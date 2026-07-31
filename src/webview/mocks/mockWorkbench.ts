@@ -1,0 +1,709 @@
+import {
+  defaultWorkbenchTask,
+  isWorkbenchTaskForModule,
+  WORKBENCH_PROTOCOL_VERSION,
+  type HostToWebviewMessage,
+  type WorkbenchModuleId,
+  type WorkbenchModuleSnapshot,
+  type WorkbenchTaskId
+} from '@protocol/workbenchProtocol';
+import { workbenchBridge } from '../bridge/vscodeBridge';
+
+const files = [
+  { relativePath: 'src/extension.ts', status: 'modified' as const, selection: 'selected' as const, fileType: 'TypeScript', repositoryName: 'vscode-svn', ownership: 'current' as const },
+  { relativePath: 'src/webview/App.svelte', status: 'added' as const, selection: 'selected' as const, fileType: 'Svelte', repositoryName: 'vscode-svn', ownership: 'current' as const },
+  { relativePath: 'dist/debug.log', status: 'unversioned' as const, selection: 'needsReview' as const, fileType: 'Log', repositoryName: 'vscode-svn', ownership: 'current' as const },
+  { relativePath: 'vendor/external-lib', status: 'external' as const, selection: 'blocked' as const, fileType: 'Folder', repositoryName: 'external-lib', ownership: 'external' as const },
+  { relativePath: 'src/conflict/example.ts', status: 'conflicted' as const, selection: 'blocked' as const, fileType: 'TypeScript', repositoryName: 'vscode-svn', ownership: 'current' as const }
+];
+
+let activeMockModuleId: WorkbenchModuleId = 'changes';
+let activeMockTaskId: WorkbenchTaskId = defaultWorkbenchTask('changes');
+
+export function startMockWorkbench(): void {
+  activeMockModuleId = 'changes';
+  activeMockTaskId = defaultWorkbenchTask('changes');
+  let mockAgentCompleted = 0;
+  const initial: HostToWebviewMessage = {
+    protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+    type: 'app/initialize',
+    moduleId: 'changes',
+    taskId: 'changes/overview',
+    repositoryUuid: 'mock-repository-uuid',
+    scopeHash: 'mock-scope-hash',
+    payload: {
+      moduleId: 'changes',
+      scope: {
+        repositoryName: 'vscode-svn',
+        roots: [{ kind: 'folder', relativePath: '.' }],
+        source: 'internal'
+      },
+      snapshot: changesSnapshot()
+    }
+  };
+
+  window.setTimeout(() => {
+    workbenchBridge.injectMock(initial);
+    const errorScenario = new URLSearchParams(window.location.search).get('error');
+    if (errorScenario === 'authentication') {
+      injectMockError({
+        title: '读取仓库失败',
+        message: 'SVN 服务器拒绝了当前认证信息。',
+        recoverable: true,
+        category: 'authentication',
+        categoryLabel: '认证失败',
+        guidance: ['使用“配置认证”通过 VS Code 安全输入凭据后重试。', '密码只通过标准输入交给 SVN，不进入命令参数、settings、Webview 快照或日志。']
+      });
+    }
+    if (errorScenario === 'certificate') {
+      injectMockError({
+        title: '读取仓库失败',
+        message: 'SVN 服务器证书校验失败。',
+        recoverable: true,
+        category: 'certificate',
+        categoryLabel: '证书校验失败',
+        guidance: ['请通过仓库管理员提供的可信渠道核对 SHA-256 指纹。'],
+        certificate: {
+          host: 'svn.example.test:8443',
+          fingerprint: 'AA:BB:CC:DD:EE:FF:00:11',
+          issuer: 'Example Internal CA',
+          validFrom: '2026-07-01',
+          validUntil: '2027-07-01',
+          failures: ['unknown-ca'],
+          canTrust: true
+        }
+      });
+    }
+    if (errorScenario === 'proxy') {
+      injectMockError({
+        title: '连接 SVN 仓库失败',
+        message: '代理服务器拒绝连接，尚未执行任何写操作。',
+        recoverable: true,
+        category: 'network',
+        categoryLabel: '代理连接失败',
+        network: { kind: 'proxy' },
+        guidance: ['检查 VS Code http.proxy 与系统代理是否一致。', '确认代理允许访问 SVN 仓库主机后再重试。']
+      });
+    }
+  }, 0);
+  window.addEventListener('svn-workbench:mock-action', (event) => {
+    const message = (event as CustomEvent).detail;
+    if (message?.type !== 'workbench/action') {
+      return;
+    }
+    const action = message.payload?.action;
+    const data = message.payload?.data ?? {};
+    if (action === 'open-module' && typeof data.moduleId === 'string') {
+      const moduleId = data.moduleId as WorkbenchModuleId;
+      const snapshots: Partial<Record<WorkbenchModuleId, () => WorkbenchModuleSnapshot>> = {
+        changes: changesSnapshot,
+        commit: commitSnapshot,
+        history: historySnapshot,
+        conflicts: conflictSnapshot,
+        repository: repositorySnapshot,
+        'ai-review': aiReviewSnapshot,
+        impact: impactSnapshot,
+        changelists: changelistsSnapshot,
+        agent: agentSnapshot,
+        settings: settingsSnapshot,
+        diagnostics: diagnosticsSnapshot
+      };
+      const createSnapshot = snapshots[moduleId];
+      const taskId = isWorkbenchTaskForModule(data.taskId, moduleId) ? data.taskId : defaultWorkbenchTask(moduleId);
+      if (createSnapshot) injectSnapshot(moduleId, createSnapshot(), taskId);
+    }
+    if (action === 'open-diff' && typeof data.relativePath === 'string') {
+      injectSnapshot('diff', {
+        kind: 'diff',
+        relativePath: data.relativePath,
+        original: "export const mode = 'legacy';\n",
+        modified: "export const mode = 'svelte';\nexport const version = 3;\n",
+        language: 'typescript',
+        truncated: false,
+        binary: false
+      });
+    }
+    if (action === 'refresh') {
+      const snapshots: Record<Exclude<WorkbenchModuleId, 'diff'>, () => WorkbenchModuleSnapshot> = {
+        changes: changesSnapshot,
+        commit: commitSnapshot,
+        history: historySnapshot,
+        conflicts: conflictSnapshot,
+        repository: repositorySnapshot,
+        'ai-review': aiReviewSnapshot,
+        impact: impactSnapshot,
+        changelists: changelistsSnapshot,
+        agent: agentSnapshot,
+        settings: settingsSnapshot,
+        diagnostics: diagnosticsSnapshot
+      };
+      if (activeMockModuleId === 'diff') {
+        injectSnapshot('diff', {
+          kind: 'diff', relativePath: 'src/extension.ts', original: '', modified: '', language: 'typescript', truncated: false, binary: false
+        });
+      } else {
+        injectSnapshot(activeMockModuleId, snapshots[activeMockModuleId]());
+      }
+    }
+    if (action === 'commit/apply-template') {
+      injectSnapshot('commit', commitSnapshot({ message: '需求: \n\n范围: \n影响: ' }));
+    }
+    if (action === 'commit/generate-message') {
+      injectSnapshot('commit', commitSnapshot({
+        message: 'feat(workbench): 迁移统一 Svelte UI',
+        ai: { source: 'local-rule', summary: '已基于 2 个文件生成提交说明。', warnings: [] }
+      }));
+    }
+    if (action === 'commit/ai-select') {
+      injectSnapshot('commit', commitSnapshot({
+        selectedPaths: ['src/extension.ts'],
+        ai: { source: 'configured-model', summary: '建议选择 1 个文件；1 个需要人工确认，1 个建议排除。', warnings: [] }
+      }));
+    }
+    if (action === 'commit/preview') {
+      injectSnapshot('commit', commitSnapshot({
+        message: typeof data.message === 'string' ? data.message : 'feat(workbench): 迁移统一 Svelte UI',
+        preview: {
+          token: 'mock-preview',
+          canExecute: true,
+          selectedPaths: ['src/extension.ts', 'src/webview/App.svelte'],
+          addPaths: ['src/webview/App.svelte'],
+          removePaths: [],
+          commands: ['svn add "src/webview/App.svelte"', 'svn commit "src/extension.ts" "src/webview/App.svelte" -F <message-file> --encoding utf-8'],
+          issues: [],
+          remoteRevision: '42',
+          outOfDatePaths: [],
+          createdAt: new Date().toISOString()
+        }
+      }));
+    }
+    if (action === 'history/select' && typeof data.revision === 'string') {
+      injectSnapshot('history', historySnapshot({ selectedRevision: data.revision }));
+    }
+    if (action === 'history/compare') {
+      injectSnapshot('diff', {
+        kind: 'diff',
+        relativePath: '. · r41 → r42',
+        original: '',
+        modified: '@@ -1 +1 @@\n-old behavior\n+unified Svelte workbench\n',
+        language: 'diff',
+        truncated: false,
+        binary: false,
+        message: '修订比较 r41 → r42'
+      });
+    }
+    if (action === 'history/blame') {
+      const blame = isScrollDataset()
+        ? Array.from({ length: 80 }, (_, index) => ({ line: index + 1, revision: String(120 - (index % 10)), author: index % 2 === 0 ? '杨楠' : '研发团队', content: `第 ${index + 1} 行中文代码说明` }))
+        : [{ line: 1, revision: '42', author: 'yangnan', content: "export const mode = 'svelte';" }];
+      injectSnapshot('history', historySnapshot({ blame, feedback: `已读取 ${blame.length} 行逐行责任信息。` }));
+    }
+    if (action === 'history/preview-restore') injectSnapshot('history', historySnapshot({ restorePreview: { token: 'mock-restore', revision: typeof data.revision === 'string' ? data.revision : '42', relativePath: 'src/extension.ts', command: 'svn cat -r 42 "src/extension.ts" > <working-file>', canExecute: true, issues: [] } }));
+    if (action === 'history/execute-restore') injectSnapshot('history', historySnapshot({ feedback: 'src/extension.ts 已恢复为 r42 内容；尚未提交。' }));
+    if (action === 'conflict/select' && typeof data.relativePath === 'string') {
+      injectSnapshot('conflicts', conflictSnapshot());
+    }
+    if (action === 'conflict/advise') {
+      injectSnapshot('conflicts', conflictSnapshot({
+        advice: mockConflictAdvice()
+      }));
+    }
+    if (action === 'conflict/save-working') {
+      injectSnapshot('conflicts', conflictSnapshot({
+        selected: {
+          ...((conflictSnapshot() as Extract<WorkbenchModuleSnapshot, { kind: 'conflicts' }>).selected!),
+          contents: {
+            base: { content: "export const mode = 'legacy';\n", truncated: false },
+            mine: { content: "export const mode = 'local';\n", truncated: false },
+            theirs: { content: "export const mode = 'svelte';\n", truncated: false },
+            working: { content: typeof data.content === 'string' ? data.content : "export const mode = 'merged';\n", truncated: false }
+          },
+          mergeEditor: { token: 'mock-edit-saved', editable: true, issues: [], feedback: '工作副本合并结果已保存；请生成解决预览。' }
+        }
+      }));
+    }
+    if (action === 'conflict/preview-resolve') {
+      injectSnapshot('conflicts', conflictSnapshot({
+        advice: mockConflictAdvice(),
+        resolvePreview: {
+          token: 'mock-resolve',
+          relativePath: 'src/conflict/example.ts',
+          command: 'svn resolve --accept working "src/conflict/example.ts"',
+          canResolve: true,
+          issues: []
+        }
+      }));
+    }
+    if (action === 'settings/test-ai') {
+      injectSnapshot('settings', settingsSnapshot({
+        ai: { ...settingsSnapshotValue.ai, feedback: { tone: 'success', message: '连接成功，模型返回了有效响应。' } }
+      }));
+    }
+    if (action === 'settings/list-models') {
+      injectSnapshot('settings', settingsSnapshot({
+        ai: {
+          ...settingsSnapshotValue.ai,
+          models: [{ id: 'deepseek-v4-flash', owner: 'deepseek' }],
+          feedback: { tone: 'success', message: '读取到 1 个可用模型。' }
+        }
+      }));
+    }
+    if (action === 'settings/recommend-team') {
+      injectSnapshot('settings', settingsSnapshot({
+        team: {
+          ...settingsSnapshotValue.team,
+          recommendation: {
+            summary: '已根据仓库目录生成团队规则建议。',
+            reasons: ['模块来自 src/webview 与 src/extension。'],
+            warnings: ['保存前请确认模块名。'],
+            confidence: 'high',
+            source: 'local-rule'
+          }
+        }
+      }));
+    }
+    if (action === 'diagnostics/run') {
+      injectSnapshot('diagnostics', diagnosticsSnapshot());
+    }
+    if (action === 'repository/preview-update') {
+      injectSnapshot('repository', repositorySnapshot({
+        update: {
+          token: 'mock-update', canExecute: true, localCount: 4, remoteCount: 2, checkedRevision: '42', risk: 'medium',
+          overlapPaths: ['src/extension.ts'], messages: ['远端与本地存在 1 个同路径重叠，请确认后再更新。'],
+          commands: ['svn update --accept postpone "."']
+        }
+      }));
+    }
+    if (action === 'repository/execute-update') {
+      injectSnapshot('repository', repositorySnapshot({
+        lastResult: { ok: true, revision: '43', hasConflicts: false, message: '已更新到 r43' }
+      }));
+    }
+    if (action === 'repository/preview-property') {
+      const name = typeof data.name === 'string' ? data.name : '';
+      const value = typeof data.value === 'string' ? data.value : '';
+      const remove = data.remove === true;
+      injectSnapshot('repository', repositorySnapshot({
+        properties: {
+          available: true, target: '.', items: [{ name: 'svn:ignore', value: 'dist\nobj' }],
+          preview: { token: 'mock-property', name, value: remove ? undefined : value, remove, command: remove ? `svn propdel "${name}" "."` : `svn propset "${name}" <value> "."`, canExecute: Boolean(name), issues: [] }
+        }
+      }));
+    }
+    if (action === 'repository/execute-property') {
+      injectSnapshot('repository', repositorySnapshot({
+        properties: { available: true, target: '.', items: [{ name: 'svn:ignore', value: 'dist\nobj' }], feedback: '已设置属性 svn:ignore；变更尚未提交。' }
+      }));
+    }
+    if (action === 'repository/preview-cleanup') {
+      injectSnapshot('repository', repositorySnapshot({
+        cleanup: { available: true, target: '.', preview: { token: 'mock-cleanup', command: 'svn cleanup "."', canExecute: true, issues: [] } }
+      }));
+    }
+    if (action === 'repository/execute-cleanup') {
+      injectSnapshot('repository', repositorySnapshot({
+        cleanup: { available: true, target: '.', feedback: '清理已完成；未删除未版本化文件，请重新检查状态。' }
+      }));
+    }
+    if (action === 'repository/browse') {
+      const url = typeof data.url === 'string' && data.url ? data.url : 'https://svn.example.test/repos/workbench/trunk';
+      injectSnapshot('repository', repositorySnapshot({
+        advanced: {
+          browser: {
+            url,
+            parentUrl: url.endsWith('/trunk') ? 'https://svn.example.test/repos/workbench' : 'https://svn.example.test/repos/workbench/trunk',
+            entries: [
+              { name: 'src', kind: 'dir', revision: '42', author: 'yangnan', date: '2026-07-30T08:00:00.000Z' },
+              { name: 'docs', kind: 'dir', revision: '40', author: 'team', date: '2026-07-29T06:00:00.000Z' },
+              { name: 'README.md', kind: 'file', size: 4280, revision: '41', author: 'yangnan', date: '2026-07-30T07:00:00.000Z' }
+            ]
+          }
+        }
+      }));
+    }
+    if (action === 'repository/preview-advanced' || action === 'repository/select-patch') {
+      const operation = action === 'repository/select-patch' ? 'apply-patch' : typeof data.operation === 'string' ? data.operation : 'branch';
+      const destructive = ['switch', 'relocate', 'merge', 'apply-patch', 'shelf'].includes(operation);
+      const titleByOperation: Record<string, string> = { branch: '创建分支', tag: '创建标签', switch: '切换工作副本', relocate: '重定位仓库根地址', merge: '合并到当前工作副本', shelf: '创建本地搁置（补丁 + 还原）', 'apply-patch': '应用补丁' };
+      const title = titleByOperation[operation] ?? '仓库操作';
+      injectSnapshot('repository', repositorySnapshot({
+        advanced: {
+          preview: {
+            token: 'mock-advanced', operation, title, destructive, canExecute: true, issues: [],
+            commands: operation === 'shelf' ? ['svn diff <current-scope> > wip.patch', 'svn revert --depth empty <exact-files>'] : operation === 'apply-patch' ? ['svn patch "feature.patch" "."'] : [`svn ${operation} <validated-source> <validated-target>`],
+            details: destructive ? ['只修改当前工作副本；不会自动提交。', '执行后重新采集状态。'] : ['仓库端操作，不包含本地未提交修改。']
+          }
+        }
+      }));
+    }
+    if (action === 'repository/execute-advanced') {
+      injectSnapshot('repository', repositorySnapshot({ advanced: { feedback: '高级仓库操作已完成；状态已经重新采集。' } }));
+    }
+    if (action === 'repository/export-patch') {
+      injectSnapshot('repository', repositorySnapshot({ advanced: { feedback: '补丁已导出：/tmp/svn-workbench.patch' } }));
+    }
+    if (action === 'repository/generate-release-notes') {
+      injectSnapshot('repository', repositorySnapshot({
+        advanced: {
+          feedback: '已从 42 条历史中生成 3 条发布记录。',
+          releaseNotes: { count: 3, fromRevision: '40', toRevision: '42', markdown: '# SVN 发布说明\n\n修订范围：r40 → r42\n\n## r42 · yangnan\n\n完成统一 Svelte 工作台与安全预检。' }
+        }
+      }));
+    }
+    if (action === 'ai-review/run') injectSnapshot('ai-review', aiReviewSnapshot());
+    if (action === 'impact/run') injectSnapshot('impact', impactSnapshot());
+    if (action === 'changelist/suggest') injectSnapshot('changelists', changelistsSnapshot({ suggestions: changelistSuggestions() }));
+    if (action === 'changelist/preview-apply') {
+      const paths = Array.isArray(data.paths) ? data.paths.filter((item: unknown): item is string => typeof item === 'string') : [];
+      const remove = data.remove === true;
+      injectSnapshot('changelists', changelistsSnapshot({
+        suggestions: changelistSuggestions(),
+        preview: { token: 'mock-changelist', name: typeof data.name === 'string' ? data.name : undefined, remove, paths, command: remove ? 'svn changelist --remove …' : `svn changelist "${data.name}" …`, canExecute: paths.length > 0, issues: [] }
+      }));
+    }
+    if (action === 'changelist/execute-apply') injectSnapshot('changelists', changelistsSnapshot({ groups: [{ name: 'webview', paths: ['src/webview/App.svelte'] }], suggestions: changelistSuggestions(), feedback: '文件已加入 webview。' }));
+    if (action === 'agent/create-plan') {
+      mockAgentCompleted = 0;
+      injectSnapshot('agent', agentSnapshot(0, typeof data.objective === 'string' ? data.objective : '检查当前范围'));
+    }
+    if (action === 'agent/approve-step') {
+      mockAgentCompleted += 1;
+      injectSnapshot('agent', agentSnapshot(mockAgentCompleted, '检查当前范围并形成测试建议'));
+    }
+    if (action === 'agent/cancel') injectSnapshot('agent', agentSnapshot(-1, '检查当前范围'));
+    if (action === 'changes/preview-operation') {
+      const paths = Array.isArray(data.paths) ? data.paths.filter((item: unknown): item is string => typeof item === 'string') : [];
+      const operation = typeof data.operation === 'string' ? data.operation : 'add';
+      const ignoreMode = data.ignoreMode === 'repository' ? 'repository' : 'directory';
+      injectSnapshot('changes', changesSnapshot({
+        operationPreview: { token: 'mock-file-op', operation, ignoreMode, paths, command: operation === 'ignore' ? `svn propset ${ignoreMode === 'repository' ? 'svn:global-ignores' : 'svn:ignore'} …` : `svn ${operation} "${paths[0] ?? ''}"`, consequences: ['操作只影响当前明确选择的文件，不会自动提交。'], destructive: operation === 'revert' || operation === 'remove', recoverability: operation === 'revert' ? '未提交内容无法从 SVN 恢复。' : '提交前可 Revert。', canExecute: paths.length > 0, issues: [] }
+      }));
+    }
+    if (action === 'changes/execute-operation') injectSnapshot('changes', changesSnapshot({ feedback: '1 个文件已加入版本控制。请刷新并确认最新 SVN 状态。' }));
+  });
+}
+
+function changesSnapshot(overrides: Record<string, unknown> = {}): WorkbenchModuleSnapshot {
+  const dataset = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('dataset') : undefined;
+  const snapshotFiles = dataset === 'large' || dataset === 'scroll'
+    ? Array.from({ length: dataset === 'large' ? 5000 : 120 }, (_, index) => ({
+        relativePath: `src/generated/deep/path/file-${String(index).padStart(4, '0')}.ts`,
+        status: index % 17 === 0 ? 'unversioned' as const : 'modified' as const,
+        selection: index % 17 === 0 ? 'needsReview' as const : 'selected' as const,
+        fileType: 'TypeScript'
+      }))
+    : files;
+  return {
+    kind: 'changes',
+    commitDraft: 'feat(workbench): 完善统一 Svelte 工作台',
+    files: snapshotFiles,
+    summary: snapshotFiles === files
+      ? { modified: 1, added: 1, unversioned: 1, conflicted: 1 }
+      : { modified: snapshotFiles.filter((item) => item.status === 'modified').length, unversioned: snapshotFiles.filter((item) => item.status === 'unversioned').length },
+    refreshedAt: new Date().toISOString(),
+    ...overrides
+  } as WorkbenchModuleSnapshot;
+}
+
+function commitSnapshot(overrides: Record<string, unknown> = {}): WorkbenchModuleSnapshot {
+  const snapshotFiles = isScrollDataset()
+    ? Array.from({ length: 80 }, (_, index) => ({
+        relativePath: `项目资料/提交候选/第-${String(index + 1).padStart(2, '0')}-个文件.ts`,
+        status: index % 7 === 0 ? 'unversioned' as const : 'modified' as const,
+        selection: 'selected' as const
+      }))
+    : files.slice(0, 3);
+  return {
+    kind: 'commit',
+    files: snapshotFiles,
+    summary: { total: snapshotFiles.length, selected: snapshotFiles.length, needsReview: 0, excluded: 0, blocked: 0 },
+    selectedPaths: snapshotFiles.map((item) => item.relativePath),
+    message: '',
+    messageIssues: ['提交说明不能为空。'],
+    conventionHint: '前缀：feat, fix；模块：workbench',
+    aiPrivacy: [
+      { scenario: 'selection', model: 'deepseek-v4-flash', fileLimit: 200, data: '文件相对路径、SVN 状态、文件类型和规则判断；不发送文件正文', historyIncluded: false },
+      { scenario: 'message', model: 'deepseek-v4-flash', fileLimit: 80, data: '已选文件元数据与增删行统计；不发送文件正文', historyIncluded: false }
+    ],
+    templates: [
+      { id: 'feature', label: '需求开发', body: '需求: \n\n范围: \n影响: ' },
+      { id: 'bugfix', label: '问题修复', body: '修复: \n\n原因: \n影响: ' }
+    ],
+    ...overrides
+  } as WorkbenchModuleSnapshot;
+}
+
+function historySnapshot(overrides: Record<string, unknown> = {}): WorkbenchModuleSnapshot {
+  const revisions = isScrollDataset()
+    ? Array.from({ length: 48 }, (_, index) => ({
+        revision: String(120 - index),
+        author: index % 2 === 0 ? '杨楠' : '研发团队',
+        date: new Date(Date.UTC(2026, 6, 30 - index, 8, 30)).toISOString(),
+        message: `第 ${index + 1} 条中文修订说明`,
+        changedPaths: Array.from({ length: 36 }, (_, pathIndex) => ({ action: 'M', path: `/trunk/项目资料/模块-${pathIndex + 1}/文件.ts` }))
+      }))
+    : [
+        { revision: '42', author: 'yangnan', date: '2026-07-30T08:30:00.000Z', message: '迁移统一 Svelte 工作台', changedPaths: [{ action: 'M', path: '/trunk/src/extension.ts' }] },
+        { revision: '41', author: 'team', date: '2026-07-29T09:00:00.000Z', message: '补充提交范围校验', changedPaths: [{ action: 'M', path: '/trunk/src/scope/operationScope.ts' }] }
+      ];
+  return {
+    kind: 'history',
+    revisions,
+    selectedRevision: revisions[0]?.revision,
+    compareRevisions: [],
+    limit: 100,
+    fileActionsAvailable: true,
+    ...overrides
+  } as WorkbenchModuleSnapshot;
+}
+
+function conflictSnapshot(overrides: Record<string, unknown> = {}): WorkbenchModuleSnapshot {
+  const conflicts = isScrollDataset()
+    ? Array.from({ length: 36 }, (_, index) => ({ relativePath: `项目资料/冲突/文件-${index + 1}.ts`, operation: 'update' as const, type: 'text' as const, sourceLeftRevision: '119', sourceRightRevision: '120' }))
+    : [{ relativePath: 'src/conflict/example.ts', operation: 'update' as const, type: 'text' as const, sourceLeftRevision: '41', sourceRightRevision: '42' }];
+  const workingContent = isScrollDataset()
+    ? Array.from({ length: 80 }, (_, index) => `第 ${index + 1} 行工作副本内容`).join('\n')
+    : "<<<<<<< .mine\nexport const mode = 'local';\n=======\nexport const mode = 'svelte';\n>>>>>>> .r42\n";
+  return {
+    kind: 'conflicts',
+    conflicts,
+    selected: {
+      relativePath: 'src/conflict/example.ts',
+      operation: 'update',
+      type: 'text',
+      sourceLeftRevision: '41',
+      sourceRightRevision: '42',
+      contents: {
+        base: { content: "export const mode = 'legacy';\n", truncated: false },
+        mine: { content: "export const mode = 'local';\n", truncated: false },
+        theirs: { content: "export const mode = 'svelte';\n", truncated: false },
+        working: { content: workingContent, truncated: false }
+      },
+      mergeEditor: { token: 'mock-edit', editable: true, issues: [] }
+    },
+    aiPrivacy: { model: 'deepseek-v4-flash', characters: 86, maxCharacters: 32000, data: '基础版本、我的版本、对方版本、工作副本的截断文本与修订元数据', historyIncluded: false },
+    ...overrides
+  } as WorkbenchModuleSnapshot;
+}
+
+function mockConflictAdvice() {
+  return {
+    recommendation: 'manualMerge' as const,
+    confidence: 'medium' as const,
+    summary: '两侧都修改了同一处行为，建议保留新的 Svelte 入口并人工核对初始化顺序。',
+    risks: ['直接接受任一侧都会丢失另一侧逻辑。'],
+    steps: ['完成工作副本合并', '运行类型检查和真实 SVN 测试'],
+    source: 'local-rule' as const
+  };
+}
+
+const settingsSnapshotValue = {
+  kind: 'settings' as const,
+  svnSecurity: { authenticationActive: true, hasStoredAuthentication: true, passwordTransport: 'stdin' as const, certificateTrust: 'explicit-svn-cache' as const },
+  ai: {
+    presets: [
+      { id: 'deepseek', label: 'DeepSeek', baseUrl: 'https://api.deepseek.com', model: 'deepseek-v4-flash', description: 'OpenAI 兼容接口。' },
+      { id: 'custom', label: '自定义 OpenAI 兼容服务', baseUrl: '', model: '', description: '自定义接口。' }
+    ],
+    scenarios: [
+      { id: 'commitSelection', label: '提交文件筛选', description: '筛选提交范围。' },
+      { id: 'conflictAdvice', label: '冲突处理建议', description: '分析冲突证据。' }
+    ],
+    providerPreset: 'deepseek',
+    baseUrl: 'https://api.deepseek.com',
+    model: 'deepseek-v4-flash',
+    scenarioModels: {},
+    hasApiKey: true,
+    includeCommitHistory: true,
+    historyLimit: 10,
+    models: []
+  },
+  team: {
+    configPath: '.svn-workbench.json',
+    enabled: true,
+    requiredIssueId: true,
+    issueIdPattern: '[A-Z]+-\\d+',
+    requiredModule: true,
+    allowedModulesText: 'workbench, extension',
+    requiredPrefix: true,
+    allowedPrefixesText: 'feat, fix, refactor',
+    warnings: [],
+    memory: { source: '当前仓库成功提交' as const, count: 2, maxEntries: 50, externallyShared: false as const, recent: [
+      { revision: '42', summary: 'feat(workbench): 完善统一 Svelte 工作台', recordedAt: '2026-07-30T08:30:00.000Z' },
+      { revision: '41', summary: 'test(svn): 补充真实冲突验收', recordedAt: '2026-07-29T09:00:00.000Z' }
+    ] }
+  }
+};
+
+function settingsSnapshot(overrides: Record<string, unknown> = {}): WorkbenchModuleSnapshot {
+  const snapshot = isScrollDataset()
+    ? {
+        ...settingsSnapshotValue,
+        ai: {
+          ...settingsSnapshotValue.ai,
+          scenarios: Array.from({ length: 32 }, (_, index) => ({ id: `scenario-${index}`, label: `AI 场景 ${index + 1}`, description: `第 ${index + 1} 个场景的中文用途说明。` }))
+        },
+        team: {
+          ...settingsSnapshotValue.team,
+          memory: {
+            ...settingsSnapshotValue.team.memory,
+            count: 40,
+            recent: Array.from({ length: 40 }, (_, index) => ({ revision: String(120 - index), summary: `第 ${index + 1} 条已脱敏中文提交摘要`, recordedAt: new Date(Date.UTC(2026, 6, 30 - index, 8)).toISOString() }))
+          }
+        }
+      }
+    : settingsSnapshotValue;
+  return { ...snapshot, ...overrides } as WorkbenchModuleSnapshot;
+}
+
+function diagnosticsSnapshot(): WorkbenchModuleSnapshot {
+  const checks = isScrollDataset()
+    ? Array.from({ length: 42 }, (_, index) => ({ id: `check-${index}`, label: `环境检查 ${index + 1}`, status: index % 9 === 0 ? 'warn' as const : 'pass' as const, detail: `第 ${index + 1} 项中文检查结果`, action: index % 9 === 0 ? '打开对应设置并修复。' : undefined }))
+    : [
+        { id: 'platform', label: '操作系统', status: 'pass' as const, detail: 'macOS' },
+        { id: 'ai-config', label: 'AI 配置', status: 'warn' as const, detail: '尚未设置 API 密钥', action: '在设置模块中配置。' }
+      ];
+  const acceptanceSections = isScrollDataset()
+    ? Array.from({ length: 24 }, (_, index) => ({ id: `section-${index}`, title: `验收分组 ${index + 1}`, items: [{ id: `item-${index}`, title: `第 ${index + 1} 个验收项目`, description: '确认小区域内容与底部操作均可到达。', steps: ['聚焦滚动区域', '滚动到最后一项'], expected: ['内容完整可见且焦点未被遮挡'] }] }))
+    : [{ id: 'core', title: '核心流程', items: [{ id: 'commit', title: '提交预检', description: '确认安全提交链路。', steps: ['打开提交模块', '生成预览'], expected: ['只有通过预检才允许提交'] }] }];
+  return {
+    kind: 'diagnostics',
+    status: 'warn',
+    checks,
+    acceptance: {
+      summary: { sections: acceptanceSections.length, items: acceptanceSections.length, steps: acceptanceSections.length * 2, expectedResults: acceptanceSections.length },
+      sections: acceptanceSections
+    },
+    generatedAt: new Date().toISOString(),
+    reportText: 'SVN 工作台环境诊断：提醒'
+  };
+}
+
+function repositorySnapshot(overrides: Record<string, unknown> = {}): WorkbenchModuleSnapshot {
+  const propertyItems = isScrollDataset()
+    ? Array.from({ length: 36 }, (_, index) => ({ name: `svn:custom-property-${index + 1}`, value: `第 ${index + 1} 个属性值` }))
+    : [{ name: 'svn:ignore', value: 'dist\nobj' }];
+  const browserEntries = isScrollDataset()
+    ? Array.from({ length: 48 }, (_, index) => ({ name: `中文目录-${String(index + 1).padStart(2, '0')}`, kind: index % 4 === 0 ? 'file' as const : 'dir' as const, revision: String(120 - index), author: '研发团队' }))
+    : [
+        { name: 'src', kind: 'dir' as const, revision: '42', author: 'yangnan' },
+        { name: 'docs', kind: 'dir' as const, revision: '40', author: 'team' },
+        { name: 'README.md', kind: 'file' as const, size: 4280, revision: '41', author: 'yangnan' }
+      ];
+  return {
+    kind: 'repository',
+    recovery: { category: 'working-copy-locked', title: '工作副本被锁定', detectedAt: '2026-07-30T08:30:00.000Z', steps: ['确认没有其他 SVN 进程正在操作该工作副本。', '检查范围后执行安全清理。'], requiresFreshPreview: true },
+    info: { name: 'vscode-svn', url: 'https://svn.example.test/repos/workbench/trunk', repositoryRoot: 'https://svn.example.test/repos/workbench', revision: '42' },
+    properties: { available: true, target: '.', items: propertyItems },
+    cleanup: { available: true, target: '.' },
+    advanced: {
+      browser: {
+        url: 'https://svn.example.test/repos/workbench/trunk',
+        parentUrl: 'https://svn.example.test/repos/workbench',
+        entries: browserEntries
+      }
+    },
+    ...overrides
+  } as WorkbenchModuleSnapshot;
+}
+
+function aiReviewSnapshot(): WorkbenchModuleSnapshot {
+  const baseFindings = [
+    { id: 'security:env', severity: 'critical' as const, category: 'security' as const, relativePath: 'src/config.ts', line: 8, title: '疑似敏感信息', evidence: '检测到疑似凭据，具体值已隐藏。', recommendation: '移除并轮换凭据。', confidence: 'high' as const },
+    { id: 'debug:extension', severity: 'warning' as const, category: 'debug' as const, relativePath: 'src/extension.ts', line: 12, title: '检测到调试代码', evidence: 'console.log(result)', recommendation: '确认调试输出是否应保留。', confidence: 'high' as const },
+    { id: 'testing', severity: 'note' as const, category: 'testing' as const, title: '未检测到测试文件变更', evidence: '2 个源文件发生变化。', recommendation: '执行回归测试。', confidence: 'medium' as const }
+  ];
+  const findings = isScrollDataset()
+    ? Array.from({ length: 36 }, (_, index) => ({ ...baseFindings[index % baseFindings.length], id: `finding-${index}`, title: `第 ${index + 1} 条审查发现`, relativePath: `项目资料/模块-${index + 1}.ts` }))
+    : baseFindings;
+  return {
+    kind: 'ai-review', state: 'ready', source: 'local-rule', generatedAt: new Date().toISOString(),
+    privacy: { files: 3, characters: 4280, maxCharacters: 2000000, historyIncluded: false, model: '本地规则引擎' },
+    summary: { critical: 1, warning: 1, note: 1 },
+    findings, warnings: []
+  };
+}
+
+function impactSnapshot(): WorkbenchModuleSnapshot {
+  return {
+    kind: 'impact', generatedAt: new Date().toISOString(), source: 'local-rule', changedFiles: 4,
+    areas: [{ id: 'src/webview', title: 'Svelte Webview', detail: '2 个变更文件', paths: ['src/webview/App.svelte', 'src/webview/styles/global.css'], risk: 'medium' }],
+    tests: [{ title: 'Webview 浏览器验收', reason: 'UI 和样式发生变化。', command: 'npm run test:webview' }],
+    observations: ['抽查 Light、Dark 和 High Contrast。'], warnings: []
+  };
+}
+
+function changelistSuggestions() {
+  const paths = isScrollDataset()
+    ? Array.from({ length: 36 }, (_, index) => `项目资料/待分组-${index + 1}.ts`)
+    : ['src/webview/App.svelte', 'src/webview/styles/global.css'];
+  const base = { summary: `${paths.length} 个界面文件`, message: 'feat(workbench): 更新界面', paths, reason: '按业务模块聚合。', risks: [] };
+  return isScrollDataset()
+    ? Array.from({ length: 24 }, (_, index) => ({ ...base, id: `split-${index + 1}`, title: `拆分建议 ${index + 1}：工作台模块` }))
+    : [{ ...base, id: 'split-1', title: '拆分 1：webview' }];
+}
+
+function changelistsSnapshot(overrides: Record<string, unknown> = {}): WorkbenchModuleSnapshot {
+  const scrollFiles = isScrollDataset()
+    ? Array.from({ length: 40 }, (_, index) => ({ relativePath: `项目资料/未分组-${index + 1}.ts`, status: 'modified' as const, selection: 'selected' as const, fileType: 'TypeScript' }))
+    : files.slice(0, 3);
+  const groups = isScrollDataset()
+    ? Array.from({ length: 16 }, (_, index) => ({ name: `变更集-${index + 1}`, paths: [`项目资料/已分组-${index + 1}.ts`] }))
+    : [];
+  return {
+    kind: 'changelists', source: 'local-rule', aiPrivacy: { model: 'deepseek-v4-flash', fileLimit: 120, data: '文件相对路径、状态、类型和模块分组；不发送文件正文', historyIncluded: false }, groups, unassigned: scrollFiles, suggestions: [], warnings: [], ...overrides
+  } as WorkbenchModuleSnapshot;
+}
+
+function agentSnapshot(completed = -2, objective = ''): WorkbenchModuleSnapshot {
+  if (completed === -2) return { kind: 'agent', status: 'idle', objective: '', steps: [], guardrails: ['只访问当前右键范围', '每一步都需要显式批准', '不自动修改文件、不自动提交'] };
+  const definitions = [
+    ['status', '重新采集 SVN 状态', 'svn-read', '已采集 4 个候选，其中 1 个阻止项。'],
+    ['review', '执行证据审查', 'local-analysis', '发现 1 个高风险、1 个提醒、1 个建议。'],
+    ['impact', '生成影响与测试计划', 'local-analysis', '识别 2 个影响区域，生成 3 条测试建议。']
+  ] as const;
+  const cancelled = completed === -1;
+  const steps = definitions.map(([id, title, capability, output], index) => ({
+    id, title, detail: `${title}的受控步骤。`, capability, command: id === 'status' ? 'svn status --xml <current-scope>' : undefined,
+    scope: '当前右键范围', risk: '低 · 只读或本地分析', reversibility: '不产生工作副本修改',
+    status: cancelled ? 'cancelled' as const : index < completed ? 'completed' as const : 'pending' as const,
+    output: index < completed ? output : undefined, requiresApproval: true
+  }));
+  return {
+    kind: 'agent', status: cancelled ? 'cancelled' : completed >= steps.length ? 'completed' : 'planned', objective,
+    guardrails: ['只访问当前右键范围', '每一步都需要显式批准', '不自动修改文件、不自动提交'], steps,
+    nextStepId: cancelled || completed >= steps.length ? undefined : steps[completed].id,
+    message: completed >= steps.length ? '受控分析计划已完成，可以进入审查、影响或提交模块继续操作。' : undefined
+  };
+}
+
+function injectSnapshot(moduleId: WorkbenchModuleId, snapshot: WorkbenchModuleSnapshot, taskId?: WorkbenchTaskId): void {
+  const resolvedTaskId = taskId ?? (moduleId === activeMockModuleId ? activeMockTaskId : defaultWorkbenchTask(moduleId));
+  activeMockModuleId = moduleId;
+  activeMockTaskId = resolvedTaskId;
+  workbenchBridge.injectMock({
+    protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+    type: 'module/snapshot',
+    moduleId,
+    taskId: resolvedTaskId,
+    repositoryUuid: 'mock-repository-uuid',
+    scopeHash: 'mock-scope-hash',
+    payload: { snapshot }
+  });
+}
+
+function injectMockError(payload: Extract<HostToWebviewMessage, { type: 'operation/error' }>['payload']): void {
+  workbenchBridge.injectMock({
+    protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+    type: 'operation/error',
+    moduleId: 'changes',
+    taskId: 'changes/overview',
+    repositoryUuid: 'mock-repository-uuid',
+    scopeHash: 'mock-scope-hash',
+    payload
+  });
+}
+
+function isScrollDataset(): boolean {
+  return typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('dataset') === 'scroll';
+}

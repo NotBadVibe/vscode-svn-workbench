@@ -1,0 +1,1622 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SVN Workbench · 验收清单</title>
+<!--
+  设计系统依据：设计令牌.md（SVN Workbench v1 共享设计令牌 §2）
+  需求依据：    完整需求摘要.md · 功能 5 · 验收清单
+  说明：本文件是 webview「验收清单」面板的自包含 HTML 蓝图（移植并完善自 prototype-acceptance-checklist.html）。
+        组件样式仅消费 --token 自定义属性，禁止 hex（离线预览兜底 :root 块除外）；
+        图标统一用 inline SVG <symbol>+<use>（单色 currentColor，标注 codicon 名）。
+  完善项：①统一 i-* 符号表替代散落 inline SVG；②消除裸几何值（20px 槽位→--space-5、16px 复选框→--space-4、2px 微间距→--space-1）；
+        ③新增 SvnMissingGate（svn 缺失引导卡）与 AiManualGate（AI 未配置手动模式卡）两处降级分支；④新增演示开关 DemoBar。
+-->
+<style>
+/* ============================================================
+   预览默认值（离线兜底）：仅当 webview 未注入宿主 --vscode-* 时生效。
+   本段含 hex 仅用于独立浏览器预览；组件样式段不含任何 hex。
+   ============================================================ */
+:root {
+  --vscode-foreground: #cccccc;
+  --vscode-descriptionForeground: #9d9d9d;
+  --vscode-disabledForeground: #6b6b6b;
+  --vscode-textLink-foreground: #3794ff;
+  --vscode-icon-foreground: #c5c5c5;
+  --vscode-panel-background: #1e1e1e;
+  --vscode-sideBar-background: #252526;
+  --vscode-editor-background: #1e1e1e;
+  --vscode-list-background: #1e1e1e;
+  --vscode-input-background: #3c3c3c;
+  --vscode-dropdown-background: #3c3c3c;
+  --vscode-sideBarSectionHeader-background: #2d2d2d;
+  --vscode-list-hoverBackground: #2a2d2e;
+  --vscode-list-activeSelectionBackground: #094771;
+  --vscode-list-inactiveSelectionBackground: #37373d;
+  --vscode-list-activeSelectionForeground: #ffffff;
+  --vscode-editorWidget-background: #252526;
+  --vscode-panel-border: #2b2b2b;
+  --vscode-widget-border: #454545;
+  --vscode-contrastBorder: #2b2b2b;
+  --vscode-errorForeground: #f48771;
+  --vscode-warningForeground: #cca700;
+  --vscode-charts-yellow: #e2c08d;
+  --vscode-charts-green: #89d185;
+  --vscode-charts-red: #f48771;
+  --vscode-charts-orange: #d7a022;
+  --vscode-charts-blue: #3794ff;
+  --vscode-charts-purple: #b180d7;
+  --vscode-focusBorder: #007fd4;
+  --vscode-widget-shadow: rgba(0, 0, 0, 0.36);
+  --vscode-button-background: #0e639c;
+  --vscode-button-foreground: #ffffff;
+  --vscode-button-hoverBackground: #1177bb;
+  --vscode-button-secondaryBackground: #3a3d41;
+  --vscode-button-secondaryForeground: #cccccc;
+  --vscode-button-secondaryHoverBackground: #45494e;
+  --vscode-badge-background: #4d4d4d;
+  --vscode-badge-foreground: #ffffff;
+  --vscode-progressBar-background: #0e70c0;
+  --vscode-diffEditor-insertedTextBackground: rgba(173, 215, 229, 0.2);
+  --vscode-diffEditor-removedTextBackground: rgba(255, 175, 175, 0.2);
+  --vscode-editorGutter-addedBackground: #9ccc7a;
+  --vscode-editorGutter-deletedBackground: #c54545;
+  --vscode-editorGutter-modifiedBackground: #e2c08d;
+  --vscode-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", Roboto, Helvetica, Arial, sans-serif;
+  --vscode-editor-font-family: "SF Mono", "Cascadia Code", Monaco, Consolas, "Liberation Mono", Menlo, monospace;
+  --vscode-input-placeholderForeground: #989898;
+  --vscode-tree-indentGuidesStroke: #404040;
+  --vscode-checkbox-background: #313131;
+  --vscode-checkbox-foreground: #f0f0f0;
+  --vscode-checkbox-border: #6b6b6b;
+}
+
+/* ============================================================
+   设计令牌（粘贴自 设计令牌.md §2，全部 var(--vscode-*) 派生）
+   ============================================================ */
+:root {
+  /* —— 前景 / 背景层级 —— */
+  --color-fg: var(--vscode-foreground);
+  --color-fg-secondary: var(--vscode-descriptionForeground);
+  --color-fg-disabled: var(--vscode-disabledForeground);
+  --color-fg-link: var(--vscode-textLink-foreground);
+  --color-icon: var(--vscode-icon-foreground);
+  --color-bg-canvas: var(--vscode-panel-background);
+  --color-bg-surface: var(--vscode-sideBar-background);
+  --color-bg-editor: var(--vscode-editor-background);
+  --color-bg-list: var(--vscode-list-background);
+  --color-bg-input: var(--vscode-input-background);
+  --color-bg-dropdown: var(--vscode-dropdown-background);
+  --color-bg-section-header: var(--vscode-sideBarSectionHeader-background);
+  --color-bg-hover: var(--vscode-list-hoverBackground);
+  --color-bg-selected: var(--vscode-list-activeSelectionBackground);
+  --color-bg-selected-inactive: var(--vscode-list-inactiveSelectionBackground);
+  --color-fg-selected: var(--vscode-list-activeSelectionForeground);
+  --color-bg-widget: var(--vscode-editorWidget-background);
+  --color-border: var(--vscode-panel-border);
+  --color-border-widget: var(--vscode-widget-border);
+  --color-border-strong: var(--vscode-contrastBorder, var(--vscode-panel-border));
+
+  /* —— 语义状态色（fg + bg 变体） —— */
+  --color-error-fg: var(--vscode-errorForeground);
+  --color-error-bg: color-mix(in srgb, var(--vscode-errorForeground) 14%, var(--vscode-panel-background));
+  --color-warning-fg: var(--vscode-warningForeground, var(--vscode-charts-yellow));
+  --color-warning-bg: color-mix(in srgb, var(--vscode-warningForeground, var(--vscode-charts-yellow)) 14%, var(--vscode-panel-background));
+  --color-info-fg: var(--vscode-textLink-foreground);
+  --color-info-bg: color-mix(in srgb, var(--vscode-textLink-foreground) 14%, var(--vscode-panel-background));
+  --color-success-fg: var(--vscode-charts-green);
+  --color-success-bg: color-mix(in srgb, var(--vscode-charts-green) 14%, var(--vscode-panel-background));
+
+  /* —— 差异色（增/删/改） —— */
+  --color-diff-add-fg: var(--vscode-charts-green);
+  --color-diff-add-bg: var(--vscode-diffEditor-insertedTextBackground, var(--vscode-charts-green));
+  --color-diff-add-gutter: var(--vscode-editorGutter-addedBackground, var(--vscode-charts-green));
+  --color-diff-del-fg: var(--vscode-charts-red, var(--vscode-errorForeground));
+  --color-diff-del-bg: var(--vscode-diffEditor-removedTextBackground, var(--vscode-charts-red));
+  --color-diff-del-gutter: var(--vscode-editorGutter-deletedBackground, var(--vscode-charts-red));
+  --color-diff-mod-fg: var(--vscode-charts-yellow, var(--vscode-charts-orange));
+  --color-diff-mod-gutter: var(--vscode-editorGutter-modifiedBackground, var(--vscode-charts-yellow));
+
+  /* —— 焦点 / 阴影 / 按钮 / 徽标 / 进度 —— */
+  --color-focus: var(--vscode-focusBorder);
+  --shadow-widget: var(--vscode-widget-shadow);
+  --color-btn-primary-bg: var(--vscode-button-background);
+  --color-btn-primary-fg: var(--vscode-button-foreground);
+  --color-btn-primary-hover: var(--vscode-button-hoverBackground);
+  --color-btn-secondary-bg: var(--vscode-button-secondaryBackground);
+  --color-btn-secondary-fg: var(--vscode-button-secondaryForeground);
+  --color-btn-secondary-hover: var(--vscode-button-secondaryHoverBackground);
+  --color-badge-bg: var(--vscode-badge-background);
+  --color-badge-fg: var(--vscode-badge-foreground);
+  --color-progress: var(--vscode-progressBar-background);
+
+  /* —— 内部辅助令牌（共享，几何值，见 设计令牌.md §4.1） —— */
+  --content-max-width: 1024px;
+  --content-max-width-narrow: 920px;
+  --control-min-width: 160px;
+  --preview-min-height: 96px;
+  --row-left-bar: 2px;
+  --hairline: 1px;
+  --bar-thickness: 4px;
+  --pill-radius: 999px;
+  --banner-bar: 3px;
+  --radius-round: 50%;
+  --status-dot: 8px;
+  --icon-size-sm: 14px; /* 通用小图标尺寸（gate-card__head / 列表行内 icon），§4.1 派生令牌 */
+}
+
+/* ============================================================
+   字体与间距令牌（设计令牌.md §3 / §4，4px 基准）
+   ============================================================ */
+:root {
+  --font-family: var(--vscode-font-family);
+  --font-family-mono: var(--vscode-editor-font-family, "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace);
+  --font-size-xs: 11px;
+  --font-size-sm: 12px;
+  --font-size-md: 13px;
+  --font-size-lg: 15px;
+  --font-size-xl: 18px;
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+  --line-height-tight: 1.3;
+  --line-height-base: 1.5;
+  --line-height-relaxed: 1.6;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 40px;
+  --control-height: 26px;
+  --control-height-sm: 22px;
+  --control-height-lg: 30px;
+  --row-height: 26px;
+  --row-height-header: 22px;
+  --radius-sm: 2px;
+  --radius-md: 3px;
+  --radius-badge: 3px;
+  --radius-lg: 4px;
+  --border-width: 1px;
+  --indent-step: 16px;
+}
+
+/* ============================================================
+   组件样式（仅使用 --token 自定义属性，无 hex）
+   ============================================================ */
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  font-family: var(--font-family);
+  font-size: var(--font-size-md);
+  color: var(--color-fg);
+  background: var(--color-bg-canvas);
+  line-height: var(--line-height-base);
+  -webkit-font-smoothing: antialiased;
+}
+:focus-visible { outline: var(--border-width) solid var(--color-focus); outline-offset: 1px; }
+
+/* 统一图标（单色 currentColor，尺寸走令牌，杜绝裸 px） */
+.icon { width: var(--space-4); height: var(--space-4); flex: none; display: inline-block; }
+.icon--sm { width: var(--space-3); height: var(--space-3); flex: none; display: inline-block; }
+.icon--lg { width: var(--space-6); height: var(--space-6); flex: none; display: inline-block; }
+
+/* —— Component: Toolbar（标题 + 平台切换） —— */
+.ac-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-bg-surface);
+  border-bottom: var(--border-width) solid var(--color-border);
+}
+.ac-toolbar .ac-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-bold);
+  color: var(--color-fg);
+}
+.ac-toolbar .ac-title .icon { color: var(--color-icon); }
+.ac-toolbar .ac-sub {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-regular);
+  color: var(--color-fg-secondary);
+  margin-left: var(--space-1);
+}
+.ac-toolbar .ac-spacer { flex: 1; }
+
+/* 平台分段控件（Windows / macOS） */
+.segmented {
+  display: inline-flex;
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--color-bg-input);
+}
+.segmented button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: var(--control-height);
+  padding: 0 var(--space-3);
+  background: transparent;
+  color: var(--color-fg-secondary);
+  border: none;
+  border-right: var(--border-width) solid var(--color-border);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  font-family: var(--font-family);
+  font-weight: var(--font-weight-medium);
+}
+.segmented button:last-child { border-right: none; }
+.segmented button .icon { color: currentColor; }
+.segmented button[aria-pressed="true"] {
+  background: var(--color-bg-selected);
+  color: var(--color-fg-selected);
+}
+
+/* —— Component: DemoBar（演示开关，纯前端模拟降级态） —— */
+  /* —— 连续性头（ContHead）：面包屑 + ScopeBar + 状态点（跨页连续性原语，见 设计令牌.md §5.9.1） —— */
+  .cont-head {
+    display: flex; align-items: center; gap: var(--space-4);
+    padding: var(--space-2) var(--space-4);
+    background: var(--color-bg-surface);
+    border-bottom: var(--hairline) solid var(--color-border);
+    min-height: calc(var(--row-height-header) + var(--space-2));
+  }
+  .breadcrumb {
+    display: flex; align-items: center; gap: var(--space-1);
+    font-size: var(--font-size-xs); color: var(--color-fg-secondary);
+    white-space: nowrap; flex: none;
+  }
+  .breadcrumb .crumb--current { color: var(--color-fg); font-weight: var(--font-weight-medium); }
+  .breadcrumb .crumb-sep { color: var(--color-fg-disabled); }
+  .cont-head .scope-bar {
+    display: flex; align-items: center; gap: var(--space-2);
+    min-width: 0; flex: 1 1 auto;
+  }
+  .scope-bar .scope-icon { color: var(--color-icon); display: inline-flex; flex: none; }
+  .scope-bar .path {
+    font-family: var(--font-family-mono); font-size: var(--font-size-sm);
+    color: var(--color-fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .scope-bar .scope { font-size: var(--font-size-sm); color: var(--color-fg-secondary); white-space: nowrap; }
+  .scope-bar .scope b { color: var(--color-fg); font-weight: var(--font-weight-medium); }
+  .health { display: flex; align-items: center; gap: var(--space-3); flex: none; margin-left: auto; }
+  .health .dot { width: var(--status-dot); height: var(--status-dot); border-radius: var(--radius-round); display: inline-block; flex: none; }
+  .health .dot--ready { background: var(--color-success-fg); }
+  .health .dot--idle  { background: var(--color-fg-disabled); }
+  .health .dot--err   { background: var(--color-error-fg); }
+
+.demo-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-1) var(--space-4);
+  background: var(--color-bg-section-header);
+  border-bottom: var(--border-width) solid var(--color-border);
+  font-size: var(--font-size-xs);
+  color: var(--color-fg-secondary);
+}
+.demo-bar__label { font-weight: var(--font-weight-medium); }
+.demo-bar__opt { display: inline-flex; align-items: center; gap: var(--space-1); cursor: pointer; }
+.demo-bar__opt input { width: var(--space-3); height: var(--space-3); accent-color: var(--color-focus); }
+
+/* —— Component: SummaryBar（状态计数） —— */
+.ac-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  border-bottom: var(--border-width) solid var(--color-border);
+  background: var(--color-bg-canvas);
+  font-size: var(--font-size-sm);
+  color: var(--color-fg-secondary);
+}
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  border-radius: var(--radius-badge);
+  padding: var(--border-width) var(--space-1);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  font-variant-numeric: tabular-nums;
+}
+.badge .badge-num { font-weight: var(--font-weight-semibold); }
+/* L7 徽标 BEM 别名共存：badge.pass/fail/pending/neutral → badge--*（成功色统一 --color-success-fg） */
+.badge.neutral,
+.badge--neutral { background: var(--color-badge-bg); color: var(--color-badge-fg); }
+.badge.pass,
+.badge--pass { background: var(--color-badge-bg); color: var(--color-success-fg); }
+.badge.fail,
+.badge--fail { background: var(--color-badge-bg); color: var(--color-error-fg); }
+.badge.pending,
+.badge--pending { background: var(--color-badge-bg); color: var(--color-warning-fg); }
+.ac-summary .ac-caliber {
+  margin-left: auto;
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-fg-secondary);
+}
+
+/* —— Component: ActionBar（展开/折叠 + 导出） —— */
+.ac-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  border-bottom: var(--border-width) solid var(--color-border);
+  background: var(--color-bg-widget);
+}
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: var(--control-height-sm);
+  padding: 0 var(--space-2);
+  background: transparent;
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-sm);
+  color: var(--color-fg);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  font-family: var(--font-family);
+}
+.icon-btn:hover { background: var(--color-bg-hover); }
+.icon-btn .icon { color: var(--color-icon); }
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: var(--control-height-lg);
+  padding: 0 var(--space-3);
+  background: var(--color-btn-primary-bg);
+  color: var(--color-btn-primary-fg);
+  border: var(--border-width) solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  font-family: var(--font-family);
+  font-weight: var(--font-weight-medium);
+  margin-left: auto;
+}
+.btn-primary:hover { background: var(--color-btn-primary-hover); }
+.btn-primary .icon { color: var(--color-btn-primary-fg); }
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: var(--control-height);
+  padding: 0 var(--space-3);
+  background: var(--color-btn-secondary-bg);
+  color: var(--color-btn-secondary-fg);
+  border: var(--border-width) solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  font-family: var(--font-family);
+  font-weight: var(--font-weight-medium);
+}
+.btn-secondary:hover { background: var(--color-btn-secondary-hover); }
+.btn-secondary .icon { color: var(--color-btn-secondary-fg); }
+
+/* —— Component: Canvas（清单主体） —— */
+.ac-canvas { padding: var(--space-4); }
+.ac-intro {
+  font-size: var(--font-size-sm);
+  color: var(--color-fg-secondary);
+  line-height: var(--line-height-base);
+  margin: 0 0 var(--space-4) 0;
+  padding: var(--space-2) var(--space-3);
+  border-left: var(--space-1) solid var(--color-info-fg);
+  background: var(--color-info-bg);
+  border-radius: var(--radius-sm);
+}
+
+/* —— Component: GateCard（降级引导卡，Raycast 左条骨架） —— */
+.gate-card {
+  display: flex;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  background: var(--color-bg-surface);
+  border: var(--border-width) solid var(--color-border);
+  border-left-width: var(--space-1);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--space-3);
+}
+.gate-card--svn { border-left-color: var(--color-error-fg); }
+.gate-card--ai { border-left-color: var(--color-info-fg); }
+.gate-card__icon { display: inline-flex; }
+.gate-card--svn .gate-card__icon { color: var(--color-error-fg); }
+.gate-card--ai .gate-card__icon { color: var(--color-info-fg); }
+.gate-card__body { min-width: 0; }
+.gate-card__title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+}
+.gate-card--svn .gate-card__title { color: var(--color-error-fg); }
+.gate-card--ai .gate-card__title { color: var(--color-info-fg); }
+.gate-card__desc {
+  font-size: var(--font-size-sm);
+  color: var(--color-fg-secondary);
+  margin-top: var(--space-1);
+  line-height: var(--line-height-base);
+}
+.gate-card__actions { display: flex; gap: var(--space-2); margin-top: var(--space-2); flex-wrap: wrap; }
+
+/* —— Component: ChecklistGroup —— */
+.ac-group {
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--space-5);
+  background: var(--color-bg-surface);
+  overflow: hidden;
+}
+.ac-group-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-bg-section-header);
+  cursor: pointer;
+  user-select: none;
+}
+.ac-group-header:focus-visible { outline: var(--border-width) solid var(--color-focus); outline-offset: -1px; }
+.ac-group-header .grp-chevron {
+  color: var(--color-fg-secondary);
+  display: inline-flex;
+  transition: transform 0.12s ease;
+}
+.ac-group-header .grp-icon { color: var(--color-icon); display: inline-flex; }
+.ac-group-header .grp-title {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-fg);
+}
+.ac-group-header .grp-count {
+  margin-left: auto;
+  background: var(--color-badge-bg);
+  color: var(--color-badge-fg);
+  border-radius: var(--radius-badge);
+  padding: var(--border-width) var(--space-1);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  font-variant-numeric: tabular-nums;
+}
+.ac-group.collapsed .ac-group-items { display: none; }
+.ac-group.collapsed .grp-chevron { transform: rotate(-90deg); }
+.ac-group-items { padding: var(--space-2) 0; }
+
+/* —— Component: ChecklistItem —— */
+.ac-item {
+  display: grid;
+  grid-template-columns: var(--space-5) 1fr auto;
+  align-items: start;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-top: var(--border-width) solid var(--color-border);
+}
+.ac-item:first-child { border-top: none; }
+.ac-item:hover { background: var(--color-bg-hover); }
+
+/* Component: 验收项复选框（令牌化：勾标复用 i-check 符号，无裸几何值） */
+.ac-item-check { position: relative; display: inline-flex; flex: none; width: var(--space-3); height: var(--space-3); }
+.ac-check {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+.ac-box {
+  width: var(--space-3);
+  height: var(--space-3);
+  border: var(--border-width) solid var(--vscode-checkbox-border);
+  border-radius: var(--radius-sm);
+  background: var(--vscode-checkbox-background);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  pointer-events: none;
+}
+.ac-tick { width: var(--space-2); height: var(--space-2); color: transparent; }
+.ac-check:checked ~ .ac-box {
+  border-color: var(--vscode-checkbox-border);
+  background: var(--vscode-checkbox-border);
+}
+.ac-check:checked ~ .ac-box .ac-tick { color: var(--vscode-checkbox-foreground); }
+.ac-check:focus-visible ~ .ac-box { outline: var(--border-width) solid var(--color-focus); outline-offset: 1px; }
+
+.ac-item-main { min-width: 0; }
+.ac-item-title {
+  font-size: var(--font-size-md);
+  color: var(--color-fg);
+  line-height: var(--line-height-tight);
+}
+.ac-ref {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-fg-secondary);
+  margin-left: var(--space-2);
+  font-weight: var(--font-weight-regular);
+}
+.ac-item-desc {
+  font-size: var(--font-size-sm);
+  color: var(--color-fg-secondary);
+  margin-top: var(--space-1);
+  line-height: var(--line-height-base);
+}
+.ac-note {
+  display: block;
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-fg-secondary);
+  margin-top: var(--space-1);
+  line-height: var(--line-height-base);
+}
+/* 平台差异注释：默认显示 Windows 口径 */
+.note-mac { display: none; }
+.platform-macos .note-win { display: none; }
+.platform-macos .note-mac { display: inline; }
+
+/* —— 状态标记（通过 / 未通过 / 待验） —— */
+.ac-status {
+  display: inline-flex;
+  align-items: center;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  white-space: nowrap;
+  align-self: center;
+}
+/* L7 徽标 BEM：验收状态徽标统一使用 badge--pass/fail/pending */
+.ac-status .badge--pass,
+.ac-status .badge--fail,
+.ac-status .badge--pending {
+  display: none;
+  align-items: center;
+  gap: var(--space-1);
+  border-radius: var(--radius-badge);
+  padding: var(--border-width) var(--space-1);
+}
+.ac-status .badge--pass .icon,
+.ac-status .badge--fail .icon,
+.ac-status .badge--pending .icon { color: currentColor; }
+
+.ac-item[data-status="pass"] .badge--pass { display: inline-flex; color: var(--color-success-fg); background: var(--color-badge-bg); }
+.ac-item[data-status="fail"] .badge--fail { display: inline-flex; color: var(--color-error-fg); background: var(--color-badge-bg); }
+.ac-item[data-status="pending"] .badge--pending { display: inline-flex; color: var(--color-warning-fg); background: var(--color-badge-bg); }
+
+/* —— Component: Toast（导出反馈） —— */
+.ac-toast {
+  position: fixed;
+  bottom: var(--space-4);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--color-bg-widget);
+  border: var(--border-width) solid var(--color-border-widget);
+  box-shadow: var(--shadow-widget);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-size-sm);
+  color: var(--color-fg);
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  pointer-events: none;
+  z-index: 50;
+}
+.ac-toast.show { opacity: 1; }
+  /* ============================================================
+     Component: NextActionBanner（na-banner · 十态编排原语）
+     来源：提交拆分队列.html（参考实现），逐项适配到本页
+     ============================================================ */
+  .na-banner {
+    display: flex; align-items: stretch;
+    border: var(--border-width) solid var(--color-border); border-radius: var(--radius-md);
+    background: var(--color-bg-surface); overflow: hidden;
+    margin: var(--space-3) var(--space-4);
+  }
+  .na-left { width: var(--bar-thickness); flex: none; background: var(--color-info-fg); }
+  .na-banner[data-sem="success"] .na-left { background: var(--color-success-fg); }
+  .na-banner[data-sem="warning"] .na-left { background: var(--color-warning-fg); }
+  /* 主行动态强调：仅 cta 态覆盖左条为单一强调色，其余态不变 */
+  .na-banner[data-cta="true"] .na-left {
+    background: var(--color-info-fg);
+    box-shadow: inset 0 0 0 1px var(--color-focus);
+  }
+  .na-icon { display: inline-flex; align-items: center; padding: 0 var(--space-3); color: var(--color-info-fg); }
+  .na-banner[data-sem="success"] .na-icon { color: var(--color-success-fg); }
+  .na-banner[data-sem="warning"] .na-icon { color: var(--color-warning-fg); }
+  .na-body { flex: 1; padding: var(--space-3) 0; min-width: 0; }
+  .na-title { font-size: var(--font-size-md); font-weight: var(--font-weight-semibold); color: var(--color-info-fg); }
+  .na-banner[data-sem="success"] .na-title { color: var(--color-success-fg); }
+  .na-banner[data-sem="warning"] .na-title { color: var(--color-warning-fg); }
+  .na-detail { font-size: var(--font-size-sm); color: var(--color-fg-secondary); line-height: var(--line-height-base); margin-top: calc(var(--border-width) * 2); }
+  .na-banner .btn-primary { margin: auto var(--space-3); flex: none; }
+
+  /* 响应式：窄屏（≤720px）补充断点 —— 纯增量，不影响桌面布局 */
+  @media (max-width: 720px) {
+    .cont-head { flex-wrap: wrap; gap: var(--space-2); padding: var(--space-2) var(--space-3); }
+    .cont-head .health { margin-left: 0; }
+    .ac-canvas { padding-left: var(--space-3); padding-right: var(--space-3); }
+    .na-banner { flex-direction: column; align-items: stretch; }
+    .na-banner .btn-primary, .na-banner .btn { width: 100%; margin: var(--space-3) 0 0; }
+    .ac-item { min-width: 0; }
+    .ac-canvas { overflow-x: auto; }
+  }
+  /* ============================================================
+     Component: In-Flow Gating 七类阻止项面板（挂载于强流程页）
+     —— 作用域隔离：仅 .gate-grid 内的 .gate-card 采用纵向堆叠布局
+        与分类左条；既有的 .gate-card--svn / --ai 降级卡不受影响 ——
+     ============================================================ */
+  .gate-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: var(--space-3); margin: var(--space-3) var(--space-4); }
+  .gate-grid .gate-card { display: flex; flex-direction: column; gap: var(--space-2); border-left: var(--bar-thickness) solid var(--color-info-fg); }
+  .gate-grid .gate-card[hidden] { display: none; }
+  .gate-card.is-error { border-left-color: var(--color-error-fg); }
+  .gate-card.is-warn { border-left-color: var(--color-warning-fg); }
+  /* L4 BEM 别名共存：gate-card__head/count/advice/items/actions → gate-card__* */
+  .gate-card__head { display: flex; align-items: center; gap: var(--space-2); color: var(--color-info-fg); font-weight: var(--font-weight-semibold); font-size: var(--font-size-md); }
+  .gate-card.is-error .gate-card__head { color: var(--color-error-fg); }
+  .gate-card.is-warn .gate-card__head { color: var(--color-warning-fg); }
+  /* 颜色来源统一为 data-cat（与 is-error/is-warn 等价，别名共存） */
+  .gate-card[data-cat="blocked"] .gate-card__head,
+  .gate-card[data-cat="unknown"] .gate-card__head { color: var(--color-warning-fg); }
+  .gate-card[data-cat="svnStatus"] .gate-card__head { color: var(--color-error-fg); }
+  .gate-card__head .icon { width: var(--icon-size-sm); height: var(--icon-size-sm); }
+  .gate-card__count { font-size: var(--font-size-sm); color: var(--color-fg-secondary); }
+  .gate-card__count b { color: var(--color-fg); font-weight: var(--font-weight-semibold); }
+  .gate-card__advice { font-size: var(--font-size-sm); color: var(--color-fg-secondary); line-height: var(--line-height-base); }
+  .gate-card__items { margin: 0; padding-left: var(--space-4); display: flex; flex-direction: column; gap: var(--space-1); font-size: var(--font-size-sm); color: var(--color-fg-secondary); }
+  .gate-card__items code { font-family: var(--font-family-mono); font-size: var(--font-size-xs); color: var(--color-fg); }
+  .gate-card__actions { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-top: var(--space-2); }
+  .gate-card__actions .btn { height: var(--control-height); }
+  @media (max-width: 720px) { .gate-grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body class="platform-windows">
+
+  <!-- ===== 统一图标符号表（单色 currentColor，标注 codicon 名） ===== -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <symbol id="icon-rocket" viewBox="0 0 16 16">
+      <path d="M8 1.5c2.5 1 4 4 4 7l-2 2H6L4 8.5c0-3 1.5-6 4-7z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" />
+      <circle cx="8" cy="6" r="1" fill="currentColor" />
+      <path d="M6 11l-2 3M10 11l2 3M8 11v2" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" />
+    </symbol>
+    <symbol id="icon-windows" viewBox="0 0 16 16"><path d="M2 2h5v5H2zM9 2h5v5H9zM2 9h5v5H2zM9 9h5v5H9z" fill="currentColor" /></symbol>
+    <symbol id="icon-apple" viewBox="0 0 16 16"><path d="M11.2 8.9c0-1.6 1.3-2.4 1.4-2.4-.8-1.1-2-1.3-2.4-1.3-1-.1-2 .6-2.5.6-.5 0-1.4-.6-2.3-.6-1.2 0-2.3.7-2.9 1.8-1.2 2.1-.3 5.2.9 6.9.6.8 1.3 1.8 2.2 1.7.9-.1 1.2-.6 2.3-.6 1 0 1.3.6 2.3.6 1 0 1.6-.9 2.2-1.7.7-1 1-2 1-2-.1 0-1.9-.7-1.9-2.8zM9.6 4.3c.5-.6.9-1.5.8-2.3-.8 0-1.7.5-2.3 1.1-.5.5-.9 1.5-.8 2.2.9.1 1.7-.4 2.3-1z" fill="currentColor" /></symbol>
+    <symbol id="icon-chevron-down" viewBox="0 0 16 16"><path d="M4 5l4 4 4-4M4 11h8" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></symbol>
+    <symbol id="icon-chevron-right" viewBox="0 0 16 16"><path d="M6 4l4 4-4 4M11 4v8" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></symbol>
+    <symbol id="icon-export" viewBox="0 0 16 16"><path d="M8 2v7M5 6l3 3 3-3M3 13h10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></symbol>
+    <symbol id="icon-debug" viewBox="0 0 16 16">
+      <ellipse cx="8" cy="8" rx="3" ry="4" fill="none" stroke="currentColor" stroke-width="1.2" />
+      <path d="M8 4V2M5 3l-2-1M11 3l2-1M5 8H2M11 8h3M5 13l-2 1M11 13l2 1" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />
+    </symbol>
+    <symbol id="icon-git-commit" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.5" fill="none" stroke="currentColor" stroke-width="1.3" /><path d="M2 8h3M11 8h3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" /></symbol>
+    <symbol id="icon-git-merge" viewBox="0 0 16 16">
+      <circle cx="4" cy="4" r="2" fill="none" stroke="currentColor" stroke-width="1.3" />
+      <circle cx="4" cy="12" r="2" fill="none" stroke="currentColor" stroke-width="1.3" />
+      <circle cx="12" cy="9" r="2" fill="none" stroke="currentColor" stroke-width="1.3" />
+      <path d="M4 6v4M6 4a6 6 0 0 0 6 5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
+    </symbol>
+    <symbol id="icon-sync" viewBox="0 0 16 16"><path d="M13 4a5 5 0 0 0-9-1L2 6M3 12a5 5 0 0 0 9 1l2-3M2 6h3v-3M14 10v3h-3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" /></symbol>
+    <symbol id="icon-sparkles" viewBox="0 0 16 16"><path d="M8 1l1 3 3 1-3 1-1 3-1-3-3-1 3-1zM12.5 8l.6 2 2 .6-2 .6-.6 2-.6-2-2-.6 2-.6z" fill="currentColor" /></symbol>
+    <symbol id="icon-git-branch" viewBox="0 0 16 16">
+      <circle cx="4" cy="3" r="1.6" fill="none" stroke="currentColor" stroke-width="1.3" />
+      <circle cx="4" cy="13" r="1.6" fill="none" stroke="currentColor" stroke-width="1.3" />
+      <circle cx="12" cy="9" r="1.6" fill="none" stroke="currentColor" stroke-width="1.3" />
+      <path d="M4 4.6V11M4 11a4 4 0 0 0 4-4h3.4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
+    </symbol>
+    <symbol id="icon-pulse" viewBox="0 0 16 16"><path d="M2 8h3l2-5 3 10 2-5h2" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" /></symbol>
+    <symbol id="icon-check" viewBox="0 0 16 16"><path d="M3 8.5l3 3 7-7" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></symbol>
+    <symbol id="icon-warning" viewBox="0 0 16 16">
+      <path d="M8 1.5L15 14H1z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" />
+      <path d="M8 6v4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+      <circle cx="8" cy="11.5" r="0.9" fill="currentColor" stroke="none" />
+    </symbol>
+    <symbol id="icon-error" viewBox="0 0 16 16">
+      <circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" stroke-width="1.4" />
+      <path d="M8 4.5v4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+      <circle cx="8" cy="11" r="0.9" fill="currentColor" stroke="none" />
+    </symbol>
+    <symbol id="icon-info" viewBox="0 0 16 16">
+      <circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" stroke-width="1.4" />
+      <path d="M8 7.5v4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+      <circle cx="8" cy="4.8" r="0.9" fill="currentColor" stroke="none" />
+    </symbol>
+    <symbol id="icon-circle" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.4" /></symbol>
+    <symbol id="icon-settings-gear" viewBox="0 0 16 16">
+      <circle cx="8" cy="8" r="2" fill="none" stroke="currentColor" stroke-width="1.3" />
+      <path d="M8 1v2M8 13v2M1 8h2M13 8h2M3 3l1.5 1.5M11.5 11.5L13 13M3 13l1.5-1.5M11.5 4.5L13 3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
+    </symbol>
+    <symbol id="icon-link-external" viewBox="0 0 16 16"><path d="M9 2h5v5M14 2L7 9M12 9v4H2V4h4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" /></symbol>
+  </svg>
+
+  <!-- Component: Toolbar -->
+  <header class="ac-toolbar">
+    <div class="ac-title">
+      <!-- codicon: rocket（验收 / 发射） -->
+      <svg class="icon" aria-hidden="true"><use href="#icon-rocket" /></svg>
+      <span>验收清单</span>
+      <span class="ac-sub">SVN Workbench v1</span>
+    </div>
+    <div class="ac-spacer"></div>
+    <div class="segmented" role="group" aria-label="平台口径">
+      <button type="button" data-platform="windows" aria-pressed="true">
+        <!-- codicon: 无对应（Windows 标识，四宫格） -->
+        <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-windows" /></svg>
+        Windows
+      </button>
+      <button type="button" data-platform="macos" aria-pressed="false">
+        <!-- codicon: 无对应（macOS 标识，苹果） -->
+        <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-apple" /></svg>
+        macOS
+      </button>
+    </div>
+  </header>
+
+  <!-- Component: DemoBar（纯前端模拟降级态，真实状态由宿主读取） -->
+  <div class="demo-bar">
+    <span class="demo-bar__label">演示模式（纯前端模拟，真实状态由宿主读取）</span>
+    <label class="demo-bar__opt"><input type="checkbox" id="demoSvn" /> 模拟 svn 缺失</label>
+    <label class="demo-bar__opt"><input type="checkbox" id="demoAi" /> 模拟 AI 未配置</label>
+  </div>
+
+  <!-- Component: ContinuityHeader（连续性头 · 面包屑 + ScopeBar + 状态点） -->
+  <header class="cont-head">
+    <nav class="breadcrumb" aria-label="面包屑">
+      <span class="crumb">SVN 工作台</span>
+      <span class="crumb-sep">/</span>
+      <span class="crumb crumb--current">验收清单</span>
+    </nav>
+    <div class="scope-bar">
+      <span class="scope-icon"><svg class="icon" aria-hidden="true" viewBox="0 0 16 16"><path d="M1.5 3.5h4l1.5 1.5h7.5v7.5H1.5z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg></span>
+      <span class="path">D:\项目\订单系统</span>
+      <span class="scope">范围：<b>src</b>（右键文件夹）</span>
+    </div>
+    <div class="health" aria-label="服务状态">
+      <span class="dot dot--svn dot--ready" title="svn 已就绪（D:\项目\订单系统）"></span>
+      <span class="dot dot--ai dot--idle" title="AI 未配置（更新建议降级为手动模式）"></span>
+    </div>
+  </header>
+
+  <!-- Component: SummaryBar -->
+  <div class="ac-summary">
+    <span class="ac-summary-label">验收进度</span>
+    <span class="badge badge--pass"><span class="badge-num" id="cnt-pass">0</span> 通过</span>
+    <span class="badge badge--fail"><span class="badge-num" id="cnt-fail">0</span> 未通过</span>
+    <span class="badge badge--pending"><span class="badge-num" id="cnt-pending">0</span> 待验</span>
+    <span class="badge badge--neutral"><span class="badge-num" id="cnt-total">0</span> 项</span>
+    <span class="ac-caliber">当前口径：<span id="caliber-label">Windows</span></span>
+  </div>
+
+  <!-- Component: ActionBar -->
+  <div class="ac-actions">
+    <button type="button" class="icon-btn" id="expand-all">
+      <!-- codicon: unfold / chevron-down -->
+      <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-chevron-down" /></svg>
+      全部展开
+    </button>
+    <button type="button" class="icon-btn" id="collapse-all">
+      <!-- codicon: fold / chevron-right -->
+      <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-chevron-right" /></svg>
+      全部折叠
+    </button>
+    <button type="button" class="btn-primary" id="export-btn">
+      <!-- codicon: cloud-download / 导出 -->
+      <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-export" /></svg>
+      导出清单快照
+    </button>
+  </div>
+
+  <!-- Component: Canvas -->
+  <main class="ac-canvas">
+    <!-- 降级引导卡容器（两处降级分支，演示开关控制显隐） -->
+    <div class="gate-wrap">
+      <!-- Component: GateCard · svn 缺失引导卡（error/warning 左条，不静默退出） -->
+      <!-- ===================== Component: NextActionBanner（na-banner · 十态编排原语） ===================== -->
+      <section class="na-banner" id="naBanner" data-sem="info" aria-label="下一步引导">
+        <div class="na-left"></div>
+        <div class="na-icon"><svg class="icon" aria-hidden="true" id="naIcon"><use id="naUse" href="#icon-info"/></svg></div>
+        <div class="na-body">
+          <div class="na-title" id="naTitle">运行验收</div>
+          <div class="na-detail" id="naDetail">勾选验收项运行验收，全部通过后可提交。</div>
+        </div>
+        <button class="btn-primary" id="naBtn" type="button" hidden>
+          <svg class="icon" aria-hidden="true" id="naBtnIcon"><use id="naBtnUse" href="#icon-git-commit"/></svg>
+          <span id="naBtnText">提交</span>
+        </button>
+      </section>
+
+      <div class="gate-card gate-card--svn" id="svnGate" hidden aria-live="polite">
+        <span class="gate-card__icon"><svg class="icon icon--lg" aria-hidden="true"><use href="#icon-error" /></svg></span>
+        <div class="gate-card__body">
+          <div class="gate-card__title"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-error" /></svg>未检测到 SVN</div>
+          <p class="gate-card__desc">本机未安装或未正确配置 SVN 命令行。请配置设置项 <code style="font-family:var(--font-family-mono)">svnWorkbench.svn.path</code>，完成后重新打开本面板。不静默退出、不阻断其他功能。</p>
+          <div class="gate-card__actions">
+            <button type="button" class="btn-secondary" data-action="svnWorkbench.svn.install">
+              <!-- codicon: link-external -->
+              <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-link-external" /></svg>去安装
+            </button>
+            <button type="button" class="btn-secondary" data-action="svnWorkbench.svn.config">
+              <!-- codicon: settings-gear -->
+              <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-settings-gear" /></svg>去配置
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Component: GateCard · AI 未配置手动模式卡（info 左条，不抛错） -->
+      <div class="gate-card gate-card--ai" id="aiGate" hidden aria-live="polite">
+        <span class="gate-card__icon"><svg class="icon icon--lg" aria-hidden="true"><use href="#icon-info" /></svg></span>
+        <div class="gate-card__body">
+          <div class="gate-card__title"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-info" /></svg>AI 未配置 · 已降级手动模式</div>
+          <p class="gate-card__desc">未检测到 AI 模型配置，相关能力已降级为「手动模式」，不抛错、不阻断整条链路。运行 <code style="font-family:var(--font-family-mono)">SVN：AI 配置模型</code> 可恢复智能建议。</p>
+          <div class="gate-card__actions">
+            <button type="button" class="btn-primary" data-action="svnWorkbench.ai.config">
+              <!-- codicon: settings-gear -->
+              <svg class="icon icon--sm" aria-hidden="true"><use href="#icon-settings-gear" /></svg>运行 SVN：AI 配置模型
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===================== Component: In-Flow Gating 七类阻止项面板 ===================== -->
+    <section class="gate-grid" id="gateGrid" aria-live="polite">
+
+      <section class="gate-card is-warn" data-cat="blocked" hidden>
+        <div class="gate-card__head"><svg class="icon" aria-hidden="true"><use href="#icon-warning"/></svg>未通过验收项</div>
+        <div class="gate-card__count"><b data-role="count">0</b> 个问题 · 涉及 <b data-role="files">0</b> 个文件</div>
+        <div class="gate-card__advice">存在未通过的验收项，请先修复对应问题再提交。</div>
+        <ul class="gate-card__items">
+          <li><code>验收项：构建通过</code> 未通过（构建失败）</li>
+          <li><code>验收项：单测覆盖率</code> 未通过</li>
+        </ul>
+        <div class="gate-card__actions">
+          <button class="btn btn-secondary" type="button" data-action="open-conflict"><svg class="icon" aria-hidden="true"><use href="#icon-warning"/></svg>查看失败项</button>
+          <button class="btn btn-secondary" type="button" data-action="refresh"><svg class="icon" aria-hidden="true"><use href="#icon-git-merge"/></svg>重新验收</button>
+        </div>
+      </section>
+
+      <section class="gate-card" data-cat="emptySelection" hidden>
+        <div class="gate-card__head"><svg class="icon" aria-hidden="true"><use href="#icon-warning"/></svg>空清单</div>
+        <div class="gate-card__count"><b data-role="count">0</b> 个问题 · 涉及 <b data-role="files">0</b> 个文件</div>
+        <div class="gate-card__advice">当前没有任何验收项，请选择验收范围或套用验收模板后再运行。</div>
+        <ul class="gate-card__items">
+          <li><code>（无验收项）</code> 清单为空</li>
+        </ul>
+        <div class="gate-card__actions">
+          <button class="btn btn-secondary" type="button" data-action="regen"><svg class="icon" aria-hidden="true"><use href="#icon-git-merge"/></svg>重新生成</button>
+          <button class="btn btn-secondary" type="button" data-action="review"><svg class="icon" aria-hidden="true"><use href="#icon-warning"/></svg>人工审阅</button>
+        </div>
+      </section>
+
+    </section>
+
+    <p class="ac-intro">
+      v1 验收口径统一 <strong>Windows + macOS</strong>（§3.7 / §5）。上方切换平台可查看各平台特定的路径与命令差异；验收状态在两平台保持一致。逐项对应 §5 验收标准表。
+    </p>
+
+    <!-- ===== 分组 1：环境检查 ===== -->
+    <!-- Component: ChecklistGroup -->
+    <section class="ac-group" data-group="env">
+      <div class="ac-group-header" role="button" tabindex="0" aria-expanded="true">
+        <!-- codicon: debug -->
+        <span class="grp-chevron"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-chevron-down" /></svg></span>
+        <span class="grp-icon"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-debug" /></svg></span>
+        <span class="grp-title">环境检查</span>
+        <span class="grp-count">0</span>
+      </div>
+      <div class="ac-group-items">
+        <!-- Component: ChecklistItem -->
+        <div class="ac-item" data-status="pass" data-default="pass">
+          <span class="ac-item-check"><input type="checkbox" class="ac-check" checked aria-label="标记通过" /><span class="ac-box" aria-hidden="true"><svg class="ac-tick" viewBox="0 0 16 16"><use href="#icon-check" /></svg></span></span>
+          <div class="ac-item-main">
+            <div class="ac-item-title">已安装 svn 时显示明确就绪状态与版本号<span class="ac-ref">§3.7 · §5</span></div>
+            <div class="ac-item-desc">体检总览给出整体就绪状态；svn 已安装时展示版本信息，不静默退出。</div>
+          </div>
+          <span class="ac-status">
+            <span class="badge--pass"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-check" /></svg>通过</span>
+            <span class="badge--fail"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-error" /></svg>未通过</span>
+            <span class="badge--pending"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-circle" /></svg>待验</span>
+          </span>
+        </div>
+
+        <div class="ac-item" data-status="pending" data-default="pending">
+          <span class="ac-item-check"><input type="checkbox" class="ac-check" aria-label="标记通过" /><span class="ac-box" aria-hidden="true"><svg class="ac-tick" viewBox="0 0 16 16"><use href="#icon-check" /></svg></span></span>
+          <div class="ac-item-main">
+            <div class="ac-item-title">缺失 svn 时给出配置引导，不静默退出<span class="ac-ref">§3.7 · §5</span></div>
+            <div class="ac-item-desc">svn 缺失渲染 warning 引导卡，指向 svnWorkbench.svn.path，并给"去安装 / 去配置"动作；不恐吓、不静默退出。
+              <span class="note-win ac-note">Windows：引导设置 svnWorkbench.svn.path → C:\Program Files\TortoiseSVN\bin\svn.exe</span>
+              <span class="note-mac ac-note">macOS：引导 brew install svn 或设置 /usr/local/bin/svn</span>
+            </div>
+          </div>
+          <span class="ac-status">
+            <span class="badge--pass"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-check" /></svg>通过</span>
+            <span class="badge--fail"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-error" /></svg>未通过</span>
+            <span class="badge--pending"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-circle" /></svg>待验</span>
+          </span>
+        </div>
+
+        <div class="ac-item" data-status="pending" data-default="pending">
+          <span class="ac-item-check"><input type="checkbox" class="ac-check" aria-label="标记通过" /><span class="ac-box" aria-hidden="true"><svg class="ac-tick" viewBox="0 0 16 16"><use href="#icon-check" /></svg></span></span>
+          <div class="ac-item-main">
+            <div class="ac-item-title">AI 未配置时降级"手动模式"，不抛错<span class="ac-ref">§3.5 / A2 · §5</span></div>
+            <div class="ac-item-desc">AI 状态卡未配置时降级"手动模式"并提示运行 SVN：AI 配置模型，不抛错阻断整条链路。
+              <span class="note-win ac-note">Windows：提示运行 SVN：AI 配置模型（设置存于 %APPDATA%）</span>
+              <span class="note-mac ac-note">macOS：提示运行 SVN：AI 配置模型（设置存于 ~/Library/Application Support）</span>
+            </div>
+          </div>
+          <span class="ac-status">
+            <span class="badge--pass"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-check" /></svg>通过</span>
+            <span class="badge--fail"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-error" /></svg>未通过</span>
+            <span class="badge--pending"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-circle" /></svg>待验</span>
+          </span>
+        </div>
+
+        <div class="ac-item" data-status="pass" data-default="pass">
+          <span class="ac-item-check"><input type="checkbox" class="ac-check" checked aria-label="标记通过" /><span class="ac-box" aria-hidden="true"><svg class="ac-tick" viewBox="0 0 16 16"><use href="#icon-check" /></svg></span></span>
+          <div class="ac-item-main">
+            <div class="ac-item-title">runSvnCommand 增加 30s 超时 + 友好超时报错<span class="ac-ref">§3.7 · §5</span></div>
+            <div class="ac-item-desc">杜绝 Promise 永久挂起；超时给出友好错误而非静默失败。</div>
+          </div>
+          <span class="ac-status">
+            <span class="badge--pass"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-check" /></svg>通过</span>
+            <span class="badge--fail"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-error" /></svg>未通过</span>
+            <span class="badge--pending"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-circle" /></svg>待验</span>
+          </span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== 分组 2：范围提交 ===== -->
+    <!-- Component: ChecklistGroup -->
+    <section class="ac-group" data-group="commit">
+      <div class="ac-group-header" role="button" tabindex="0" aria-expanded="true">
+        <!-- codicon: git-commit -->
+        <span class="grp-chevron"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-chevron-down" /></svg></span>
+        <span class="grp-icon"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-git-commit" /></svg></span>
+        <span class="grp-title">范围提交</span>
+        <span class="grp-count">0</span>
+      </div>
+      <div class="ac-group-items">
+        <div class="ac-item" data-status="pass" data-default="pass">
+          <span class="ac-item-check"><input type="checkbox" class="ac-check" checked aria-label="标记通过" /><span class="ac-box" aria-hidden="true"><svg class="ac-tick" viewBox="0 0 16 16"><use href="#icon-check" /></svg></span></span>
+          <div class="ac-item-main">
+            <div class="ac-item-title">右键文件夹提交只显示该文件夹范围<span class="ac-ref">§3.6 硬验收 · §5</span></div>
+            <div class="ac-item-desc">"右键文件夹提交只显示该文件夹范围"为硬验收项，范围不扩大。
+              <span class="note-win ac-note">Windows 示例范围：C:\proj\src\feature</span>
+              <span class="note-mac ac-note">macOS 示例范围：/Users/dev/proj/src/feature</span>
+            </div>
+          </div>
+          <span class="ac-status">
+            <span class="badge--pass"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-check" /></svg>通过</span>
+            <span class="badge--fail"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-error" /></svg>未通过</span>
+            <span class="badge--pending"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-circle" /></svg>待验</span>
+          </span>
+        </div>
+
+        <div class="ac-item" data-status="pending" data-default="pending">
+          <span class="ac-item-check"><input type="checkbox" class="ac-check" aria-label="标记通过" /><span class="ac-box" aria-hidden="true"><svg class="ac-tick" viewBox="0 0 16 16"><use href="#icon-check" /></svg></span></span>
+          <div class="ac-item-main">
+            <div class="ac-item-title">筛选 / 分组 / 预设按统一 template group 单一 schema 工作<span class="ac-ref">§3.1 / §3.2 · §5</span></div>
+            <div class="ac-item-desc">以 template group 为唯一驱动源，preset 只引用分组，字段结构统一为单一 schema（消除两套并存）。</div>
+          </div>
+          <span class="ac-status">
+            <span class="badge--pass"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-check" /></svg>通过</span>
+            <span class="badge--fail"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-error" /></svg>未通过</span>
+            <span class="badge--pending"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-circle" /></svg>待验</span>
+          </span>
+        </div>
+
+        <div class="ac-item" data-status="fail" data-default="fail">
+          <span class="ac-item-check"><input type="checkbox" class="ac-check" aria-label="标记通过" /><span class="ac-box" aria-hidden="true"><svg class="ac-tick" viewBox="0 0 16 16"><use href="#icon-check" /></svg></span></span>
+          <div class="ac-item-main">
+            <div class="ac-item-title">提交篮不能自动吸收范围外新变更<span class="ac-ref">§3.6 · §5</span></div>
+            <div class="ac-item-desc">提交篮不能自动吸收范围外新变更（硬验收）；当前版本存在吸收范围外变更的风险，待修复。</div>
+          </div>
+          <span class="ac-status">
+            <span class="badge--pass"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-check" /></svg>通过</span>
+            <span class="badge--fail"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-error" /></svg>未通过</span>
+            <span class="badge--pending"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-circle" /></svg>待验</span>
+          </span>
+        </div>
+
+        <div class="ac-item" data-status="pass" data-default="pass">
+          <span class="ac-item-check"><input type="checkbox" class="ac-check" checked aria-label="标记通过" /><span class="ac-box" aria-hidden="true"><svg class="ac-tick" viewBox="0 0 16 16"><use href="#icon-check" /></svg></span></span>
+          <div class="ac-item-main">
+            <div class="ac-item-title">合并"提交页"与"提交篮"为单页<span class="ac-ref">§3.1 · §5</span></div>
+            <div class="ac-item-desc">采用单页结构（否定独立面板），Svelte 重写 commitPanel.ts。</div>
+          </div>
+          <span class="ac-status">
+            <span class="badge--pass"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-check" /></svg>通过</span>
+            <span class="badge--fail"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-error" /></svg>未通过</span>
+            <span class="badge--pending"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-circle" /></svg>待验</span>
+          </span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== 分组 3：冲突中心 ===== -->
+    <!-- Component: ChecklistGroup -->
+    <section class="ac-group" data-group="conflict">
+      <div class="ac-group-header" role="button" tabindex="0" aria-expanded="true">
+        <!-- codicon: git-merge -->
+        <span class="grp-chevron"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-chevron-down" /></svg></span>
+        <span class="grp-icon"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-git-merge" /></svg></span>
+        <span class="grp-title">冲突中心</span>
+        <span class="grp-count">0</span>
+      </div>
+      <div class="ac-group-items">
+        <div class="ac-item" data-status="pending" data-default="pending">
+          <span class="ac-item-check"><input type="checkbox" class="ac-check" aria-label="标记通过" /><span class="ac-box" aria-hidden="true"><svg class="ac-tick" viewBox="0 0 16 16"><use href="#icon-check" /></svg></span></span>
+          <div class="ac-item-main">
+            <div class="ac-item-title">working / ours / theirs 三选一可解决<span class="ac-ref">§3.3 · §5</span></div>
+            <div class="ac-item-desc">扩展 conflictResolver 当前仅 accept working，MVP 支持三选一，明确非悬而未决。</div>
+          </div>
+          <span class="ac-status">
+            <span class="badge--pass"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-check" /></svg>通过</span>
+            <span class="badge--fail"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-error" /></svg>未通过</span>
+            <span class="badge--pending"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-circle" /></svg>待验</span>
+          </span>
+        </div>
+
+        <div class="ac-item" data-status="pass" data-default="pass">
+          <span class="ac-item-check"><input type="checkbox" class="ac-check" checked aria-label="标记通过" /><span class="ac-box" aria-hidden="true"><svg class="ac-tick" viewBox="0 0 16 16"><use href="#icon-check" /></svg></span></span>
+          <div class="ac-item-main">
+            <div class="ac-item-title">默认布局"左右 + 结果"确定，非悬而未决<span class="ac-ref">§3.3 · §5</span></div>
+            <div class="ac-item-desc">左右双 pane（working/ours/theirs）+ 底部结果预览，明确二选一。</div>
+          </div>
+          <span class="ac-status">
+            <span class="badge--pass"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-check" /></svg>通过</span>
+            <span class="badge--fail"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-error" /></svg>未通过</span>
+            <span class="badge--pending"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-circle" /></svg>待验</span>
+          </span>
+        </div>
+
+        <div class="ac-item" data-status="pending" data-default="pending">
+          <span class="ac-item-check"><input type="checkbox" class="ac-check" aria-label="标记通过" /><span class="ac-box" aria-hidden="true"><svg class="ac-tick" viewBox="0 0 16 16"><use href="#icon-check" /></svg></span></span>
+          <div class="ac-item-main">
+            <div class="ac-item-title">webview 运行期无未捕获错误<span class="ac-ref">§3.1 错误边界 / §4.1 · §5</span></div>
+            <div class="ac-item-desc">全局错误边界，webview 的 console / error 回传 extension host 输出通道；受控渲染替代 innerHTML 拼接。</div>
+          </div>
+          <span class="ac-status">
+            <span class="badge--pass"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-check" /></svg>通过</span>
+            <span class="badge--fail"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-error" /></svg>未通过</span>
+            <span class="badge--pending"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-circle" /></svg>待验</span>
+          </span>
+        </div>
+
+        <div class="ac-item" data-status="pass" data-default="pass">
+          <span class="ac-item-check"><input type="checkbox" class="ac-check" checked aria-label="标记通过" /><span class="ac-box" aria-hidden="true"><svg class="ac-tick" viewBox="0 0 16 16"><use href="#icon-check" /></svg></span></span>
+          <div class="ac-item-main">
+            <div class="ac-item-title">三方合并器明确归后期<span class="ac-ref">决策 #4 · §3.3</span></div>
+            <div class="ac-item-desc">MVP 不含内置三方合并器（落实 technical §7.2），原"三方合并面板"降级为后期规划。</div>
+          </div>
+          <span class="ac-status">
+            <span class="badge--pass"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-check" /></svg>通过</span>
+            <span class="badge--fail"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-error" /></svg>未通过</span>
+            <span class="badge--pending"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-circle" /></svg>待验</span>
+          </span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== 分组 4：更新 ===== -->
+    <!-- Component: ChecklistGroup -->
+    <section class="ac-group" data-group="update">
+      <div class="ac-group-header" role="button" tabindex="0" aria-expanded="true">
+        <!-- codicon: sync -->
+        <span class="grp-chevron"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-chevron-down" /></svg></span>
+        <span class="grp-icon"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-sync" /></svg></span>
+        <span class="grp-title">更新</span>
+        <span class="grp-count">0</span>
+      </div>
+      <div class="ac-group-items">
+        <div class="ac-item" data-status="pass" data-default="pass">
+          <span class="ac-item-check"><input type="checkbox" class="ac-check" checked aria-label="标记通过" /><span class="ac-box" aria-hidden="true"><svg class="ac-tick" viewBox="0 0 16 16"><use href="#icon-check" /></svg></span></span>
+          <div class="ac-item-main">
+            <div class="ac-item-title">独立命令 SVN：更新当前范围 可达<span class="ac-ref">§3.4 / §2.1 #6 · §5</span></div>
+            <div class="ac-item-desc">新增 updateScope 命令，Explorer 右键文件夹 / 命令面板触发，需在 package.json 补注册。</div>
+          </div>
+          <span class="ac-status">
+            <span class="badge--pass"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-check" /></svg>通过</span>
+            <span class="badge--fail"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-error" /></svg>未通过</span>
+            <span class="badge--pending"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-circle" /></svg>待验</span>
+          </span>
+        </div>
+
+        <div class="ac-item" data-status="pending" data-default="pending">
+          <span class="ac-item-check"><input type="checkbox" class="ac-check" aria-label="标记通过" /><span class="ac-box" aria-hidden="true"><svg class="ac-tick" viewBox="0 0 16 16"><use href="#icon-check" /></svg></span></span>
+          <div class="ac-item-main">
+            <div class="ac-item-title">"更新建议"为近似建议且命名一致<span class="ac-ref">§3.4 / 决策 #5 · §5</span></div>
+            <div class="ac-item-desc">smartUpdate 改名为"更新建议"，语义明确为近似建议而非精确预览 / 冲突预测（落实 technical §5.4 / §14.3）。</div>
+          </div>
+          <span class="ac-status">
+            <span class="badge--pass"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-check" /></svg>通过</span>
+            <span class="badge--fail"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-error" /></svg>未通过</span>
+            <span class="badge--pending"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-circle" /></svg>待验</span>
+          </span>
+        </div>
+
+        <div class="ac-item" data-status="pending" data-default="pending">
+          <span class="ac-item-check"><input type="checkbox" class="ac-check" aria-label="标记通过" /><span class="ac-box" aria-hidden="true"><svg class="ac-tick" viewBox="0 0 16 16"><use href="#icon-check" /></svg></span></span>
+          <div class="ac-item-main">
+            <div class="ac-item-title">凭据优先 SVN auth cache，不默认传 --password<span class="ac-ref">§4.2 · §5</span></div>
+            <div class="ac-item-desc">凭据优先依赖 SVN auth cache；AI key 存 SecretStorage（已有实现保留）。
+              <span class="note-win ac-note">Windows：走 %APPDATA%\Subversion\auth</span>
+              <span class="note-mac ac-note">macOS：走 ~/Library/Application Support/Subversion/auth</span>
+            </div>
+          </div>
+          <span class="ac-status">
+            <span class="badge--pass"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-check" /></svg>通过</span>
+            <span class="badge--fail"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-error" /></svg>未通过</span>
+            <span class="badge--pending"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-circle" /></svg>待验</span>
+          </span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== 分组 5：AI 能力 ===== -->
+    <!-- Component: ChecklistGroup -->
+    <section class="ac-group" data-group="ai">
+      <div class="ac-group-header" role="button" tabindex="0" aria-expanded="true">
+        <!-- codicon: 无对应（sparkles / AI） -->
+        <span class="grp-chevron"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-chevron-down" /></svg></span>
+        <span class="grp-icon"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-sparkles" /></svg></span>
+        <span class="grp-title">AI 能力</span>
+        <span class="grp-count">0</span>
+      </div>
+      <div class="ac-group-items">
+        <div class="ac-item" data-status="pending" data-default="pending">
+          <span class="ac-item-check"><input type="checkbox" class="ac-check" aria-label="标记通过" /><span class="ac-box" aria-hidden="true"><svg class="ac-tick" viewBox="0 0 16 16"><use href="#icon-check" /></svg></span></span>
+          <div class="ac-item-main">
+            <div class="ac-item-title">AI 未配置时降级手动模式不抛错<span class="ac-ref">§3.5 / A2 · §5</span></div>
+            <div class="ac-item-desc">相关功能显式降级为"手动模式"并提示运行 SVN：AI 配置模型，不抛错阻断整条链路。</div>
+          </div>
+          <span class="ac-status">
+            <span class="badge--pass"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-check" /></svg>通过</span>
+            <span class="badge--fail"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-error" /></svg>未通过</span>
+            <span class="badge--pending"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-circle" /></svg>待验</span>
+          </span>
+        </div>
+
+        <div class="ac-item" data-status="pass" data-default="pass">
+          <span class="ac-item-check"><input type="checkbox" class="ac-check" checked aria-label="标记通过" /><span class="ac-box" aria-hidden="true"><svg class="ac-tick" viewBox="0 0 16 16"><use href="#icon-check" /></svg></span></span>
+          <div class="ac-item-main">
+            <div class="ac-item-title">AI 仅"建议勾选"，用户确认后生效，不自动改状态<span class="ac-ref">§3.5 / 决策 #2 · §5</span></div>
+            <div class="ac-item-desc">AI 不自动勾选，仅生成建议，用户确认后生效；覆盖原自动勾选冲突。</div>
+          </div>
+          <span class="ac-status">
+            <span class="badge--pass"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-check" /></svg>通过</span>
+            <span class="badge--fail"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-error" /></svg>未通过</span>
+            <span class="badge--pending"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-circle" /></svg>待验</span>
+          </span>
+        </div>
+
+        <div class="ac-item" data-status="pending" data-default="pending">
+          <span class="ac-item-check"><input type="checkbox" class="ac-check" aria-label="标记通过" /><span class="ac-box" aria-hidden="true"><svg class="ac-tick" viewBox="0 0 16 16"><use href="#icon-check" /></svg></span></span>
+          <div class="ac-item-main">
+            <div class="ac-item-title">合并建议默认可配置且默认关闭<span class="ac-ref">§3.5 · §5</span></div>
+            <div class="ac-item-desc">生成的合并建议默认可配置且默认关闭（落实决策 #2），避免无感改动。</div>
+          </div>
+          <span class="ac-status">
+            <span class="badge--pass"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-check" /></svg>通过</span>
+            <span class="badge--fail"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-error" /></svg>未通过</span>
+            <span class="badge--pending"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-circle" /></svg>待验</span>
+          </span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== 分组 6：SCM ===== -->
+    <!-- Component: ChecklistGroup -->
+    <section class="ac-group" data-group="scm">
+      <div class="ac-group-header" role="button" tabindex="0" aria-expanded="true">
+        <!-- codicon: git-branch / source-control -->
+        <span class="grp-chevron"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-chevron-down" /></svg></span>
+        <span class="grp-icon"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-git-branch" /></svg></span>
+        <span class="grp-title">SCM</span>
+        <span class="grp-count">0</span>
+      </div>
+      <div class="ac-group-items">
+        <div class="ac-item" data-status="pending" data-default="pending">
+          <span class="ac-item-check"><input type="checkbox" class="ac-check" aria-label="标记通过" /><span class="ac-box" aria-hidden="true"><svg class="ac-tick" viewBox="0 0 16 16"><use href="#icon-check" /></svg></span></span>
+          <div class="ac-item-main">
+            <div class="ac-item-title">外部变更后手动刷新状态准确<span class="ac-ref">§5 SCM</span></div>
+            <div class="ac-item-desc">状态在外部变更后可手动刷新且准确（自动刷新为后续增强）。</div>
+          </div>
+          <span class="ac-status">
+            <span class="badge--pass"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-check" /></svg>通过</span>
+            <span class="badge--fail"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-error" /></svg>未通过</span>
+            <span class="badge--pending"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-circle" /></svg>待验</span>
+          </span>
+        </div>
+
+        <div class="ac-item" data-status="pass" data-default="pass">
+          <span class="ac-item-check"><input type="checkbox" class="ac-check" checked aria-label="标记通过" /><span class="ac-box" aria-hidden="true"><svg class="ac-tick" viewBox="0 0 16 16"><use href="#icon-check" /></svg></span></span>
+          <div class="ac-item-main">
+            <div class="ac-item-title">凭据策略：优先 auth cache，AI key 存 SecretStorage<span class="ac-ref">§4.2 · §5</span></div>
+            <div class="ac-item-desc">补 §11.3 空白；不默认传 --password，AI key 存 SecretStorage（已有实现保留）。</div>
+          </div>
+          <span class="ac-status">
+            <span class="badge--pass"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-check" /></svg>通过</span>
+            <span class="badge--fail"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-error" /></svg>未通过</span>
+            <span class="badge--pending"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-circle" /></svg>待验</span>
+          </span>
+        </div>
+
+        <div class="ac-item" data-status="pending" data-default="pending">
+          <span class="ac-item-check"><input type="checkbox" class="ac-check" aria-label="标记通过" /><span class="ac-box" aria-hidden="true"><svg class="ac-tick" viewBox="0 0 16 16"><use href="#icon-check" /></svg></span></span>
+          <div class="ac-item-main">
+            <div class="ac-item-title">自动刷新为后续增强（v1 不做精确预览 / 预测）<span class="ac-ref">§6 后期 · §5</span></div>
+            <div class="ac-item-desc">v1 不做"远端变更精确预览 / 更新前冲突预测"，已归后期清单。</div>
+          </div>
+          <span class="ac-status">
+            <span class="badge--pass"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-check" /></svg>通过</span>
+            <span class="badge--fail"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-error" /></svg>未通过</span>
+            <span class="badge--pending"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-circle" /></svg>待验</span>
+          </span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== 分组 7：诊断 ===== -->
+    <!-- Component: ChecklistGroup -->
+    <section class="ac-group" data-group="diag">
+      <div class="ac-group-header" role="button" tabindex="0" aria-expanded="true">
+        <!-- codicon: pulse / 无对应（活动） -->
+        <span class="grp-chevron"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-chevron-down" /></svg></span>
+        <span class="grp-icon"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-pulse" /></svg></span>
+        <span class="grp-title">诊断</span>
+        <span class="grp-count">0</span>
+      </div>
+      <div class="ac-group-items">
+        <div class="ac-item" data-status="pass" data-default="pass">
+          <span class="ac-item-check"><input type="checkbox" class="ac-check" checked aria-label="标记通过" /><span class="ac-box" aria-hidden="true"><svg class="ac-tick" viewBox="0 0 16 16"><use href="#icon-check" /></svg></span></span>
+          <div class="ac-item-main">
+            <div class="ac-item-title">验收口径统一 Windows + macOS<span class="ac-ref">§3.7 · §5</span></div>
+            <div class="ac-item-desc">验收口径统一 Windows + macOS（对齐 design-stage-summary §12 与 page-function），跨平台一致。</div>
+          </div>
+          <span class="ac-status">
+            <span class="badge--pass"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-check" /></svg>通过</span>
+            <span class="badge--fail"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-error" /></svg>未通过</span>
+            <span class="badge--pending"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-circle" /></svg>待验</span>
+          </span>
+        </div>
+
+        <div class="ac-item" data-status="pending" data-default="pending">
+          <span class="ac-item-check"><input type="checkbox" class="ac-check" aria-label="标记通过" /><span class="ac-box" aria-hidden="true"><svg class="ac-tick" viewBox="0 0 16 16"><use href="#icon-check" /></svg></span></span>
+          <div class="ac-item-main">
+            <div class="ac-item-title">跨平台命令契约一致（SVN 子菜单 / 右键项措辞）<span class="ac-ref">§2.2 · §5</span></div>
+            <div class="ac-item-desc">所有 SVN 命令统一收纳到 SVN 子菜单；右键项措辞一致。
+              <span class="note-win ac-note">Windows：命令面板 Ctrl+Shift+P → SVN：打开验收清单</span>
+              <span class="note-mac ac-note">macOS：命令面板 Cmd+Shift+P → SVN：打开验收清单</span>
+            </div>
+          </div>
+          <span class="ac-status">
+            <span class="badge--pass"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-check" /></svg>通过</span>
+            <span class="badge--fail"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-error" /></svg>未通过</span>
+            <span class="badge--pending"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-circle" /></svg>待验</span>
+          </span>
+        </div>
+
+        <div class="ac-item" data-status="pending" data-default="pending">
+          <span class="ac-item-check"><input type="checkbox" class="ac-check" aria-label="标记通过" /><span class="ac-box" aria-hidden="true"><svg class="ac-tick" viewBox="0 0 16 16"><use href="#icon-check" /></svg></span></span>
+          <div class="ac-item-main">
+            <div class="ac-item-title">首次激活自动 checkEnvironment<span class="ac-ref">§3.7 · §5</span></div>
+            <div class="ac-item-desc">首次激活自动 checkEnvironment；命令 SVN：检查环境 也可手动触发。</div>
+          </div>
+          <span class="ac-status">
+            <span class="badge--pass"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-check" /></svg>通过</span>
+            <span class="badge--fail"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-error" /></svg>未通过</span>
+            <span class="badge--pending"><svg class="icon icon--sm" aria-hidden="true"><use href="#icon-circle" /></svg>待验</span>
+          </span>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Component: Toast -->
+  <div class="ac-toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script>
+    // 极小原生 JS：平台切换 / 勾选状态 / 折叠 / 导出 / 演示降级。禁止 innerHTML 拼接。
+    (function () {
+      "use strict";
+      var body = document.body;
+
+      // —— 演示降级开关（纯前端模拟；真实状态由宿主读取后调用 applyState）——
+      var svnGate = document.getElementById("svnGate");
+      var aiGate = document.getElementById("aiGate");
+      var demoSvn = document.getElementById("demoSvn");
+      var demoAi = document.getElementById("demoAi");
+
+      /* —— NextAction 十态编排原语（na-banner） ——
+         来源：提交拆分队列.html 参考实现，逐项适配本页域逻辑 */
+      var naBanner = document.getElementById("naBanner");
+      var naTitle = document.getElementById("naTitle");
+      var naDetail = document.getElementById("naDetail");
+      var naUse = document.getElementById("naUse");
+      var naBtn = document.getElementById("naBtn");
+      var naBtnText = document.getElementById("naBtnText");
+      var naBtnUse = document.getElementById("naBtnUse");
+
+      var NA_STATES = {
+        svnMissing:    { sem: 'info',    icon: 'icon-info',         title: '先配置 svn',          detail: '未检测到 SVN，请先配置 svn.path，再运行验收与提交。', btn: null },
+        manual:        { sem: 'info',    icon: 'icon-settings-gear',title: 'AI 未配置 · 手动模式', detail: 'AI 建议已降级为手动模式，你可手动核对验收项。', btn: null },
+        reviewBlocked: { sem: 'warning', icon: 'icon-warning',      title: '存在未通过项',        detail: '有验收项未通过，请先处理后再提交。', btn: null },
+        submitReady:   { sem: 'success', icon: 'icon-git-commit',   title: '验收全部通过',        detail: '全部验收项已通过，可提交当前范围。', btn: 'submit' },
+        idle:          { sem: 'info',    icon: 'icon-info',         title: '运行验收',            detail: '勾选验收项运行验收，全部通过后可提交。', btn: null }
+      };
+      var NA_BTN = {
+        submit: '提交'
+      };
+
+      function computeNextAction() {
+        var svnMissing = demoSvn && demoSvn.checked;
+        var aiOff = demoAi && demoAi.checked;
+        var fail = document.querySelectorAll('.ac-item[data-status="fail"]').length;
+        var pass = document.querySelectorAll('.ac-item[data-status="pass"]').length;
+        var total = document.querySelectorAll('.ac-item').length;
+        if (svnMissing) return 'svnMissing';
+        if (fail > 0) return 'reviewBlocked';
+        if (total > 0 && pass === total) return 'submitReady';
+        if (aiOff) return 'manual';
+        return 'idle';
+      }
+
+      function renderNextAction(stateKey) {
+        var s = NA_STATES[stateKey] || NA_STATES.idle;
+        naBanner.setAttribute('data-sem', s.sem);
+        if (s.btn) { naBanner.dataset.cta = 'true'; } else { delete naBanner.dataset.cta; }
+        naUse.setAttribute('href', '#' + s.icon);
+        naTitle.textContent = s.title;
+        naDetail.textContent = s.detail;
+        if (s.btn) {
+          naBtn.hidden = false;
+          naBtnText.textContent = NA_BTN[s.btn] || '继续';
+          naBtnUse.setAttribute('href', '#' + s.icon);
+          naBtn.setAttribute('data-action', s.btn);
+        } else {
+          naBtn.hidden = true;
+        }
+      }
+
+      // data-action 命令占位：真实实现由宿主绑定，此处不执行任何动作
+      if (naBtn) {
+        naBtn.addEventListener('click', function () {
+          var act = naBtn.getAttribute('data-action');
+          if (act) { /* 占位：宿主按 data-action 派发命令 */ }
+        });
+      }
+
+      // 真实状态接入点（宿主调用）：applyState({ svnMissing:false, aiConfigured:true })
+      /* —— In-Flow Gating 七类阻止项面板（renderGating） ——
+         纯受控渲染：计数用 textContent，条目用 createElement 重建，禁用 innerHTML 拼接 */
+      /* —— In-Flow Gating 统一信号模型（computeGating · 纯函数，单一真相源） —— */
+      function computeGating(state) {
+        state = state || {};
+        var scope = state.scope || { outOfScope: 0, candidates: 0, excluded: 0 };
+        var conflicts = state.conflicts || [];
+        var svn = state.svn || { installed: true, configured: true, path: '' };
+        var ai = state.ai || { configured: true };
+        var selection = state.selection || { files: 0, empty: true };
+        var unknown = state.unknown || [];
+        var categories = [];
+        var dataCatSet = (typeof Set === 'function') ? new Set() : {};
+        function add(cat, count, files, items, copyKey, actions, priority) {
+          categories.push({ cat: cat, count: count, files: files, items: items || [], copyKey: copyKey, actions: actions || [] });
+          if (dataCatSet instanceof Set) { dataCatSet.add(cat); } else { dataCatSet[cat] = true; }
+        }
+        if (!svn.installed || !svn.configured) add('svnStatus', 1, 0, [{ path: svn.path || '', reason: 'SVN 缺失或未配置' }], 'svnStatus', ['svn-config', 'refresh'], 1);
+        if (conflicts.length) add('blocked', conflicts.length, conflicts.length, conflicts, 'blocked', ['open-conflict', 'refresh'], 2);
+        if (unknown.length) add('unknown', unknown.length, unknown.length, unknown, 'unknown', ['review', 'refresh'], 3);
+        if (selection.empty || selection.files === 0) add('emptySelection', 1, 0, [], 'emptySelection', ['regen', 'review'], 4);
+        if (scope.outOfScope > 0) add('scope', scope.outOfScope, scope.outOfScope, [], 'scope', ['regen', 'review'], 5);
+        if (scope.candidates > 0) add('candidate', scope.candidates, scope.candidates, [], 'candidate', ['regen', 'review'], 5);
+        if (scope.excluded > 0) add('excluded', scope.excluded, scope.excluded, [], 'excluded', ['review', 'refresh'], 5);
+        categories.sort(function (a, b) { return a.priority - b.priority; });
+        return { active: categories.length > 0, categories: categories, priority: categories.length ? categories[0].priority : 0, dataCatSet: dataCatSet };
+      }
+
+      function renderGating() {
+        var grid = document.getElementById('gateGrid');
+        if (!grid) return;
+        var _svn = document.getElementById('svnGate') || document.getElementById('svnCard');
+        var _ai = document.getElementById('aiGate') || document.getElementById('aiInfoCard');
+        var _gating = computeGating({
+          svn: { installed: !(_svn && !_svn.hidden), configured: !(_svn && !_svn.hidden), path: '' },
+          ai: { configured: !(_ai && !_ai.hidden) },
+          scope: { outOfScope: 0, candidates: 0, excluded: 0 },
+          conflicts: [], selection: { files: 0, empty: false }, unknown: []
+        });
+        function fill(card, count, files, items) {
+          var bC = card.querySelector('.gate-card__count [data-role="count"]');
+          var bF = card.querySelector('.gate-card__count [data-role="files"]');
+          if (bC) bC.textContent = String(count);
+          if (bF) bF.textContent = String(files);
+          var ul = card.querySelector('.gate-card__items');
+          if (ul && items) {
+            while (ul.firstChild) ul.removeChild(ul.firstChild);
+            items.forEach(function (it) {
+              var li = document.createElement('li');
+              var code = document.createElement('code');
+              code.textContent = it.path;
+              li.appendChild(code);
+              if (it.note) li.appendChild(document.createTextNode(' ' + it.note));
+              ul.appendChild(li);
+            });
+          }
+        }
+        function show(cat, on, count, files, items) {
+          var card = grid.querySelector('.gate-card[data-cat="' + cat + '"]');
+          if (!card) return;
+          card.hidden = !on;
+          if (on) fill(card, count, files, items);
+        }
+        var fail = document.querySelectorAll('.ac-item[data-status="fail"]').length;
+        var total = document.querySelectorAll('.ac-item').length;
+        show('blocked', fail > 0, fail, fail, [
+          { path: '验收项：构建通过', note: '未通过（构建失败）' },
+          { path: '验收项：单测覆盖率', note: '未通过' }
+        ]);
+        show('emptySelection', total === 0, 1, 0, [
+          { path: '（无验收项）', note: '当前没有任何验收项' }
+        ]);
+      }
+
+      function applyState(state) {
+        svnGate.hidden = !(state && state.svnMissing);
+        aiGate.hidden = !(state && !state.aiConfigured);
+        renderGating();
+      }
+      demoSvn.addEventListener("change", function () {
+        svnGate.hidden = !demoSvn.checked;
+        renderNextAction(computeNextAction());
+      });
+      demoAi.addEventListener("change", function () {
+        aiGate.hidden = !demoAi.checked;
+        renderNextAction(computeNextAction());
+      });
+
+      // —— 平台切换（Windows / macOS 双口径）——
+      var segBtns = document.querySelectorAll(".segmented button");
+      var caliberLabel = document.getElementById("caliber-label");
+      segBtns.forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          var p = btn.dataset.platform;
+          body.classList.remove("platform-windows", "platform-macos");
+          body.classList.add("platform-" + p);
+          segBtns.forEach(function (b) {
+            b.setAttribute("aria-pressed", b === btn ? "true" : "false");
+          });
+          caliberLabel.textContent = p === "macos" ? "macOS" : "Windows";
+        });
+      });
+
+      // —— 勾选 → 状态标记（通过 / 未通过 / 待验）——
+      var items = document.querySelectorAll(".ac-item");
+      function refreshSummary() {
+        var pass = 0, fail = 0, pending = 0;
+        items.forEach(function (it) {
+          var s = it.dataset.status;
+          if (s === "pass") pass++;
+          else if (s === "fail") fail++;
+          else pending++;
+        });
+        document.getElementById("cnt-pass").textContent = pass;
+        document.getElementById("cnt-fail").textContent = fail;
+        document.getElementById("cnt-pending").textContent = pending;
+        document.getElementById("cnt-total").textContent = pass + fail + pending;
+      }
+      items.forEach(function (it) {
+        var cb = it.querySelector(".ac-check");
+        cb.addEventListener("change", function () {
+          it.dataset.status = cb.checked ? "pass" : it.dataset.default;
+          refreshSummary();
+          renderNextAction(computeNextAction());
+        });
+      });
+
+      // —— 分组计数（仅初始化一次）——
+      document.querySelectorAll(".ac-group").forEach(function (g) {
+        var n = g.querySelectorAll(".ac-item").length;
+        g.querySelector(".grp-count").textContent = n;
+      });
+
+      // —— 分组折叠 / 展开 ——
+      document.querySelectorAll(".ac-group-header").forEach(function (h) {
+        function toggle() {
+          var g = h.closest(".ac-group");
+          var collapsed = g.classList.toggle("collapsed");
+          h.setAttribute("aria-expanded", collapsed ? "false" : "true");
+        }
+        h.addEventListener("click", toggle);
+        h.addEventListener("keydown", function (e) {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            toggle();
+          }
+        });
+      });
+      document.getElementById("expand-all").addEventListener("click", function () {
+        document.querySelectorAll(".ac-group").forEach(function (g) {
+          g.classList.remove("collapsed");
+          g.querySelector(".ac-group-header").setAttribute("aria-expanded", "true");
+        });
+      });
+      document.getElementById("collapse-all").addEventListener("click", function () {
+        document.querySelectorAll(".ac-group").forEach(function (g) {
+          g.classList.add("collapsed");
+          g.querySelector(".ac-group-header").setAttribute("aria-expanded", "false");
+        });
+      });
+
+      // —— 导出清单快照（复制为纯文本）——
+      var toast = document.getElementById("toast");
+      var toastTimer;
+      function showToast(msg) {
+        toast.textContent = msg;
+        toast.classList.add("show");
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(function () {
+          toast.classList.remove("show");
+        }, 2200);
+      }
+      document.getElementById("export-btn").addEventListener("click", function () {
+        var platform = body.classList.contains("platform-macos") ? "macOS" : "Windows";
+        var lines = ["SVN Workbench v1 验收清单（口径：" + platform + "）", ""];
+        document.querySelectorAll(".ac-group").forEach(function (g) {
+          var name = g.querySelector(".grp-title").textContent.trim();
+          lines.push("## " + name);
+          g.querySelectorAll(".ac-item").forEach(function (it) {
+            var title = it.querySelector(".ac-item-title").textContent.trim();
+            var s = it.dataset.status;
+            var mark = s === "pass" ? "✓" : s === "fail" ? "✗" : "?";
+            lines.push("  [" + mark + "] " + title);
+          });
+          lines.push("");
+        });
+        var text = lines.join("\n");
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(
+            function () { showToast("已复制清单快照到剪贴板"); },
+            function () { showToast("复制失败，请手动选择"); }
+          );
+        } else {
+          showToast("当前环境不支持剪贴板，请手动复制");
+        }
+      });
+
+      // —— 引导卡动作占位（命令桥接）——
+      document.querySelectorAll(".gate-card__actions [data-action]").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+          var cmd = btn.dataset.action;
+          // 占位：真实环境通过 vscode.postMessage 调用对应命令
+          showToast("触发命令：" + cmd);
+        });
+      });
+
+      // 初始化计数
+      refreshSummary();
+      // 初始渲染：na-banner 反映默认演示态
+      renderNextAction(computeNextAction());
+      renderGating();
+    })();
+  </script>
+</body>
+</html>

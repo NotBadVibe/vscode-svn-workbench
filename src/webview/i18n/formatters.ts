@@ -1,0 +1,56 @@
+const dateTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false
+});
+
+const timeFormatter = new Intl.DateTimeFormat('zh-CN', {
+  hour: '2-digit',
+  minute: '2-digit',
+  hour12: false
+});
+
+const numberFormatter = new Intl.NumberFormat('zh-CN');
+
+export function formatZhNumber(value: number): string {
+  return numberFormatter.format(value);
+}
+
+export function formatZhDateTime(value: string | number | Date, now: string | number | Date = new Date()): string {
+  const date = new Date(value);
+  const reference = new Date(now);
+  if (!Number.isFinite(date.getTime()) || !Number.isFinite(reference.getTime())) return '未知时间';
+
+  const day = startOfLocalDay(date);
+  const today = startOfLocalDay(reference);
+  const difference = Math.round((today - day) / 86_400_000);
+  const time = timeFormatter.format(date);
+  if (difference === 0) return `今天 ${time}`;
+  if (difference === 1) return `昨天 ${time}`;
+  return dateTimeFormatter.format(date).replaceAll('/', '-');
+}
+
+export function formatZhTime(value: string | number | Date): string {
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? timeFormatter.format(date) : '未知时间';
+}
+
+export function formatCount(value: number, unit: '文件' | '修订' | '路径' | '冲突' | '项目' | '步骤' | '字符'): string {
+  const classifiers = {
+    文件: '个文件',
+    修订: '条修订',
+    路径: '条路径',
+    冲突: '处冲突',
+    项目: '个项目',
+    步骤: '个步骤',
+    字符: '个字符'
+  } as const;
+  return `${formatZhNumber(value)} ${classifiers[unit]}`;
+}
+
+function startOfLocalDay(value: Date): number {
+  return new Date(value.getFullYear(), value.getMonth(), value.getDate()).getTime();
+}

@@ -1,0 +1,52 @@
+{
+  "measuredAt": "2026-07-31T13:00:46.178Z",
+  "runs": 20,
+  "interactiveMs": {
+    "p50": 45,
+    "p95": 49,
+    "samples": [
+      49,
+      45,
+      45,
+      48,
+      46,
+      46,
+      53,
+      44,
+      44,
+      44,
+      45,
+      45,
+      44,
+      44,
+      45,
+      44,
+      44,
+      49,
+      44,
+      43
+    ]
+  },
+  "bundleGzipBytes": {
+    "js": 34056,
+    "css": 17884,
+    "lazyChunks": 19,
+    "repositoryTaskChunks": 7
+  },
+  "largeList": {
+    "files": 5000,
+    "mountedRows": 18,
+    "scrollToEndMs": 38
+  },
+  "budgets": {
+    "shellJsGzipBytes": 163840,
+    "shellCssGzipBytes": 51200,
+    "interactiveP95Ms": 700,
+    "largeListMountedRows": 100,
+    "largeListScrollMs": 500,
+    "minimumLazyChunks": 17,
+    "minimumRepositoryTaskChunks": 7
+  },
+  "passed": true,
+  "failures": []
+}

@@ -1,0 +1,1446 @@
+<!--
+  SVN Workbench v1 · 提交面板（提交当前范围）原型（蓝图 for Svelte webview）
+  设计系统：v1-design-tokens.md（§2 完整 :root 令牌块，视觉唯一依据）
+  需求摘要：完整需求摘要.md · 功能 1 · 提交面板
+  约束落实：
+  - <style> 顶部先粘贴 设计令牌.md 的 :root 块（派生令牌），其下提供离线预览兜底 --vscode-* 默认值（仅此处含 hex）。
+  - 组件样式只引用 --token（其值为 var(--vscode-*) 或 color-mix），无裸几何值、无 hex。
+  - 图标统一 inline SVG <symbol> + <use href="#i-...">（单色 currentColor），注释标注 codicon 名。
+  - 结构用 <!-- Component: Xxx --> 划分 Svelte 组件边界。
+  - 自包含：CSS/JS/图标全内联，零外部资源；受控渲染，禁用 innerHTML 拼接。
+  - 全局降级：AI 未配置 → 手动模式 info 卡（不抛错）；svn 缺失 → 引导卡（不静默退出）。每页顶部演示开关模拟二者（仅演示，真实由宿主读取）。
+-->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SVN Workbench · 提交当前范围</title>
+<style>
+/* =========================================================================
+   设计令牌.md §2 完整 :root 令牌块（直接消费 · 组件全部引用以下派生令牌）
+   ========================================================================= */
+:root {
+  /* —— 前景 / 背景层级 —— */
+  --color-fg: var(--vscode-foreground);
+  --color-fg-secondary: var(--vscode-descriptionForeground);
+  --color-fg-disabled: var(--vscode-disabledForeground);
+  --color-fg-link: var(--vscode-textLink-foreground);
+  --color-icon: var(--vscode-icon-foreground);
+  --color-bg-canvas: var(--vscode-panel-background);
+  --color-bg-surface: var(--vscode-sideBar-background);
+  --color-bg-editor: var(--vscode-editor-background);
+  --color-bg-list: var(--vscode-list-background);
+  --color-bg-input: var(--vscode-input-background);
+  --color-bg-dropdown: var(--vscode-dropdown-background);
+  --color-bg-section-header: var(--vscode-sideBarSectionHeader-background);
+  --color-bg-hover: var(--vscode-list-hoverBackground);
+  --color-bg-selected: var(--vscode-list-activeSelectionBackground);
+  --color-bg-selected-inactive: var(--vscode-list-inactiveSelectionBackground);
+  --color-fg-selected: var(--vscode-list-activeSelectionForeground);
+  --color-bg-widget: var(--vscode-editorWidget-background);
+  --color-border: var(--vscode-panel-border);
+  --color-border-widget: var(--vscode-widget-border);
+  --color-border-strong: var(--vscode-contrastBorder, var(--vscode-panel-border));
+
+  /* —— 语义状态色（fg + bg 变体） —— */
+  --color-error-fg: var(--vscode-errorForeground);
+  --color-error-bg: color-mix(in srgb, var(--vscode-errorForeground) 14%, var(--vscode-panel-background));
+  --color-warning-fg: var(--vscode-warningForeground, var(--vscode-charts-yellow));
+  --color-warning-bg: color-mix(in srgb, var(--vscode-warningForeground, var(--vscode-charts-yellow)) 14%, var(--vscode-panel-background));
+  --color-info-fg: var(--vscode-textLink-foreground);
+  --color-info-bg: color-mix(in srgb, var(--vscode-textLink-foreground) 14%, var(--vscode-panel-background));
+  --color-success-fg: var(--vscode-charts-green);
+  --color-success-bg: color-mix(in srgb, var(--vscode-charts-green) 14%, var(--vscode-panel-background));
+
+  /* —— 差异色（增/删/改） —— */
+  --color-diff-add-fg: var(--vscode-charts-green);
+  --color-diff-add-bg: var(--vscode-diffEditor-insertedTextBackground, var(--vscode-charts-green));
+  --color-diff-add-gutter: var(--vscode-editorGutter-addedBackground, var(--vscode-charts-green));
+  --color-diff-del-fg: var(--vscode-charts-red, var(--vscode-errorForeground));
+  --color-diff-del-bg: var(--vscode-diffEditor-removedTextBackground, var(--vscode-charts-red));
+  --color-diff-del-gutter: var(--vscode-editorGutter-deletedBackground, var(--vscode-charts-red));
+  --color-diff-mod-fg: var(--vscode-charts-yellow, var(--vscode-charts-orange));
+  --color-diff-mod-gutter: var(--vscode-editorGutter-modifiedBackground, var(--vscode-charts-yellow));
+
+  /* —— 焦点 / 阴影 / 按钮 / 徽标 / 进度 —— */
+  --color-focus: var(--vscode-focusBorder);
+  --shadow-widget: var(--vscode-widget-shadow);
+  --color-btn-primary-bg: var(--vscode-button-background);
+  --color-btn-primary-fg: var(--vscode-button-foreground);
+  --color-btn-primary-hover: var(--vscode-button-hoverBackground);
+  --color-btn-secondary-bg: var(--vscode-button-secondaryBackground);
+  --color-btn-secondary-fg: var(--vscode-button-secondaryForeground);
+  --color-btn-secondary-hover: var(--vscode-button-secondaryHoverBackground);
+  --color-badge-bg: var(--vscode-badge-background);
+  --color-badge-fg: var(--vscode-badge-foreground);
+  --color-progress: var(--vscode-progressBar-background);
+}
+
+/* =========================================================================
+   离线预览兜底：深色主题 --vscode-* 默认值。
+   真实 webview 中全部由宿主主题注入覆盖；仅此块允许 hex，组件样式不写 hex。
+   ========================================================================= */
+:root {
+  --vscode-foreground: #cccccc;
+  --vscode-descriptionForeground: #9d9d9d;
+  --vscode-disabledForeground: #7f7f7f;
+  --vscode-textLink-foreground: #3794ff;
+  --vscode-icon-foreground: #c5c5c5;
+  --vscode-panel-background: #1e1e1e;
+  --vscode-editor-background: #1e1e1e;
+  --vscode-sideBar-background: #252526;
+  --vscode-sideBarSectionHeader-background: rgba(128, 128, 128, 0.16);
+  --vscode-list-background: #1e1e1e;
+  --vscode-input-background: #3c3c3c;
+  --vscode-input-foreground: #cccccc;
+  --vscode-input-placeholderForeground: #9d9d9d;
+  --vscode-dropdown-background: #3c3c3c;
+  --vscode-list-hoverBackground: #2a2d2e;
+  --vscode-list-activeSelectionBackground: #094771;
+  --vscode-list-inactiveSelectionBackground: #37373d;
+  --vscode-list-activeSelectionForeground: #ffffff;
+  --vscode-editorWidget-background: #252526;
+  --vscode-panel-border: #2b2b2b;
+  --vscode-widget-border: #2b2b2b;
+  --vscode-errorForeground: #f48771;
+  --vscode-warningForeground: #cca700;
+  --vscode-charts-green: #89d185;
+  --vscode-charts-red: #f48771;
+  --vscode-charts-yellow: #cca700;
+  --vscode-charts-orange: #e2c08d;
+  --vscode-diffEditor-insertedTextBackground: #9ccc2c33;
+  --vscode-diffEditor-removedTextBackground: #f14c4c33;
+  --vscode-editorGutter-addedBackground: #9ccc2c;
+  --vscode-editorGutter-deletedBackground: #f14c4c;
+  --vscode-editorGutter-modifiedBackground: #e2c08d;
+  --vscode-focusBorder: #007fd4;
+  --vscode-widget-shadow: rgba(0, 0, 0, 0.36);
+  --vscode-button-background: #0e639c;
+  --vscode-button-foreground: #ffffff;
+  --vscode-button-hoverBackground: #1177bb;
+  --vscode-button-secondaryBackground: #3a3d41;
+  --vscode-button-secondaryForeground: #cccccc;
+  --vscode-button-secondaryHoverBackground: #45494e;
+  --vscode-badge-background: #4d4d4d;
+  --vscode-badge-foreground: #ffffff;
+  --vscode-progressBar-background: #0e70c0;
+  --vscode-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+  --vscode-editor-font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, "Courier New", monospace;
+  --vscode-checkbox-background: #3c3c3c;
+  --vscode-checkbox-foreground: #f0f0f0;
+  --vscode-checkbox-border: #6b6b6b;
+  --vscode-tree-indentGuidesStroke: rgba(169, 169, 169, 0.20);
+
+  /* —— 字体令牌（px 几何值，非颜色，不违反禁 hex） —— */
+  --font-family: var(--vscode-font-family);
+  --font-family-mono: var(--vscode-editor-font-family, 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace);
+  --font-size-xs: 11px;
+  --font-size-sm: 12px;
+  --font-size-md: 13px;
+  --font-size-lg: 15px;
+  --font-size-xl: 18px;
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+  --line-height-tight: 1.3;
+  --line-height-base: 1.5;
+  --line-height-relaxed: 1.6;
+
+  /* —— 间距与尺寸令牌（4px 基准） —— */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 40px;
+  --control-height: 26px;
+  --control-height-sm: 22px;
+  --control-height-lg: 30px;
+  --row-height: 26px;
+  --row-height-header: 22px;
+  --radius-sm: 2px;
+  --radius-md: 3px;
+  --radius-badge: 3px;
+  --radius-lg: 4px;
+  --border-width: 1px;
+  --indent-step: 16px;
+}
+
+/* =========================================================================
+   基础重置
+   ========================================================================= */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  font-family: var(--font-family);
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-base);
+  color: var(--color-fg);
+  background: var(--color-bg-canvas);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+button { font-family: inherit; cursor: pointer; }
+::selection { background: var(--color-bg-selected); color: var(--color-fg-selected); }
+
+/* 图标（inline SVG <symbol>/<use>，单色 currentColor） */
+.ic {
+  width: var(--space-4);
+  height: var(--space-4);
+  display: inline-block; flex: none;
+  vertical-align: middle;
+  color: currentColor;
+}
+.ic--sm { width: var(--space-3); height: var(--space-3); }
+
+/* 面板容器：纵向单列流，填满 webview 宽度 */
+.panel {
+  max-width: 1024px;
+  margin: 0 auto;
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+/* 区块标题小标 */
+.block-label {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-fg-secondary);
+  margin: 0 0 var(--space-2);
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+.block-label .ic { color: var(--color-icon); }
+
+/* 提示/说明文案 */
+.hint {
+  font-size: var(--font-size-sm);
+  color: var(--color-fg-secondary);
+  margin: var(--space-2) 0 0;
+  line-height: var(--line-height-base);
+}
+.hint code {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  background: var(--color-bg-surface);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-1);
+  color: var(--color-fg);
+}
+
+/* =========================================================================
+   演示开关工具条（纯前端，仅模拟降级态；真实由宿主读取）
+   ========================================================================= */
+.demo-bar {
+  position: sticky; top: 0; z-index: 30;
+  display: flex; align-items: center; gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-bg-surface);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+.demo-bar .demo-title {
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  font-size: var(--font-size-xs); font-weight: var(--font-weight-semibold);
+  color: var(--color-fg-secondary);
+}
+.demo-bar .demo-title .ic { color: var(--color-fg-secondary); }
+.demo-bar .demo-switch {
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  font-size: var(--font-size-xs); color: var(--color-fg-secondary);
+  cursor: pointer; user-select: none;
+}
+.demo-bar .demo-switch input { accent-color: var(--color-focus); }
+.demo-bar .demo-note {
+  margin-left: auto; font-size: var(--font-size-xs);
+  color: var(--color-fg-disabled);
+}
+
+/* =========================================================================
+   按钮（§5.1）
+   ========================================================================= */
+.btn-primary, .btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  border: var(--border-width) solid transparent;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-btn-primary-fg);
+  background: var(--color-btn-primary-bg);
+  padding: 0 var(--space-3);
+}
+.btn-primary { height: var(--control-height-lg); }
+.btn-secondary {
+  height: var(--control-height);
+  background: var(--color-btn-secondary-bg);
+  color: var(--color-btn-secondary-fg);
+  border-color: var(--color-border);
+}
+.btn-primary:hover { background: var(--color-btn-primary-hover); }
+.btn-secondary:hover { background: var(--color-btn-secondary-hover); }
+.btn-primary:focus-visible, .btn-secondary:focus-visible {
+  outline: 1px solid var(--color-focus);
+  outline-offset: -1px;
+}
+.btn-secondary:disabled, .btn-primary:disabled {
+  color: var(--color-fg-disabled);
+  background: var(--color-btn-secondary-bg);
+  cursor: not-allowed;
+}
+
+/* 图标按钮（工具栏动作） */
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  height: var(--control-height-sm);
+  min-width: var(--control-height-sm);
+  padding: 0 var(--space-1);
+  background: transparent;
+  color: var(--color-icon);
+  border: var(--border-width) solid transparent;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+}
+.icon-btn:hover { background: var(--color-bg-hover); }
+.icon-btn:focus-visible {
+  outline: 1px solid var(--color-focus);
+  outline-offset: -1px;
+}
+
+/* =========================================================================
+   Component: RepositoryBar（仓库条 / 范围条）
+   ========================================================================= */
+.repository-bar {
+  background: var(--color-bg-surface);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+}
+.repository-bar .rb-title {
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-bold);
+  line-height: var(--line-height-tight);
+  margin: 0 0 var(--space-2);
+}
+.rb-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-5);
+}
+.rb-field { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.rb-field .ic { color: var(--color-icon); flex: none; }
+.rb-field .rb-key {
+  font-size: var(--font-size-xs);
+  color: var(--color-fg-secondary);
+  font-weight: var(--font-weight-medium);
+  flex: none;
+}
+.rb-field .rb-val {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-sm);
+  color: var(--color-fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rb-field .rb-val.scope { color: var(--color-fg); }
+.rb-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.rb-refresh-status {
+  font-size: var(--font-size-xs);
+  color: var(--color-fg-secondary);
+  white-space: nowrap;
+}
+
+/* =========================================================================
+   Component: StatusSummaryBar（状态摘要条）
+   ========================================================================= */
+.status-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  background: var(--color-bg-surface);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-4);
+}
+.status-summary .ss-label {
+  font-size: var(--font-size-sm);
+  color: var(--color-fg-secondary);
+  margin-right: var(--space-1);
+}
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: var(--control-height-sm);
+  padding: 0 var(--space-1);
+  background: var(--color-badge-bg);
+  color: var(--color-badge-fg);
+  border-radius: var(--radius-badge);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  font-family: var(--font-family-mono);
+  line-height: 1;
+}
+.badge .ic { width: var(--space-3); height: var(--space-3); color: currentColor; }
+.badge.is-warning { color: var(--color-warning-fg); }
+.badge.is-error { color: var(--color-error-fg); }
+.badge.is-add { color: var(--color-diff-add-fg); }
+.badge.is-del { color: var(--color-diff-del-fg); }
+
+/* =========================================================================
+   Component: BatchActionBar（批量操作条）
+   ========================================================================= */
+.batch-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  background: var(--color-bg-widget);
+  border-top: var(--border-width) solid var(--color-border);
+  border-bottom: var(--border-width) solid var(--color-border);
+  border-radius: 0;
+  padding: var(--space-2) var(--space-3);
+}
+.batch-bar .bb-sep {
+  width: var(--border-width);
+  height: var(--control-height-sm);
+  background: var(--color-border);
+}
+
+/* =========================================================================
+   Component: FilterGroupPreset（筛选 · 分组 · 预设控制）
+   基于 template group 单一 schema；预设只引用分组；默认排除生成物。
+   ========================================================================= */
+.fgp {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: var(--space-3);
+  align-items: end;
+}
+@media (max-width: 720px) {
+  .fgp { grid-template-columns: 1fr; }
+}
+
+/* 搜索输入（Input 规范 §5.2） —— flex 布局避免裸 calc 几何值 */
+.search-field { display: flex; align-items: center; position: relative; }
+.search-field .ic {
+  position: absolute;
+  left: var(--space-2);
+  color: var(--color-fg-secondary);
+  pointer-events: none;
+}
+.search-input {
+  width: 100%;
+  height: var(--control-height);
+  background: var(--color-bg-input);
+  color: var(--color-fg);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-2) 0 calc(var(--space-2) + var(--space-4));
+  font-family: var(--font-family);
+  font-size: var(--font-size-md);
+}
+.search-input::placeholder { color: var(--vscode-input-placeholderForeground); }
+.search-input:focus {
+  outline: none;
+  border-color: var(--color-focus);
+}
+
+/* 自定义下拉（Dropdown 规范 §5.2），无外部依赖 */
+.dropdown { position: relative; }
+.dd-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--control-height);
+  min-width: 160px;
+  background: var(--color-bg-dropdown);
+  color: var(--color-fg);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-2);
+  font-size: var(--font-size-md);
+  justify-content: space-between;
+}
+.dd-trigger:hover { border-color: var(--color-focus); }
+.dd-trigger:focus-visible { outline: 1px solid var(--color-focus); outline-offset: -1px; }
+.dd-trigger .ic { color: var(--color-icon); }
+.dd-menu {
+  position: absolute;
+  top: calc(100% + var(--space-1));
+  left: 0;
+  min-width: 100%;
+  z-index: 20;
+  background: var(--color-bg-dropdown);
+  border: var(--border-width) solid var(--color-border-widget);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-widget);
+  padding: var(--space-1);
+  margin: 0;
+  list-style: none;
+}
+.dd-menu[hidden] { display: none; }
+.dd-item {
+  height: var(--row-height);
+  display: flex;
+  align-items: center;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--color-fg);
+  font-size: var(--font-size-md);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.dd-item:hover { background: var(--color-bg-hover); }
+.dd-item.is-selected { background: var(--color-bg-selected); color: var(--color-fg-selected); }
+
+/* 排除规则提示条 */
+.exclude-note {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--font-size-xs);
+  color: var(--color-fg-secondary);
+  margin-top: var(--space-2);
+}
+.exclude-note .ic { color: var(--color-info-fg); width: var(--space-3); height: var(--space-3); }
+
+/* =========================================================================
+   Component: FileList（文件列表 · 分组 · 行内勾选）
+   §3.6 硬约束：范围不扩大，不自动吸收范围外新变更（见底部说明）
+   ========================================================================= */
+.file-list {
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-list);
+  overflow: hidden;
+}
+
+/* 分组头 */
+.group-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: var(--row-height-header);
+  padding: 0 var(--space-2) 0 var(--space-3);
+  background: var(--color-bg-section-header);
+  border-bottom: var(--border-width) solid var(--color-border);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-fg);
+  cursor: pointer;
+  user-select: none;
+}
+.group-header:hover { background: var(--color-bg-hover); }
+.group-header .chev {
+  color: var(--color-fg-secondary);
+  transition: transform 120ms ease;
+}
+.group-header.collapsed .chev { transform: rotate(-90deg); }
+.group-header .gh-count {
+  margin-left: auto;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-regular);
+  color: var(--color-fg-secondary);
+  font-family: var(--font-family-mono);
+}
+
+/* 文件行 */
+.file-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: var(--row-height);
+  padding: 0 var(--space-3) 0 calc(var(--space-3) + var(--indent-step));
+  border-bottom: var(--border-width) solid var(--color-border);
+}
+.file-row:last-child { border-bottom: none; }
+.file-row:hover { background: var(--color-bg-hover); }
+.group-body.collapsed .file-row { display: none; }
+
+/* 状态字母徽标（M/A/D/C），仅用语义色，无背景彩虹 */
+.st {
+  width: var(--space-4);
+  height: var(--space-4);
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-bold);
+}
+.st-m { color: var(--color-diff-mod-fg); }
+.st-a { color: var(--color-diff-add-fg); }
+.st-d { color: var(--color-diff-del-fg); }
+.st-c { color: var(--color-warning-fg); }
+
+/* 自定义复选框（复用 --vscode-checkbox-*，受控渲染） */
+.cbx { display: inline-flex; align-items: center; position: relative; flex: none; }
+.cbx input {
+  position: absolute;
+  width: 1px; height: 1px;
+  opacity: 0; margin: 0; padding: 0;
+  overflow: hidden; clip: rect(0 0 0 0);
+}
+.cbx-box {
+  width: var(--space-4); height: var(--space-4);
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--vscode-checkbox-background);
+  border: var(--border-width) solid var(--vscode-checkbox-border);
+  border-radius: var(--radius-sm);
+  color: var(--vscode-checkbox-foreground);
+}
+.cbx-box .ic { width: var(--space-3); height: var(--space-3); display: none; }
+.cbx input:checked + .cbx-box { border-color: var(--color-focus); }
+.cbx input:checked + .cbx-box .ic { display: inline-block; }
+.cbx input:focus-visible + .cbx-box { outline: 1px solid var(--color-focus); outline-offset: 1px; }
+
+.file-path {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-sm);
+  color: var(--color-fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.file-row .row-tag {
+  margin-left: auto;
+  flex: none;
+  font-size: var(--font-size-xs);
+  font-family: var(--font-family-mono);
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-badge);
+  border: var(--border-width) solid var(--color-border);
+  color: var(--color-fg-secondary);
+}
+.file-row .row-tag.tag-conflict { color: var(--color-warning-fg); border-color: var(--color-warning-fg); }
+.file-row .row-tag.tag-excluded { color: var(--color-fg-disabled); }
+
+/* 已排除生成物行：克制降透明度，不喧宾夺主 */
+.file-row.is-excluded { opacity: 0.55; }
+.file-row.is-excluded .cbx input { display: none; }
+.file-row.is-excluded .cbx-box { background: transparent; border-style: dashed; }
+
+/* 范围外保护说明 */
+.scope-note {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-info-bg);
+  border: var(--border-width) solid var(--color-border);
+  border-left: var(--space-1) solid var(--color-info-fg);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  color: var(--color-fg-secondary);
+  line-height: var(--line-height-base);
+}
+.scope-note .ic { color: var(--color-info-fg); flex: none; margin-top: 1px; width: var(--space-3); height: var(--space-3); }
+.scope-note code {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-fg);
+}
+
+/* =========================================================================
+   全局降级卡（Raycast 左条骨架：4px 状态色竖条 + 内容）
+   ========================================================================= */
+.gate-card {
+  display: flex;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  background: var(--color-bg-surface);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-md);
+}
+.gate-card[hidden] { display: none; }
+.gate-card--svn { border-left: var(--space-1) solid var(--color-error-fg); }
+.gate-card--ai { border-left: var(--space-1) solid var(--color-info-fg); }
+.gate-card .gate-ic { flex: none; margin-top: 1px; }
+.gate-card--svn .gate-ic { color: var(--color-error-fg); }
+.gate-card--ai .gate-ic { color: var(--color-info-fg); }
+.gate-card .gate-body { min-width: 0; }
+.gate-card .gate-title {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-fg);
+  margin: 0 0 var(--space-1);
+  display: flex; align-items: center; gap: var(--space-1);
+}
+.gate-card--svn .gate-title { color: var(--color-error-fg); }
+.gate-card--ai .gate-title { color: var(--color-info-fg); }
+.gate-card .gate-text {
+  font-size: var(--font-size-sm);
+  color: var(--color-fg-secondary);
+  line-height: var(--line-height-base);
+  margin: 0 0 var(--space-2);
+}
+.gate-card .gate-text code {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  background: var(--color-bg-canvas);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-1);
+  color: var(--color-fg);
+}
+
+/* =========================================================================
+   Component: AiSuggestSection（AI 建议勾选区）
+   §3.5：AI 仅建议勾选、用户确认生效；默认关闭；未配置降级手动模式（不抛错）
+   ========================================================================= */
+.ai-section {
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-surface);
+  padding: var(--space-3) var(--space-4);
+}
+.ai-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+.ai-head .ai-title {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+}
+.ai-head .ai-mode {
+  font-size: var(--font-size-xs);
+  font-family: var(--font-family-mono);
+  padding: 0 var(--space-1);
+  border-radius: var(--radius-badge);
+  border: var(--border-width) solid var(--color-border);
+  color: var(--color-fg-secondary);
+}
+.ai-head .ai-switch {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--font-size-xs);
+  color: var(--color-fg-secondary);
+}
+.ai-head .ai-switch input { accent-color: var(--color-focus); }
+
+.ai-configured { display: flex; flex-direction: column; gap: var(--space-2); }
+.ai-configured[hidden] { display: none; }
+.ai-notconfigured[hidden] { display: none; }
+.ai-row { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+.ai-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--font-size-sm);
+  color: var(--color-fg-secondary);
+}
+.ai-toggle input { accent-color: var(--color-focus); }
+.ai-result {
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-canvas);
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.ai-result[hidden] { display: none; }
+.ai-suggest-summary { font-size: var(--font-size-md); color: var(--color-fg); }
+.ai-suggest-summary b { color: var(--color-diff-add-fg); font-family: var(--font-family-mono); }
+.ai-result-actions { display: flex; gap: var(--space-2); }
+
+/* =========================================================================
+   Component: CommitMessageBox（提交信息框）
+   §3.2：支持模板 / 预设（template group 单一 schema）
+   ========================================================================= */
+.commit-box { display: flex; flex-direction: column; gap: var(--space-2); }
+.commit-templates { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+.tpl-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: var(--control-height-sm);
+  padding: 0 var(--space-2);
+  background: var(--color-bg-surface);
+  color: var(--color-fg-secondary);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+}
+.tpl-btn:hover { background: var(--color-bg-hover); color: var(--color-fg); }
+.tpl-btn:focus-visible { outline: 1px solid var(--color-focus); outline-offset: -1px; }
+.commit-textarea {
+  width: 100%;
+  min-height: 96px;
+  resize: vertical;
+  background: var(--color-bg-input);
+  color: var(--color-fg);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-relaxed);
+}
+.commit-textarea::placeholder { color: var(--vscode-input-placeholderForeground); }
+.commit-textarea:focus { outline: none; border-color: var(--color-focus); }
+.commit-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--font-size-xs);
+  color: var(--color-fg-secondary);
+  font-family: var(--font-family-mono);
+}
+
+/* =========================================================================
+   Component: ActionButtons（动作按钮）
+   ========================================================================= */
+.action-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  padding-top: var(--space-2);
+  border-top: var(--border-width) solid var(--color-border);
+}
+.action-bar .ab-spacer { margin-left: auto; }
+
+/* =========================================================================
+   Component: GlobalErrorBoundary（全局错误边界注记 · §4.1）
+   ========================================================================= */
+.error-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-error-bg);
+  border: var(--border-width) solid var(--color-error-fg);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  color: var(--color-error-fg);
+  line-height: var(--line-height-base);
+}
+.error-banner[hidden] { display: none; }
+.error-banner .ic { flex: none; margin-top: 1px; }
+
+.footer-note {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-xs);
+  color: var(--color-fg-secondary);
+  padding-top: var(--space-2);
+}
+.footer-note .link-btn {
+  background: none;
+  border: none;
+  color: var(--color-fg-link);
+  font-size: var(--font-size-xs);
+  text-decoration: underline;
+  padding: 0;
+}
+</style>
+</head>
+<body>
+
+<!-- 图标符号定义（inline SVG <symbol>，单色 currentColor；真实实现替换为对应 codicon） -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-refresh" viewBox="0 0 16 16"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><path d="M13.5 2.5V6H10" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-check-all" viewBox="0 0 16 16"><rect x="2" y="2" width="12" height="12" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M4.5 8l2.2 2.2 4.8-5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-circle-slash" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M3.5 3.5l9 9" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></symbol>
+    <symbol id="i-sync" viewBox="0 0 16 16"><path d="M2.5 7a5.5 5.5 0 0 1 9.4-3.9M12 3.2V7H8.4" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M13.5 9a5.5 5.5 0 0 1-9.4 3.9M4 12.8V9H7.6" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-chevron-down" viewBox="0 0 16 16"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-chevron-right" viewBox="0 0 16 16"><path d="M6 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-search" viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M10.5 10.5L14 14" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></symbol>
+    <symbol id="i-filter" viewBox="0 0 16 16"><path d="M2 3.5h12L9 8.5v4l-2 1.5v-5.5L2 3.5z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 16 16"><path d="M2 4.3h4l1.5 1.5H14v6.2H2z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></symbol>
+    <symbol id="i-file" viewBox="0 0 16 16"><path d="M4 2.5h5l3 3v8H4z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M9 2.5v3h3" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></symbol>
+    <symbol id="i-info" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M8 7v4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="8" cy="4.6" r="0.9" fill="currentColor"/></symbol>
+    <symbol id="i-warning" viewBox="0 0 16 16"><path d="M8 2l6 11H2z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M8 6.5v3.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="8" cy="11.4" r="0.8" fill="currentColor"/></symbol>
+    <symbol id="i-error" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M5.5 5.5l5 5M10.5 5.5l-5 5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></symbol>
+    <symbol id="i-check" viewBox="0 0 16 16"><path d="M3 8.5l3 3 7-8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-git-commit" viewBox="0 0 16 16"><circle cx="8" cy="8" r="3" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M8 1.5v3M8 11.5v3M1.5 8h3M11.5 8h3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></symbol>
+    <symbol id="i-git-compare" viewBox="0 0 16 16"><circle cx="5" cy="5" r="2" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="11" cy="11" r="2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M5 7v1.5A2.5 2.5 0 0 0 7.5 11h.5" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></symbol>
+    <symbol id="i-git-merge" viewBox="0 0 16 16"><circle cx="5" cy="4" r="1.6" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="5" cy="12" r="1.6" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="11" cy="8" r="1.6" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M5 5.6v4.8M5 8a6 6 0 0 0 6 0" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></symbol>
+    <symbol id="i-close" viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></symbol>
+    <symbol id="i-edit" viewBox="0 0 16 16"><path d="M11 2.5l2.5 2.5L6 12.5l-3 1 1-3z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></symbol>
+    <symbol id="i-settings-gear" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M8 1v2.2M8 12.8V15M1 8h2.2M12.8 8H15M3.1 3.1l1.6 1.6M11.3 11.3l1.6 1.6M12.9 3.1l-1.6 1.6M4.7 11.3l-1.6 1.6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></symbol>
+    <symbol id="i-beaker" viewBox="0 0 16 16"><path d="M6 1.5h4M6.6 1.5v5L3 13.4A1 1 0 0 0 3.9 15h8.2a1 1 0 0 0 .9-1.6L9.4 6.5v-5" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></symbol>
+    <symbol id="i-terminal" viewBox="0 0 16 16"><path d="M3 4l3 3-3 3M8 12h5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  </defs>
+</svg>
+
+<main class="panel">
+
+  <!-- ===================== Component: DemoBar（纯前端演示开关） ===================== -->
+  <div class="demo-bar" aria-label="演示开关">
+    <span class="demo-title"><svg class="ic ic--sm"><use href="#i-beaker"/></svg> 演示开关</span>
+    <label class="demo-switch"><input type="checkbox" id="demoAi" /> 模拟 AI 未配置</label>
+    <label class="demo-switch"><input type="checkbox" id="demoSvn" /> 模拟 svn 缺失</label>
+    <span class="demo-note">真实降级态由宿主读取 svnWorkbench 配置，此处仅前端预览</span>
+  </div>
+
+  <!-- ===================== Component: SvnMissingGate（svn 缺失引导卡） ===================== -->
+  <section class="gate-card gate-card--svn" id="svnGate" hidden aria-label="svn 缺失引导">
+    <svg class="ic gate-ic"><use href="#i-error"/></svg>
+    <div class="gate-body">
+      <p class="gate-title"><svg class="ic ic--sm"><use href="#i-error"/></svg> 未检测到 svn，无法计算差异</p>
+      <p class="gate-text">提交依赖 <code>svn</code> 命令。请在设置中配置 <code>svnWorkbench.svn.path</code>（指向 <code>svn</code> 可执行文件），或安装命令行 svn / TortoiseSVN 后重新体检。扩展不会静默退出，下方操作将不可用直至 svn 就绪。</p>
+      <button class="btn-secondary" type="button" data-run-command="svnWorkbench.openSettings">
+        <svg class="ic ic--sm"><use href="#i-settings-gear"/></svg> 去配置 svn.path
+      </button>
+    </div>
+  </section>
+
+  <!-- ===================== Component: RepositoryBar ===================== -->
+  <section class="repository-bar" aria-label="仓库条 / 范围条">
+    <h1 class="rb-title">提交当前范围</h1>
+    <div class="rb-meta">
+      <div class="rb-field">
+        <svg class="ic"><use href="#i-folder"/></svg>
+        <span class="rb-key">工作副本</span>
+        <span class="rb-val" title="D:\项目\订单系统">D:\项目\订单系统</span>
+      </div>
+      <div class="rb-field">
+        <svg class="ic"><use href="#i-folder"/></svg>
+        <span class="rb-key">当前范围（右键文件夹）</span>
+        <span class="rb-val scope" title="D:\项目\订单系统\src\服务层">D:\项目\订单系统\src\服务层</span>
+      </div>
+      <div class="rb-right">
+        <span class="rb-refresh-status" id="refreshStatus">已是最新 · 12:34:05</span>
+        <button class="icon-btn" id="refreshBtn" type="button" title="刷新状态（codicon: refresh）">
+          <svg class="ic"><use href="#i-refresh"/></svg> 刷新
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== Component: StatusSummaryBar ===================== -->
+  <section class="status-summary" aria-label="状态摘要条">
+    <span class="ss-label">变更统计</span>
+    <span class="badge is-mod"><svg class="ic"><use href="#i-edit"/></svg>变更 3</span>
+    <span class="badge is-add"><svg class="ic"><use href="#i-file"/></svg>新增 2</span>
+    <span class="badge is-del"><svg class="ic"><use href="#i-close"/></svg>删除 2</span>
+    <span class="badge is-warning"><svg class="ic"><use href="#i-warning"/></svg>冲突 1</span>
+    <span class="badge">共 8 项待处理</span>
+  </section>
+
+  <!-- ===================== Component: BatchActionBar ===================== -->
+  <section class="batch-bar" aria-label="批量操作条">
+    <button class="icon-btn" data-batch="all" type="button" title="全选（codicon: check-all）">
+      <svg class="ic"><use href="#i-check-all"/></svg> 全选
+    </button>
+    <button class="icon-btn" data-batch="none" type="button" title="全不选（codicon: circle-slash）">
+      <svg class="ic"><use href="#i-circle-slash"/></svg> 全不选
+    </button>
+    <button class="icon-btn" data-batch="invert" type="button" title="反选（codicon: sync）">
+      <svg class="ic"><use href="#i-sync"/></svg> 反选
+    </button>
+    <span class="bb-sep" role="separator"></span>
+    <button class="icon-btn" id="toggleAllGroups" type="button" title="展开 / 折叠全部分组（codicon: chevron-down）">
+      <svg class="ic" id="toggleAllIcon"><use href="#i-chevron-down"/></svg> 折叠全部
+    </button>
+  </section>
+
+  <!-- ===================== Component: FilterGroupPreset ===================== -->
+  <section aria-label="筛选 · 分组 · 预设控制">
+    <div class="fgp">
+      <div class="search-field">
+        <svg class="ic ic--sm"><use href="#i-search"/></svg>
+        <input class="search-input" id="filterInput" type="text" placeholder="筛选 / 搜索文件路径（支持中文与空格）" />
+      </div>
+
+      <!-- 分组：基于 template group 单一 schema -->
+      <div class="dropdown" data-dropdown>
+        <button class="dd-trigger" type="button" aria-haspopup="listbox" aria-expanded="false">
+          <span class="dd-label" data-dd-label="分组：按文件夹">分组：按文件夹</span>
+          <svg class="ic ic--sm"><use href="#i-chevron-down"/></svg>
+        </button>
+        <ul class="dd-menu" role="listbox" hidden>
+          <li class="dd-item is-selected" role="option" data-value="folder">按文件夹</li>
+          <li class="dd-item" role="option" data-value="status">按状态</li>
+          <li class="dd-item" role="option" data-value="template">按模板分组</li>
+        </ul>
+      </div>
+
+      <!-- 预设：只引用分组（不重复定义 schema） -->
+      <div class="dropdown" data-dropdown>
+        <button class="dd-trigger" type="button" aria-haspopup="listbox" aria-expanded="false">
+          <span class="dd-label" data-dd-label="预设：无">预设：无</span>
+          <svg class="ic ic--sm"><use href="#i-chevron-down"/></svg>
+        </button>
+        <ul class="dd-menu" role="listbox" hidden>
+          <li class="dd-item is-selected" role="option" data-value="none">无</li>
+          <li class="dd-item" role="option" data-value="source-only">仅源码（排除生成物）</li>
+          <li class="dd-item" role="option" data-value="my-common">我的常用提交</li>
+        </ul>
+      </div>
+    </div>
+    <p class="exclude-note">
+      <svg class="ic"><use href="#i-info"/></svg>
+      默认排除生成物（.svnignore / svn:ignore）：<code>bin/</code>、<code>obj/</code>、<code>.vs</code> 等。分组与预设均基于 template group 单一 schema（§3.2）。
+    </p>
+  </section>
+
+  <!-- ===================== Component: FileList ===================== -->
+  <section aria-label="文件列表">
+    <p class="block-label"><svg class="ic"><use href="#i-file"/></svg> 提交候选（分组展示 · 行内勾选 · 支持筛选）</p>
+    <div class="file-list" id="fileList">
+
+      <!-- 分组：src\服务层 -->
+      <div class="group" data-group>
+        <div class="group-header" role="button" tabindex="0">
+          <svg class="ic chev"><use href="#i-chevron-down"/></svg>
+          <span>src\服务层</span>
+          <span class="gh-count">3 项</span>
+        </div>
+        <div class="group-body">
+          <div class="file-row">
+            <label class="cbx"><input type="checkbox" class="row-cbx" checked /><span class="cbx-box"><svg class="ic"><use href="#i-check"/></svg></span></label>
+            <span class="st st-m">M</span>
+            <span class="file-path" title="D:\项目\订单系统\src\服务层\订单服务.ts">D:\项目\订单系统\src\服务层\订单服务.ts</span>
+          </div>
+          <div class="file-row">
+            <label class="cbx"><input type="checkbox" class="row-cbx" checked /><span class="cbx-box"><svg class="ic"><use href="#i-check"/></svg></span></label>
+            <span class="st st-m">M</span>
+            <span class="file-path" title="D:\项目\订单系统\src\服务层\订单服务 测试.cs">D:\项目\订单系统\src\服务层\订单服务 测试.cs</span>
+          </div>
+          <div class="file-row">
+            <label class="cbx"><input type="checkbox" class="row-cbx" checked /><span class="cbx-box"><svg class="ic"><use href="#i-check"/></svg></span></label>
+            <span class="st st-a">A</span>
+            <span class="file-path" title="D:\项目\订单系统\src\服务层\退款服务.ts">D:\项目\订单系统\src\服务层\退款服务.ts</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 分组：src\工具 -->
+      <div class="group" data-group>
+        <div class="group-header" role="button" tabindex="0">
+          <svg class="ic chev"><use href="#i-chevron-down"/></svg>
+          <span>src\工具</span>
+          <span class="gh-count">2 项</span>
+        </div>
+        <div class="group-body">
+          <div class="file-row">
+            <label class="cbx"><input type="checkbox" class="row-cbx" checked /><span class="cbx-box"><svg class="ic"><use href="#i-check"/></svg></span></label>
+            <span class="st st-m">M</span>
+            <span class="file-path" title="/Users/张三/dev/订单系统/src/工具/合并.ts">/Users/张三/dev/订单系统/src/工具/合并.ts</span>
+          </div>
+          <div class="file-row">
+            <label class="cbx"><input type="checkbox" class="row-cbx" checked /><span class="cbx-box"><svg class="ic"><use href="#i-check"/></svg></span></label>
+            <span class="st st-a">A</span>
+            <span class="file-path" title="/Users/张三/dev/订单系统/src/工具/工具箱.ts">/Users/张三/dev/订单系统/src/工具/工具箱.ts</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 分组：冲突（需先解决） -->
+      <div class="group" data-group>
+        <div class="group-header" role="button" tabindex="0">
+          <svg class="ic chev"><use href="#i-chevron-down"/></svg>
+          <span>冲突（需先解决）</span>
+          <span class="gh-count">1 项</span>
+        </div>
+        <div class="group-body">
+          <div class="file-row">
+            <label class="cbx"><input type="checkbox" class="row-cbx" /><span class="cbx-box"><svg class="ic"><use href="#i-check"/></svg></span></label>
+            <span class="st st-c">C</span>
+            <span class="file-path" title="D:\项目\订单系统\src\配置\app.config.ts">D:\项目\订单系统\src\配置\app.config.ts</span>
+            <span class="row-tag tag-conflict">待解决</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 分组：已排除的生成物（默认排除规则示例） -->
+      <div class="group" data-group>
+        <div class="group-header" role="button" tabindex="0">
+          <svg class="ic chev"><use href="#i-chevron-down"/></svg>
+          <span>已排除的生成物（.svnignore / svn:ignore）</span>
+          <span class="gh-count">3 项</span>
+        </div>
+        <div class="group-body">
+          <div class="file-row is-excluded">
+            <label class="cbx"><input type="checkbox" disabled /><span class="cbx-box"></span></label>
+            <span class="st st-a">A</span>
+            <span class="file-path" title="bin\订单服务.dll">bin\订单服务.dll</span>
+            <span class="row-tag tag-excluded">已排除</span>
+          </div>
+          <div class="file-row is-excluded">
+            <label class="cbx"><input type="checkbox" disabled /><span class="cbx-box"></span></label>
+            <span class="st st-m">M</span>
+            <span class="file-path" title="obj\Debug\订单服务.pdb">obj\Debug\订单服务.pdb</span>
+            <span class="row-tag tag-excluded">已排除</span>
+          </div>
+          <div class="file-row is-excluded">
+            <label class="cbx"><input type="checkbox" disabled /><span class="cbx-box"></span></label>
+            <span class="st st-m">M</span>
+            <span class="file-path" title=".vs\项目.vsidx">.vs\项目.vsidx</span>
+            <span class="row-tag tag-excluded">已排除</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- §3.6 硬约束说明：不自动吸收范围外新变更 -->
+    <div class="scope-note">
+      <svg class="ic"><use href="#i-info"/></svg>
+      <span>提交范围固定为右键文件夹 <code>D:\项目\订单系统\src\服务层</code>。本面板<strong>不会自动吸收范围外的新变更</strong>；若在范围外产生改动，需在其所属文件夹右键重新触发「提交此文件夹」（§3.6）。</span>
+    </div>
+  </section>
+
+  <!-- ===================== Component: AiSuggestSection ===================== -->
+  <section class="ai-section" aria-label="AI 建议勾选区">
+    <div class="ai-head">
+      <svg class="ic"><use href="#i-git-merge"/></svg>
+      <span class="ai-title">AI 建议勾选</span>
+      <span class="ai-mode" id="aiModeLabel">模式：已配置（建议勾选 · 默认关闭）</span>
+      <label class="ai-switch">
+        <input type="checkbox" id="aiConfigToggle" checked />
+        预览：AI 未配置
+      </label>
+    </div>
+
+    <!-- 未配置（默认）：降级"手动模式"，不抛错，提示运行 SVN：AI 配置模型 -->
+    <div class="gate-card gate-card--ai ai-notconfigured" id="aiNotConfigured" hidden>
+      <svg class="ic gate-ic"><use href="#i-info"/></svg>
+      <div class="gate-body">
+        <p class="gate-title"><svg class="ic ic--sm"><use href="#i-info"/></svg> 手动模式（AI 未配置）</p>
+        <p class="gate-text">AI 建议勾选当前不可用。运行 <code>SVN：AI 配置模型</code> 后，可在此获得基于 template group 的智能勾选建议。当前请手动勾选待提交文件。</p>
+        <button class="btn-secondary" type="button" data-run-command="svnWorkbench.aiConfigure">
+          <svg class="ic ic--sm"><use href="#i-settings-gear"/></svg> 配置 AI 模型
+        </button>
+      </div>
+    </div>
+
+    <!-- 已配置：仅建议、需确认生效；默认关闭 -->
+    <div class="ai-configured" id="aiConfigured">
+      <div class="ai-row">
+        <button class="btn-secondary" id="aiSuggestBtn" type="button">
+          <svg class="ic ic--sm"><use href="#i-git-merge"/></svg> 建议勾选
+        </button>
+        <label class="ai-toggle">
+          <input type="checkbox" id="aiDefaultOn" />
+          默认启用 AI 建议（当前：关闭 · §3.5）
+        </label>
+      </div>
+      <p class="hint">点击后<strong>仅生成建议</strong>，不会自动修改你的勾选；需你确认「采用建议」后生效（§3.5）。</p>
+
+      <div class="ai-result" id="aiResult" hidden>
+        <div class="ai-suggest-summary">建议勾选 <b>5</b> 项（基于 template group 单一 schema：仅源码 / 排除生成物）。冲突项 <code>app.config.ts</code> 需先解决，未纳入建议。</div>
+        <div class="ai-result-actions">
+          <button class="btn-primary" id="aiAdoptBtn" type="button">采用建议</button>
+          <button class="btn-secondary" id="aiIgnoreBtn" type="button">忽略</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== Component: CommitMessageBox ===================== -->
+  <section class="commit-box" aria-label="提交信息框">
+    <p class="block-label"><svg class="ic"><use href="#i-edit"/></svg> 提交信息</p>
+    <div class="commit-templates">
+      <button class="tpl-btn" type="button" data-tpl="fix"><svg class="ic ic--sm"><use href="#i-edit"/></svg> 插入模板：修复</button>
+      <button class="tpl-btn" type="button" data-tpl="feat"><svg class="ic ic--sm"><use href="#i-edit"/></svg> 插入模板：新增</button>
+      <button class="tpl-btn" type="button" data-tpl="refactor"><svg class="ic ic--sm"><use href="#i-edit"/></svg> 插入模板：重构</button>
+    </div>
+    <textarea class="commit-textarea" id="commitMsg" placeholder="请输入提交说明（建议说明本次变更目的，便于团队审阅）"></textarea>
+    <div class="commit-meta">
+      <span id="commitCount">已选 7 项 · 待解决 1 项</span>
+      <span id="commitLen">0 字符</span>
+    </div>
+  </section>
+
+  <!-- ===================== Component: ActionButtons ===================== -->
+  <section class="action-bar" aria-label="动作按钮">
+    <button class="btn-primary" id="submitBtn" type="button">
+      <svg class="ic"><use href="#i-git-commit"/></svg> 提交
+    </button>
+    <button class="btn-secondary" type="button">
+      <svg class="ic"><use href="#i-close"/></svg> 取消
+    </button>
+    <button class="btn-secondary" id="refreshBtn2" type="button">
+      <svg class="ic"><use href="#i-refresh"/></svg> 刷新
+    </button>
+    <button class="btn-secondary" type="button">
+      <svg class="ic"><use href="#i-git-compare"/></svg> 打开差异对比
+    </button>
+    <span class="ab-spacer"></span>
+  </section>
+
+  <!-- ===================== Component: GlobalErrorBoundary ===================== -->
+  <div class="error-banner" id="errorBanner" hidden role="alert">
+    <svg class="ic"><use href="#i-error"/></svg>
+    <span id="errorBannerText">运行期错误（示例）：拖动排序失败，已回传扩展宿主输出通道。其余操作不受影响。</span>
+  </div>
+
+  <div class="footer-note">
+    <svg class="ic ic--sm"><use href="#i-info"/></svg>
+    <span>错误边界（§4.1）：运行期错误回传扩展宿主输出通道，不静默丢失。</span>
+    <button class="link-btn" id="simErrorBtn" type="button">模拟一次运行期错误</button>
+  </div>
+
+</main>
+
+<script>
+/* =========================================================================
+   极少原生 JS：勾选 / 搜索 / 分组折叠 / 下拉 / AI 交互 / 降级演示。
+   一律操作 DOM 属性与 textContent，禁用 innerHTML 拼接（§4.1）。
+   ========================================================================= */
+(function () {
+  'use strict';
+
+  /* —— 批量操作：全选 / 全不选 / 反选（仅作用于可选文件行） —— */
+  var batchBar = document.querySelector('.batch-bar');
+  if (batchBar) {
+    batchBar.addEventListener('click', function (e) {
+      var btn = e.target.closest('[data-batch]');
+      if (!btn) return;
+      var mode = btn.getAttribute('data-batch');
+      var boxes = document.querySelectorAll('.file-row:not(.is-excluded) .row-cbx');
+      boxes.forEach(function (box) {
+        if (mode === 'all') box.checked = true;
+        else if (mode === 'none') box.checked = false;
+        else if (mode === 'invert') box.checked = !box.checked;
+      });
+      updateCommitCount();
+    });
+  }
+
+  /* —— 分组折叠 / 展开 —— */
+  function bindGroup(header) {
+    function toggle() {
+      var group = header.closest('[data-group]');
+      var body = group.querySelector('.group-body');
+      var collapsed = header.classList.toggle('collapsed');
+      body.classList.toggle('collapsed', collapsed);
+    }
+    header.addEventListener('click', toggle);
+    header.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); }
+    });
+  }
+  document.querySelectorAll('.group-header').forEach(bindGroup);
+
+  /* —— 展开 / 折叠全部 —— */
+  var toggleAllBtn = document.getElementById('toggleAllGroups');
+  var toggleAllIcon = document.getElementById('toggleAllIcon');
+  if (toggleAllBtn) {
+    var allCollapsed = false;
+    toggleAllBtn.addEventListener('click', function () {
+      allCollapsed = !allCollapsed;
+      document.querySelectorAll('[data-group]').forEach(function (group) {
+        var header = group.querySelector('.group-header');
+        var body = group.querySelector('.group-body');
+        header.classList.toggle('collapsed', allCollapsed);
+        body.classList.toggle('collapsed', allCollapsed);
+      });
+      toggleAllIcon.classList.toggle('rot', allCollapsed);
+      toggleAllBtn.lastChild.textContent = allCollapsed ? ' 展开全部' : ' 折叠全部';
+    });
+  }
+
+  /* —— 搜索 / 筛选：按路径子串过滤 —— */
+  var filterInput = document.getElementById('filterInput');
+  if (filterInput) {
+    filterInput.addEventListener('input', function () {
+      var q = filterInput.value.trim().toLowerCase();
+      document.querySelectorAll('[data-group]').forEach(function (group) {
+        var rows = group.querySelectorAll('.file-row');
+        var visible = 0;
+        rows.forEach(function (row) {
+          var path = row.querySelector('.file-path');
+          var match = !q || (path && path.textContent.toLowerCase().indexOf(q) !== -1);
+          row.style.display = match ? '' : 'none';
+          if (match) visible++;
+        });
+        group.style.display = visible === 0 ? 'none' : '';
+      });
+    });
+  }
+
+  /* —— 自定义下拉（分组 / 预设） —— */
+  document.querySelectorAll('[data-dropdown]').forEach(function (dd) {
+    var trigger = dd.querySelector('.dd-trigger');
+    var menu = dd.querySelector('.dd-menu');
+    var label = dd.querySelector('[data-dd-label]');
+    trigger.addEventListener('click', function () {
+      var open = menu.hasAttribute('hidden');
+      document.querySelectorAll('[data-dropdown] .dd-menu').forEach(function (m) { m.setAttribute('hidden', ''); });
+      document.querySelectorAll('[data-dropdown] .dd-trigger').forEach(function (t) { t.setAttribute('aria-expanded', 'false'); });
+      if (open) { menu.removeAttribute('hidden'); trigger.setAttribute('aria-expanded', 'true'); }
+    });
+    menu.querySelectorAll('.dd-item').forEach(function (item) {
+      item.addEventListener('click', function () {
+        menu.querySelectorAll('.dd-item').forEach(function (i) { i.classList.remove('is-selected'); });
+        item.classList.add('is-selected');
+        label.textContent = label.getAttribute('data-dd-label').split('：')[0] + '：' + item.textContent;
+        menu.setAttribute('hidden', '');
+        trigger.setAttribute('aria-expanded', 'false');
+      });
+    });
+  });
+  document.addEventListener('click', function (e) {
+    if (!e.target.closest('[data-dropdown]')) {
+      document.querySelectorAll('[data-dropdown] .dd-menu').forEach(function (m) { m.setAttribute('hidden', ''); });
+      document.querySelectorAll('[data-dropdown] .dd-trigger').forEach(function (t) { t.setAttribute('aria-expanded', 'false'); });
+    }
+  });
+
+  /* —— 提交信息：模板插入 + 字数统计 —— */
+  var commitMsg = document.getElementById('commitMsg');
+  var commitLen = document.getElementById('commitLen');
+  var templates = {
+    fix: 'fix: 修复订单服务在并发场景下的状态错乱\n\n- 修正锁粒度，避免范围外副作用',
+    feat: 'feat: 新增退款服务入口\n\n- 支持按订单维度发起退款',
+    refactor: 'refactor: 抽离合并工具为独立模块\n\n- 提升可测试性与复用'
+  };
+  document.querySelectorAll('[data-tpl]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var key = btn.getAttribute('data-tpl');
+      if (templates[key]) commitMsg.value = templates[key];
+      updateCommitLen();
+    });
+  });
+  if (commitMsg) {
+    commitMsg.addEventListener('input', updateCommitLen);
+  }
+  function updateCommitLen() {
+    if (commitLen && commitMsg) commitLen.textContent = commitMsg.value.length + ' 字符';
+  }
+
+  /* —— 提交计数（已选 / 待解决） —— */
+  function updateCommitCount() {
+    var countEl = document.getElementById('commitCount');
+    if (!countEl) return;
+    var checked = document.querySelectorAll('.file-row:not(.is-excluded) .row-cbx:checked').length;
+    var conflict = document.querySelectorAll('.file-row .row-tag.tag-conflict').length;
+    countEl.textContent = '已选 ' + checked + ' 项 · 待解决 ' + conflict + ' 项';
+  }
+  document.querySelectorAll('.row-cbx').forEach(function (box) {
+    box.addEventListener('change', updateCommitCount);
+  });
+  updateCommitCount();
+
+  /* —— AI 区块：已配置 ⇄ 未配置（手动模式）切换 —— */
+  var aiToggle = document.getElementById('aiConfigToggle');
+  var aiNotCfg = document.getElementById('aiNotConfigured');
+  var aiCfg = document.getElementById('aiConfigured');
+  var aiModeLabel = document.getElementById('aiModeLabel');
+  function syncAi(checked) {
+    aiNotCfg.hidden = !checked;
+    aiCfg.hidden = checked;
+    aiModeLabel.textContent = checked ? '模式：未配置（手动模式）' : '模式：已配置（建议勾选 · 默认关闭）';
+  }
+  if (aiToggle) {
+    aiToggle.addEventListener('change', function () { syncAi(aiToggle.checked); });
+  }
+
+  /* —— AI 建议勾选：仅生成建议 → 用户确认生效 —— */
+  var aiSuggestBtn = document.getElementById('aiSuggestBtn');
+  var aiResult = document.getElementById('aiResult');
+  var aiAdoptBtn = document.getElementById('aiAdoptBtn');
+  var aiIgnoreBtn = document.getElementById('aiIgnoreBtn');
+  if (aiSuggestBtn) {
+    aiSuggestBtn.addEventListener('click', function () { aiResult.hidden = false; });
+  }
+  if (aiAdoptBtn) {
+    aiAdoptBtn.addEventListener('click', function () {
+      document.querySelectorAll('.file-row').forEach(function (row) {
+        if (row.classList.contains('is-excluded')) return;
+        if (row.querySelector('.tag-conflict')) return;
+        var box = row.querySelector('.row-cbx');
+        if (box) box.checked = true;
+      });
+      aiResult.hidden = true;
+      updateCommitCount();
+    });
+  }
+  if (aiIgnoreBtn) {
+    aiIgnoreBtn.addEventListener('click', function () { aiResult.hidden = true; });
+  }
+
+  /* —— 刷新（仓库条 + 动作按钮，统一行为） —— */
+  function doRefresh() {
+    var status = document.getElementById('refreshStatus');
+    if (status) {
+      status.textContent = '刷新中…';
+      setTimeout(function () {
+        var now = new Date();
+        var t = [now.getHours(), now.getMinutes(), now.getSeconds()]
+          .map(function (n) { return (n < 10 ? '0' : '') + n; }).join(':');
+        status.textContent = '已刷新 · ' + t;
+      }, 600);
+    }
+  }
+  var refreshBtn = document.getElementById('refreshBtn');
+  var refreshBtn2 = document.getElementById('refreshBtn2');
+  if (refreshBtn) refreshBtn.addEventListener('click', doRefresh);
+  if (refreshBtn2) refreshBtn2.addEventListener('click', doRefresh);
+
+  /* —— 提交按钮：svn 缺失时禁用（降级不抛错） —— */
+  var submitBtn = document.getElementById('submitBtn');
+  if (submitBtn) {
+    submitBtn.addEventListener('click', function () {
+      if (submitBtn.disabled) return;
+      var status = document.getElementById('refreshStatus');
+      if (status) status.textContent = '已提交（演示）· 等待扩展宿主回执';
+    });
+  }
+
+  /* —— 全局错误边界演示（§4.1） —— */
+  var simBtn = document.getElementById('simErrorBtn');
+  var errBanner = document.getElementById('errorBanner');
+  if (simBtn && errBanner) {
+    simBtn.addEventListener('click', function () {
+      errBanner.hidden = !errBanner.hidden;
+    });
+  }
+
+  /* —— 演示开关：模拟全局降级态（仅前端预览，真实由宿主读取） —— */
+  var demoAi = document.getElementById('demoAi');
+  var demoSvn = document.getElementById('demoSvn');
+  var svnGate = document.getElementById('svnGate');
+  function applyDemo() {
+    var aiMissing = demoAi.checked;
+    var svnMissing = demoSvn.checked;
+    // AI 未配置 → 手动模式卡 + 模式标签
+    syncAi(aiMissing);
+    if (aiToggle) aiToggle.checked = aiMissing;
+    // svn 缺失 → 引导卡 + 禁用提交/对比等 svn 依赖动作
+    svnGate.hidden = !svnMissing;
+    if (submitBtn) submitBtn.disabled = svnMissing;
+  }
+  if (demoAi) demoAi.addEventListener('change', applyDemo);
+  if (demoSvn) demoSvn.addEventListener('change', applyDemo);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+out/
+dist/
+*.vsix
+coverage/
+playwright-report/
+test-results/
+
+# VS Code extension test artifacts
+.vscode-test/
+
+# Local validation sandboxes
+.validation/
+.workbuddy/
+
+# Logs and local environment
+*.log
+.env
+.env.*
+
+# OS files
+.DS_Store
+Thumbs.db

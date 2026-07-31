@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+<!--
+  Design system: 设计令牌.md (SVN Workbench v1 共享设计令牌)
+  模式借鉴基底: Linear (主) + Vercel / Raycast (辅)
+  约束: 所有颜色走 var(--vscode-*) 主题变量；组件样式零硬编码 hex；深色默认+自动浅色。
+  图标: inline SVG（<symbol> + <use href="#i-...">，单色 currentColor）；不使用 codicon 字体。
+  本原型为「环境检查 / 诊断」webview 面板蓝图，对应 v1 功能 4（§3.7 / §4.2）。
+  演示状态: 默认展示「异常但不崩溃」——svn 缺失(warning) + AI 未配置(manual info)，凭据待检测(info)。
+  演示开关: 顶栏 DemoBar 提供纯前端模拟（demo 仅用于预览，真实状态由宿主读取）。
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SVN Workbench · 环境检查 / 诊断</title>
+<style>
+/* ============================================================
+   设计令牌 :root（粘贴自 设计令牌.md §2）
+   ============================================================ */
+:root {
+  --color-fg: var(--vscode-foreground);
+  --color-fg-secondary: var(--vscode-descriptionForeground);
+  --color-fg-disabled: var(--vscode-disabledForeground);
+  --color-fg-link: var(--vscode-textLink-foreground);
+  --color-icon: var(--vscode-icon-foreground);
+  --color-bg-canvas: var(--vscode-panel-background);
+  --color-bg-surface: var(--vscode-sideBar-background);
+  --color-bg-editor: var(--vscode-editor-background);
+  --color-bg-list: var(--vscode-list-background);
+  --color-bg-input: var(--vscode-input-background);
+  --color-bg-dropdown: var(--vscode-dropdown-background);
+  --color-bg-section-header: var(--vscode-sideBarSectionHeader-background);
+  --color-bg-hover: var(--vscode-list-hoverBackground);
+  --color-bg-selected: var(--vscode-list-activeSelectionBackground);
+  --color-bg-selected-inactive: var(--vscode-list-inactiveSelectionBackground);
+  --color-fg-selected: var(--vscode-list-activeSelectionForeground);
+  --color-bg-widget: var(--vscode-editorWidget-background);
+  --color-border: var(--vscode-panel-border);
+  --color-border-widget: var(--vscode-widget-border);
+  --color-border-strong: var(--vscode-contrastBorder, var(--vscode-panel-border));
+  --color-error-fg: var(--vscode-errorForeground);
+  --color-error-bg: color-mix(in srgb, var(--vscode-errorForeground) 14%, var(--vscode-panel-background));
+  --color-warning-fg: var(--vscode-warningForeground, var(--vscode-charts-yellow));
+  --color-warning-bg: color-mix(in srgb, var(--vscode-warningForeground, var(--vscode-charts-yellow)) 14%, var(--vscode-panel-background));
+  --color-info-fg: var(--vscode-textLink-foreground);
+  --color-info-bg: color-mix(in srgb, var(--vscode-textLink-foreground) 14%, var(--vscode-panel-background));
+  --color-success-fg: var(--vscode-charts-green);
+  --color-success-bg: color-mix(in srgb, var(--vscode-charts-green) 14%, var(--vscode-panel-background));
+  --color-diff-add-fg: var(--vscode-charts-green);
+  --color-diff-add-bg: var(--vscode-diffEditor-insertedTextBackground, var(--vscode-charts-green));
+  --color-diff-add-gutter: var(--vscode-editorGutter-addedBackground, var(--vscode-charts-green));
+  --color-diff-del-fg: var(--vscode-charts-red, var(--vscode-errorForeground));
+  --color-diff-del-bg: var(--vscode-diffEditor-removedTextBackground, var(--vscode-charts-red));
+  --color-diff-del-gutter: var(--vscode-editorGutter-deletedBackground, var(--vscode-charts-red));
+  --color-diff-mod-fg: var(--vscode-charts-yellow, var(--vscode-charts-orange));
+  --color-diff-mod-gutter: var(--vscode-editorGutter-modifiedBackground, var(--vscode-charts-yellow));
+  --color-focus: var(--vscode-focusBorder);
+  --shadow-widget: var(--vscode-widget-shadow);
+  --color-btn-primary-bg: var(--vscode-button-background);
+  --color-btn-primary-fg: var(--vscode-button-foreground);
+  --color-btn-primary-hover: var(--vscode-button-hoverBackground);
+  --color-btn-secondary-bg: var(--vscode-button-secondaryBackground);
+  --color-btn-secondary-fg: var(--vscode-button-secondaryForeground);
+  --color-btn-secondary-hover: var(--vscode-button-secondaryHoverBackground);
+  --color-badge-bg: var(--vscode-badge-background);
+  --color-badge-fg: var(--vscode-badge-foreground);
+  --color-progress: var(--vscode-progressBar-background);
+}
+
+/* ============================================================
+   离线预览兜底默认值（仅此处允许 hex）
+   ============================================================ */
+:root {
+  --vscode-foreground: #cccccc;
+  --vscode-descriptionForeground: #9d9d9d;
+  --vscode-disabledForeground: #6b6b6b;
+  --vscode-textLink-foreground: #3794ff;
+  --vscode-icon-foreground: #c5c5c5;
+  --vscode-panel-background: #1e1e1e;
+  --vscode-sideBar-background: #252526;
+  --vscode-editor-background: #1e1e1e;
+  --vscode-list-background: #1e1e1e;
+  --vscode-input-background: #3c3c3c;
+  --vscode-dropdown-background: #3c3c3c;
+  --vscode-sideBarSectionHeader-background: #2a2a2a;
+  --vscode-list-hoverBackground: #2a2d2e;
+  --vscode-list-activeSelectionBackground: #094771;
+  --vscode-list-inactiveSelectionBackground: #37373d;
+  --vscode-list-activeSelectionForeground: #ffffff;
+  --vscode-editorWidget-background: #252526;
+  --vscode-panel-border: #2b2b2b;
+  --vscode-widget-border: #454545;
+  --vscode-contrastBorder: #454545;
+  --vscode-errorForeground: #f48771;
+  --vscode-warningForeground: #cca700;
+  --vscode-charts-green: #89d185;
+  --vscode-charts-yellow: #cca700;
+  --vscode-charts-red: #f14c4c;
+  --vscode-charts-orange: #e2c08d;
+  --vscode-focusBorder: #007fd4;
+  --vscode-widget-shadow: rgba(0, 0, 0, 0.36);
+  --vscode-button-background: #0e639c;
+  --vscode-button-foreground: #ffffff;
+  --vscode-button-hoverBackground: #1177bb;
+  --vscode-button-secondaryBackground: #3a3d41;
+  --vscode-button-secondaryForeground: #cccccc;
+  --vscode-button-secondaryHoverBackground: #45494e;
+  --vscode-badge-background: #4d4d4d;
+  --vscode-badge-foreground: #ffffff;
+  --vscode-progressBar-background: #0e70c0;
+  --vscode-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+  --vscode-editor-font-family: "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  --vscode-input-placeholderForeground: #989898;
+  --vscode-tree-indentGuidesStroke: #404040;
+  --vscode-checkbox-background: #3c3c3c;
+  --vscode-checkbox-foreground: #f0f0f0;
+  --vscode-checkbox-border: #6b6b6b;
+  --vscode-diffEditor-insertedTextBackground: rgba(69, 184, 113, 0.25);
+  --vscode-editorGutter-addedBackground: rgba(89, 182, 88, 0.6);
+  --vscode-diffEditor-removedTextBackground: rgba(244, 135, 113, 0.25);
+  --vscode-editorGutter-deletedBackground: rgba(244, 135, 113, 0.6);
+  --vscode-editorGutter-modifiedBackground: rgba(204, 167, 0, 0.6);
+}
+
+/* ============================================================
+   字体 / 间距 / 尺寸令牌
+   ============================================================ */
+:root {
+  --font-family: var(--vscode-font-family);
+  --font-family-mono: var(--vscode-editor-font-family, 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace);
+  --font-size-xs: 11px;
+  --font-size-sm: 12px;
+  --font-size-md: 13px;
+  --font-size-lg: 15px;
+  --font-size-xl: 18px;
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+  --line-height-tight: 1.3;
+  --line-height-base: 1.5;
+  --line-height-relaxed: 1.6;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 40px;
+  --control-height: 26px;
+  --control-height-sm: 22px;
+  --control-height-lg: 30px;
+  --row-height: 26px;
+  --row-height-header: 22px;
+  --radius-sm: 2px;
+  --radius-md: 3px;
+  --radius-badge: 3px;
+  --radius-lg: 4px;
+  --border-width: 1px;
+  --indent-step: 16px;
+}
+
+/* ============================================================
+   组件样式（仅消费 --token，零 hex）
+   ============================================================ */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: var(--font-family);
+  font-size: var(--font-size-md);
+  color: var(--color-fg);
+  background: var(--color-bg-canvas);
+  line-height: var(--line-height-base);
+  -webkit-font-smoothing: antialiased;
+}
+.mono { font-family: var(--font-family-mono); }
+.ic {
+  width: var(--space-4); height: var(--space-4);
+  display: block; flex: none; color: inherit;
+}
+.ic--sm { width: var(--space-3); height: var(--space-3); }
+.ic--lg { width: var(--space-6); height: var(--space-6); }
+
+.panel { display: flex; flex-direction: column; min-height: 100vh; }
+
+/* ============================================================
+   Component: DemoBar
+   ============================================================ */
+.demo-bar {
+  display: flex; align-items: center; gap: var(--space-4);
+  padding: var(--space-2) var(--space-4);
+  background: var(--color-bg-surface);
+  border-bottom: var(--border-width) solid var(--color-border);
+  font-size: var(--font-size-xs);
+  color: var(--color-fg-secondary);
+}
+.demo-bar .demo-tag { display: inline-flex; align-items: center; gap: var(--space-1); font-weight: var(--font-weight-medium); }
+.demo-opt { display: inline-flex; align-items: center; gap: var(--space-1); cursor: pointer; user-select: none; }
+.demo-opt input { accent-color: var(--color-focus); }
+.demo-note { margin-left: auto; opacity: 0.8; }
+
+/* ============================================================
+   Component: PanelHeader
+   ============================================================ */
+.panel-header {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-3);
+  padding: var(--space-4);
+  border-bottom: var(--border-width) solid var(--color-border);
+  background: var(--color-bg-canvas);
+}
+.panel-header__left { display: flex; align-items: center; gap: var(--space-2); }
+.panel-header__icon { color: var(--color-icon); display: inline-flex; }
+.panel-header__titles { display: flex; flex-direction: column; }
+.panel-header__title { font-size: var(--font-size-xl); font-weight: var(--font-weight-bold); line-height: var(--line-height-tight); }
+.panel-header__sub { font-size: var(--font-size-xs); color: var(--color-fg-secondary); margin-top: var(--space-1); }
+.panel-header__right { display: flex; align-items: center; gap: var(--space-2); }
+.panel-header__cmd { font-size: var(--font-size-xs); color: var(--color-fg-secondary); font-family: var(--font-family-mono); }
+
+.icon-btn {
+  width: var(--control-height-lg); height: var(--control-height-lg);
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; border: var(--border-width) solid transparent;
+  border-radius: var(--radius-sm); color: var(--color-icon); cursor: pointer;
+}
+.icon-btn:hover { background: var(--color-bg-hover); }
+.icon-btn:focus-visible { outline: 1px solid var(--color-focus); outline-offset: -1px; }
+.icon-btn .ic { display: block; }
+
+/* ============================================================
+   Component: HealthOverviewBar (体检总览)
+   ============================================================ */
+.overview {
+  display: flex; flex-direction: column; gap: var(--space-2);
+  background: var(--color-bg-surface);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-4);
+}
+.overview__row { display: flex; align-items: flex-start; gap: var(--space-3); }
+.overview__text { display: flex; flex-direction: column; flex: 1 1 auto; }
+.overview__title { font-size: var(--font-size-lg); font-weight: var(--font-weight-semibold); line-height: var(--line-height-tight); }
+.overview__sub { font-size: var(--font-size-sm); color: var(--color-fg-secondary); margin-top: var(--space-1); line-height: var(--line-height-relaxed); }
+.overview__foot { display: flex; align-items: center; gap: var(--space-2); font-size: var(--font-size-xs); color: var(--color-fg-secondary); flex-wrap: wrap; }
+.overview__sep { color: var(--color-border-strong); }
+
+.status-dot { width: var(--space-2); height: var(--space-2); border-radius: 50%; display: inline-block; background: var(--color-fg-secondary); margin-top: var(--space-1); flex: 0 0 auto; }
+.status-dot--warning { background: var(--color-warning-fg); }
+.status-dot--ok { background: var(--color-success-fg); }
+.status-dot--info { background: var(--color-info-fg); }
+
+/* ============================================================
+   Component: StatusCard (Raycast 左色条骨架)
+   ============================================================ */
+.card {
+  position: relative;
+  background: var(--color-bg-surface);
+  border: var(--border-width) solid var(--color-border);
+  border-left: 4px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-4);
+}
+.card--warning { border-left-color: var(--color-warning-fg); }
+.card--info { border-left-color: var(--color-info-fg); }
+.card--ok { border-left-color: var(--color-success-fg); }
+.card--error { border-left-color: var(--color-error-fg); }
+
+.card__head { display: flex; align-items: center; gap: var(--space-2); }
+.card__icon { color: var(--color-fg-secondary); display: inline-flex; }
+.card--warning .card__icon { color: var(--color-warning-fg); }
+.card--info .card__icon { color: var(--color-info-fg); }
+.card--ok .card__icon { color: var(--color-success-fg); }
+.card--error .card__icon { color: var(--color-error-fg); }
+.card__title { font-size: var(--font-size-md); font-weight: var(--font-weight-semibold); }
+.card__state { font-size: var(--font-size-sm); color: var(--color-fg-secondary); }
+.card__head .badge { margin-left: auto; }
+
+.card__content { margin-top: var(--space-2); display: flex; flex-direction: column; gap: var(--space-1); }
+.card__actions { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-top: var(--space-3); }
+
+.kv { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; padding: var(--space-1) 0; }
+.kv__k { font-size: var(--font-size-sm); color: var(--color-fg-secondary); min-width: calc(var(--space-8) * 3 + var(--space-4)); }
+.kv__v { font-size: var(--font-size-sm); color: var(--color-fg); }
+.hint { font-size: var(--font-size-sm); color: var(--color-fg-secondary); line-height: var(--line-height-relaxed); margin-top: var(--space-2); }
+
+.badge {
+  display: inline-flex; align-items: center; padding: 0 var(--space-1);
+  height: var(--control-height-sm);
+  font-size: var(--font-size-xs); font-weight: var(--font-weight-medium);
+  border-radius: var(--radius-badge);
+  background: var(--color-badge-bg); color: var(--color-badge-fg);
+}
+.badge--warning { color: var(--color-warning-fg); }
+.badge--info { color: var(--color-info-fg); }
+.badge--ok { color: var(--color-success-fg); }
+.badge--error { color: var(--color-error-fg); }
+
+.tag {
+  display: inline-flex; align-items: center; padding: 0 var(--space-1);
+  height: var(--control-height-sm);
+  font-size: var(--font-size-xs); font-weight: var(--font-weight-medium);
+  border-radius: var(--radius-badge);
+}
+.tag--warn { color: var(--color-warning-fg); background: var(--color-warning-bg); }
+.tag--info { color: var(--color-info-fg); background: var(--color-info-bg); }
+.tag--ok { color: var(--color-success-fg); background: var(--color-success-bg); }
+
+/* ============================================================
+   Component: DiagnosticDetails (可折叠，演示 30s 超时友好报错)
+   ============================================================ */
+.diag { border: var(--border-width) solid var(--color-border); border-radius: var(--radius-md); margin-bottom: var(--space-4); overflow: hidden; }
+.diag__toggle {
+  width: 100%; display: flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-bg-surface); border: none; cursor: pointer;
+  color: var(--color-fg); font-family: var(--font-family);
+  font-size: var(--font-size-sm); font-weight: var(--font-weight-medium);
+}
+.diag__toggle:hover { background: var(--color-bg-hover); }
+.diag__chevron { color: var(--color-fg-secondary); display: inline-flex; transition: transform 0.15s ease; }
+.diag__hint { margin-left: auto; font-size: var(--font-size-xs); color: var(--color-fg-secondary); font-weight: var(--font-weight-regular); }
+.diag__body { padding: var(--space-3) var(--space-4); background: var(--color-bg-editor); border-top: var(--border-width) solid var(--color-border); }
+.diag__body[hidden] { display: none; }
+
+.log { font-family: var(--font-family-mono); font-size: var(--font-size-xs); line-height: var(--line-height-relaxed); }
+.log__line { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+.log__cmd { color: var(--color-fg); }
+.log__err { color: var(--color-error-fg); }
+.log__warn { color: var(--color-warning-fg); }
+.log__info { color: var(--color-info-fg); }
+.log__note { color: var(--color-fg-secondary); margin-top: var(--space-2); line-height: var(--line-height-relaxed); }
+
+/* ============================================================
+   Component: GuideActions (引导动作)
+   ============================================================ */
+.guide { border-top: var(--border-width) solid var(--color-border); padding-top: var(--space-4); }
+.guide__title { font-size: var(--font-size-sm); color: var(--color-fg-secondary); margin-bottom: var(--space-3); font-weight: var(--font-weight-medium); }
+.guide__row { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+
+.btn {
+  height: var(--control-height);
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  padding: 0 var(--space-3); border-radius: var(--radius-sm);
+  font-size: var(--font-size-md); font-weight: var(--font-weight-medium);
+  cursor: pointer; border: var(--border-width) solid transparent;
+  font-family: var(--font-family); color: var(--color-fg);
+}
+.btn .ic { display: block; }
+.btn--primary { background: var(--color-btn-primary-bg); color: var(--color-btn-primary-fg); }
+.btn--primary:hover { background: var(--color-btn-primary-hover); }
+.btn--secondary { background: var(--color-btn-secondary-bg); color: var(--color-btn-secondary-fg); border-color: var(--color-border); }
+.btn--secondary:hover { background: var(--color-btn-secondary-hover); }
+.btn:focus-visible { outline: 1px solid var(--color-focus); outline-offset: -1px; }
+
+.panel-body { padding: var(--space-4); display: flex; flex-direction: column; }
+</style>
+</head>
+<body>
+<div class="panel">
+
+  <!-- inline SVG 图标符号表（单色 currentColor；codicon 对应名见注释） -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="i-debug" viewBox="0 0 16 16"><path d="M2 8 H5 L6.5 4.5 L9.5 11.5 L11 8 H14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 16 16"><path d="M2.5 8 a5.5 5.5 0 0 1 9.3 -3.9" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/><path d="M12 2.5 V6 H8.5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/><path d="M13.5 8 a5.5 5.5 0 0 1 -9.3 3.9" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 13.5 V10 H7.5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-warning" viewBox="0 0 16 16"><path d="M8 2.5 L14.5 13 H1.5 Z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M8 6.5 V9.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="8" cy="11.6" r="0.7" fill="currentColor"/></symbol>
+    <symbol id="i-info" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M8 7.2 V11.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="8" cy="5" r="0.7" fill="currentColor"/></symbol>
+    <symbol id="i-key" viewBox="0 0 16 16"><circle cx="5.5" cy="5.5" r="2.4" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M7.2 7.2 L12.5 12.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><path d="M11 11 L12.5 9.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><path d="M12.5 12.5 L14 11" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></symbol>
+    <symbol id="i-settings-gear" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.2" fill="currentColor"/><path d="M8 1.5 V3.1 M8 12.9 V14.5 M1.5 8 H3.1 M12.9 8 H14.5 M3.4 3.4 L4.5 4.5 M11.5 11.5 L12.6 12.6 M12.6 3.4 L11.5 4.5 M4.5 11.5 L3.4 12.6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></symbol>
+    <symbol id="i-link-external" viewBox="0 0 16 16"><path d="M6 3.5H3.5V12.5H12.5V10" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/><path d="M9.5 3.5H12.5V6.5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/><path d="M12.5 3.5L7 9" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-play" viewBox="0 0 16 16"><path d="M5 3.5 L12.5 8 L5 12.5 Z" fill="currentColor"/></symbol>
+    <symbol id="i-chevron-right" viewBox="0 0 16 16"><path d="M6 4 L10 8 L6 12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-check" viewBox="0 0 16 16"><path d="M3 8.4l3 3 7-7.4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  </svg>
+
+  <!-- Component: DemoBar（纯前端演示开关） -->
+  <div class="demo-bar">
+    <span class="demo-tag"><svg class="ic ic--sm"><use href="#i-debug"/></svg>演示模拟</span>
+    <label class="demo-opt"><input type="checkbox" id="demoAi" checked /> 模拟 AI 已配置</label>
+    <label class="demo-opt"><input type="checkbox" id="demoSvn" checked /> 模拟 svn 缺失</label>
+    <span class="demo-note">演示开关仅用于预览降级态，真实状态由宿主读取</span>
+  </div>
+
+  <!-- Component: PanelHeader -->
+  <header class="panel-header">
+    <div class="panel-header__left">
+      <span class="panel-header__icon"><svg class="ic ic--lg"><use href="#i-debug"/></svg></span>
+      <div class="panel-header__titles">
+        <span class="panel-header__title">环境检查 / 诊断</span>
+        <span class="panel-header__sub">首次激活已自动体检 · 也可运行 SVN：检查环境 手动触发</span>
+      </div>
+    </div>
+    <div class="panel-header__right">
+      <span class="panel-header__cmd">svnWorkbench.checkEnvironment</span>
+      <button class="icon-btn" id="recheckBtn" title="重新体检" aria-label="重新体检">
+        <svg class="ic"><use href="#i-refresh"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <main class="panel-body">
+
+    <!-- Component: HealthOverviewBar (体检总览) -->
+    <section class="overview" aria-label="体检总览">
+      <div class="overview__row">
+        <span class="status-dot status-dot--warning" aria-hidden="true"></span>
+        <div class="overview__text">
+          <span class="overview__title">环境需配置</span>
+          <span class="overview__sub">检测到 2 项需处理：svn 未找到、AI 未配置。可继续以手动模式使用，扩展不会静默退出。</span>
+        </div>
+        <span class="badge badge--warning">需配置</span>
+      </div>
+      <div class="overview__foot">
+        <span class="mono" id="lastCheck">上次体检：刚刚</span>
+        <span class="overview__sep">·</span>
+        <span>首次激活已自动执行 checkEnvironment（§3.7）</span>
+      </div>
+    </section>
+
+    <!-- Component: SvnOkCard（svn 已就绪，默认隐藏，demoSvn 取消时显示） -->
+    <section class="card card--ok" aria-label="svn 状态" data-svn="ok" hidden>
+      <header class="card__head">
+        <span class="card__icon"><svg class="ic"><use href="#i-check"/></svg></span>
+        <span class="card__title">svn</span>
+        <span class="card__state">已就绪</span>
+        <span class="badge badge--ok">正常</span>
+      </header>
+      <div class="card__content">
+        <div class="kv">
+          <span class="kv__k">版本</span>
+          <code class="mono kv__v">svn, version 1.14.2</code>
+          <span class="tag tag--ok">已检测到</span>
+        </div>
+        <p class="hint">svn 可执行文件正常，所有依赖 svn 的能力（提交 / 更新 / 冲突解决 / 范围与筛选）均可使用。</p>
+      </div>
+    </section>
+
+    <!-- Component: SvnStatusCard（svn 状态卡 · 缺失=warning，绝不静默；默认显示） -->
+    <section class="card card--warning" aria-label="svn 状态" data-svn="missing">
+      <header class="card__head">
+        <span class="card__icon"><svg class="ic"><use href="#i-warning"/></svg></span>
+        <span class="card__title">svn</span>
+        <span class="card__state">缺失</span>
+        <span class="badge badge--warning">需配置</span>
+      </header>
+      <div class="card__content">
+        <div class="kv">
+          <span class="kv__k">配置路径</span>
+          <code class="mono kv__v">C:\Program Files\TortoiseSVN\bin\svn.exe</code>
+          <span class="tag tag--warn">未找到</span>
+        </div>
+        <div class="kv">
+          <span class="kv__k">macOS 默认路径</span>
+          <code class="mono kv__v">/usr/local/bin/svn</code>
+          <span class="tag tag--warn">未找到</span>
+        </div>
+        <p class="hint">在设置中配置正确的 <span class="mono">svnWorkbench.svn.path</span>，或安装 TortoiseSVN / 命令行 svn 后重新体检。检测命令 30s 内友好返回，不会永久挂起；扩展不会因此静默退出（§3.7）。</p>
+      </div>
+      <footer class="card__actions">
+        <button class="btn btn--secondary" data-action="svn-config"><svg class="ic ic--sm"><use href="#i-settings-gear"/></svg>去配置</button>
+        <button class="btn btn--secondary" data-action="svn-install"><svg class="ic ic--sm"><use href="#i-link-external"/></svg>去安装</button>
+      </footer>
+    </section>
+
+    <!-- Component: AiOkCard（AI 已配置，默认隐藏，demoAi 勾选时显示） -->
+    <section class="card card--ok" aria-label="AI 状态" data-ai="ok" hidden>
+      <header class="card__head">
+        <span class="card__icon"><svg class="ic"><use href="#i-check"/></svg></span>
+        <span class="card__title">AI 模型</span>
+        <span class="card__state">已配置</span>
+        <span class="badge badge--ok">可用</span>
+      </header>
+      <div class="card__content">
+        <div class="kv">
+          <span class="kv__k">AI Provider</span>
+          <span class="kv__v">已配置（如 openai / 本地模型）</span>
+        </div>
+        <div class="kv">
+          <span class="kv__k">当前模式</span>
+          <span class="tag tag--ok">AI 增强</span>
+        </div>
+        <p class="hint">AI 已配置，提交建议勾选 / 冲突解决 / 更新建议等能力将提供增强建议（仅建议，用户确认后生效，不自动改状态）。</p>
+      </div>
+    </section>
+
+    <!-- Component: AiStatusCard（AI 状态卡 · 未配置=info 手动模式，不抛错；默认显示） -->
+    <section class="card card--info" aria-label="AI 状态" data-ai="manual">
+      <header class="card__head">
+        <span class="card__icon"><svg class="ic"><use href="#i-info"/></svg></span>
+        <span class="card__title">AI 模型</span>
+        <span class="card__state">未配置</span>
+        <span class="badge badge--info">手动模式</span>
+      </header>
+      <div class="card__content">
+        <div class="kv">
+          <span class="kv__k">AI Provider</span>
+          <span class="kv__v">未配置</span>
+        </div>
+        <div class="kv">
+          <span class="kv__k">当前模式</span>
+          <span class="tag tag--info">手动模式</span>
+        </div>
+        <p class="hint">未配置 AI 模型时自动降级为手动模式：提交建议勾选 / 冲突解决 / 更新建议等功能可正常使用，扩展不抛错、不阻断链路（§3.5 / §3.7）。运行 <span class="mono">SVN：AI 配置模型</span> 可随时启用。</p>
+      </div>
+      <footer class="card__actions">
+        <button class="btn btn--secondary" data-action="ai-config"><svg class="ic ic--sm"><use href="#i-play"/></svg>运行 AI 配置</button>
+      </footer>
+    </section>
+
+    <!-- Component: CredentialsStatusCard (凭据状态 · 依赖 SVN auth cache，不默认 --password) -->
+    <section class="card card--info" aria-label="凭据状态">
+      <header class="card__head">
+        <span class="card__icon"><svg class="ic"><use href="#i-key"/></svg></span>
+        <span class="card__title">凭据</span>
+        <span class="card__state">待检测</span>
+        <span class="badge badge--info">依赖 svn</span>
+      </header>
+      <div class="card__content">
+        <div class="kv">
+          <span class="kv__k">凭据来源</span>
+          <span class="kv__v">SVN auth cache（本地认证缓存）</span>
+        </div>
+        <div class="kv">
+          <span class="kv__k">--password 注入</span>
+          <span class="tag tag--ok">已禁用</span>
+        </div>
+        <p class="hint">优先读取 SVN 本地认证缓存，不会默认向命令注入 <span class="mono">--password</span>（§4.2）。待 svn 就绪后将自动读取缓存状态，无需手动填入密码。</p>
+      </div>
+    </section>
+
+    <!-- Component: DiagnosticDetails (可折叠 · 演示 30s 超时友好报错与降级链路) -->
+    <section class="diag" aria-label="诊断详情">
+      <button class="diag__toggle" id="diagToggle" aria-expanded="false" aria-controls="diagBody">
+        <span class="diag__chevron"><svg class="ic ic--sm"><use href="#i-chevron-right"/></svg></span>
+        <span>诊断详情</span>
+        <span class="diag__hint">检测命令 30s 超时即友好提示</span>
+      </button>
+      <div class="diag__body" id="diagBody" hidden>
+        <div class="log">
+          <div class="log__line"><span class="log__cmd">$ svn --version --quiet</span><span class="log__err">未找到 svn (ENOENT)</span></div>
+          <div class="log__line"><span class="log__cmd">$ svn info --show-item revision .</span><span class="log__warn">跳过：svn 不可用</span></div>
+          <div class="log__line"><span class="log__cmd">AI 配置探测</span><span class="log__info">未配置 → 降级手动模式</span></div>
+          <div class="log__line"><span class="log__cmd">凭据探测</span><span class="log__info">待 svn 就绪后读 auth cache</span></div>
+          <div class="log__note">首次激活已自动执行 checkEnvironment（§3.7）。若 svn 无响应，runSvnCommand 将在 30s 后返回友好超时报错，不会永久挂起 Promise。</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Component: GuideActions (引导动作) -->
+    <section class="guide" aria-label="引导动作">
+      <div class="guide__title">引导动作</div>
+      <div class="guide__row">
+        <button class="btn btn--secondary" data-action="svn-config"><svg class="ic ic--sm"><use href="#i-settings-gear"/></svg>跳转设置</button>
+        <button class="btn btn--secondary" data-action="ai-config"><svg class="ic ic--sm"><use href="#i-play"/></svg>运行 AI 配置</button>
+        <button class="btn btn--primary" data-action="recheck"><svg class="ic ic--sm"><use href="#i-refresh"/></svg>重新体检</button>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script>
+  // 极少量原生 JS：折叠切换、体检时间戳、演示开关联动。禁止 innerHTML 拼接。
+  (function () {
+    var toggle = document.getElementById('diagToggle');
+    var body = document.getElementById('diagBody');
+    var chevron = toggle.querySelector('.diag__chevron');
+    toggle.addEventListener('click', function () {
+      var open = !body.hasAttribute('hidden');
+      if (open) {
+        body.setAttribute('hidden', '');
+        chevron.style.transform = 'rotate(0deg)';
+        toggle.setAttribute('aria-expanded', 'false');
+      } else {
+        body.removeAttribute('hidden');
+        chevron.style.transform = 'rotate(90deg)';
+        toggle.setAttribute('aria-expanded', 'true');
+      }
+    });
+
+    var recheck = document.getElementById('recheckBtn');
+    var stamp = document.getElementById('lastCheck');
+    function recheckNow() {
+      var now = new Date();
+      var p = function (n) { return n.toString().padStart(2, '0'); };
+      stamp.textContent = '上次体检：' + p(now.getHours()) + ':' + p(now.getMinutes()) + ':' + p(now.getSeconds());
+    }
+    recheck.addEventListener('click', recheckNow);
+    document.querySelector('[data-action="recheck"]').addEventListener('click', recheckNow);
+
+    // —— 演示开关：svn 缺失 ↔ svn 就绪 ——
+    var demoSvn = document.getElementById('demoSvn');
+    var svnMissing = document.querySelector('[data-svn="missing"]');
+    var svnOk = document.querySelector('[data-svn="ok"]');
+    function applySvn() {
+      var missing = demoSvn.checked;
+      svnMissing.hidden = !missing;
+      svnOk.hidden = missing;
+    }
+    demoSvn.addEventListener('change', applySvn);
+
+    // —— 演示开关：AI 已配置 ↔ 手动模式 ——
+    var demoAi = document.getElementById('demoAi');
+    var aiManual = document.querySelector('[data-ai="manual"]');
+    var aiOk = document.querySelector('[data-ai="ok"]');
+    function applyAi() {
+      var configured = demoAi.checked;
+      aiManual.hidden = configured;
+      aiOk.hidden = !configured;
+    }
+    demoAi.addEventListener('change', applyAi);
+
+    // 占位命令桥接
+    ['svn-config', 'svn-install', 'ai-config'].forEach(function (a) {
+      document.querySelectorAll('[data-action="' + a + '"]').forEach(function (el) {
+        el.addEventListener('click', function () {});
+      });
+    });
+  })();
+</script>
+</body>
+</html>

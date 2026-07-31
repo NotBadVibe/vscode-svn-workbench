@@ -1,0 +1,90 @@
+name: Verify SVN Workbench
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Subversion on Ubuntu
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y subversion xvfb
+
+      - name: Install Subversion on macOS
+        if: runner.os == 'macOS'
+        run: brew install subversion
+
+      - name: Install Subversion on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install tortoisesvn --yes --no-progress
+          "C:\Program Files\TortoiseSVN\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify SVN CLI
+        run: |
+          svn --version --quiet
+          svnadmin --version --quiet
+
+      - name: Static checks
+        run: npm run check
+
+      - name: Unit, domain and coverage gates
+        run: npm run test:coverage
+
+      - name: Install Chromium and Linux browser dependencies
+        if: runner.os == 'Linux'
+        run: npx playwright install --with-deps chromium
+
+      - name: Install Chromium
+        if: runner.os != 'Linux'
+        run: npx playwright install chromium
+
+      - name: Webview interaction, visual and accessibility acceptance
+        run: npm run test:webview
+
+      - name: Performance budgets
+        if: runner.os == 'Linux'
+        run: npm run test:performance
+
+      - name: Extension Host and real SVN acceptance on Linux
+        if: runner.os == 'Linux'
+        run: xvfb-run -a npm run test:extension
+
+      - name: Extension Host and real SVN acceptance
+        if: runner.os != 'Linux'
+        run: npm run test:extension
+
+      - name: Package VSIX and validate clean-profile lifecycle
+        if: runner.os == 'Linux'
+        run: |
+          npm run package:vsix
+          npm run validate:vsix-install
+
+      - name: Upload Linux release candidate
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: svn-workbench-vsix
+          path: svn-workbench-*.vsix

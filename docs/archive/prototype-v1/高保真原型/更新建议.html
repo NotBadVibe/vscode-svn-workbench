@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+<!--
+  SVN Workbench v1 · 「更新建议」功能 Webview 原型（蓝图）
+  Design system: 设计令牌.md (SVN Workbench v1 共享设计令牌)
+  对应命令: SVN：更新当前范围 (svnWorkbench.updateScope)
+  技术栈: Svelte 组件 + VS Code 内嵌 webview（本文件为单文件可运行蓝图，代表 v1 最终观感）
+  硬约束:
+    1. 组件样式只引用 设计令牌.md 定义的 --token 自定义属性，禁止任何 hex 颜色（仅兜底 :root 允许）。
+    2. :root 顶部提供设计令牌块；下方离线兜底提供 --vscode-* 深色默认值。
+    3. 图标全部 inline SVG（<symbol> + <use href="#i-...">，单色 currentColor）；注释对应 codicon 名。
+    4. 以 <!-- Component: Xxx --> 注释划分 Svelte 组件边界。
+    5. 自包含：CSS 内联；极少原生 JS（无 innerHTML 拼接）。
+    6. 密度与状态色克制，对齐 VS Code 原生 + Linear 借鉴基底；中文样本。
+    7. AI 降级：未启用 AI 时显示「手动模式」info 卡（左条 --color-info-fg），不抛错。
+    8. svn 缺失：显示引导卡（左条 --color-error-fg，指向 svnWorkbench.svn.path），不静默退出。
+  功能语义（v1 权威基线 §3.4）:
+    - smartUpdate → 「更新建议」，语义为【近似建议】，非精确远端预览、非冲突预测。
+    - v1 不做：远端变更精确预览 / 更新前冲突预测（页面标注为后期）。
+    - 凭据优先 SVN auth cache，不默认传 --password。
+-->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>更新建议 · SVN Workbench</title>
+  <style>
+    /* ============================================================
+       设计令牌 :root（粘贴自 设计令牌.md §2）
+       ============================================================ */
+    :root {
+      --color-fg: var(--vscode-foreground);
+      --color-fg-secondary: var(--vscode-descriptionForeground);
+      --color-fg-disabled: var(--vscode-disabledForeground);
+      --color-fg-link: var(--vscode-textLink-foreground);
+      --color-icon: var(--vscode-icon-foreground);
+      --color-bg-canvas: var(--vscode-panel-background);
+      --color-bg-surface: var(--vscode-sideBar-background);
+      --color-bg-editor: var(--vscode-editor-background);
+      --color-bg-list: var(--vscode-list-background);
+      --color-bg-input: var(--vscode-input-background);
+      --color-bg-dropdown: var(--vscode-dropdown-background);
+      --color-bg-section-header: var(--vscode-sideBarSectionHeader-background);
+      --color-bg-hover: var(--vscode-list-hoverBackground);
+      --color-bg-selected: var(--vscode-list-activeSelectionBackground);
+      --color-bg-selected-inactive: var(--vscode-list-inactiveSelectionBackground);
+      --color-fg-selected: var(--vscode-list-activeSelectionForeground);
+      --color-bg-widget: var(--vscode-editorWidget-background);
+      --color-border: var(--vscode-panel-border);
+      --color-border-widget: var(--vscode-widget-border);
+      --color-border-strong: var(--vscode-contrastBorder, var(--vscode-panel-border));
+      --color-error-fg: var(--vscode-errorForeground);
+      --color-error-bg: color-mix(in srgb, var(--vscode-errorForeground) 14%, var(--vscode-panel-background));
+      --color-warning-fg: var(--vscode-warningForeground, var(--vscode-charts-yellow));
+      --color-warning-bg: color-mix(in srgb, var(--vscode-warningForeground, var(--vscode-charts-yellow)) 14%, var(--vscode-panel-background));
+      --color-info-fg: var(--vscode-textLink-foreground);
+      --color-info-bg: color-mix(in srgb, var(--vscode-textLink-foreground) 14%, var(--vscode-panel-background));
+      --color-success-fg: var(--vscode-charts-green);
+      --color-success-bg: color-mix(in srgb, var(--vscode-charts-green) 14%, var(--vscode-panel-background));
+      --color-diff-add-fg: var(--vscode-charts-green);
+      --color-diff-add-bg: var(--vscode-diffEditor-insertedTextBackground, var(--vscode-charts-green));
+      --color-diff-add-gutter: var(--vscode-editorGutter-addedBackground, var(--vscode-charts-green));
+      --color-diff-del-fg: var(--vscode-charts-red, var(--vscode-errorForeground));
+      --color-diff-del-bg: var(--vscode-diffEditor-removedTextBackground, var(--vscode-charts-red));
+      --color-diff-del-gutter: var(--vscode-editorGutter-deletedBackground, var(--vscode-charts-red));
+      --color-diff-mod-fg: var(--vscode-charts-yellow, var(--vscode-charts-orange));
+      --color-diff-mod-gutter: var(--vscode-editorGutter-modifiedBackground, var(--vscode-charts-yellow));
+      --color-focus: var(--vscode-focusBorder);
+      --shadow-widget: var(--vscode-widget-shadow);
+      --color-btn-primary-bg: var(--vscode-button-background);
+      --color-btn-primary-fg: var(--vscode-button-foreground);
+      --color-btn-primary-hover: var(--vscode-button-hoverBackground);
+      --color-btn-secondary-bg: var(--vscode-button-secondaryBackground);
+      --color-btn-secondary-fg: var(--vscode-button-secondaryForeground);
+      --color-btn-secondary-hover: var(--vscode-button-secondaryHoverBackground);
+      --color-badge-bg: var(--vscode-badge-background);
+      --color-badge-fg: var(--vscode-badge-foreground);
+      --color-progress: var(--vscode-progressBar-background);
+    }
+
+    /* ============================================================
+       离线预览兜底默认值（仅此处允许 hex）
+       ============================================================ */
+    :root {
+      --vscode-foreground: #cccccc;
+      --vscode-descriptionForeground: #9d9d9d;
+      --vscode-disabledForeground: #6b6b6b;
+      --vscode-textLink-foreground: #3794ff;
+      --vscode-icon-foreground: #c5c5c5;
+      --vscode-errorForeground: #f48771;
+      --vscode-warningForeground: #cca700;
+      --vscode-panel-background: #1e1e1e;
+      --vscode-sideBar-background: #252526;
+      --vscode-editor-background: #1e1e1e;
+      --vscode-list-background: #1e1e1e;
+      --vscode-input-background: #3c3c3c;
+      --vscode-dropdown-background: #3c3c3c;
+      --vscode-sideBarSectionHeader-background: #2d2d2d;
+      --vscode-list-hoverBackground: #2a2d2e;
+      --vscode-list-activeSelectionBackground: #094771;
+      --vscode-list-inactiveSelectionBackground: #37373d;
+      --vscode-list-activeSelectionForeground: #ffffff;
+      --vscode-editorWidget-background: #252526;
+      --vscode-panel-border: #3c3c3c;
+      --vscode-widget-border: #454545;
+      --vscode-contrastBorder: #808080;
+      --vscode-focusBorder: #007fd4;
+      --vscode-widget-shadow: rgba(0, 0, 0, 0.36);
+      --vscode-button-background: #0e639c;
+      --vscode-button-foreground: #ffffff;
+      --vscode-button-hoverBackground: #1177bb;
+      --vscode-button-secondaryBackground: #3a3d41;
+      --vscode-button-secondaryForeground: #cccccc;
+      --vscode-button-secondaryHoverBackground: #45494e;
+      --vscode-badge-background: #4d4d4d;
+      --vscode-badge-foreground: #ffffff;
+      --vscode-progressBar-background: #0e70c0;
+      --vscode-charts-green: #89d185;
+      --vscode-charts-red: #f14c4c;
+      --vscode-charts-yellow: #cca700;
+      --vscode-charts-orange: #e2c08d;
+      --vscode-diffEditor-insertedTextBackground: rgba(73, 163, 99, 0.2);
+      --vscode-diffEditor-removedTextBackground: rgba(187, 63, 63, 0.2);
+      --vscode-editorGutter-addedBackground: #9bcc709c;
+      --vscode-editorGutter-deletedBackground: #c0292900;
+      --vscode-editorGutter-modifiedBackground: #c2963300;
+      --vscode-input-placeholderForeground: #989898;
+      --vscode-checkbox-background: #3c3c3c;
+      --vscode-checkbox-foreground: #f0f0f0;
+      --vscode-checkbox-border: #3c3c3c;
+      --vscode-tree-indentGuidesStroke: #404040;
+      --vscode-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      --vscode-editor-font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    }
+
+    /* ============================================================
+       字体 / 间距 / 尺寸令牌
+       ============================================================ */
+    :root {
+      --font-family: var(--vscode-font-family);
+      --font-family-mono: var(--vscode-editor-font-family, 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace);
+      --font-size-xs: 11px;
+      --font-size-sm: 12px;
+      --font-size-md: 13px;
+      --font-size-lg: 15px;
+      --font-size-xl: 18px;
+      --font-weight-regular: 400;
+      --font-weight-medium: 500;
+      --font-weight-semibold: 600;
+      --font-weight-bold: 700;
+      --line-height-tight: 1.3;
+      --line-height-base: 1.5;
+      --line-height-relaxed: 1.6;
+      --space-1: 4px;
+      --space-2: 8px;
+      --space-3: 12px;
+      --space-4: 16px;
+      --space-5: 20px;
+      --space-6: 24px;
+      --space-7: 32px;
+      --space-8: 40px;
+      --control-height: 26px;
+      --control-height-sm: 22px;
+      --control-height-lg: 30px;
+      --row-height: 26px;
+      --row-height-header: 22px;
+      --radius-sm: 2px;
+      --radius-md: 3px;
+      --radius-badge: 3px;
+      --radius-lg: 4px;
+      --border-width: 1px;
+      --indent-step: 16px;
+    }
+
+    /* ============================================================
+       全局基础
+       ============================================================ */
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      font-family: var(--font-family);
+      font-size: var(--font-size-md);
+      line-height: var(--line-height-base);
+      color: var(--color-fg);
+      background: var(--color-bg-canvas);
+      -webkit-font-smoothing: antialiased;
+    }
+    .ic {
+      width: var(--space-4); height: var(--space-4);
+      display: inline-block; flex-shrink: 0; color: inherit;
+    }
+    .ic--sm { width: var(--space-3); height: var(--space-3); }
+    .ic--lg { width: var(--space-6); height: var(--space-6); }
+
+    .badge {
+      display: inline-flex; align-items: center; justify-content: center;
+      min-width: var(--space-4); height: var(--control-height-sm);
+      padding: 0 var(--space-1);
+      background: var(--color-badge-bg); color: var(--color-badge-fg);
+      border-radius: var(--radius-badge);
+      font-size: var(--font-size-xs); font-weight: var(--font-weight-medium); line-height: 1;
+    }
+
+    .panel { display: flex; flex-direction: column; height: 100%; background: var(--color-bg-canvas); }
+    .spacer { flex: 1 1 auto; }
+
+    /* ============================================================
+       Component: DemoBar
+       ============================================================ */
+    .demo-bar {
+      display: flex; align-items: center; gap: var(--space-4);
+      padding: var(--space-2) var(--space-4);
+      background: var(--color-bg-surface);
+      border-bottom: var(--border-width) solid var(--color-border);
+      font-size: var(--font-size-xs);
+      color: var(--color-fg-secondary);
+    }
+    .demo-bar .demo-tag { display: inline-flex; align-items: center; gap: var(--space-1); font-weight: var(--font-weight-medium); }
+    .demo-opt { display: inline-flex; align-items: center; gap: var(--space-1); cursor: pointer; user-select: none; }
+    .demo-opt input { accent-color: var(--color-focus); }
+    .demo-note { margin-left: auto; opacity: 0.8; }
+
+    /* ============================================================
+       Component: GateCard（svn 缺失 / AI 手动模式）
+       ============================================================ */
+    .gate-card {
+      margin: var(--space-4);
+      display: flex; gap: var(--space-3);
+      background: var(--color-bg-surface);
+      border: var(--border-width) solid var(--color-border);
+      border-left: 4px solid var(--color-border-strong);
+      border-radius: var(--radius-md);
+      padding: var(--space-3);
+    }
+    .gate-card--svn { border-left-color: var(--color-error-fg); }
+    .gate-card--ai  { border-left-color: var(--color-info-fg); }
+    .gate-card__icon { flex: none; margin-top: 1px; }
+    .gate-card--svn .gate-card__icon { color: var(--color-error-fg); }
+    .gate-card--ai  .gate-card__icon { color: var(--color-info-fg); }
+    .gate-card__body { min-width: 0; }
+    .gate-card__title {
+      font-size: var(--font-size-md); font-weight: var(--font-weight-semibold);
+      color: var(--color-fg); margin: 0 0 var(--space-1);
+      display: flex; align-items: center; gap: var(--space-2);
+    }
+    .gate-card__text {
+      font-size: var(--font-size-sm); color: var(--color-fg-secondary);
+      margin: 0 0 var(--space-2); line-height: var(--line-height-relaxed);
+    }
+    .gate-card__text code {
+      font-family: var(--font-family-mono); font-size: var(--font-size-xs);
+      color: var(--color-fg); background: var(--color-bg-input);
+      padding: 1px var(--space-1); border-radius: var(--radius-sm);
+    }
+    .gate-card__actions { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+
+    /* ============================================================
+       Component: ScopeBar（范围条 · 顶栏）
+       ============================================================ */
+    .scope-bar {
+      display: flex; align-items: center; gap: var(--space-2);
+      height: calc(var(--row-height-header) + var(--space-3));
+      padding: 0 var(--space-3);
+      background: var(--color-bg-surface);
+      border-bottom: var(--border-width) solid var(--color-border);
+      flex-shrink: 0;
+    }
+    .scope-bar .scope-icon { color: var(--color-icon); display: inline-flex; }
+    .scope-bar .scope-label { color: var(--color-fg-secondary); font-size: var(--font-size-sm); white-space: nowrap; }
+    .scope-bar .scope-path {
+      font-family: var(--font-family-mono); font-size: var(--font-size-sm);
+      color: var(--color-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .scope-bar .scope-count { margin-left: var(--space-1); }
+    .btn-icon {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: var(--control-height-sm); height: var(--control-height-sm);
+      background: transparent; color: var(--color-icon);
+      border: var(--border-width) solid transparent; border-radius: var(--radius-sm); cursor: pointer;
+    }
+    .btn-icon:hover { background: var(--color-bg-hover); }
+    .btn-icon:focus-visible { outline: 1px solid var(--color-focus); outline-offset: -1px; }
+
+    /* ============================================================
+       Component: InfoBanner（近似建议说明 · info 状态色提示条）
+       ============================================================ */
+    .info-banner {
+      display: flex; align-items: flex-start; gap: var(--space-2);
+      margin: var(--space-4);
+      padding: var(--space-3);
+      background: var(--color-info-bg);
+      border: var(--border-width) solid color-mix(in srgb, var(--color-info-fg) 32%, transparent);
+      border-left: 3px solid var(--color-info-fg);
+      border-radius: var(--radius-md);
+      color: var(--color-fg);
+      font-size: var(--font-size-sm);
+      line-height: var(--line-height-base);
+    }
+    .info-banner .ic { color: var(--color-info-fg); margin-top: 1px; }
+    .info-banner strong { font-weight: var(--font-weight-semibold); }
+
+    /* ============================================================
+       Component: UpdateSuggestionList（更新建议列表）
+       ============================================================ */
+    .suggestion-scroll { flex: 1 1 auto; overflow-y: auto; min-height: 0; }
+    .section-header {
+      display: flex; align-items: center; gap: var(--space-2);
+      height: var(--row-height-header);
+      padding: 0 var(--space-3);
+      background: var(--color-bg-section-header);
+      border-bottom: var(--border-width) solid var(--color-border);
+      font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold);
+      color: var(--color-fg); flex-shrink: 0;
+    }
+    .section-header .ic { color: var(--color-icon); }
+    .section-header .section-title { letter-spacing: .02em; }
+
+    /* AI 降级提示：本地推测模式（手动模式），不抛错 */
+    .manual-tag {
+      display: inline-flex; align-items: center; gap: var(--space-1);
+      margin-left: auto; padding: 0 var(--space-2);
+      height: var(--control-height-sm);
+      color: var(--color-info-fg);
+      background: color-mix(in srgb, var(--color-info-fg) 12%, transparent);
+      border-radius: var(--radius-badge);
+      font-size: var(--font-size-xs); font-weight: var(--font-weight-medium);
+    }
+    .manual-tag .ic { color: var(--color-info-fg); }
+
+    .suggestion-list { list-style: none; margin: 0; padding: 0; }
+    .suggestion-item {
+      display: flex; align-items: center; gap: var(--space-2);
+      padding: var(--space-2) var(--space-3);
+      min-height: var(--row-height);
+      border-bottom: var(--border-width) solid var(--color-border);
+    }
+    .suggestion-item:hover { background: var(--color-bg-hover); }
+    .suggestion-item .file-ico { color: var(--color-icon); }
+    .file-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+    .file-path {
+      font-family: var(--font-family-mono); font-size: var(--font-size-md);
+      color: var(--color-fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .file-desc { font-size: var(--font-size-sm); color: var(--color-fg-secondary); }
+
+    /* 状态标记（修改/新增），使用 diff 语义色 */
+    .status-tag {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: var(--control-height-sm); height: var(--control-height-sm);
+      border-radius: var(--radius-sm);
+      font-size: var(--font-size-xs); font-weight: var(--font-weight-semibold); flex-shrink: 0;
+    }
+    .status-tag.tag-mod { color: var(--color-diff-mod-fg); background: color-mix(in srgb, var(--color-diff-mod-fg) 16%, transparent); }
+    .status-tag.tag-add { color: var(--color-diff-add-fg); background: color-mix(in srgb, var(--color-diff-add-fg) 16%, transparent); }
+
+    /* 近似标记（基于本地状态推测），克制中性 */
+    .tag-approx {
+      display: inline-flex; align-items: center;
+      height: var(--control-height-sm); padding: 0 var(--space-1);
+      color: var(--color-fg-secondary); background: transparent;
+      border: var(--border-width) solid var(--color-border); border-radius: var(--radius-badge);
+      font-size: var(--font-size-xs); font-weight: var(--font-weight-medium); flex-shrink: 0;
+    }
+
+    /* v1 后期说明（克制 muted 注脚） */
+    .later-note {
+      display: flex; align-items: center; gap: var(--space-1);
+      margin: var(--space-4); padding: 0;
+      color: var(--color-fg-secondary);
+      font-size: var(--font-size-sm); line-height: var(--line-height-base);
+    }
+    .later-note .ic { color: var(--color-fg-secondary); }
+
+    /* ============================================================
+       Component: ActionBar（动作按钮条）
+       ============================================================ */
+    .action-bar {
+      display: flex; align-items: center; gap: var(--space-2);
+      padding: var(--space-3) var(--space-4);
+      background: var(--color-bg-surface);
+      border-top: var(--border-width) solid var(--color-border);
+      flex-shrink: 0;
+    }
+    .btn-primary {
+      display: inline-flex; align-items: center; gap: var(--space-1);
+      height: var(--control-height-lg); padding: 0 var(--space-3);
+      background: var(--color-btn-primary-bg); color: var(--color-btn-primary-fg);
+      border: var(--border-width) solid transparent; border-radius: var(--radius-sm);
+      font-size: var(--font-size-md); font-weight: var(--font-weight-medium); cursor: pointer;
+    }
+    .btn-primary:hover { background: var(--color-btn-primary-hover); }
+    .btn-primary:focus-visible { outline: 1px solid var(--color-focus); outline-offset: -1px; }
+    .btn-primary[disabled] { color: var(--color-fg-disabled); background: var(--color-btn-secondary-bg); cursor: default; }
+    .btn-primary .ic { width: var(--space-3); height: var(--space-3); }
+    .btn-secondary {
+      display: inline-flex; align-items: center; gap: var(--space-1);
+      height: var(--control-height); padding: 0 var(--space-3);
+      background: var(--color-btn-secondary-bg); color: var(--color-btn-secondary-fg);
+      border: var(--border-width) solid transparent; border-radius: var(--radius-sm);
+      font-size: var(--font-size-md); cursor: pointer;
+    }
+    .btn-secondary:hover { background: var(--color-btn-secondary-hover); }
+    .btn-secondary:focus-visible { outline: 1px solid var(--color-focus); outline-offset: -1px; }
+    .btn-secondary .ic { width: var(--space-3); height: var(--space-3); }
+  </style>
+</head>
+<body>
+  <!-- SVG 雪碧图：全部 inline SVG（<symbol> + <use>），单色 currentColor；注释标注对应 codicon 名 -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <symbol id="i-folder" viewBox="0 0 16 16"><path fill="currentColor" d="M1.5 2.5h4.1L7.1 4.1H14.5a1 1 0 0 1 1 1V12a1 1 0 0 1-1 1H1.5a1 1 0 0 1-1-1V3.5a1 1 0 0 1 1-1z"/></symbol>
+    <symbol id="i-file" viewBox="0 0 16 16"><path fill="currentColor" d="M3.5 1.5h5L13 6v8.5a.5.5 0 0 1-.5.5h-9a.5.5 0 0 1-.5-.5V2a.5.5 0 0 1 .5-.5z"/></symbol>
+    <symbol id="i-info" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="8" cy="5" r="1" fill="currentColor"/><rect x="7.2" y="6.8" width="1.6" height="5" rx=".8" fill="currentColor"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" d="M13.4 4.4A6 6 0 1 0 14 8"/><path fill="currentColor" d="M14 1.8 13 5 16.2 5.2z"/></symbol>
+    <symbol id="i-sync" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" d="M3 6.6a5 5 0 0 1 8.6-2.3L13 5.6"/><path fill="currentColor" d="M13 1.8 12 5.4 15.4 5.2z"/><path fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" d="M13 9.4a5 5 0 0 1-8.6 2.3L3 10.4"/><path fill="currentColor" d="M3 14.2 4 10.6 0.6 10.8z"/></symbol>
+    <symbol id="i-git-compare" viewBox="0 0 16 16"><circle cx="4.5" cy="3.6" r="2.3" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="11.5" cy="12.4" r="2.3" fill="none" stroke="currentColor" stroke-width="1.3"/><path fill="none" stroke="currentColor" stroke-width="1.3" d="M6.8 3.6H9.5a2.5 2.5 0 0 1 2.5 2.5v2.1M9.2 12.4H6.5A2.5 2.5 0 0 1 4 10V7.9"/></symbol>
+    <symbol id="i-warning" viewBox="0 0 16 16"><path d="M8 1.4l6.6 11.6H1.4z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M8 6v3.1" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><circle cx="8" cy="11" r="0.8" fill="currentColor"/></symbol>
+    <symbol id="i-error" viewBox="0 0 16 16"><path d="M8 1.4l6.6 11.6H1.4z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M8 6v3.1" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><circle cx="8" cy="11" r="0.8" fill="currentColor"/></symbol>
+    <symbol id="i-beaker" viewBox="0 0 16 16"><path d="M6.2 2v4.4L3.2 12a1.4 1.4 0 0 0 1.2 2.1h7.2A1.4 1.4 0 0 0 12.8 12L9.8 6.4V2" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/><path d="M5.4 2h5.2M5.6 9.2h4.8" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></symbol>
+    <symbol id="i-settings-gear" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2" fill="currentColor"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M12.6 3.4l-1.4 1.4M4.8 11.2l-1.4 1.4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></symbol>
+    <symbol id="i-link-external" viewBox="0 0 16 16"><path d="M6 3.5H3.5V12.5H12.5V10" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M9.5 3.5H12.5V6.5" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M12.5 3.5L7 9" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  </svg>
+
+  <!-- ===== Svelte webview 根组件 ===== -->
+  <div class="panel">
+
+    <!-- Component: DemoBar（纯前端演示开关） -->
+    <div class="demo-bar">
+      <span class="demo-tag"><svg class="ic ic--sm"><use href="#i-beaker"/></svg>演示模拟</span>
+      <label class="demo-opt"><input type="checkbox" id="demoAi" /> 模拟 AI 已配置</label>
+      <label class="demo-opt"><input type="checkbox" id="demoSvn" /> 模拟 svn 缺失</label>
+      <span class="demo-note">演示开关仅用于预览降级态，真实状态由宿主读取</span>
+    </div>
+
+    <!-- Component: SvnMissingGate（svn 缺失 → 引导卡，默认隐藏） -->
+    <section class="gate-card gate-card--svn" data-svn-gate hidden aria-label="svn 缺失引导">
+      <span class="gate-card__icon"><svg class="ic ic--lg"><use href="#i-error"/></svg></span>
+      <div class="gate-card__body">
+        <p class="gate-card__title"><svg class="ic ic--sm"><use href="#i-error"/></svg>svn 缺失</p>
+        <p class="gate-card__text">
+          未找到可用的 svn 可执行文件，无法执行「更新当前范围」。请检查设置项
+          <code>svnWorkbench.svn.path</code>，或安装命令行 svn / TortoiseSVN 后重试。扩展不会因此静默退出（§3.4 / §3.7）。
+        </p>
+        <div class="gate-card__actions">
+          <button class="btn btn-secondary" data-action="svn-config"><svg class="ic ic--sm"><use href="#i-settings-gear"/></svg>去配置</button>
+          <button class="btn btn-secondary" data-action="svn-install"><svg class="ic ic--sm"><use href="#i-link-external"/></svg>去安装</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Component: Panel（svn 可用时显示） -->
+    <div class="panel-body" data-panel>
+
+      <!-- Component: ScopeBar -->
+      <header class="scope-bar">
+        <span class="scope-icon"><svg class="ic"><use href="#i-folder"/></svg></span>
+        <span class="scope-label">当前范围</span>
+        <span class="scope-path">D:\work\orders-service\src\服务层</span>
+        <span class="badge scope-count">5 项待更新</span>
+        <span class="spacer"></span>
+        <button class="btn-icon" id="btn-refresh" title="刷新" aria-label="刷新">
+          <svg class="ic"><use href="#i-refresh"/></svg>
+        </button>
+      </header>
+
+      <!-- Component: AiManualGate（AI 未配置 → 手动模式 info 卡，默认显示，由 demoAi 隐藏） -->
+      <section class="gate-card gate-card--ai" data-ai-gate aria-label="AI 未配置">
+        <span class="gate-card__icon"><svg class="ic ic--lg"><use href="#i-info"/></svg></span>
+        <div class="gate-card__body">
+          <p class="gate-card__title"><svg class="ic ic--sm"><use href="#i-info"/></svg>手动模式（AI 未配置）</p>
+          <p class="gate-card__text">
+            未检测到 AI 模型配置，更新建议降级为「本地推测模式」，不阻断更新流程。
+            运行 <code>SVN：AI 配置模型</code> 后可获得更精准的合并与建议。
+          </p>
+          <div class="gate-card__actions">
+            <button class="btn btn-secondary" data-action="ai-config"><svg class="ic ic--sm"><use href="#i-settings-gear"/></svg>运行 SVN：AI 配置模型</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Component: InfoBanner（近似建议说明） -->
+      <div class="info-banner">
+        <svg class="ic"><use href="#i-info"/></svg>
+        <span>
+          <strong>更新建议为近似建议</strong>：基于本地工作副本状态推测，<strong>非精确远端预览</strong>、<strong>非冲突预测</strong>。
+          实际变更以执行更新后为准；凭据优先使用 SVN 认证缓存，不会默认传递密码。
+        </span>
+      </div>
+
+      <!-- Component: UpdateSuggestionList -->
+      <div class="suggestion-scroll">
+        <div class="section-header">
+          <svg class="ic"><use href="#i-sync"/></svg>
+          <span class="section-title">更新建议</span>
+          <span class="badge">5 项</span>
+          <!-- AI 降级提示：未启用 AI，本地推测（手动模式），不抛错 -->
+          <span class="manual-tag">
+            <svg class="ic ic--sm"><use href="#i-info"/></svg>
+            本地推测 · 未启用 AI
+          </span>
+        </div>
+
+        <ul class="suggestion-list">
+          <li class="suggestion-item">
+            <svg class="ic file-ico"><use href="#i-file"/></svg>
+            <div class="file-main">
+              <span class="file-path">src/服务层/订单服务.ts</span>
+              <span class="file-desc">修改 · 基于本地状态推测，可能存在偏差</span>
+            </div>
+            <span class="tag-approx">近似</span>
+            <span class="status-tag tag-mod" title="修改">M</span>
+          </li>
+
+          <li class="suggestion-item">
+            <svg class="ic file-ico"><use href="#i-file"/></svg>
+            <div class="file-main">
+              <span class="file-path">docs/需求.md</span>
+              <span class="file-desc">修改</span>
+            </div>
+            <span class="status-tag tag-mod" title="修改">M</span>
+          </li>
+
+          <li class="suggestion-item">
+            <svg class="ic file-ico"><use href="#i-file"/></svg>
+            <div class="file-main">
+              <span class="file-path">src/服务层/支付服务.ts</span>
+              <span class="file-desc">新增 · 远端新增文件，本地尚未检出</span>
+            </div>
+            <span class="status-tag tag-add" title="新增">A</span>
+          </li>
+
+          <li class="suggestion-item">
+            <svg class="ic file-ico"><use href="#i-file"/></svg>
+            <div class="file-main">
+              <span class="file-path">src/组件/订单卡片.vue</span>
+              <span class="file-desc">修改</span>
+            </div>
+            <span class="status-tag tag-mod" title="修改">M</span>
+          </li>
+
+          <li class="suggestion-item">
+            <svg class="ic file-ico"><use href="#i-file"/></svg>
+            <div class="file-main">
+              <span class="file-path">package.json</span>
+              <span class="file-desc">修改 · 依赖版本可能有更新</span>
+            </div>
+            <span class="status-tag tag-mod" title="修改">M</span>
+          </li>
+        </ul>
+
+        <!-- v1 不做项标注（§3.4 / §6 后期） -->
+        <p class="later-note">
+          <svg class="ic ic--sm"><use href="#i-info"/></svg>
+          v1 暂不包含：远端变更精确预览、更新前冲突预测（规划于后期版本）。
+        </p>
+      </div>
+
+      <!-- Component: ActionBar（动作按钮） -->
+      <footer class="action-bar">
+        <button class="btn-primary" id="btn-update">
+          <svg class="ic"><use href="#i-sync"/></svg>
+          更新当前范围
+        </button>
+        <button class="btn-secondary" id="btn-diff">
+          <svg class="ic"><use href="#i-git-compare"/></svg>
+          打开差异对比
+        </button>
+        <span class="spacer"></span>
+        <button class="btn-secondary" id="btn-refresh-2">
+          <svg class="ic"><use href="#i-refresh"/></svg>
+          刷新
+        </button>
+      </footer>
+    </div>
+  </div>
+
+  <script>
+    /* 极少原生 JS（无 innerHTML 拼接）：仅做轻量交互反馈，代表 Svelte 事件绑定占位 */
+    (function () {
+      var panel = document.querySelector('[data-panel]');
+      var svnGate = document.querySelector('[data-svn-gate]');
+      var aiGate = document.querySelector('[data-ai-gate]');
+      var demoSvn = document.getElementById('demoSvn');
+      var demoAi = document.getElementById('demoAi');
+
+      // —— 演示开关：svn 缺失 → 引导卡替代主面板（不静默退出） ——
+      demoSvn.addEventListener('change', function () {
+        var missing = demoSvn.checked;
+        svnGate.hidden = !missing;
+        panel.hidden = missing;
+      });
+
+      // —— 演示开关：AI 已配置 → 隐藏手动模式 info 卡 ——
+      demoAi.addEventListener('change', function () {
+        aiGate.hidden = demoAi.checked;
+      });
+
+      var updateBtn = document.getElementById('btn-update');
+      var refreshBtns = [document.getElementById('btn-refresh'), document.getElementById('btn-refresh-2')];
+
+      // 更新当前范围：禁用并进入「更新中」态（真实实现调用 svn update，凭据走 SVN auth cache）
+      updateBtn.addEventListener('click', function () {
+        if (updateBtn.disabled) return;
+        var original = updateBtn.textContent;
+        updateBtn.disabled = true;
+        updateBtn.textContent = '更新中…';
+        setTimeout(function () {
+          updateBtn.disabled = false;
+          updateBtn.textContent = original;
+        }, 1500);
+      });
+
+      // 刷新：仅视觉反馈（真实实现重新拉取本地状态推测）
+      refreshBtns.forEach(function (b) {
+        if (!b) return;
+        b.addEventListener('click', function () {
+          b.style.opacity = '0.5';
+          setTimeout(function () { b.style.opacity = '1'; }, 400);
+        });
+      });
+
+      // 占位命令桥接
+      var cfg = document.querySelector('[data-action="svn-config"]');
+      if (cfg) cfg.addEventListener('click', function () {});
+      var inst = document.querySelector('[data-action="svn-install"]');
+      if (inst) inst.addEventListener('click', function () {});
+      var ai = document.querySelector('[data-action="ai-config"]');
+      if (ai) ai.addEventListener('click', function () {});
+      document.getElementById('btn-diff').addEventListener('click', function () {});
+    })();
+  </script>
+</body>
+</html>

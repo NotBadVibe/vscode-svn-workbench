@@ -1,0 +1,1364 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SVN Workbench · 范围与筛选</title>
+<!--
+  设计系统依据：设计令牌.md（SVN Workbench v1 共享设计令牌 §2）
+  需求依据：    完整需求摘要.md · 功能 6 · 范围与筛选
+  说明：本文件是 webview「范围与筛选」上下文区块的自包含 HTML 蓝图（移植并完善自 prototype-scope-filter.html）。
+        组件样式仅消费 --token 自定义属性，禁止 hex（离线预览兜底 :root 块除外）；
+        图标统一用 inline SVG <symbol>+<use>（单色 currentColor，标注 codicon 名）。
+  完善项：①统一 i-* 符号表替代散落 inline SVG；②消除裸几何值（ic 16/14/18px→令牌、card/pill 4px→--space-1、
+         pill 开关改为令牌化复选框、dot 8px→--space-2、84px 标签宽移除、calc(-1px)→-var(--border-width) 等）；
+        ③新增 SvnMissingGate（svn 缺失引导卡）与 AiManualGate（AI 未配置手动模式卡）两处降级分支；④新增演示开关 DemoBar。
+-->
+<style>
+/* ============================================================
+   预览默认值（离线兜底）：仅当 webview 未注入宿主 --vscode-* 时生效。
+   本段含 hex 仅用于独立浏览器预览；组件样式段不含任何 hex。
+   ============================================================ */
+:root {
+  --vscode-foreground: #cccccc;
+  --vscode-descriptionForeground: #9d9d9d;
+  --vscode-disabledForeground: #6b6b6b;
+  --vscode-textLink-foreground: #3794ff;
+  --vscode-icon-foreground: #c5c5c5;
+  --vscode-panel-background: #1e1e1e;
+  --vscode-sideBar-background: #252526;
+  --vscode-editor-background: #1e1e1e;
+  --vscode-list-background: #1e1e1e;
+  --vscode-input-background: #3c3c3c;
+  --vscode-dropdown-background: #3c3c3c;
+  --vscode-sideBarSectionHeader-background: #2d2d2d;
+  --vscode-list-hoverBackground: #2a2d2e;
+  --vscode-list-activeSelectionBackground: #094771;
+  --vscode-list-inactiveSelectionBackground: #37373d;
+  --vscode-list-activeSelectionForeground: #ffffff;
+  --vscode-editorWidget-background: #252526;
+  --vscode-panel-border: #2b2b2b;
+  --vscode-widget-border: #454545;
+  --vscode-contrastBorder: #2b2b2b;
+  --vscode-errorForeground: #f48771;
+  --vscode-warningForeground: #cca700;
+  --vscode-charts-green: #89d185;
+  --vscode-charts-yellow: #e2c08d;
+  --vscode-charts-orange: #d7a022;
+  --vscode-charts-red: #f48771;
+  --vscode-focusBorder: #007fd4;
+  --vscode-widget-shadow: rgba(0, 0, 0, 0.36);
+  --vscode-button-background: #0e639c;
+  --vscode-button-foreground: #ffffff;
+  --vscode-button-hoverBackground: #1177bb;
+  --vscode-button-secondaryBackground: #3a3d41;
+  --vscode-button-secondaryForeground: #cccccc;
+  --vscode-button-secondaryHoverBackground: #45494e;
+  --vscode-badge-background: #4d4d4d;
+  --vscode-badge-foreground: #ffffff;
+  --vscode-progressBar-background: #0e70c0;
+  --vscode-diffEditor-insertedTextBackground: rgba(173, 215, 229, 0.2);
+  --vscode-diffEditor-removedTextBackground: rgba(255, 175, 175, 0.2);
+  --vscode-editorGutter-addedBackground: #9ccc7a;
+  --vscode-editorGutter-deletedBackground: #c54545;
+  --vscode-editorGutter-modifiedBackground: #e2c08d;
+  --vscode-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", Roboto, Helvetica, Arial, sans-serif;
+  --vscode-editor-font-family: "SF Mono", "Cascadia Code", Monaco, Consolas, "Liberation Mono", Menlo, monospace;
+  --vscode-input-placeholderForeground: #989898;
+  --vscode-tree-indentGuidesStroke: #404040;
+  --vscode-checkbox-background: #313131;
+  --vscode-checkbox-foreground: #f0f0f0;
+  --vscode-checkbox-border: #6b6b6b;
+}
+
+/* ============================================================
+   设计令牌（粘贴自 设计令牌.md §2，全部 var(--vscode-*) 派生）
+   ============================================================ */
+:root {
+  --color-fg: var(--vscode-foreground);
+  --color-fg-secondary: var(--vscode-descriptionForeground);
+  --color-fg-disabled: var(--vscode-disabledForeground);
+  --color-fg-link: var(--vscode-textLink-foreground);
+  --color-icon: var(--vscode-icon-foreground);
+  --color-bg-canvas: var(--vscode-panel-background);
+  --color-bg-surface: var(--vscode-sideBar-background);
+  --color-bg-editor: var(--vscode-editor-background);
+  --color-bg-list: var(--vscode-list-background);
+  --color-bg-input: var(--vscode-input-background);
+  --color-bg-dropdown: var(--vscode-dropdown-background);
+  --color-bg-section-header: var(--vscode-sideBarSectionHeader-background);
+  --color-bg-hover: var(--vscode-list-hoverBackground);
+  --color-bg-selected: var(--vscode-list-activeSelectionBackground);
+  --color-bg-selected-inactive: var(--vscode-list-inactiveSelectionBackground);
+  --color-fg-selected: var(--vscode-list-activeSelectionForeground);
+  --color-bg-widget: var(--vscode-editorWidget-background);
+  --color-border: var(--vscode-panel-border);
+  --color-border-widget: var(--vscode-widget-border);
+  --color-border-strong: var(--vscode-contrastBorder, var(--vscode-panel-border));
+
+  --color-error-fg: var(--vscode-errorForeground);
+  --color-error-bg: color-mix(in srgb, var(--vscode-errorForeground) 14%, var(--vscode-panel-background));
+  --color-warning-fg: var(--vscode-warningForeground, var(--vscode-charts-yellow));
+  --color-warning-bg: color-mix(in srgb, var(--vscode-warningForeground, var(--vscode-charts-yellow)) 14%, var(--vscode-panel-background));
+  --color-info-fg: var(--vscode-textLink-foreground);
+  --color-info-bg: color-mix(in srgb, var(--vscode-textLink-foreground) 14%, var(--vscode-panel-background));
+  --color-success-fg: var(--vscode-charts-green);
+  --color-success-bg: color-mix(in srgb, var(--vscode-charts-green) 14%, var(--vscode-panel-background));
+
+  --color-diff-add-fg: var(--vscode-charts-green);
+  --color-diff-add-bg: var(--vscode-diffEditor-insertedTextBackground, var(--vscode-charts-green));
+  --color-diff-add-gutter: var(--vscode-editorGutter-addedBackground, var(--vscode-charts-green));
+  --color-diff-del-fg: var(--vscode-charts-red, var(--vscode-errorForeground));
+  --color-diff-del-bg: var(--vscode-diffEditor-removedTextBackground, var(--vscode-charts-red));
+  --color-diff-del-gutter: var(--vscode-editorGutter-deletedBackground, var(--vscode-charts-red));
+  --color-diff-mod-fg: var(--vscode-charts-yellow, var(--vscode-charts-orange));
+  --color-diff-mod-gutter: var(--vscode-editorGutter-modifiedBackground, var(--vscode-charts-yellow));
+
+  --color-focus: var(--vscode-focusBorder);
+  --shadow-widget: var(--vscode-widget-shadow);
+  --color-btn-primary-bg: var(--vscode-button-background);
+  --color-btn-primary-fg: var(--vscode-button-foreground);
+  --color-btn-primary-hover: var(--vscode-button-hoverBackground);
+  --color-btn-secondary-bg: var(--vscode-button-secondaryBackground);
+  --color-btn-secondary-fg: var(--vscode-button-secondaryForeground);
+  --color-btn-secondary-hover: var(--vscode-button-secondaryHoverBackground);
+  --color-badge-bg: var(--vscode-badge-background);
+  --color-badge-fg: var(--vscode-badge-foreground);
+  --color-progress: var(--vscode-progressBar-background);
+}
+
+/* ============================================================
+   字体与间距令牌（设计令牌.md §3 / §4，4px 基准）
+   ============================================================ */
+:root {
+  --font-family: var(--vscode-font-family);
+  --font-family-mono: var(--vscode-editor-font-family, "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace);
+  --font-size-xs: 11px;
+  --font-size-sm: 12px;
+  --font-size-md: 13px;
+  --font-size-lg: 15px;
+  --font-size-xl: 18px;
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+  --line-height-tight: 1.3;
+  --line-height-base: 1.5;
+  --line-height-relaxed: 1.6;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 40px;
+  --control-height: 26px;
+  --control-height-sm: 22px;
+  --control-height-lg: 30px;
+  --row-height: 26px;
+  --row-height-header: 22px;
+  --radius-sm: 2px;
+  --radius-md: 3px;
+  --radius-badge: 3px;
+  --radius-lg: 4px;
+  --border-width: 1px;
+  --indent-step: 16px;
+}
+
+/* ============================================================
+   组件样式（仅使用 --token 自定义属性，无 hex）
+   ============================================================ */
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--color-bg-canvas);
+  color: var(--color-fg);
+  font-family: var(--font-family);
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-base);
+  -webkit-font-smoothing: antialiased;
+}
+:focus-visible { outline: 1px solid var(--color-focus); outline-offset: 1px; }
+
+/* 统一图标（单色 currentColor，尺寸走令牌，杜绝裸 px） */
+.ic { width: var(--space-4); height: var(--space-4); display: inline-block; flex: none; color: var(--color-icon); vertical-align: middle; }
+.ic--fg { color: var(--color-fg); }
+.ic--sm { width: var(--space-3); height: var(--space-3); }
+.ic--lg { width: var(--space-5); height: var(--space-5); }
+
+/* —— Component: DemoBar（演示开关，纯前端模拟降级态） —— */
+.demo-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-1) var(--space-4);
+  background: var(--color-bg-section-header);
+  border-bottom: var(--border-width) solid var(--color-border);
+  font-size: var(--font-size-xs);
+  color: var(--color-fg-secondary);
+}
+.demo-bar__label { font-weight: var(--font-weight-medium); }
+.demo-bar__opt { display: inline-flex; align-items: center; gap: var(--space-1); cursor: pointer; }
+.demo-bar__opt input { width: var(--space-3); height: var(--space-3); accent-color: var(--color-focus); }
+
+/* —— Component: GateCard（降级引导卡，Raycast 左条骨架） —— */
+.gate-card {
+  display: flex;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  background: var(--color-bg-surface);
+  border: var(--border-width) solid var(--color-border);
+  border-left-width: var(--space-1);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--space-3);
+}
+.gate-card--svn { border-left-color: var(--color-error-fg); }
+.gate-card--ai { border-left-color: var(--color-info-fg); }
+.gate-card__icon { display: inline-flex; }
+.gate-card--svn .gate-card__icon { color: var(--color-error-fg); }
+.gate-card--ai .gate-card__icon { color: var(--color-info-fg); }
+.gate-card__body { min-width: 0; }
+.gate-card__title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+}
+.gate-card--svn .gate-card__title { color: var(--color-error-fg); }
+.gate-card--ai .gate-card__title { color: var(--color-info-fg); }
+.gate-card__desc {
+  font-size: var(--font-size-sm);
+  color: var(--color-fg-secondary);
+  margin-top: var(--space-1);
+  line-height: var(--line-height-base);
+}
+.gate-card__actions { display: flex; gap: var(--space-2); margin-top: var(--space-2); flex-wrap: wrap; }
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: var(--control-height);
+  padding: 0 var(--space-3);
+  background: var(--color-btn-primary-bg);
+  color: var(--color-btn-primary-fg);
+  border: var(--border-width) solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  font-family: var(--font-family);
+  font-weight: var(--font-weight-medium);
+}
+.btn-primary:hover { background: var(--color-btn-primary-hover); }
+.btn-primary .ic { color: var(--color-btn-primary-fg); }
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: var(--control-height);
+  padding: 0 var(--space-3);
+  background: var(--color-btn-secondary-bg);
+  color: var(--color-btn-secondary-fg);
+  border: var(--border-width) solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  font-family: var(--font-family);
+  font-weight: var(--font-weight-medium);
+}
+.btn-secondary:hover { background: var(--color-btn-secondary-hover); }
+.btn-secondary .ic { color: var(--color-btn-secondary-fg); }
+
+/* ============================================================
+   Component: ScopeContextBar（范围上下文顶栏 / 面板头部）
+   ============================================================ */
+.scope-bar {
+  position: sticky; top: 0; z-index: 5;
+  display: flex; align-items: center; gap: var(--space-3);
+  height: calc(var(--row-height-header) + var(--space-3));
+  padding: 0 var(--space-4);
+  background: var(--color-bg-surface);
+  border-bottom: var(--border-width) solid var(--color-border);
+}
+.scope-bar__icon { color: var(--color-icon); display: inline-flex; }
+.scope-bar__titles { display: flex; flex-direction: column; line-height: var(--line-height-tight); min-width: 0; }
+.scope-bar__title {
+  font-size: var(--font-size-lg); font-weight: var(--font-weight-semibold);
+  color: var(--color-fg); letter-spacing: 0.2px;
+}
+.scope-bar__sub { font-size: var(--font-size-xs); color: var(--color-fg-secondary); }
+.scope-bar__spacer { flex: 1 1 auto; }
+.scope-bar__actions { display: flex; align-items: center; gap: var(--space-2); }
+
+/* 图标按钮（tool-btn） */
+.tool-btn {
+  height: var(--control-height-sm); min-width: var(--control-height-sm);
+  padding: 0 var(--space-1);
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--space-1);
+  background: transparent; color: var(--color-icon);
+  border: var(--border-width) solid transparent; border-radius: var(--radius-sm);
+  cursor: pointer; font-family: inherit; font-size: var(--font-size-sm);
+}
+.tool-btn:hover { background: var(--color-bg-hover); }
+.tool-btn:focus-visible { outline: 1px solid var(--color-focus); outline-offset: -1px; }
+
+/* ============================================================
+   Component: MenuContractStrip（SVN 子菜单契约提示条 · §2.2）
+   ============================================================ */
+.contract-strip {
+  display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
+  padding: var(--space-2) var(--space-4);
+  background: var(--color-bg-canvas);
+  border-bottom: var(--border-width) solid var(--color-border);
+}
+.contract-strip__label {
+  font-size: var(--font-size-xs); color: var(--color-fg-secondary);
+  display: inline-flex; align-items: center; gap: var(--space-1);
+}
+.menu-chip {
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  height: var(--control-height-sm); padding: 0 var(--space-2);
+  background: var(--color-bg-surface);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs); color: var(--color-fg);
+}
+.menu-chip .ic { color: var(--color-fg-secondary); }
+
+/* ============================================================
+   主体布局
+   ============================================================ */
+.main {
+  max-width: 920px; margin: 0 auto;
+  padding: var(--space-5) var(--space-4) var(--space-7);
+  display: flex; flex-direction: column; gap: var(--space-6);
+}
+
+/* 区块标题条 */
+.block__head {
+  display: flex; align-items: center; gap: var(--space-2);
+  height: var(--row-height-header);
+  margin-bottom: var(--space-3);
+}
+.block__head .ic { color: var(--color-fg-secondary); }
+.block__title { font-size: var(--font-size-lg); font-weight: var(--font-weight-semibold); color: var(--color-fg); }
+.block__hint { font-size: var(--font-size-xs); color: var(--color-fg-secondary); margin-left: auto; }
+
+/* ============================================================
+   Component: ScopeRuleCard（区块1 · 全局操作范围规则）
+   ============================================================ */
+.rule-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
+@media (max-width: 640px) { .rule-grid { grid-template-columns: 1fr; } }
+
+/* Raycast 风状态卡：左 4px（--space-1）状态条 + 内容 */
+.card {
+  display: flex; gap: var(--space-3);
+  background: var(--color-bg-surface);
+  border: var(--border-width) solid var(--color-border);
+  border-left: var(--space-1) solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+}
+.card--info   { border-left-color: var(--color-info-fg); }
+.card--warning{ border-left-color: var(--color-warning-fg); }
+.card--error  { border-left-color: var(--color-error-fg); }
+.card--success{ border-left-color: var(--color-success-fg); }
+.card__icon { flex: none; }
+.card--info   .card__icon { color: var(--color-info-fg); }
+.card--warning .card__icon { color: var(--color-warning-fg); }
+.card--error  .card__icon { color: var(--color-error-fg); }
+.card--success .card__icon { color: var(--color-success-fg); }
+.card__body { min-width: 0; }
+.card__title { font-size: var(--font-size-md); font-weight: var(--font-weight-medium); color: var(--color-fg); margin: 0 0 var(--space-1); }
+.card__text { font-size: var(--font-size-sm); color: var(--color-fg-secondary); margin: 0; line-height: var(--line-height-relaxed); }
+.card__text strong { color: var(--color-fg); font-weight: var(--font-weight-medium); }
+
+/* ============================================================
+   Component: RightClickScopeTree（区块2 · 右键文件夹范围显示）
+   ============================================================ */
+.scope-panel {
+  background: var(--color-bg-surface);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+.scope-panel__bar {
+  display: flex; align-items: center; gap: var(--space-2);
+  height: calc(var(--row-height-header) + var(--space-2));
+  padding: 0 var(--space-3);
+  background: var(--color-bg-section-header);
+  border-bottom: var(--border-width) solid var(--color-border);
+}
+.scope-panel__bar .ic { color: var(--color-fg-secondary); }
+.scope-breadcrumb {
+  font-family: var(--font-family-mono); font-size: var(--font-size-sm);
+  color: var(--color-fg-secondary); display: inline-flex; align-items: center; gap: var(--space-1);
+}
+.scope-breadcrumb .sep { color: var(--color-fg-disabled); }
+.scope-breadcrumb .here { color: var(--color-fg-selected); background: var(--color-bg-selected); padding: 0 var(--space-1); border-radius: var(--radius-sm); }
+.scope-panel__spacer { flex: 1 1 auto; }
+
+/* 范围外切换（令牌化复选框，替代原 pill 开关） */
+.scope-toggle { display: inline-flex; align-items: center; gap: var(--space-1); font-size: var(--font-size-xs); color: var(--color-fg-secondary); cursor: pointer; }
+.scope-toggle .check__box { width: var(--space-4); height: var(--space-4); }
+
+/* 树 */
+.tree { list-style: none; margin: 0; padding: var(--space-1) 0; }
+.tree .tree { padding: 0; }
+.tree__row {
+  display: flex; align-items: center; gap: var(--space-1);
+  height: var(--row-height); padding-right: var(--space-3);
+  color: var(--color-fg); cursor: default; position: relative;
+  border-left: var(--border-width) solid transparent;
+}
+.tree__row:hover { background: var(--color-bg-hover); }
+.tree__row .indent { width: var(--space-4); flex: none; }
+.tree__row .twist {
+  width: var(--space-4); height: var(--space-4); flex: none; display: inline-flex; align-items: center; justify-content: center;
+  color: var(--color-fg-secondary); background: none; border: none; cursor: pointer; padding: 0;
+}
+.tree__row .twist .ic { transition: transform 120ms ease; }
+.tree__row.is-collapsed > .twist .ic { transform: rotate(-90deg); }
+.tree__row .node-ic { flex: none; color: var(--color-icon); }
+.tree__row .label { font-size: var(--font-size-md); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tree__row .meta { margin-left: auto; display: inline-flex; align-items: center; gap: var(--space-2); flex: none; }
+
+/* 缩进参考线 */
+.tree__children { list-style: none; margin: 0; padding-left: var(--indent-step); border-left: var(--border-width) solid var(--vscode-tree-indentGuidesStroke); margin-left: calc(var(--indent-step) - var(--border-width)); }
+.tree__row.is-collapsed + .tree__children { display: none; }
+
+/* 选中（右键范围根） */
+.tree__row--scope {
+  background: var(--color-bg-selected); color: var(--color-fg-selected);
+  border-left-color: var(--color-border-strong);
+}
+.tree__row--scope .node-ic,
+.tree__row--scope .twist { color: var(--color-fg-selected); }
+.tree__row--scope:hover { background: var(--color-bg-selected); }
+
+/* 范围内但非操作目标的文件 */
+.tree__row--in-scope .node-ic { color: var(--color-fg-secondary); }
+
+/* 范围外（调试预览显示时） */
+.tree__row--outofscope { color: var(--color-fg-disabled); }
+.tree__row--outofscope .node-ic,
+.tree__row--outofscope .twist { color: var(--color-fg-disabled); }
+.tree__row--outofscope .label { font-style: italic; }
+/* 默认隐藏范围外（仅显示右键范围） */
+.tree__children--hidden, .tree__row--outofscope { display: none; }
+.scope-panel.show-outofscope .tree__row--outofscope { display: flex; }
+
+/* 生成物排除徽标 */
+.badge {
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  height: var(--space-4); padding: 0 var(--space-1);
+  background: var(--color-badge-bg); color: var(--color-badge-fg);
+  border-radius: var(--radius-badge); font-size: var(--font-size-xs); font-weight: var(--font-weight-medium);
+  font-family: var(--font-family-mono);
+}
+.badge--exclude { background: transparent; color: var(--color-fg-disabled); border: var(--border-width) solid var(--color-border); }
+.badge--scope { background: var(--color-success-bg); color: var(--color-success-fg); border: var(--border-width) solid color-mix(in srgb, var(--color-success-fg) 40%, transparent); }
+
+/* 范围外摘要 */
+.outofscope-summary {
+  display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
+  padding: var(--space-2) var(--space-3);
+  border-top: var(--border-width) solid var(--color-border);
+  background: var(--color-bg-canvas);
+  font-size: var(--font-size-xs); color: var(--color-fg-secondary);
+}
+.outofscope-summary .ic { color: var(--color-fg-disabled); }
+.outofscope-summary code { font-family: var(--font-family-mono); color: var(--color-fg); }
+
+/* ============================================================
+   Component: FilterLayers（区块3 · 筛选层级：目录 / 文件 / 状态）
+   ============================================================ */
+.filter-panel {
+  background: var(--color-bg-surface);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  display: flex; flex-direction: column; gap: var(--space-3);
+}
+.filter-row { display: flex; align-items: center; gap: var(--space-3); }
+.filter-row__label {
+  flex: none; display: inline-flex; align-items: center; gap: var(--space-1);
+  font-size: var(--font-size-sm); color: var(--color-fg-secondary);
+}
+.filter-row__label .ic { color: var(--color-fg-secondary); }
+.filter-row__control { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: var(--space-2); }
+
+/* dropdown（范围选择） */
+.dropdown {
+  position: relative; flex: 1 1 auto; max-width: 360px;
+}
+.dropdown__trigger {
+  width: 100%; height: var(--control-height);
+  display: flex; align-items: center; gap: var(--space-1);
+  padding: 0 var(--space-2);
+  background: var(--color-bg-dropdown); color: var(--color-fg);
+  border: var(--border-width) solid var(--color-border); border-radius: var(--radius-sm);
+  font-family: var(--font-family-mono); font-size: var(--font-size-sm);
+  cursor: pointer; text-align: left;
+}
+.dropdown__trigger:hover { border-color: var(--color-border-strong); }
+.dropdown__trigger:focus-visible { outline: 1px solid var(--color-focus); outline-offset: -1px; }
+.dropdown__trigger .chev { margin-left: auto; color: var(--color-fg-secondary); }
+.dropdown__menu {
+  position: absolute; top: calc(100% + var(--space-1)); left: 0; right: 0; z-index: 10;
+  background: var(--color-bg-dropdown); border: var(--border-width) solid var(--color-border-widget);
+  border-radius: var(--radius-sm); box-shadow: var(--shadow-widget); padding: var(--space-1);
+  display: none;
+}
+.dropdown.is-open .dropdown__menu { display: block; }
+.dropdown__item {
+  height: var(--row-height); display: flex; align-items: center; gap: var(--space-1);
+  padding: 0 var(--space-2); border-radius: var(--radius-sm); cursor: pointer;
+  font-family: var(--font-family-mono); font-size: var(--font-size-sm); color: var(--color-fg);
+}
+.dropdown__item:hover { background: var(--color-bg-hover); }
+.dropdown__item.is-selected { background: var(--color-bg-selected); color: var(--color-fg-selected); }
+
+/* search input（文件名筛选） */
+.input {
+  flex: 1 1 auto; max-width: 360px; height: var(--control-height);
+  display: flex; align-items: center; gap: var(--space-1);
+  padding: 0 var(--space-2);
+  background: var(--color-bg-input); color: var(--color-fg);
+  border: var(--border-width) solid var(--color-border); border-radius: var(--radius-sm);
+}
+.input .ic { color: var(--color-fg-secondary); }
+.input input {
+  flex: 1 1 auto; min-width: 0; border: none; outline: none; background: transparent;
+  color: var(--color-fg); font-family: var(--font-family-mono); font-size: var(--font-size-sm);
+}
+.input input::placeholder { color: var(--vscode-input-placeholderForeground); }
+.input:focus-within { border-color: var(--color-focus); }
+
+/* 状态多选（check 组） */
+.check-group { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+.check {
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  cursor: pointer; font-size: var(--font-size-sm); color: var(--color-fg);
+  user-select: none;
+}
+.check input { position: absolute; opacity: 0; width: 0; height: 0; }
+.check__box {
+  width: var(--space-4); height: var(--space-4); flex: none;
+  border: var(--border-width) solid var(--vscode-checkbox-border);
+  background: var(--vscode-checkbox-background); border-radius: var(--radius-sm);
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.check__box .ic { color: var(--vscode-checkbox-foreground); opacity: 0; }
+.check input:checked + .check__box .ic { opacity: 1; }
+.check input:focus-visible + .check__box { outline: 1px solid var(--color-focus); outline-offset: 1px; }
+.check__count { font-family: var(--font-family-mono); font-size: var(--font-size-xs); color: var(--color-fg-secondary); }
+
+/* 状态色点 */
+.dot { width: var(--space-2); height: var(--space-2); border-radius: 999px; flex: none; }
+.dot--add { background: var(--color-diff-add-fg); }
+.dot--mod { background: var(--color-diff-mod-fg); }
+.dot--del { background: var(--color-diff-del-fg); }
+.dot--conflict { background: var(--color-warning-fg); }
+
+/* ============================================================
+   Component: TemplatePresets（区块4 · 模板预设：单一 schema）
+   ============================================================ */
+.tg-list { display: flex; flex-direction: column; gap: var(--space-3); }
+.tg-item {
+  background: var(--color-bg-surface);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+.tg-item__head {
+  display: flex; align-items: center; gap: var(--space-2);
+  height: calc(var(--row-height-header) + var(--space-2));
+  padding: 0 var(--space-3);
+  background: var(--color-bg-section-header);
+  border-bottom: var(--border-width) solid var(--color-border);
+}
+.tg-item__head .ic { color: var(--color-fg-secondary); }
+.tg-item__name { font-size: var(--font-size-md); font-weight: var(--font-weight-medium); color: var(--color-fg); }
+.tg-item__id { font-family: var(--font-family-mono); font-size: var(--font-size-xs); color: var(--color-fg-disabled); margin-left: auto; }
+.tg-item__body { padding: var(--space-3); display: flex; flex-direction: column; gap: var(--space-3); }
+.tg-patterns {
+  display: flex; align-items: center; gap: var(--space-1); flex-wrap: wrap;
+  font-size: var(--font-size-xs); color: var(--color-fg-secondary);
+}
+.tg-patterns .kw { font-family: var(--font-family-mono); color: var(--color-fg); background: var(--color-bg-canvas); border: var(--border-width) solid var(--color-border); border-radius: var(--radius-sm); padding: 0 var(--space-1); }
+
+.preset-list { display: flex; flex-direction: column; gap: var(--space-2); }
+.preset-list__cap { font-size: var(--font-size-xs); color: var(--color-fg-secondary); display: inline-flex; align-items: center; gap: var(--space-1); }
+.preset-row {
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-bg-canvas);
+  border: var(--border-width) solid var(--color-border); border-radius: var(--radius-sm);
+}
+.preset-row__name { font-size: var(--font-size-sm); color: var(--color-fg); font-weight: var(--font-weight-medium); }
+.preset-row__ref { font-family: var(--font-family-mono); font-size: var(--font-size-xs); color: var(--color-fg-disabled); }
+.preset-row__detail { margin-left: auto; display: inline-flex; align-items: center; gap: var(--space-2); font-size: var(--font-size-xs); color: var(--color-fg-secondary); }
+.preset-row__detail .inc { color: var(--color-diff-add-fg); font-family: var(--font-family-mono); }
+.preset-row__detail .exc { color: var(--color-diff-del-fg); font-family: var(--font-family-mono); }
+
+/* 默认排除生成物提示 */
+.exclude-note {
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-warning-bg);
+  border: var(--border-width) solid color-mix(in srgb, var(--color-warning-fg) 35%, transparent);
+  border-left: var(--space-1) solid var(--color-warning-fg);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm); color: var(--color-fg-secondary);
+}
+.exclude-note .ic { color: var(--color-warning-fg); flex: none; }
+.exclude-note code { font-family: var(--font-family-mono); color: var(--color-fg); }
+
+/* ============================================================
+   Component: OutOfScopeProtection（区块5 · 范围外保护 · 硬验收）
+   ============================================================ */
+.guard-card {
+  display: flex; gap: var(--space-3);
+  background: var(--color-bg-surface);
+  border: var(--border-width) solid var(--color-border);
+  border-left: var(--space-1) solid var(--color-error-fg);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+}
+.guard-card__icon { flex: none; color: var(--color-error-fg); }
+.guard-card__body { min-width: 0; flex: 1 1 auto; }
+.guard-card__title { font-size: var(--font-size-md); font-weight: var(--font-weight-semibold); color: var(--color-fg); margin: 0 0 var(--space-1); display: flex; align-items: center; gap: var(--space-2); }
+.guard-card__title .accept-badge {
+  font-size: var(--font-size-xs); font-weight: var(--font-weight-medium);
+  color: var(--color-error-fg); border: var(--border-width) solid var(--color-error-fg);
+  border-radius: var(--radius-badge); padding: 0 var(--space-1);
+}
+.guard-card__text { font-size: var(--font-size-sm); color: var(--color-fg-secondary); margin: 0 0 var(--space-3); line-height: var(--line-height-relaxed); }
+
+/* 提交篮 mock */
+.basket-mock {
+  background: var(--color-bg-canvas);
+  border: var(--border-width) solid var(--color-border); border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-3);
+  display: flex; flex-direction: column; gap: var(--space-2);
+}
+.basket-mock__bar { display: flex; align-items: center; gap: var(--space-1); font-size: var(--font-size-sm); color: var(--color-fg); }
+.basket-mock__bar .ic { color: var(--color-fg-secondary); }
+.basket-mock__lock { margin-left: auto; display: inline-flex; align-items: center; gap: var(--space-1); font-size: var(--font-size-xs); color: var(--color-success-fg); }
+.basket-mock__items { font-family: var(--font-family-mono); font-size: var(--font-size-xs); color: var(--color-fg); display: flex; flex-direction: column; gap: var(--space-1); }
+.basket-mock__items .it { display: flex; align-items: center; gap: var(--space-1); }
+.basket-mock__items .it .st { width: var(--space-2); height: var(--space-2); border-radius: 999px; }
+.st--add { background: var(--color-diff-add-fg); }
+.st--mod { background: var(--color-diff-mod-fg); }
+.st--conflict { background: var(--color-warning-fg); }
+.basket-mock__note {
+  font-size: var(--font-size-xs); color: var(--color-fg-secondary);
+  display: flex; align-items: center; gap: var(--space-1);
+  border-top: var(--border-width) solid var(--color-border); padding-top: var(--space-2);
+}
+.basket-mock__note .ic { color: var(--color-warning-fg); }
+
+/* disabled 锁定开关 */
+.locked-switch { display: inline-flex; align-items: center; gap: var(--space-1); font-size: var(--font-size-xs); color: var(--color-fg-disabled); margin-top: var(--space-2); }
+.locked-switch .ic { color: var(--color-fg-disabled); }
+
+/* footer note */
+.foot-note {
+  font-size: var(--font-size-xs); color: var(--color-fg-disabled);
+  border-top: var(--border-width) solid var(--color-border); padding-top: var(--space-3);
+  display: flex; align-items: center; gap: var(--space-1);
+}
+.foot-note .ic { color: var(--color-fg-disabled); }
+</style>
+</head>
+<body>
+
+  <!-- ===== 统一图标符号表（单色 currentColor，标注 codicon 名） ===== -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <symbol id="i-filter" viewBox="0 0 16 16"><path d="M2 3.5h12l-4.6 5.4v4.1l-2.8 1.5v-5.6z" fill="currentColor" /></symbol>
+    <symbol id="i-refresh" viewBox="0 0 16 16">
+      <path d="M2.5 8a5.5 5.5 0 0 1 9.3-3.9M13.5 8a5.5 5.5 0 0 1-9.3 3.9" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+      <path d="M11.8 1.6v2.5h-2.5M4.2 14.4v-2.5h2.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
+    </symbol>
+    <symbol id="i-settings-gear" viewBox="0 0 16 16">
+      <circle cx="8" cy="8" r="2" fill="currentColor" />
+      <path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M12.6 3.4l-1.4 1.4M4.8 11.2l-1.4 1.4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
+    </symbol>
+    <symbol id="i-info" viewBox="0 0 16 16">
+      <circle cx="8" cy="8" r="6.4" fill="none" stroke="currentColor" stroke-width="1.4" />
+      <circle cx="8" cy="5" r="0.9" fill="currentColor" />
+      <path d="M8 7v5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+    </symbol>
+    <symbol id="i-git-commit" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.6" fill="currentColor" /><path d="M1.5 8h3.9M10.6 8h3.9" stroke="currentColor" stroke-width="1.4" /></symbol>
+    <symbol id="i-cloud-download" viewBox="0 0 16 16">
+      <path d="M4.5 9.5A3.5 3.5 0 0 1 5 2.7 4 4 0 0 1 12.6 4 3 3 0 0 1 12 9.5z" fill="none" stroke="currentColor" stroke-width="1.3" />
+      <path d="M8 8.5V12M5.5 10 8 12.5 10.5 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
+    </symbol>
+    <symbol id="i-warning" viewBox="0 0 16 16">
+      <path d="M8 1.6 15 14H1z" fill="currentColor" />
+      <path d="M8 6v4" fill="none" stroke="var(--color-bg-canvas)" stroke-width="1.4" stroke-linecap="round" />
+      <circle cx="8" cy="11.5" r="0.9" fill="var(--color-bg-canvas)" />
+    </symbol>
+    <symbol id="i-split-horizontal" viewBox="0 0 16 16"><path d="M8 1v14M3 5.5 5.5 3v5M13 10.5 10.5 13V8" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></symbol>
+    <symbol id="i-folder" viewBox="0 0 16 16"><path d="M1.5 3.5h4l1.5 1.5h7.5v7.5H1.5z" fill="currentColor" /></symbol>
+    <symbol id="i-chevron-down" viewBox="0 0 16 16"><path d="M3.5 6 8 11l4.5-5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></symbol>
+    <symbol id="i-chevron-right" viewBox="0 0 16 16"><path d="M5.5 4 11 8l-5.5 4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></symbol>
+    <symbol id="i-file" viewBox="0 0 16 16"><path d="M4 1.5h5l3 3v9.5H4z" fill="currentColor" /><path d="M9 1.5v3h3" fill="currentColor" opacity="0.55" /></symbol>
+    <symbol id="i-circle-filled" viewBox="0 0 16 16"><circle cx="8" cy="8" r="5" fill="currentColor" /></symbol>
+    <symbol id="i-search" viewBox="0 0 16 16">
+      <circle cx="7" cy="7" r="4.2" fill="none" stroke="currentColor" stroke-width="1.4" />
+      <path d="M10.2 10.2 14 14" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+    </symbol>
+    <symbol id="i-check" viewBox="0 0 16 16"><path d="M3 8.4 6.2 11.5 13 4.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></symbol>
+    <symbol id="i-error" viewBox="0 0 16 16">
+      <path d="M8 1.6 15 14H1z" fill="currentColor" />
+      <path d="M8 6v4" fill="none" stroke="var(--color-bg-canvas)" stroke-width="1.4" stroke-linecap="round" />
+      <circle cx="8" cy="11.5" r="0.9" fill="var(--color-bg-canvas)" />
+    </symbol>
+    <symbol id="i-shield" viewBox="0 0 16 16">
+      <path d="M8 1.5 14 3.4v4.6C14 12 11 14.4 8 15 5 14.4 2 12 2 8V3.4z" fill="currentColor" />
+      <path d="M5.6 8 7.3 9.7 10.4 6.4" fill="none" stroke="var(--color-bg-canvas)" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
+    </symbol>
+    <symbol id="i-lock" viewBox="0 0 16 16">
+      <rect x="3.5" y="7" width="9" height="6.5" rx="1" fill="currentColor" />
+      <path d="M5.5 7V5.2a2.5 2.5 0 0 1 5 0V7" fill="none" stroke="currentColor" stroke-width="1.4" />
+    </symbol>
+  </svg>
+
+  <!-- ============================================================
+       Component: ScopeContextBar（范围上下文顶栏）
+       ============================================================ -->
+  <header class="scope-bar">
+    <span class="scope-bar__icon">
+      <!-- codicon: filter -->
+      <svg class="ic ic--lg"><use href="#i-filter" /></svg>
+    </span>
+    <div class="scope-bar__titles">
+      <span class="scope-bar__title">范围与筛选</span>
+      <span class="scope-bar__sub">提交 / 更新 / 冲突中心 的范围上下文区块</span>
+    </div>
+    <div class="scope-bar__spacer"></div>
+    <div class="scope-bar__actions">
+      <!-- codicon: refresh -->
+      <button class="tool-btn" title="重新计算范围" aria-label="重新计算范围" data-cmd="svnWorkbench.scope.refresh">
+        <svg class="ic"><use href="#i-refresh" /></svg>
+      </button>
+      <!-- codicon: settings-gear -->
+      <button class="tool-btn" title="范围设置" aria-label="范围设置" data-cmd="svnWorkbench.scope.config">
+        <svg class="ic"><use href="#i-settings-gear" /></svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- Component: DemoBar（纯前端模拟降级态，真实状态由宿主读取） -->
+  <div class="demo-bar">
+    <span class="demo-bar__label">演示模式（纯前端模拟，真实状态由宿主读取）</span>
+    <label class="demo-bar__opt"><input type="checkbox" id="demoSvn" /> 模拟 svn 缺失</label>
+    <label class="demo-bar__opt"><input type="checkbox" id="demoAi" /> 模拟 AI 未配置</label>
+  </div>
+
+  <!-- ============================================================
+       Component: MenuContractStrip（SVN 子菜单契约 · §2.2）
+       ============================================================ -->
+  <div class="contract-strip">
+    <span class="contract-strip__label">
+      <!-- codicon: info -->
+      <svg class="ic ic--sm"><use href="#i-info" /></svg>
+      配合 SVN 子菜单生效：
+    </span>
+    <!-- codicon: git-commit → 提交此文件夹 -->
+    <span class="menu-chip"><svg class="ic ic--sm"><use href="#i-git-commit" /></svg>提交此文件夹</span>
+    <!-- codicon: cloud-download → 更新当前范围 -->
+    <span class="menu-chip"><svg class="ic ic--sm"><use href="#i-cloud-download" /></svg>更新当前范围</span>
+    <!-- codicon: warning → 打开冲突中心 -->
+    <span class="menu-chip"><svg class="ic ic--sm"><use href="#i-warning" /></svg>打开冲突中心</span>
+    <!-- codicon: split-horizontal → 打开差异对比 -->
+    <span class="menu-chip"><svg class="ic ic--sm"><use href="#i-split-horizontal" /></svg>打开差异对比</span>
+  </div>
+
+  <main class="main">
+
+    <!-- 降级引导卡容器（两处降级分支，演示开关控制显隐） -->
+    <div class="gate-wrap">
+      <!-- Component: GateCard · svn 缺失引导卡（error 左条，不静默退出） -->
+      <div class="gate-card gate-card--svn" id="svnGate" hidden>
+        <span class="gate-card__icon"><svg class="ic--lg"><use href="#i-error" /></svg></span>
+        <div class="gate-card__body">
+          <div class="gate-card__title"><svg class="ic--sm"><use href="#i-error" /></svg>未检测到 SVN</div>
+          <p class="gate-card__desc">本机未安装或未正确配置 SVN 命令行，范围与筛选无法基于真实工作副本状态计算。请配置设置项 <code style="font-family:var(--font-family-mono)">svnWorkbench.svn.path</code>。不静默退出、不阻断其他功能。</p>
+          <div class="gate-card__actions">
+            <button type="button" class="btn-secondary" data-cmd="svnWorkbench.svn.install">
+              <!-- codicon: link-external -->
+              <svg class="ic--sm"><use href="#i-link-external" /></svg>去安装
+            </button>
+            <button type="button" class="btn-secondary" data-cmd="svnWorkbench.svn.config">
+              <!-- codicon: settings-gear -->
+              <svg class="ic--sm"><use href="#i-settings-gear" /></svg>去配置
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Component: GateCard · AI 未配置手动模式卡（info 左条，不抛错） -->
+      <div class="gate-card gate-card--ai" id="aiGate" hidden>
+        <span class="gate-card__icon"><svg class="ic--lg"><use href="#i-info" /></svg></span>
+        <div class="gate-card__body">
+          <div class="gate-card__title"><svg class="ic--sm"><use href="#i-info" /></svg>AI 未配置 · 已降级手动模式</div>
+          <p class="gate-card__desc">未检测到 AI 模型配置，相关能力已降级为「手动模式」，不抛错、不阻断整条链路。运行 <code style="font-family:var(--font-family-mono)">SVN：AI 配置模型</code> 可恢复智能建议。</p>
+          <div class="gate-card__actions">
+            <button type="button" class="btn-primary" data-cmd="svnWorkbench.ai.config">
+              <!-- codicon: settings-gear -->
+              <svg class="ic--sm"><use href="#i-settings-gear" /></svg>运行 SVN：AI 配置模型
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================================
+         区块 1 · Component: ScopeRuleCard（全局操作范围规则）
+         ============================================================ -->
+    <section class="block">
+      <div class="block__head">
+        <!-- codicon: info -->
+        <svg class="ic"><use href="#i-info" /></svg>
+        <span class="block__title">全局操作范围规则</span>
+        <span class="block__hint">范围不扩大原则（§3.6）</span>
+      </div>
+      <div class="rule-grid">
+        <!-- 仅当前工作副本 -->
+        <div class="card card--info">
+          <span class="card__icon">
+            <!-- codicon: git-commit -->
+            <svg class="ic ic--lg"><use href="#i-git-commit" /></svg>
+          </span>
+          <div class="card__body">
+            <p class="card__title">仅当前工作副本</p>
+            <p class="card__text">操作范围限定在<strong>已检出（checked-out）的工作副本</strong>内，不跨仓库、不触及版本库其他分支或上层目录。</p>
+          </div>
+        </div>
+        <!-- 仅右键范围 -->
+        <div class="card card--info">
+          <span class="card__icon">
+            <!-- codicon: folder -->
+            <svg class="ic ic--lg"><use href="#i-folder" /></svg>
+          </span>
+          <div class="card__body">
+            <p class="card__title">仅右键范围</p>
+            <p class="card__text">以<strong>右键选定的文件夹</strong>为唯一操作根，提交 / 更新 / 冲突中心只渲染该文件夹范围，不向上或向旁扩张。</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================
+         区块 2 · Component: RightClickScopeTree（右键文件夹范围显示）
+         ============================================================ -->
+    <section class="block">
+      <div class="block__head">
+        <!-- codicon: folder -->
+        <svg class="ic"><use href="#i-folder" /></svg>
+        <span class="block__title">右键文件夹范围显示</span>
+        <span class="block__hint">硬验收项 · 只显示该文件夹范围（§3.6）</span>
+      </div>
+
+      <div class="scope-panel" id="scopePanel">
+        <div class="scope-panel__bar">
+          <!-- codicon: folder -->
+          <svg class="ic"><use href="#i-folder" /></svg>
+          <span class="scope-breadcrumb">
+            <span>订单系统</span><span class="sep">›</span><span>src</span><span class="sep">›</span><span class="here">服务层</span>
+          </span>
+          <span class="scope-panel__spacer"></span>
+          <label class="scope-toggle" title="调试预览：显示范围外目录">
+            <input type="checkbox" id="scopeToggle" />
+            <span class="check__box"><svg class="ic--sm"><use href="#i-check" /></svg></span>
+            <span>显示范围外</span>
+          </label>
+        </div>
+
+        <ul class="tree" role="tree">
+          <!-- 工作副本根 -->
+          <li>
+            <div class="tree__row">
+              <button class="twist" aria-label="折叠" data-twist>
+                <!-- codicon: chevron-down -->
+                <svg class="ic"><use href="#i-chevron-down" /></svg>
+              </button>
+              <!-- codicon: folder -->
+              <svg class="node-ic ic"><use href="#i-folder" /></svg>
+              <span class="label">订单系统</span>
+              <span class="meta"><span class="badge badge--scope">工作副本根</span></span>
+            </div>
+            <ul class="tree__children">
+              <!-- 范围外：docs（默认隐藏） -->
+              <li>
+                <div class="tree__row tree__row--outofscope">
+                  <button class="twist" aria-label="折叠" data-twist>
+                    <svg class="ic"><use href="#i-chevron-down" /></svg>
+                  </button>
+                  <svg class="node-ic ic"><use href="#i-folder" /></svg>
+                  <span class="label">docs</span>
+                  <span class="meta"><span class="badge badge--exclude">范围外</span></span>
+                </div>
+              </li>
+              <!-- 范围外：bin（生成物，默认隐藏） -->
+              <li>
+                <div class="tree__row tree__row--outofscope">
+                  <span class="indent"></span>
+                  <svg class="node-ic ic"><use href="#i-folder" /></svg>
+                  <span class="label">bin</span>
+                  <span class="meta"><span class="badge badge--exclude">生成物·默认排除</span></span>
+                </div>
+              </li>
+              <!-- 范围外：obj（生成物，默认隐藏） -->
+              <li>
+                <div class="tree__row tree__row--outofscope">
+                  <span class="indent"></span>
+                  <svg class="node-ic ic"><use href="#i-folder" /></svg>
+                  <span class="label">obj</span>
+                  <span class="meta"><span class="badge badge--exclude">生成物·默认排除</span></span>
+                </div>
+              </li>
+              <!-- src -->
+              <li>
+                <div class="tree__row">
+                  <button class="twist" aria-label="折叠" data-twist>
+                    <svg class="ic"><use href="#i-chevron-down" /></svg>
+                  </button>
+                  <svg class="node-ic ic"><use href="#i-folder" /></svg>
+                  <span class="label">src</span>
+                </div>
+                <ul class="tree__children">
+                  <!-- 工具（范围内但非操作目标） -->
+                  <li>
+                    <div class="tree__row tree__row--in-scope">
+                      <span class="indent"></span>
+                      <svg class="node-ic ic"><use href="#i-folder" /></svg>
+                      <span class="label">工具</span>
+                      <span class="meta"><span class="badge badge--exclude">范围内·非操作目标</span></span>
+                    </div>
+                  </li>
+                  <!-- 右键选定范围根：服务层（高亮） -->
+                  <li>
+                    <div class="tree__row tree__row--scope" aria-current="true">
+                      <button class="twist" aria-label="折叠" data-twist>
+                        <svg class="ic"><use href="#i-chevron-down" /></svg>
+                      </button>
+                      <svg class="node-ic ic"><use href="#i-folder" /></svg>
+                      <span class="label">服务层</span>
+                      <span class="meta"><span class="badge badge--scope">右键选定</span></span>
+                    </div>
+                    <ul class="tree__children">
+                      <li>
+                        <div class="tree__row tree__row--in-scope">
+                          <span class="indent"></span>
+                          <!-- codicon: file -->
+                          <svg class="node-ic ic"><use href="#i-file" /></svg>
+                          <span class="label">PaymentService.cs</span>
+                          <span class="meta"><span class="dot dot--mod"></span><span class="check__count">修改</span></span>
+                        </div>
+                      </li>
+                      <li>
+                        <div class="tree__row tree__row--in-scope">
+                          <span class="indent"></span>
+                          <svg class="node-ic ic"><use href="#i-file" /></svg>
+                          <span class="label">OrderService.cs</span>
+                          <span class="meta"><span class="dot dot--add"></span><span class="check__count">新增</span></span>
+                        </div>
+                      </li>
+                      <li>
+                        <div class="tree__row tree__row--in-scope">
+                          <span class="indent"></span>
+                          <svg class="node-ic ic"><use href="#i-file" /></svg>
+                          <span class="label">InvoiceService.cs</span>
+                          <span class="meta"><span class="dot dot--conflict"></span><span class="check__count">冲突</span></span>
+                        </div>
+                      </li>
+                    </ul>
+                  </li>
+                  <!-- Program.cs（范围内但非操作目标） -->
+                  <li>
+                    <div class="tree__row tree__row--in-scope">
+                      <span class="indent"></span>
+                      <svg class="node-ic ic"><use href="#i-file" /></svg>
+                      <span class="label">Program.cs</span>
+                      <span class="meta"><span class="dot dot--mod"></span><span class="check__count">修改</span></span>
+                    </div>
+                  </li>
+                </ul>
+              </li>
+            </ul>
+          </li>
+        </ul>
+
+        <!-- 范围外摘要：无论开关都展示，满足"生成物默认排除并标注" -->
+        <div class="outofscope-summary">
+          <!-- codicon: info -->
+          <svg class="ic ic--sm"><use href="#i-info" /></svg>
+          范围外已隐藏：<code>docs/</code>、<code>bin/</code>（生成物·默认排除）、<code>obj/</code>（生成物·默认排除）。提交 / 更新 / 冲突中心仅渲染 <code>src/服务层</code>。
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================
+         区块 3 · Component: FilterLayers（筛选层级：目录 / 文件 / 状态）
+         ============================================================ -->
+    <section class="block">
+      <div class="block__head">
+        <!-- codicon: filter -->
+        <svg class="ic"><use href="#i-filter" /></svg>
+        <span class="block__title">筛选层级</span>
+        <span class="block__hint">目录 / 文件 / 状态 三级</span>
+      </div>
+
+      <div class="filter-panel">
+        <!-- 目录层级 -->
+        <div class="filter-row">
+          <span class="filter-row__label">
+            <!-- codicon: folder -->
+            <svg class="ic ic--sm"><use href="#i-folder" /></svg>
+            目录
+          </span>
+          <div class="filter-row__control">
+            <div class="dropdown" id="scopeDropdown">
+              <button class="dropdown__trigger" data-dd-trigger aria-haspopup="listbox" aria-expanded="false">
+                <!-- codicon: folder -->
+                <svg class="ic ic--sm"><use href="#i-folder" /></svg>
+                <span id="scopeValue">订单系统/src/服务层</span>
+                <!-- codicon: chevron-down -->
+                <svg class="ic ic--sm chev"><use href="#i-chevron-down" /></svg>
+              </button>
+              <ul class="dropdown__menu" role="listbox">
+                <li class="dropdown__item is-selected" role="option" data-value="订单系统/src/服务层">
+                  <!-- codicon: folder -->
+                  <svg class="ic ic--sm"><use href="#i-folder" /></svg>订单系统/src/服务层
+                </li>
+                <li class="dropdown__item" role="option" data-value="订单系统/src">
+                  <svg class="ic ic--sm"><use href="#i-folder" /></svg>订单系统/src
+                </li>
+                <li class="dropdown__item" role="option" data-value="订单系统">
+                  <svg class="ic ic--sm"><use href="#i-folder" /></svg>订单系统
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
+
+        <!-- 文件层级 -->
+        <div class="filter-row">
+          <span class="filter-row__label">
+            <!-- codicon: file -->
+            <svg class="ic ic--sm"><use href="#i-file" /></svg>
+            文件
+          </span>
+          <div class="filter-row__control">
+            <label class="input">
+              <!-- codicon: search -->
+              <svg class="ic ic--sm"><use href="#i-search" /></svg>
+              <input type="text" placeholder="按文件名筛选，如 *Service.cs" aria-label="按文件名筛选" />
+            </label>
+          </div>
+        </div>
+
+        <!-- 状态层级 -->
+        <div class="filter-row">
+          <span class="filter-row__label">
+            <!-- codicon: circle-filled -->
+            <svg class="ic ic--sm"><use href="#i-circle-filled" /></svg>
+            状态
+          </span>
+          <div class="filter-row__control">
+            <div class="check-group">
+              <label class="check">
+                <input type="checkbox" checked />
+                <span class="check__box"><svg class="ic ic--sm"><use href="#i-check" /></svg></span>
+                <span class="dot dot--add"></span>新增 <span class="check__count">1</span>
+              </label>
+              <label class="check">
+                <input type="checkbox" checked />
+                <span class="check__box"><svg class="ic ic--sm"><use href="#i-check" /></svg></span>
+                <span class="dot dot--mod"></span>修改 <span class="check__count">2</span>
+              </label>
+              <label class="check">
+                <input type="checkbox" checked />
+                <span class="check__box"><svg class="ic ic--sm"><use href="#i-check" /></svg></span>
+                <span class="dot dot--del"></span>删除 <span class="check__count">0</span>
+              </label>
+              <label class="check">
+                <input type="checkbox" checked />
+                <span class="check__box"><svg class="ic ic--sm"><use href="#i-check" /></svg></span>
+                <span class="dot dot--conflict"></span>冲突 <span class="check__count">1</span>
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============================================================
+         区块 4 · Component: TemplatePresets（模板预设 · 单一 schema）
+         ============================================================ -->
+    <section class="block">
+      <div class="block__head">
+        <!-- codicon: settings-gear -->
+        <svg class="ic"><use href="#i-settings-gear" /></svg>
+        <span class="block__title">模板预设</span>
+        <span class="block__hint">template group 唯一驱动源 · 单一 schema（§3.1/§3.2）</span>
+      </div>
+
+      <div class="tg-list">
+        <!-- Template Group 1 -->
+        <div class="tg-item">
+          <div class="tg-item__head">
+            <!-- codicon: folder -->
+            <svg class="ic"><use href="#i-folder" /></svg>
+            <span class="tg-item__name">后端服务</span>
+            <span class="tg-item__id">group:backend</span>
+          </div>
+          <div class="tg-item__body">
+            <div class="tg-patterns">
+              <span>patterns:</span>
+              <span class="kw">src/**/*.cs</span>
+              <span class="kw">*.sln</span>
+            </div>
+            <div class="preset-list">
+              <span class="preset-list__cap">
+                <!-- codicon: settings-gear -->
+                <svg class="ic ic--sm"><use href="#i-settings-gear" /></svg>
+                presets（引用分组 backend）：
+              </span>
+              <div class="preset-row">
+                <span class="preset-row__name">仅服务层</span>
+                <span class="preset-row__ref">→ backend</span>
+                <span class="preset-row__detail">
+                  <span class="inc">+ src/服务层</span><span class="exc">− bin/ obj/</span>
+                </span>
+              </div>
+              <div class="preset-row">
+                <span class="preset-row__name">含配置</span>
+                <span class="preset-row__ref">→ backend</span>
+                <span class="preset-row__detail">
+                  <span class="inc">+ src/ appsettings.json</span><span class="exc">− obj/</span>
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Template Group 2 -->
+        <div class="tg-item">
+          <div class="tg-item__head">
+            <!-- codicon: folder -->
+            <svg class="ic"><use href="#i-folder" /></svg>
+            <span class="tg-item__name">前端资产</span>
+            <span class="tg-item__id">group:frontend</span>
+          </div>
+          <div class="tg-item__body">
+            <div class="tg-patterns">
+              <span>patterns:</span>
+              <span class="kw">src/**/*.ts</span>
+              <span class="kw">src/**/*.vue</span>
+              <span class="kw">*.css</span>
+            </div>
+            <div class="preset-list">
+              <span class="preset-list__cap">
+                <svg class="ic ic--sm"><use href="#i-settings-gear" /></svg>
+                presets（引用分组 frontend）：
+              </span>
+              <div class="preset-row">
+                <span class="preset-row__name">仅源码</span>
+                <span class="preset-row__ref">→ frontend</span>
+                <span class="preset-row__detail">
+                  <span class="inc">+ src/</span><span class="exc">− dist/ node_modules/</span>
+                </span>
+              </div>
+              <div class="preset-row">
+                <span class="preset-row__name">含样式</span>
+                <span class="preset-row__ref">→ frontend</span>
+                <span class="preset-row__detail">
+                  <span class="inc">+ src/ *.css</span><span class="exc">− node_modules/</span>
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Template Group 3 -->
+        <div class="tg-item">
+          <div class="tg-item__head">
+            <!-- codicon: folder -->
+            <svg class="ic"><use href="#i-folder" /></svg>
+            <span class="tg-item__name">文档</span>
+            <span class="tg-item__id">group:docs</span>
+          </div>
+          <div class="tg-item__body">
+            <div class="tg-patterns">
+              <span>patterns:</span>
+              <span class="kw">docs/**</span>
+              <span class="kw">*.md</span>
+            </div>
+            <div class="preset-list">
+              <span class="preset-list__cap">
+                <svg class="ic ic--sm"><use href="#i-settings-gear" /></svg>
+                presets（引用分组 docs）：
+              </span>
+              <div class="preset-row">
+                <span class="preset-row__name">仅设计文档</span>
+                <span class="preset-row__ref">→ docs</span>
+                <span class="preset-row__detail">
+                  <span class="inc">+ docs/设计文档.md</span>
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 默认排除生成物 -->
+      <div class="exclude-note" style="margin-top: var(--space-3);">
+        <!-- codicon: warning -->
+        <svg class="ic"><use href="#i-warning" /></svg>
+        默认排除生成物（引用 <code>.svnignore</code> / <code>svn:ignore</code>）：<code>bin/</code>、<code>obj/</code>、<code>dist/</code>、<code>node_modules/</code>。单一 schema 下 template group 为唯一驱动源，preset 仅引用分组，不另立结构。
+      </div>
+    </section>
+
+    <!-- ============================================================
+         区块 5 · Component: OutOfScopeProtection（范围外保护 · 硬验收）
+         ============================================================ -->
+    <section class="block">
+      <div class="block__head">
+        <!-- codicon: shield -->
+        <svg class="ic"><use href="#i-shield" /></svg>
+        <span class="block__title">范围外保护</span>
+        <span class="block__hint">硬验收项（§3.6）</span>
+      </div>
+
+      <div class="guard-card">
+        <span class="guard-card__icon">
+          <!-- codicon: error -->
+          <svg class="ic ic--lg"><use href="#i-error" /></svg>
+        </span>
+        <div class="guard-card__body">
+          <p class="guard-card__title">
+            提交篮不会自动吸收范围外新变更
+            <span class="accept-badge">硬验收</span>
+          </p>
+          <p class="guard-card__text">
+            在<strong>右键范围（src/服务层）</strong>之外产生的新变更，<strong>不会</strong>被提交篮自动纳入。范围不扩大原则保证：开发者只会提交其明确选定的文件夹，避免误带工作副本其他部分的改动。
+          </p>
+
+          <!-- 提交篮 mock -->
+          <div class="basket-mock">
+            <div class="basket-mock__bar">
+              <!-- codicon: git-commit -->
+              <svg class="ic ic--sm"><use href="#i-git-commit" /></svg>
+              提交篮 · 范围 = src/服务层
+              <span class="basket-mock__lock">
+                <!-- codicon: lock -->
+                <svg class="ic ic--sm"><use href="#i-lock" /></svg>
+                范围已锁定
+              </span>
+            </div>
+            <div class="basket-mock__items">
+              <span class="it"><span class="st st--add"></span>src/服务层/OrderService.cs</span>
+              <span class="it"><span class="st st--mod"></span>src/服务层/PaymentService.cs</span>
+              <span class="it"><span class="st st--conflict"></span>src/服务层/InvoiceService.cs（冲突待解决）</span>
+            </div>
+            <div class="basket-mock__note">
+              <!-- codicon: info -->
+              <svg class="ic ic--sm"><use href="#i-info" /></svg>
+              范围外新增（如 docs/需求.md、bin/ 产物）不会自动出现在此篮；如需纳入，请在其所属文件夹重新发起对应 SVN 命令。
+            </div>
+          </div>
+
+          <span class="locked-switch">
+            <!-- codicon: lock -->
+            <svg class="ic ic--sm"><use href="#i-lock" /></svg>
+            “自动纳入范围外变更”开关已禁用（范围不扩大原则）
+          </span>
+        </div>
+      </div>
+    </section>
+
+    <div class="foot-note">
+      <!-- codicon: info -->
+      <svg class="ic ic--sm"><use href="#i-info" /></svg>
+      本层为 v1 Svelte webview 中"范围与筛选"上下文区块蓝图；颜色全部走 var(--vscode-*) 令牌，深浅主题自动适配。
+    </div>
+
+  </main>
+
+  <script>
+    // 原生 JS：树展开/折叠、范围外切换、下拉开关、演示降级。无 innerHTML 拼接。
+    (function () {
+      "use strict";
+
+      // —— 演示降级开关（纯前端模拟；真实状态由宿主读取后调用 applyState）——
+      var svnGate = document.getElementById("svnGate");
+      var aiGate = document.getElementById("aiGate");
+      var demoSvn = document.getElementById("demoSvn");
+      var demoAi = document.getElementById("demoAi");
+      function applyState(state) {
+        svnGate.hidden = !(state && state.svnMissing);
+        aiGate.hidden = !(state && !state.aiConfigured);
+      }
+      demoSvn.addEventListener("change", function () { svnGate.hidden = !demoSvn.checked; });
+      demoAi.addEventListener("change", function () { aiGate.hidden = !demoAi.checked; });
+
+      // 1) 树折叠/展开
+      document.querySelectorAll('[data-twist]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var row = btn.closest('.tree__row');
+          if (!row) return;
+          row.classList.toggle('is-collapsed');
+        });
+      });
+
+      // 2) 范围外显示切换
+      var toggle = document.getElementById('scopeToggle');
+      var panel = document.getElementById('scopePanel');
+      if (toggle && panel) {
+        toggle.addEventListener('change', function () {
+          panel.classList.toggle('show-outofscope', toggle.checked);
+        });
+      }
+
+      // 3) 范围下拉（目录层级）开关 + 选中
+      var dd = document.getElementById('scopeDropdown');
+      if (dd) {
+        var trigger = dd.querySelector('[data-dd-trigger]');
+        var valueEl = document.getElementById('scopeValue');
+        trigger.addEventListener('click', function () {
+          var open = dd.classList.toggle('is-open');
+          trigger.setAttribute('aria-expanded', open ? 'true' : 'false');
+        });
+        dd.querySelectorAll('.dropdown__item').forEach(function (item) {
+          item.addEventListener('click', function () {
+            dd.querySelectorAll('.dropdown__item').forEach(function (i) { i.classList.remove('is-selected'); });
+            item.classList.add('is-selected');
+            if (valueEl) valueEl.textContent = item.getAttribute('data-value');
+            dd.classList.remove('is-open');
+            trigger.setAttribute('aria-expanded', 'false');
+          });
+        });
+        document.addEventListener('click', function (e) {
+          if (!dd.contains(e.target)) { dd.classList.remove('is-open'); trigger.setAttribute('aria-expanded', 'false'); }
+        });
+      }
+
+      // —— 引导卡 / 工具栏动作占位（命令桥接）——
+      document.querySelectorAll('[data-cmd]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var cmd = btn.getAttribute('data-cmd');
+          // 占位：真实环境通过 vscode.postMessage 调用对应命令
+          console.log('[svnWorkbench] command bridge →', cmd);
+        });
+      });
+    })();
+  </script>
+</body>
+</html>

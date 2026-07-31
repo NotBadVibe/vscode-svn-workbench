@@ -1,0 +1,17 @@
+{
+  "ok": true,
+  "runId": "2026-07-31T13-01-20-501Z",
+  "expectedExtension": "local.svn-workbench@0.0.1",
+  "vsixPath": "svn-workbench-0.0.1.vsix",
+  "vsixSha256": "4165A955C8D2D945836AC4415404EFD33C7BC1440AECD9FF004616365C3F2321",
+  "vsixSizeBytes": 441564,
+  "codeVersion": ["1.131.0", "e4c7e7b1d6d060162f4aa7f8225271b67ce1df75", "arm64"],
+  "lifecycle": {
+    "install": "通过",
+    "listedAfterInstall": ["local.svn-workbench@0.0.1"],
+    "uninstall": "通过",
+    "listedAfterUninstall": [],
+    "reinstall": "通过",
+    "listedAfterReinstall": ["local.svn-workbench@0.0.1"]
+  }
+}

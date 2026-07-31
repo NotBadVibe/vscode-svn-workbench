@@ -1,0 +1,526 @@
+<!--
+  SVN Workbench v1 · 提交拆分预览（greenfield 审阅视图）自包含原型
+  设计令牌来源：设计令牌.md（视觉唯一依据）
+  需求来源：requirements-undesigned-5pages.md · 页面 3 · 提交拆分预览
+  约束落实：
+   ① 组件样式仅引用 --token，无硬编码 hex（:root 预览默认值除外）；
+   ② font-family 首值 var(--vscode-font-family)；路径/diff/代码用 --font-family-mono；
+   ③ 间距/圆角/高度/字号/行高只走 --token，组件样式无裸几何值；
+   ④ 成功色统一 --color-success-fg；状态色仅用于徽标文字/左条/关键计数/图标；
+   ⑤ 图标 inline SVG <symbol> + <use href="#i-..."> 单色 currentColor，注释标注 codicon 名；
+   ⑥ 交互纯原生内联 <script>，受控渲染，严禁运行时拼接 HTML 字符串；
+   ⑦ 顶部演示控制模拟 AI 未配置 / 加载中 / blocked / 空态；
+   ⑧ AI 未配置 → 降级手动分批 info 卡 + 手动选文件入口占位，不抛错；自包含零外部资源。
+-->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SVN Workbench · 提交拆分预览</title>
+<style>
+/* =========================================================================
+   :root — 第 0 层：VS Code 深色主题预览默认值（仅离线渲染兜底）
+   ========================================================================= */
+:root {
+  --vscode-foreground: #cccccc;
+  --vscode-descriptionForeground: #9d9d9d;
+  --vscode-disabledForeground: #6b6b6b;
+  --vscode-textLink-foreground: #3794ff;
+  --vscode-icon-foreground: #c5c5c5;
+  --vscode-panel-background: #1e1e1e;
+  --vscode-editor-background: #1e1e1e;
+  --vscode-sideBar-background: #252526;
+  --vscode-sideBarSectionHeader-background: #2d2d2d;
+  --vscode-list-background: #1e1e1e;
+  --vscode-input-background: #3c3c3c;
+  --vscode-input-foreground: #cccccc;
+  --vscode-input-placeholderForeground: #9d9d9d;
+  --vscode-dropdown-background: #3c3c3c;
+  --vscode-list-hoverBackground: #2a2d2e;
+  --vscode-list-activeSelectionBackground: #094771;
+  --vscode-list-inactiveSelectionBackground: #37373d;
+  --vscode-list-activeSelectionForeground: #ffffff;
+  --vscode-editorWidget-background: #252526;
+  --vscode-panel-border: #2b2b2b;
+  --vscode-widget-border: #2b2b2b;
+  --vscode-errorForeground: #f48771;
+  --vscode-warningForeground: #cca700;
+  --vscode-charts-green: #89d185;
+  --vscode-charts-red: #f48771;
+  --vscode-charts-yellow: #cca700;
+  --vscode-charts-orange: #e2c08d;
+  --vscode-diffEditor-insertedTextBackground: #9ccc2c33;
+  --vscode-diffEditor-removedTextBackground: #f14c4c33;
+  --vscode-editorGutter-addedBackground: #9ccc2c;
+  --vscode-editorGutter-deletedBackground: #f14c4c;
+  --vscode-editorGutter-modifiedBackground: #e2c08d;
+  --vscode-focusBorder: #007fd4;
+  --vscode-widget-shadow: rgba(0, 0, 0, 0.36);
+  --vscode-button-background: #0e639c;
+  --vscode-button-foreground: #ffffff;
+  --vscode-button-hoverBackground: #1177bb;
+  --vscode-button-secondaryBackground: #3a3d41;
+  --vscode-button-secondaryForeground: #cccccc;
+  --vscode-button-secondaryHoverBackground: #45494e;
+  --vscode-badge-background: #4d4d4d;
+  --vscode-badge-foreground: #ffffff;
+  --vscode-progressBar-background: #0e70c0;
+  --vscode-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+  --vscode-editor-font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, "Courier New", monospace;
+  --vscode-checkbox-background: #3c3c3c;
+  --vscode-checkbox-foreground: #f0f0f0;
+  --vscode-checkbox-border: #6b6b6b;
+  --vscode-tree-indentGuidesStroke: rgba(169, 169, 169, 0.20);
+}
+
+/* =========================================================================
+   :root — 第 1 层：设计令牌派生 + 内部辅助令牌
+   ========================================================================= */
+:root {
+  --color-fg: var(--vscode-foreground);
+  --color-fg-secondary: var(--vscode-descriptionForeground);
+  --color-fg-disabled: var(--vscode-disabledForeground);
+  --color-fg-link: var(--vscode-textLink-foreground);
+  --color-icon: var(--vscode-icon-foreground);
+  --color-bg-canvas: var(--vscode-panel-background);
+  --color-bg-surface: var(--vscode-sideBar-background);
+  --color-bg-editor: var(--vscode-editor-background);
+  --color-bg-list: var(--vscode-list-background);
+  --color-bg-input: var(--vscode-input-background);
+  --color-bg-dropdown: var(--vscode-dropdown-background);
+  --color-bg-section-header: var(--vscode-sideBarSectionHeader-background);
+  --color-bg-hover: var(--vscode-list-hoverBackground);
+  --color-bg-selected: var(--vscode-list-activeSelectionBackground);
+  --color-bg-selected-inactive: var(--vscode-list-inactiveSelectionBackground);
+  --color-fg-selected: var(--vscode-list-activeSelectionForeground);
+  --color-bg-widget: var(--vscode-editorWidget-background);
+  --color-border: var(--vscode-panel-border);
+  --color-border-widget: var(--vscode-widget-border);
+  --color-border-strong: var(--vscode-contrastBorder, var(--vscode-panel-border));
+
+  --color-error-fg: var(--vscode-errorForeground);
+  --color-error-bg: color-mix(in srgb, var(--vscode-errorForeground) 14%, var(--vscode-panel-background));
+  --color-warning-fg: var(--vscode-warningForeground, var(--vscode-charts-yellow));
+  --color-warning-bg: color-mix(in srgb, var(--vscode-warningForeground, var(--vscode-charts-yellow)) 14%, var(--vscode-panel-background));
+  --color-info-fg: var(--vscode-textLink-foreground);
+  --color-info-bg: color-mix(in srgb, var(--vscode-textLink-foreground) 14%, var(--vscode-panel-background));
+  --color-success-fg: var(--vscode-charts-green);
+  --color-success-bg: color-mix(in srgb, var(--vscode-charts-green) 14%, var(--vscode-panel-background));
+
+  --color-diff-add-fg: var(--vscode-charts-green);
+  --color-diff-add-bg: var(--vscode-diffEditor-insertedTextBackground, var(--vscode-charts-green));
+  --color-diff-add-gutter: var(--vscode-editorGutter-addedBackground, var(--vscode-charts-green));
+  --color-diff-del-fg: var(--vscode-charts-red, var(--vscode-errorForeground));
+  --color-diff-del-bg: var(--vscode-diffEditor-removedTextBackground, var(--vscode-charts-red));
+  --color-diff-del-gutter: var(--vscode-editorGutter-deletedBackground, var(--vscode-charts-red));
+  --color-diff-mod-fg: var(--vscode-charts-yellow, var(--vscode-charts-orange));
+  --color-diff-mod-gutter: var(--vscode-editorGutter-modifiedBackground, var(--vscode-charts-yellow));
+
+  --color-focus: var(--vscode-focusBorder);
+  --shadow-widget: var(--vscode-widget-shadow);
+  --color-btn-primary-bg: var(--vscode-button-background);
+  --color-btn-primary-fg: var(--vscode-button-foreground);
+  --color-btn-primary-hover: var(--vscode-button-hoverBackground);
+  --color-btn-secondary-bg: var(--vscode-button-secondaryBackground);
+  --color-btn-secondary-fg: var(--vscode-button-secondaryForeground);
+  --color-btn-secondary-hover: var(--vscode-button-secondaryHoverBackground);
+  --color-badge-bg: var(--vscode-badge-background);
+  --color-badge-fg: var(--vscode-badge-foreground);
+  --color-progress: var(--vscode-progressBar-background);
+
+  --font-family: var(--vscode-font-family);
+  --font-family-mono: var(--vscode-editor-font-family, 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace);
+  --font-size-xs: 11px;
+  --font-size-sm: 12px;
+  --font-size-md: 13px;
+  --font-size-lg: 15px;
+  --font-size-xl: 18px;
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+  --line-height-tight: 1.3;
+  --line-height-base: 1.5;
+  --line-height-relaxed: 1.6;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 40px;
+  --control-height: 26px;
+  --control-height-sm: 22px;
+  --control-height-lg: 30px;
+  --row-height: 26px;
+  --row-height-header: 22px;
+  --radius-sm: 2px;
+  --radius-md: 3px;
+  --radius-badge: 3px;
+  --radius-lg: 4px;
+  --border-width: 1px;
+  --indent-step: 16px;
+
+  --icon-size: 16px;
+  --icon-size-sm: 14px;
+  --icon-size-lg: 18px;
+  --bar-thickness: 4px;
+  --dd-min-width: 200px;
+  --panel-max: 960px;
+  --outline-w: 1px;
+  --focus-offset: -1px;
+  --pill-radius: 999px;
+  --switch-w: 32px;
+  --switch-h: 18px;
+  --switch-knob: 14px;
+  --knob-offset: 1px;
+  --knob-travel: 14px;
+}
+
+/* =========================================================================
+   基础重置
+   ========================================================================= */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body { font-family: var(--font-family); font-size: var(--font-size-md); line-height: var(--line-height-base); color: var(--color-fg); background: var(--color-bg-canvas); -webkit-font-smoothing: antialiased; }
+button { font-family: inherit; cursor: pointer; }
+::selection { background: var(--color-bg-selected); color: var(--color-fg-selected); }
+.ic { width: var(--icon-size); height: var(--icon-size); display: inline-block; flex: none; vertical-align: middle; color: var(--color-icon); }
+.ic--sm { width: var(--icon-size-sm); height: var(--icon-size-sm); }
+.ic--fg { color: var(--color-fg); }
+
+/* =========================================================================
+   Component: DemoBar
+   ========================================================================= */
+.demo-bar { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; padding: var(--space-2) var(--space-4); background: var(--color-bg-surface); border-bottom: var(--border-width) solid var(--color-border); font-size: var(--font-size-xs); color: var(--color-fg-secondary); }
+.demo-bar .demo-label { display: inline-flex; align-items: center; gap: var(--space-1); font-weight: var(--font-weight-semibold); }
+.demo-bar .demo-label .ic { color: var(--color-fg-secondary); }
+.demo-bar .demo-opt { display: inline-flex; align-items: center; gap: var(--space-1); cursor: pointer; user-select: none; }
+.demo-bar .demo-opt input { accent-color: var(--color-focus); }
+
+/* =========================================================================
+   主容器 + 通用
+   ========================================================================= */
+.panel { max-width: var(--panel-max); margin: 0 auto; padding: var(--space-4); display: flex; flex-direction: column; gap: var(--space-5); }
+.block-label { font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); color: var(--color-fg-secondary); margin: 0 0 var(--space-2); display: flex; align-items: center; gap: var(--space-1); }
+.block-label .ic { color: var(--color-icon); }
+.hint { font-size: var(--font-size-sm); color: var(--color-fg-secondary); margin: var(--space-2) 0 0; line-height: var(--line-height-base); }
+
+/* =========================================================================
+   Component: TitleArea
+   ========================================================================= */
+.title-area { display: flex; flex-direction: column; gap: var(--space-1); }
+.title-area h1 { font-size: var(--font-size-xl); font-weight: var(--font-weight-bold); line-height: var(--line-height-tight); margin: 0; display: flex; align-items: center; gap: var(--space-2); }
+.title-area h1 .ic { color: var(--color-icon); }
+.title-area .subtitle { font-size: var(--font-size-sm); color: var(--color-fg-secondary); line-height: var(--line-height-base); }
+
+/* =========================================================================
+   Component: Card（Raycast 风：左条 + 内容；状态色仅用于左条）
+   ========================================================================= */
+.card { display: flex; gap: var(--space-3); background: var(--color-bg-surface); border: var(--border-width) solid var(--color-border); border-radius: var(--radius-md); padding: var(--space-3); }
+.card[hidden] { display: none; }
+.card--info { border-left: var(--bar-thickness) solid var(--color-info-fg); }
+.card--warning { border-left: var(--bar-thickness) solid var(--color-warning-fg); }
+.card--error { border-left: var(--bar-thickness) solid var(--color-error-fg); }
+.card--success { border-left: var(--bar-thickness) solid var(--color-success-fg); }
+.card__ic { flex: none; margin-top: var(--border-width); }
+.card--info .card__ic { color: var(--color-info-fg); }
+.card--warning .card__ic { color: var(--color-warning-fg); }
+.card--error .card__ic { color: var(--color-error-fg); }
+.card--success .card__ic { color: var(--color-success-fg); }
+.card__body { min-width: 0; }
+.card__title { font-size: var(--font-size-md); font-weight: var(--font-weight-semibold); color: var(--color-fg); margin: 0 0 var(--space-1); display: flex; align-items: center; gap: var(--space-1); }
+.card__text { font-size: var(--font-size-sm); color: var(--color-fg-secondary); line-height: var(--line-height-base); margin: 0 0 var(--space-2); }
+.card__text code { font-family: var(--font-family-mono); font-size: var(--font-size-xs); background: var(--color-bg-canvas); border: var(--border-width) solid var(--color-border); border-radius: var(--radius-sm); padding: 0 var(--space-1); color: var(--color-fg); }
+
+/* =========================================================================
+   Component: MessageCard（提交信息卡 · 只读 mono）
+   ========================================================================= */
+.msg-card { background: var(--color-bg-surface); border: var(--border-width) solid var(--color-border); border-radius: var(--radius-md); padding: var(--space-3); display: flex; flex-direction: column; gap: var(--space-2); }
+.msg-card .mc-title { font-size: var(--font-size-lg); font-weight: var(--font-weight-semibold); color: var(--color-fg); display: flex; align-items: center; gap: var(--space-1); }
+.msg-card .mc-title .ic { color: var(--color-icon); }
+.msg-card .mc-text {
+  font-family: var(--font-family-mono); font-size: var(--font-size-sm); color: var(--color-fg);
+  background: var(--color-bg-canvas); border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-sm); padding: var(--space-2); line-height: var(--line-height-relaxed);
+  white-space: pre-wrap; word-break: break-all; margin: 0;
+}
+
+/* =========================================================================
+   Component: FileGroupPreview（文件分组预览）
+   ========================================================================= */
+.group { background: var(--color-bg-list); border: var(--border-width) solid var(--color-border); border-radius: var(--radius-md); overflow: hidden; }
+.group + .group { margin-top: var(--space-3); }
+.group__head { display: flex; align-items: center; gap: var(--space-2); height: var(--row-height-header); padding: 0 var(--space-3); background: var(--color-bg-section-header); border-bottom: var(--border-width) solid var(--color-border); font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); color: var(--color-fg); }
+.group__head .ic { color: var(--color-icon); }
+.group__head .g-count { margin-left: auto; font-size: var(--font-size-xs); font-weight: var(--font-weight-regular); color: var(--color-fg-secondary); font-family: var(--font-family-mono); }
+.file-row { display: flex; align-items: center; gap: var(--space-2); height: var(--row-height); padding: 0 var(--space-3); border-bottom: var(--border-width) solid var(--color-border); }
+.file-row:last-child { border-bottom: none; }
+.file-row:hover { background: var(--color-bg-hover); }
+.file-row .f-path { font-family: var(--font-family-mono); font-size: var(--font-size-sm); color: var(--color-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.file-row .f-tag { margin-left: auto; flex: none; font-size: var(--font-size-xs); font-family: var(--font-family-mono); padding: 0 var(--space-1); border-radius: var(--radius-badge); border: var(--border-width) solid var(--color-border); }
+.f-tag.tag-ok { color: var(--color-success-fg); border-color: var(--color-success-fg); }
+.f-tag.tag-warn { color: var(--color-warning-fg); border-color: var(--color-warning-fg); }
+.f-tag.tag-err { color: var(--color-error-fg); border-color: var(--color-error-fg); }
+
+/* =========================================================================
+   Component: RiskList（风险清单 · warning/error 语义色）
+   ========================================================================= */
+.risk-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-1); }
+.risk-item { display: flex; align-items: flex-start; gap: var(--space-1); padding: var(--space-1) var(--space-2); border-radius: var(--radius-sm); font-size: var(--font-size-sm); line-height: var(--line-height-base); }
+.risk-item .ic { flex: none; margin-top: var(--border-width); }
+.risk-item.is-warn { background: var(--color-warning-bg); color: var(--color-warning-fg); }
+.risk-item.is-warn .ic { color: var(--color-warning-fg); }
+.risk-item.is-err { background: var(--color-error-bg); color: var(--color-error-fg); }
+.risk-item.is-err .ic { color: var(--color-error-fg); }
+.risk-item code { font-family: var(--font-family-mono); font-size: var(--font-size-xs); background: var(--color-bg-canvas); border: var(--border-width) solid var(--color-border); border-radius: var(--radius-sm); padding: 0 var(--space-1); color: currentColor; }
+
+/* =========================================================================
+   Component: PlanStatusBar（canCommit ready/blocked）
+   ========================================================================= */
+.plan-status { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-4); background: var(--color-bg-surface); border: var(--border-width) solid var(--color-border); border-radius: var(--radius-md); font-size: var(--font-size-sm); }
+.plan-status.is-ready { border-left: var(--bar-thickness) solid var(--color-success-fg); }
+.plan-status.is-ready .ps-icon, .plan-status.is-ready .ps-text { color: var(--color-success-fg); }
+.plan-status.is-blocked { border-left: var(--bar-thickness) solid var(--color-warning-fg); }
+.plan-status.is-blocked .ps-icon, .plan-status.is-blocked .ps-text { color: var(--color-warning-fg); }
+.plan-status .ps-text { font-weight: var(--font-weight-medium); }
+.plan-status .ps-meta { margin-left: auto; font-family: var(--font-family-mono); font-size: var(--font-size-xs); color: var(--color-fg-secondary); }
+
+/* =========================================================================
+   按钮
+   ========================================================================= */
+.btn-primary, .btn-secondary { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-1); border: var(--border-width) solid transparent; border-radius: var(--radius-sm); font-size: var(--font-size-md); font-weight: var(--font-weight-medium); padding: 0 var(--space-3); }
+.btn-primary { height: var(--control-height-lg); background: var(--color-btn-primary-bg); color: var(--color-btn-primary-fg); }
+.btn-secondary { height: var(--control-height); background: var(--color-btn-secondary-bg); color: var(--color-btn-secondary-fg); border-color: var(--color-border); }
+.btn-primary:hover { background: var(--color-btn-primary-hover); }
+.btn-secondary:hover { background: var(--color-btn-secondary-hover); }
+.btn-primary:focus-visible, .btn-secondary:focus-visible { outline: var(--outline-w) solid var(--color-focus); outline-offset: var(--focus-offset); }
+.btn-primary:disabled, .btn-secondary:disabled { color: var(--color-fg-disabled); cursor: not-allowed; background: var(--color-btn-secondary-bg); }
+.action-bar { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.icon-btn { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-1); height: var(--control-height-sm); min-width: var(--control-height-sm); padding: 0 var(--space-1); background: transparent; color: var(--color-icon); border: var(--border-width) solid transparent; border-radius: var(--radius-sm); font-size: var(--font-size-sm); font-weight: var(--font-weight-medium); }
+.icon-btn:hover { background: var(--color-bg-hover); }
+.icon-btn:focus-visible { outline: var(--outline-w) solid var(--color-focus); outline-offset: var(--focus-offset); }
+
+/* 进度条 */
+.progress { height: var(--control-height-sm); background: var(--color-bg-input); border: var(--border-width) solid var(--color-border); border-radius: var(--radius-sm); overflow: hidden; }
+.progress[hidden] { display: none; }
+.progress .bar { height: 100%; width: 0; background: var(--color-progress); transition: width 600ms ease; }
+
+.footer-note { display: flex; align-items: center; gap: var(--space-2); font-size: var(--font-size-xs); color: var(--color-fg-secondary); padding-top: var(--space-2); border-top: var(--border-width) solid var(--color-border); }
+.footer-note .ic { color: var(--color-fg-disabled); }
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-git-merge" viewBox="0 0 16 16"><circle cx="5" cy="4" r="1.6" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="5" cy="12" r="1.6" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="11" cy="8" r="1.6" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M5 5.6v4.8M5 8a6 6 0 0 0 6 0" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></symbol>
+  <symbol id="i-info" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M8 7v4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="8" cy="4.6" r="0.9" fill="currentColor"/></symbol>
+  <symbol id="i-check" viewBox="0 0 16 16"><path d="M3 8.5l3 3 7-8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-warning" viewBox="0 0 16 16"><path d="M8 2l6 11H2z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M8 6.5v3.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="8" cy="11.4" r="0.8" fill="currentColor"/></symbol>
+  <symbol id="i-error" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M5.5 5.5l5 5M10.5 5.5l-5 5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 16 16"><path d="M1.5 3.5h4l1.5 1.5h7.5v7.5H1.5z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></symbol>
+  <symbol id="i-file" viewBox="0 0 16 16"><path d="M4 1.5h5l3 3v9.5H4z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M9 1.5v3h3" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></symbol>
+  <symbol id="i-git-commit" viewBox="0 0 16 16"><circle cx="8" cy="8" r="3" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M8 1.5v3M8 11.5v3M1.5 8h3M11.5 8h3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></symbol>
+  <symbol id="i-play" viewBox="0 0 16 16"><path d="M4 3l9 5-9 5z" fill="currentColor"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 16 16"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><path d="M13.5 2.5V6H10" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-close" viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 16 16"><path d="M1.5 8S4 4 8 4s6.5 4 6.5 4-2.5 4-6.5 4-6.5-4-6.5-4z" fill="none" stroke="currentColor" stroke-width="1.2"/><circle cx="8" cy="8" r="2" fill="none" stroke="currentColor" stroke-width="1.2"/></symbol>
+  <symbol id="i-settings-gear" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M8 1v2.2M8 12.8V15M1 8h2.2M12.8 8H15M3.1 3.1l1.6 1.6M11.3 11.3l1.6 1.6M12.9 3.1l-1.6 1.6M4.7 11.3l-1.6 1.6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></symbol>
+  <symbol id="i-edit" viewBox="0 0 16 16"><path d="M11 2.5l2.5 2.5L6 12.5l-3 1 1-3z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></symbol>
+</svg>
+
+<!-- ===================== Component: DemoBar ===================== -->
+<div class="demo-bar" aria-label="演示控制（仅前端模拟，真实状态由宿主读取）">
+  <span class="demo-label"><svg class="ic"><use href="#i-info"/></svg> 演示控制</span>
+  <label class="demo-opt"><input type="checkbox" id="demoAiOff" /> 模拟 AI 未配置</label>
+  <label class="demo-opt"><input type="checkbox" id="demoLoading" /> 模拟加载中</label>
+  <label class="demo-opt"><input type="checkbox" id="demoBlocked" /> 模拟 blocked（canCommit=false）</label>
+  <label class="demo-opt"><input type="checkbox" id="demoEmpty" /> 模拟空态（emptySelection）</label>
+</div>
+
+<main class="panel">
+
+  <!-- ===================== Component: TitleArea ===================== -->
+  <section class="title-area" aria-label="标题区">
+    <h1><svg class="ic"><use href="#i-git-merge"/></svg> 按模块拆分：订单服务</h1>
+    <p class="subtitle">分批提交规划预览 · 本批为"服务层"提交，可直接套用或加入提交队列。</p>
+  </section>
+
+  <!-- ===================== Component: SummaryCard ===================== -->
+  <section class="card card--info" aria-label="摘要卡">
+    <svg class="card__ic ic"><use href="#i-info"/></svg>
+    <div class="card__body">
+      <p class="card__title"><svg class="ic"><use href="#i-info"/></svg> 本批范围与意图</p>
+      <p class="card__text">将订单相关改动分为「模型层 / 服务层 / 配置」三批。本批提交服务层接口，依赖的模型层已先行提交，提交信息保持语义一致。</p>
+    </div>
+  </section>
+
+  <!-- ===================== Component: MessageCard ===================== -->
+  <section class="msg-card" aria-label="提交信息卡">
+    <span class="mc-title"><svg class="ic"><use href="#i-edit"/></svg> 提交信息</span>
+    <pre class="mc-text">feat(order): 新增订单创建与取消接口
+
+- 支持幂等创建，避免重复下单
+- 补充取消流程与库存回滚
+- 新增对应单元测试</pre>
+  </section>
+
+  <!-- ===================== Component: FileGroupPreview ===================== -->
+  <section aria-label="文件分组预览">
+    <p class="block-label"><svg class="ic"><use href="#i-file"/></svg> 文件分组预览</p>
+    <div id="fileGroups">
+      <div class="group">
+        <div class="group__head"><svg class="ic"><use href="#i-folder"/></svg> 服务层（可提交）<span class="g-count">2 项</span></div>
+        <div class="file-row"><svg class="ic ic--fg"><use href="#i-file"/></svg><span class="f-path">src/order/OrderService.ts</span><span class="f-tag tag-ok">可提交</span></div>
+        <div class="file-row"><svg class="ic ic--fg"><use href="#i-file"/></svg><span class="f-path">src/order/OrderController.ts</span><span class="f-tag tag-ok">可提交</span></div>
+      </div>
+      <div class="group">
+        <div class="group__head"><svg class="ic"><use href="#i-folder"/></svg> 模型层（阻止：等待上游）<span class="g-count">2 项</span></div>
+        <div class="file-row"><svg class="ic ic--fg"><use href="#i-file"/></svg><span class="f-path">src/order/model/Order.ts</span><span class="f-tag tag-warn">阻止</span></div>
+        <div class="file-row"><svg class="ic ic--fg"><use href="#i-file"/></svg><span class="f-path">src/order/model/OrderItem.ts</span><span class="f-tag tag-warn">阻止</span></div>
+      </div>
+      <div class="group">
+        <div class="group__head"><svg class="ic"><use href="#i-folder"/></svg> 冲突（阻止：需先解决）<span class="g-count">1 项</span></div>
+        <div class="file-row"><svg class="ic ic--fg"><use href="#i-file"/></svg><span class="f-path">src/order/OrderService.ts</span><span class="f-tag tag-err">冲突未解决</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== Component: RiskList ===================== -->
+  <section aria-label="风险清单">
+    <p class="block-label"><svg class="ic"><use href="#i-warning"/></svg> 风险清单</p>
+    <ul class="risk-list" id="riskList">
+      <li class="risk-item is-warn"><svg class="ic"><use href="#i-warning"/></svg><span>模型层 <code>Order.ts</code> 依赖的上游批次尚未提交，本批提交可能产生孤立引用。</span></li>
+      <li class="risk-item is-err"><svg class="ic"><use href="#i-error"/></svg><span><code>src/order/OrderService.ts</code> 存在未解决冲突，需先到冲突中心解决。</span></li>
+    </ul>
+  </section>
+
+  <!-- ===================== Component: PlanStatusBar ===================== -->
+  <section class="plan-status is-ready" id="planStatus" aria-label="计划状态条">
+    <svg class="ps-icon ic"><use href="#i-check"/></svg>
+    <span class="ps-text" id="planText">本批可提交（canCommit = ready）</span>
+    <span class="ps-meta">5 文件 · 4 可提交 / 1 冲突</span>
+  </section>
+
+  <!-- ===================== Component: ActionButtons ===================== -->
+  <section class="action-bar" aria-label="动作按钮">
+    <button class="btn-primary" id="applyBtn" type="button">
+      <svg class="ic"><use href="#i-check"/></svg> 套用此计划
+    </button>
+    <button class="btn-secondary" id="queueBtn" type="button">
+      <svg class="ic"><use href="#i-git-commit"/></svg> 加入队列
+    </button>
+    <button class="btn-secondary" id="regenBtn" type="button">
+      <svg class="ic"><use href="#i-refresh"/></svg> 重新生成
+    </button>
+  </section>
+
+  <!-- 加载中进度 -->
+  <div class="progress" id="progress" hidden><div class="bar" id="progressBar"></div></div>
+
+  <!-- ===================== Component: AiInfoCard（降级：手动分批） ===================== -->
+  <section class="card card--info" id="aiInfoCard" hidden aria-label="AI 未配置降级">
+    <svg class="card__ic ic"><use href="#i-info"/></svg>
+    <div class="card__body">
+      <p class="card__title"><svg class="ic"><use href="#i-info"/></svg> 手动模式（AI 未配置）</p>
+      <p class="card__text">拆分建议本由 AI 生成，当前未配置 AI 模型，已降级为手动分批。你可手动指定本批包含的文件，不阻断流程。</p>
+      <button class="btn-secondary" id="manualPickBtn" type="button">
+        <svg class="ic"><use href="#i-folder"/></svg> 手动选择本批文件
+      </button>
+    </div>
+  </section>
+
+  <!-- ===================== Component: EmptyState（emptySelection） ===================== -->
+  <section class="card card--info" id="emptyState" hidden aria-label="空态">
+    <svg class="card__ic ic"><use href="#i-info"/></svg>
+    <div class="card__body">
+      <p class="card__title"><svg class="ic"><use href="#i-info"/></svg> 当前范围没有可预览的文件</p>
+      <p class="card__text">emptySelection：本批未包含任何文件。请重新选择文件或重新生成拆分建议。</p>
+    </div>
+  </section>
+
+  <!-- ===================== Component: FooterNote ===================== -->
+  <div class="footer-note">
+    <svg class="ic"><use href="#i-info"/></svg>
+    <span>后期项（仅设计不实现）：套用 / 加入队列 / 重新生成 均走命令占位；AI 未配置时降级手动分批，不抛错。</span>
+  </div>
+
+</main>
+
+<script>
+/* 受控渲染：操作 DOM textContent / classList / createElement / setAttribute，严禁运行时拼接 HTML 字符串。 */
+(function () {
+  'use strict';
+
+  var fileGroups = document.getElementById('fileGroups');
+  var riskList = document.getElementById('riskList');
+  var planStatus = document.getElementById('planStatus');
+  var planText = document.getElementById('planText');
+  var aiInfoCard = document.getElementById('aiInfoCard');
+  var emptyState = document.getElementById('emptyState');
+  var demoAiOff = document.getElementById('demoAiOff');
+  var demoBlocked = document.getElementById('demoBlocked');
+  var demoEmpty = document.getElementById('demoEmpty');
+
+  function applyState() {
+    var empty = demoEmpty.checked;
+    var blocked = demoBlocked.checked;
+    var aiOff = demoAiOff.checked;
+
+    fileGroups.hidden = empty;
+    riskList.closest('section').hidden = empty;
+    planStatus.hidden = empty;
+
+    // 空态
+    emptyState.hidden = !empty;
+
+    // AI 未配置 → 降级手动分批 info 卡
+    aiInfoCard.hidden = !aiOff;
+
+    // blocked 态：canCommit=false → 警告 + 风险展开
+    if (blocked) {
+      planStatus.className = 'plan-status is-blocked';
+      planText.textContent = '本批存在阻止项，暂不可提交（canCommit = blocked）';
+      var psIcon = planStatus.querySelector('.ps-icon use');
+      psIcon.setAttribute('href', '#i-warning');
+    } else {
+      planStatus.className = 'plan-status is-ready';
+      planText.textContent = '本批可提交（canCommit = ready）';
+      var psIcon2 = planStatus.querySelector('.ps-icon use');
+      psIcon2.setAttribute('href', '#i-check');
+    }
+  }
+  [demoAiOff, demoBlocked, demoEmpty].forEach(function (el) {
+    el.addEventListener('change', applyState);
+  });
+  applyState();
+
+  /* —— 加载中（按钮禁用 + 进度） —— */
+  var applyBtn = document.getElementById('applyBtn');
+  var queueBtn = document.getElementById('queueBtn');
+  var regenBtn = document.getElementById('regenBtn');
+  var progress = document.getElementById('progress');
+  var progressBar = document.getElementById('progressBar');
+  var demoLoading = document.getElementById('demoLoading');
+  function setLoading(on) {
+    var disabled = on || demoLoading.checked;
+    applyBtn.disabled = disabled; queueBtn.disabled = disabled; regenBtn.disabled = disabled;
+    if (disabled) {
+      progress.hidden = false; progressBar.style.width = '0';
+      requestAnimationFrame(function () { progressBar.style.width = '100%'; });
+    } else { progress.hidden = true; }
+  }
+  demoLoading.addEventListener('change', function () { setLoading(demoLoading.checked); });
+
+  /* —— 动作按钮（命令占位） —— */
+  applyBtn.addEventListener('click', function () { if (applyBtn.disabled) return; /* svnWorkbench.applySplitPlan 占位 */ });
+  queueBtn.addEventListener('click', function () { if (queueBtn.disabled) return; /* svnWorkbench.enqueueSplitPlan 占位 */ });
+  regenBtn.addEventListener('click', function () { if (regenBtn.disabled) return; setLoading(true); setTimeout(function () { setLoading(false); }, 700); });
+  document.getElementById('manualPickBtn').addEventListener('click', function () { /* svnWorkbench.pickFilesManually 占位 */ });
+})();
+</script>
+</body>
+</html>

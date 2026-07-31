@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SVN Workbench v3 · 功能全景与状态矩阵</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --font-ui: var(--vscode-font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif);
+      --font-code: var(--vscode-editor-font-family, "SFMono-Regular", Consolas, monospace);
+      --bg: var(--vscode-editor-background, #1f1f1f); --side: var(--vscode-sideBar-background, #181818);
+      --surface: var(--vscode-editorWidget-background, #252526); --raised: var(--vscode-sideBarSectionHeader-background, #292929);
+      --input: var(--vscode-input-background, #313131); --hover: var(--vscode-list-hoverBackground, #2a2d2e);
+      --selected: var(--vscode-list-activeSelectionBackground, #04395e); --fg: var(--vscode-foreground, #cccccc);
+      --muted: var(--vscode-descriptionForeground, #969696); --faint: var(--vscode-disabledForeground, #6d6d6d);
+      --border: var(--vscode-panel-border, #303030); --strong: var(--vscode-widget-border, #4b4b4b);
+      --focus: var(--vscode-focusBorder, #007fd4); --link: var(--vscode-textLink-foreground, #4daafc);
+      --primary: var(--vscode-button-background, #0e639c); --primary-hover: var(--vscode-button-hoverBackground, #1177bb);
+      --primary-fg: var(--vscode-button-foreground, #fff); --secondary: var(--vscode-button-secondaryBackground, #3a3d41);
+      --success: var(--vscode-testing-iconPassed, #73c991); --warning: var(--vscode-editorWarning-foreground, #cca700); --danger: var(--vscode-errorForeground, #f48771);
+      --info-bg: color-mix(in srgb, var(--link) 8%, var(--surface)); --warn-bg: color-mix(in srgb, var(--warning) 8%, var(--surface)); --danger-bg: color-mix(in srgb, var(--danger) 8%, var(--surface)); --ok-bg: color-mix(in srgb, var(--success) 8%, var(--surface));
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body { margin: 0; min-width: 720px; overflow: hidden; color: var(--fg); background: var(--bg); font: 13px/1.45 var(--font-ui); }
+    button, input, textarea, select { font: inherit; }
+    button { color: inherit; }
+    button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 1px solid var(--focus); outline-offset: -1px; }
+    [hidden] { display: none !important; }
+    .mono { font-family: var(--font-code); } .muted { color: var(--muted); } .success { color: var(--success); } .warning { color: var(--warning); } .danger { color: var(--danger); }
+    .icon { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.55; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+    .app { height: 100%; display: grid; grid-template-rows: 46px 36px minmax(0,1fr) 22px; }
+    .topbar { display: flex; align-items: center; gap: 10px; padding: 0 14px; background: var(--side); border-bottom: 1px solid var(--border); }
+    .brand { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+    .brand .icon { color: var(--link); }
+    .topbar p { margin: 0; color: var(--muted); font-size: 12px; }
+    .topbar .right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+    .tabs { display: flex; align-items: stretch; gap: 1px; padding: 0 10px; background: var(--side); border-bottom: 1px solid var(--border); }
+    .tab { min-width: 130px; border: 0; border-bottom: 1px solid transparent; background: transparent; color: var(--muted); cursor: pointer; }
+    .tab:hover { background: var(--hover); color: var(--fg); }
+    .tab.active { color: var(--fg); border-bottom-color: var(--focus); background: var(--bg); }
+    .content { min-height: 0; overflow: hidden; }
+    .page { height: 100%; overflow: auto; padding: 14px; }
+    .button { min-height: 28px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 0 10px; border: 1px solid transparent; border-radius: 3px; background: var(--primary); color: var(--primary-fg); cursor: pointer; }
+    .button:hover { background: var(--primary-hover); }
+    .button.secondary { color: var(--fg); background: var(--secondary); border-color: var(--strong); }
+    .button.ghost { color: var(--fg); background: transparent; border-color: var(--strong); }
+    .button.small { min-height: 24px; padding: 0 8px; font-size: 12px; }
+    .button:disabled { opacity: .45; cursor: not-allowed; }
+    .icon-button { width: 25px; height: 25px; display: inline-grid; place-items: center; padding: 0; border: 1px solid transparent; background: transparent; cursor: pointer; }
+    .icon-button:hover { background: var(--hover); }
+    .badge { display: inline-flex; align-items: center; min-height: 19px; padding: 0 6px; border-radius: 8px; background: rgba(128,128,128,.18); font-size: 11px; white-space: nowrap; }
+    .badge.ai { color: var(--link); } .badge.ok { color: var(--success); } .badge.warn { color: var(--warning); } .badge.err { color: var(--danger); }
+    .input, .select, .textarea { width: 100%; color: var(--fg); background: var(--input); border: 1px solid var(--strong); border-radius: 3px; }
+    .input, .select { height: 28px; padding: 0 8px; } .textarea { min-height: 76px; padding: 8px; resize: vertical; }
+    .section-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+    .section-head h1 { margin: 0; font-size: 17px; }
+    .section-head p { margin: 0; color: var(--muted); }
+    .section-head .right { margin-left: auto; display: flex; gap: 6px; }
+    .panel { border: 1px solid var(--border); background: var(--side); }
+    .panel-head { min-height: 37px; display: flex; align-items: center; gap: 7px; padding: 6px 9px; border-bottom: 1px solid var(--border); font-weight: 600; }
+    .panel-head .right { margin-left: auto; }
+
+    .scm-shell { min-height: calc(100% - 48px); display: grid; grid-template-columns: 330px minmax(440px,1fr); border: 1px solid var(--border); }
+    .scm-side { min-height: 0; border-right: 1px solid var(--border); background: var(--side); overflow: auto; }
+    .repo-picker { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 6px; padding: 8px; border-bottom: 1px solid var(--border); }
+    .commit-box { padding: 8px; border-bottom: 1px solid var(--border); }
+    .commit-box .textarea { min-height: 64px; }
+    .commit-box-actions { display: flex; gap: 6px; margin-top: 6px; }
+    .scm-toolbar { display: flex; align-items: center; gap: 3px; height: 31px; padding: 0 7px; border-bottom: 1px solid var(--border); }
+    .scm-toolbar .label { font-size: 11px; font-weight: 600; text-transform: uppercase; }
+    .scm-toolbar .right { margin-left: auto; display: flex; }
+    .scm-group { border-bottom: 1px solid var(--border); }
+    .group-head { height: 28px; display: flex; align-items: center; gap: 6px; padding: 0 8px; background: var(--raised); font-size: 11px; font-weight: 600; }
+    .group-head .count { margin-left: auto; color: var(--muted); }
+    .scm-row { min-height: 31px; display: grid; grid-template-columns: 17px 20px minmax(0,1fr) auto; gap: 5px; align-items: center; padding: 2px 8px 2px 15px; cursor: pointer; }
+    .scm-row:hover { background: var(--hover); }
+    .scm-row.active { background: var(--selected); }
+    .scm-row input { width: 13px; height: 13px; margin: 0; accent-color: var(--focus); }
+    .scm-row .path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .scm-row .state { font: 600 11px var(--font-code); text-align: center; }
+    .scm-main { min-width: 0; min-height: 0; display: grid; grid-template-rows: auto minmax(0,1fr) auto; }
+    .repo-strip { min-height: 37px; display: flex; align-items: center; gap: 8px; padding: 0 10px; border-bottom: 1px solid var(--border); background: var(--side); }
+    .repo-strip .right { margin-left: auto; }
+    .scm-detail { overflow: auto; padding: 14px; }
+    .detail-grid { display: grid; grid-template-columns: repeat(3,minmax(130px,1fr)); gap: 8px; margin-bottom: 12px; }
+    .metric { padding: 10px; border: 1px solid var(--border); background: var(--side); }
+    .metric strong { display: block; margin-top: 2px; font-size: 19px; }
+    .command-preview { padding: 10px; border: 1px solid var(--border); background: var(--bg); font: 12px/1.65 var(--font-code); white-space: pre-wrap; }
+    .context-matrix { width: 100%; border-collapse: collapse; margin-top: 12px; }
+    .context-matrix th, .context-matrix td { padding: 7px 9px; border: 1px solid var(--border); text-align: left; }
+    .context-matrix th { background: var(--raised); color: var(--muted); font-size: 11px; }
+    .native-note { display: flex; align-items: flex-start; gap: 8px; padding: 9px 10px; border-top: 1px solid var(--border); background: var(--info-bg); }
+
+    .agent-layout { min-height: calc(100% - 48px); display: grid; grid-template-columns: 360px minmax(440px,1fr); gap: 12px; }
+    .agent-request { padding: 12px; }
+    .context-pills { display: flex; flex-wrap: wrap; gap: 5px; margin: 9px 0 12px; }
+    .step-list { border-top: 1px solid var(--border); }
+    .agent-step { display: grid; grid-template-columns: 24px minmax(0,1fr) auto; gap: 8px; align-items: start; padding: 10px; border-bottom: 1px solid var(--border); }
+    .agent-step.active { background: var(--selected); }
+    .agent-step.done .step-index { color: var(--success); border-color: var(--success); }
+    .step-index { width: 22px; height: 22px; display: grid; place-items: center; border: 1px solid var(--strong); border-radius: 50%; font-size: 11px; }
+    .agent-step p { margin: 2px 0 0; color: var(--muted); font-size: 12px; }
+    .agent-detail { min-width: 0; padding: 14px; border: 1px solid var(--border); background: var(--side); }
+    .agent-detail h2 { margin: 0 0 4px; font-size: 16px; }
+    .agent-detail > p { margin: 0 0 12px; color: var(--muted); }
+    .decision-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; margin-bottom: 12px; }
+    .decision { padding: 9px; border: 1px solid var(--border); background: var(--bg); }
+    .decision span { color: var(--muted); font-size: 11px; }
+    .decision strong { display: block; margin-top: 3px; }
+    .agent-actions { display: flex; gap: 7px; margin-top: 12px; }
+    .privacy { margin-top: 12px; padding: 9px; border-left: 3px solid var(--link); background: var(--info-bg); }
+    .privacy p { margin: 3px 0 0; color: var(--muted); }
+
+    .state-layout { min-height: calc(100% - 48px); display: grid; grid-template-columns: 360px minmax(450px,1fr); gap: 12px; }
+    .state-grid { display: grid; grid-template-columns: repeat(2,1fr); gap: 7px; align-content: start; }
+    .state-card { min-height: 77px; padding: 9px; border: 1px solid var(--border); background: var(--side); cursor: pointer; text-align: left; }
+    .state-card:hover { border-color: var(--focus); }
+    .state-card.active { background: var(--selected); border-color: var(--focus); }
+    .state-card strong { display: flex; align-items: center; gap: 7px; }
+    .state-card p { margin: 4px 0 0; color: var(--muted); font-size: 11px; }
+    .state-detail { border: 1px solid var(--border); background: var(--side); overflow: auto; }
+    .state-detail-head { display: flex; align-items: center; gap: 8px; padding: 11px 12px; border-bottom: 1px solid var(--border); }
+    .state-detail-head h2 { margin: 0; font-size: 15px; }
+    .state-sample { padding: 14px; }
+    .state-sample > p { margin: 0 0 12px; color: var(--muted); }
+    .form-grid { display: grid; grid-template-columns: 150px minmax(230px,1fr); align-items: center; gap: 9px 11px; }
+    .form-grid label { color: var(--muted); font-size: 12px; }
+    .fingerprint { padding: 9px; border: 1px solid var(--border); background: var(--bg); font: 11px/1.6 var(--font-code); word-break: break-all; }
+    .file-list { display: grid; gap: 1px; border: 1px solid var(--border); background: var(--border); }
+    .file-item { min-height: 32px; display: flex; align-items: center; gap: 7px; padding: 0 8px; background: var(--bg); }
+    .file-item .right { margin-left: auto; }
+    .progress { height: 4px; margin: 11px 0; background: var(--border); overflow: hidden; }
+    .progress i { display: block; width: 62%; height: 100%; background: var(--primary); }
+    .sample-actions { display: flex; gap: 7px; margin-top: 12px; }
+
+    .catalog-grid { display: grid; grid-template-columns: repeat(3,minmax(250px,1fr)); gap: 9px; }
+    .catalog-card { padding: 11px; border: 1px solid var(--border); background: var(--side); }
+    .catalog-card h3 { display: flex; align-items: center; gap: 7px; margin: 0 0 7px; font-size: 13px; }
+    .catalog-card ul { margin: 0; padding-left: 18px; color: var(--muted); }
+    .catalog-card li { margin: 5px 0; }
+    .memory-panel { display: grid; grid-template-columns: minmax(400px,1.2fr) minmax(300px,.8fr); gap: 10px; margin-top: 11px; }
+    .memory-source { display: grid; grid-template-columns: 20px minmax(0,1fr) auto; align-items: center; gap: 8px; padding: 9px; border-bottom: 1px solid var(--border); }
+    .setting-list { padding: 11px; }
+    .setting-row { min-height: 34px; display: flex; align-items: center; gap: 9px; border-bottom: 1px solid var(--border); }
+    .setting-row .right { margin-left: auto; }
+    .toggle { width: 30px; height: 16px; border: 0; border-radius: 8px; background: var(--primary); position: relative; cursor: pointer; }
+    .toggle::after { content: ""; position: absolute; width: 12px; height: 12px; right: 2px; top: 2px; border-radius: 50%; background: #fff; }
+    .statusbar { display: flex; align-items: center; gap: 12px; padding: 0 8px; background: var(--vscode-statusBar-background, #007acc); color: var(--vscode-statusBar-foreground, #fff); font-size: 11px; }
+    .statusbar .right { margin-left: auto; }
+    .toast { position: fixed; z-index: 50; right: 13px; bottom: 34px; max-width: 390px; padding: 9px 11px; border: 1px solid var(--strong); border-left: 3px solid var(--link); background: var(--surface); box-shadow: 0 7px 22px rgba(0,0,0,.35); opacity: 0; transform: translateY(10px); pointer-events: none; transition: .15s; }
+    .toast.show { opacity: 1; transform: translateY(0); }
+    @media (max-width: 1040px) { .scm-shell, .agent-layout, .state-layout { grid-template-columns: 1fr; } .scm-side { border-right: 0; border-bottom: 1px solid var(--border); } .catalog-grid { grid-template-columns: repeat(2,1fr); } .memory-panel { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <svg aria-hidden="true" width="0" height="0" style="position:absolute">
+    <symbol id="i-branch" viewBox="0 0 16 16"><circle cx="4" cy="3" r="1.5"/><circle cx="4" cy="13" r="1.5"/><circle cx="12" cy="6" r="1.5"/><path d="M4 4.5v7M5.5 5.6H8A4 4 0 0 0 12 2v2.5"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 16 16"><path d="M1.5 4h5l1.2 1.5h6.8v7H1.5V4Z"/></symbol>
+    <symbol id="i-file" viewBox="0 0 16 16"><path d="M4 2h5l3 3v9H4V2Z"/><path d="M9 2v3h3"/></symbol>
+    <symbol id="i-down" viewBox="0 0 16 16"><path d="m4 6 4 4 4-4"/></symbol>
+    <symbol id="i-spark" viewBox="0 0 16 16"><path d="m8 1 1.2 4 4 1.2-4 1.2-1.2 4-1.2-4-4-1.2 4-1.2L8 1Z"/><path d="m12.5 10 .6 1.8 1.8.6-1.8.6-.6 1.8-.6-1.8-1.8-.6 1.8-.6.6-1.8Z"/></symbol>
+    <symbol id="i-check" viewBox="0 0 16 16"><path d="m3 8 3 3 7-7"/></symbol>
+    <symbol id="i-warning" viewBox="0 0 16 16"><path d="M8 2 14 13H2L8 2Z"/><path d="M8 6v3M8 11.5v.1"/></symbol>
+    <symbol id="i-sync" viewBox="0 0 16 16"><path d="M13 5a5 5 0 0 0-8.7-1.4L2 6M3 11a5 5 0 0 0 8.7 1.4L14 10"/><path d="M2 2v4h4M14 14v-4h-4"/></symbol>
+    <symbol id="i-history" viewBox="0 0 16 16"><path d="M3 5.5A5.5 5.5 0 1 1 2.5 9"/><path d="M1.5 3v3h3M8 4.5V8l2.5 1.5"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 16 16"><rect x="3" y="7" width="10" height="7" rx="1"/><path d="M5 7V5a3 3 0 0 1 6 0v2"/></symbol>
+    <symbol id="i-key" viewBox="0 0 16 16"><circle cx="5" cy="8" r="3"/><path d="M8 8h6M11 8v2M13 8v2"/></symbol>
+    <symbol id="i-globe" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><path d="M2 8h12M8 2a9 9 0 0 1 0 12M8 2a9 9 0 0 0 0 12"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 16 16"><path d="M3 4h10M6 4V2h4v2M5 6v7M8 6v7M11 6v7"/></symbol>
+    <symbol id="i-test" viewBox="0 0 16 16"><path d="M6 2h4M7 2v4l-4 7h10L9 6V2"/><path d="M5 10h6"/></symbol>
+    <symbol id="i-info" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6"/><path d="M8 7v4M8 4.5v.1"/></symbol>
+    <symbol id="i-close" viewBox="0 0 16 16"><path d="m4 4 8 8M12 4l-8 8"/></symbol>
+  </svg>
+
+  <div class="app">
+    <header class="topbar"><div class="brand"><svg class="icon"><use href="#i-branch"/></svg>SVN Workbench v3</div><p>功能完整性评审原型 · 不作为用户日常入口</p><div class="right"><span class="badge ok">62 项已纳入</span><span class="badge ai">AI-first</span></div></header>
+    <nav class="tabs" aria-label="功能全景导航"><button class="tab active" data-tab="scm">原生 SCM 与 Changelist</button><button class="tab" data-tab="agent">AI 任务代理</button><button class="tab" data-tab="states">可靠性与状态矩阵</button><button class="tab" data-tab="catalog">历史、仓库与团队</button></nav>
+    <main class="content">
+      <section class="page" data-page="scm">
+        <div class="section-head"><div><h1>原生 SCM 是日常主界面</h1><p>右键负责发起任务，SCM 负责持续观察、选择、分组与提交。</p></div><div class="right"><button class="button secondary" data-demo="refresh">刷新全部仓库</button><button class="button">智能提交所选</button></div></div>
+        <div class="scm-shell">
+          <aside class="scm-side">
+            <div class="repo-picker"><select class="select" aria-label="选择 SVN 工作副本"><option>order-platform · trunk · r18447</option><option>payment-sdk · branches/v2 · r932</option><option>docs-external · trunk · r541</option></select><button class="icon-button" title="仓库管理"><svg class="icon"><use href="#i-down"/></svg></button></div>
+            <div class="commit-box"><textarea class="textarea" placeholder="提交说明（与智能提交模块共享草稿）">feat(order): 完善订单金额校验</textarea><div class="commit-box-actions"><button class="button small">提交 Changelist</button><button class="button small secondary"><svg class="icon"><use href="#i-spark"/></svg>AI 生成</button></div></div>
+            <div class="scm-toolbar"><span class="label">源代码管理</span><div class="right"><button class="icon-button" title="刷新"><svg class="icon"><use href="#i-sync"/></svg></button><button class="icon-button" title="新建 Changelist">＋</button><button class="icon-button" title="更多">···</button></div></div>
+            <section class="scm-group"><div class="group-head"><svg class="icon"><use href="#i-down"/></svg>冲突<span class="count danger">1</span></div><div class="scm-row"><input type="checkbox" disabled><span class="state danger">C</span><span class="path">order/lock.service.ts</span><span class="badge err">阻止</span></div></section>
+            <section class="scm-group"><div class="group-head"><svg class="icon"><use href="#i-down"/></svg>CHANGELIST · 金额校验<span class="count">5</span></div><div class="scm-row active"><input type="checkbox" checked><span class="state warning">M</span><span class="path">order/checkout.ts</span><span class="badge ai">AI</span></div><div class="scm-row"><input type="checkbox" checked><span class="state warning">M</span><span class="path">order/validator.ts</span></div><div class="scm-row"><input type="checkbox" checked><span class="state success">A</span><span class="path">order/types.ts</span></div><div class="scm-row"><input type="checkbox" checked><span class="state warning">M</span><span class="path">shared/money.ts</span></div><div class="scm-row"><input type="checkbox" checked><span class="state success">A</span><span class="path">tests/checkout.spec.ts</span></div></section>
+            <section class="scm-group"><div class="group-head"><svg class="icon"><use href="#i-down"/></svg>CHANGELIST · 文档更新<span class="count">1</span></div><div class="scm-row"><input type="checkbox"><span class="state warning">M</span><span class="path">docs/order-api.md</span></div></section>
+            <section class="scm-group"><div class="group-head"><svg class="icon"><use href="#i-down"/></svg>未分组<span class="count">2</span></div><div class="scm-row"><input type="checkbox"><span class="state warning">M</span><span class="path">shared/logger.ts</span><span class="badge warn">另批</span></div><div class="scm-row"><input type="checkbox"><span class="state muted">?</span><span class="path">tmp/debug.log</span><span class="badge err">忽略?</span></div></section>
+          </aside>
+          <section class="scm-main"><div class="repo-strip"><svg class="icon"><use href="#i-folder"/></svg><strong>order-platform</strong><span class="mono muted">svn://svn.example.com/order/trunk</span><span class="badge">主工作副本</span><span class="right badge ok">独立提交边界</span></div><div class="scm-detail"><div class="detail-grid"><div class="metric"><span class="muted">仓库</span><strong>3</strong></div><div class="metric"><span class="muted">Changelist</span><strong>2</strong></div><div class="metric"><span class="muted">所选文件</span><strong>5</strong></div></div><div class="panel"><div class="panel-head">所选文件的命令预览 <span class="right badge ok">同一仓库</span></div><div class="command-preview">svn status --xml src/order
+svn changelist "金额校验" checkout.ts validator.ts types.ts money.ts checkout.spec.ts
+svn commit --changelist "金额校验" -F &lt;message-file&gt; --encoding utf-8</div></div><table class="context-matrix"><thead><tr><th>右键上下文</th><th>提升到首层的命令</th><th>隐藏或阻止</th></tr></thead><tbody><tr><td>SVN 文件夹</td><td>提交、更新、历史、AI 审查</td><td>单文件 Lock/Blame</td></tr><tr><td>单个修改文件</td><td>Diff、历史、Blame、解释、Revert</td><td>范围更新</td></tr><tr><td>多文件选择</td><td>Changelist、审查、提交、锁定</td><td>跨仓库提交</td></tr><tr><td>冲突文件</td><td>冲突处理、Merge Editor</td><td>直接提交</td></tr><tr><td>未版本化文件</td><td>Add、Ignore、敏感扫描</td><td>历史、Blame</td></tr><tr><td>仓库根</td><td>Update、Commit、Cleanup、Branch/Tag</td><td>无</td></tr><tr><td>非 SVN 路径</td><td>检测工作副本</td><td>其余 SVN 命令</td></tr></tbody></table></div><div class="native-note"><svg class="icon success"><use href="#i-check"/></svg><div><strong>多仓库约束</strong><br><span class="muted">`payment-sdk` 与 `docs-external` 各自拥有独立 SourceControl。externals 显示来源徽标；混合选择必须按仓库拆分，绝不拼成一次提交。</span></div></div></section>
+        </div>
+      </section>
+
+      <section class="page" data-page="agent" hidden>
+        <div class="section-head"><div><h1>AI 任务代理：可以主动规划，不能静默执行</h1><p>代理将自然语言目标拆为受控 SVN 步骤，每一步展示范围、命令、风险和可撤销性。</p></div><div class="right"><span class="badge ai">需要逐步确认</span></div></div>
+        <div class="agent-layout"><section class="panel"><div class="agent-request"><label for="agentPrompt"><strong>你的目标</strong></label><textarea id="agentPrompt" class="textarea">把订单金额相关修改整理成可提交状态；不要包含日志重构，并补齐必要测试。</textarea><div class="context-pills"><span class="badge">范围 src/order</span><span class="badge">8 个变化</span><span class="badge">1 个冲突</span><span class="badge">远端 +3</span><span class="badge ai">团队记忆 20 条</span></div><button id="startAgent" class="button"><svg class="icon"><use href="#i-spark"/></svg>生成执行计划</button></div><div class="step-list"><article class="agent-step active" data-agent-step="0"><span class="step-index">1</span><div><strong>确认范围与仓库</strong><p>阻止 externals 和范围外文件混入</p></div><span class="badge warn">待确认</span></article><article class="agent-step" data-agent-step="1"><span class="step-index">2</span><div><strong>审查变化与敏感内容</strong><p>缺陷、密钥、生成物、大文件、调试代码</p></div><span class="badge">等待</span></article><article class="agent-step" data-agent-step="2"><span class="step-index">3</span><div><strong>更新并处理冲突</strong><p>先复查远端，再转到 Merge Editor</p></div><span class="badge">等待</span></article><article class="agent-step" data-agent-step="3"><span class="step-index">4</span><div><strong>建立 SVN Changelist</strong><p>金额校验、文档更新；日志重构移出</p></div><span class="badge">等待</span></article><article class="agent-step" data-agent-step="4"><span class="step-index">5</span><div><strong>补充和运行测试</strong><p>JPY、超大金额、默认币种</p></div><span class="badge">等待</span></article><article class="agent-step" data-agent-step="5"><span class="step-index">6</span><div><strong>生成说明并提交</strong><p>最终远端检查后才执行 commit</p></div><span class="badge">等待</span></article></div></section><section class="agent-detail"><h2 id="agentStepTitle">步骤 1 · 确认范围与仓库</h2><p id="agentStepSummary">发现当前选择包含 order-platform 与 docs-external 两个工作副本。代理建议只保留 order-platform/src/order。</p><div class="decision-grid"><div class="decision"><span>操作范围</span><strong id="agentScope">order-platform/src/order</strong></div><div class="decision"><span>风险</span><strong id="agentRisk" class="warning">混合仓库</strong></div><div class="decision"><span>可撤销</span><strong id="agentUndo">不产生修改</strong></div></div><div class="panel"><div class="panel-head">将执行的命令 / 动作</div><div id="agentCommand" class="command-preview">svn info --xml src/order
+svn status --xml src/order
+阻止 docs-external/README.md 进入当前任务</div></div><div class="privacy"><strong>上下文与隐私</strong><p id="agentPrivacy">本步仅在本地读取路径、仓库 UUID 和状态；不会把文件内容发送给模型。</p></div><div class="agent-actions"><button id="approveStep" class="button">批准并执行此步</button><button class="button secondary">编辑计划</button><button class="button ghost" data-agent-cancel>停止代理</button></div></section></div>
+      </section>
+
+      <section class="page" data-page="states" hidden>
+        <div class="section-head"><div><h1>可靠性与状态矩阵</h1><p>P0 状态必须有清晰原因、原生恢复动作和不会丢失上下文的重试路径。</p></div><div class="right"><span class="badge warn">10 个关键状态</span></div></div>
+        <div class="state-layout"><section class="state-grid"><button class="state-card active" data-state="auth"><strong><svg class="icon"><use href="#i-key"/></svg>需要登录</strong><p>用户名、密码、系统凭据存储</p></button><button class="state-card" data-state="certificate"><strong><svg class="icon warning"><use href="#i-lock"/></svg>证书不受信任</strong><p>主机、指纹、仅本次/永久信任</p></button><button class="state-card" data-state="offline"><strong><svg class="icon warning"><use href="#i-globe"/></svg>离线或代理失败</strong><p>区分 DNS、代理、超时和认证</p></button><button class="state-card" data-state="locked"><strong><svg class="icon danger"><use href="#i-lock"/></svg>工作副本锁定</strong><p>Cleanup 预览与恢复步骤</p></button><button class="state-card" data-state="running"><strong><svg class="icon"><use href="#i-sync"/></svg>长任务执行中</strong><p>阶段、耗时、输出、取消与重试</p></button><button class="state-card" data-state="mixedRepo"><strong><svg class="icon danger"><use href="#i-warning"/></svg>混合仓库选择</strong><p>按仓库拆分，禁止一次提交</p></button><button class="state-card" data-state="staleAi"><strong><svg class="icon warning"><use href="#i-spark"/></svg>AI 结果已过期</strong><p>文件、scope 或 revision 变化</p></button><button class="state-card" data-state="destructive"><strong><svg class="icon danger"><use href="#i-trash"/></svg>破坏性操作</strong><p>精确清单、可恢复性与二次确认</p></button><button class="state-card" data-state="svnMissing"><strong><svg class="icon danger"><use href="#i-warning"/></svg>SVN CLI 缺失</strong><p>路径配置与安装引导</p></button><button class="state-card" data-state="aiOff"><strong><svg class="icon"><use href="#i-spark"/></svg>AI 未配置</strong><p>核心 SVN 保持可用，本地规则降级</p></button></section><section class="state-detail"><header class="state-detail-head"><svg id="stateIcon" class="icon"><use href="#i-key"/></svg><h2 id="stateTitle">连接 SVN 仓库</h2><span id="stateBadge" class="badge warn">需要操作</span></header><div class="state-sample" data-state-detail="auth"><p>svn.example.com 要求身份验证。密码不会写入工作区设置或日志。</p><div class="form-grid"><label>仓库</label><div class="mono">https://svn.example.com/order</div><label for="authUser">用户名</label><input id="authUser" class="input" value="yangnan"><label for="authPassword">密码</label><input id="authPassword" type="password" class="input" placeholder="输入仓库密码"><label>保存方式</label><select class="select"><option>交给操作系统凭据存储</option><option>仅本次会话</option><option>不保存</option></select></div><div class="sample-actions"><button class="button">登录并重试</button><button class="button secondary">取消当前操作</button></div></div><div class="state-sample" data-state-detail="certificate" hidden><p>证书主机名匹配，但签发机构不受系统信任。用户必须看到完整指纹后才能选择。</p><div class="fingerprint">主机: svn.internal.example.com
+SHA-256: 7A:61:36:AF:94:83:2B:10:5F:61:8D:20:8A:2E:72:CD
+原因: unknown certificate authority
+有效期: 2026-04-01 — 2027-04-01</div><div class="sample-actions"><button class="button">仅本次信任</button><button class="button secondary">永久信任此证书</button><button class="button ghost">取消</button></div></div><div class="state-sample" data-state-detail="offline" hidden><p>无法连接仓库。诊断结果：代理 `127.0.0.1:7890` 拒绝连接；本地 Diff、历史缓存和文件整理仍可使用。</p><div class="sample-actions"><button class="button">重新连接</button><button class="button secondary">打开代理设置</button><button class="button ghost">查看诊断</button></div></div><div class="state-sample" data-state-detail="locked" hidden><p>上次更新被中断，`src/order` 留下工作副本锁。Cleanup 不会删除本地修改。</p><div class="file-list"><div class="file-item"><svg class="icon warning"><use href="#i-lock"/></svg><span class="mono">src/order</span><span class="right badge warn">locked</span></div><div class="file-item"><svg class="icon"><use href="#i-info"/></svg><span>发现未完成 update 日志</span><span class="right badge">可清理</span></div></div><div class="command-preview" style="margin-top:10px">svn cleanup src/order --remove-unversioned=false --remove-ignored=false</div><div class="sample-actions"><button class="button">执行安全 Cleanup</button><button class="button secondary">打开输出</button></div></div><div class="state-sample" data-state-detail="running" hidden><p id="runningText">正在更新 src/order · 阶段 3/5：应用远端文本变化 · 已用时 18 秒</p><div class="progress"><i id="progressBar"></i></div><div class="file-list"><div class="file-item"><span class="mono">svn update src/order</span><span class="right badge ai">运行中</span></div><div class="file-item"><span>已处理 46 / 73 个路径</span><button class="button small ghost">查看输出</button></div></div><div class="sample-actions"><button id="cancelProgress" class="button secondary">取消任务</button><button id="retryProgress" class="button" disabled>重新采集状态并重试</button></div></div><div class="state-sample" data-state-detail="mixedRepo" hidden><p>选择包含两个仓库 UUID，SVN 不能将它们放入一次原子提交。</p><div class="file-list"><div class="file-item"><span class="mono">order-platform/src/order/checkout.ts</span><span class="right badge ok">repo A</span></div><div class="file-item"><span class="mono">docs-external/order-api.md</span><span class="right badge warn">repo B · external</span></div></div><div class="sample-actions"><button class="button">按仓库创建两个任务</button><button class="button secondary">只保留当前仓库</button></div></div><div class="state-sample" data-state-detail="staleAi" hidden><p>AI 审查基于 r18447 和 8 个文件；现在工作副本为 r18450，checkout.ts 也已修改。旧结论不能直接采用。</p><div class="file-list"><div class="file-item"><span>revision</span><span class="right mono">r18447 → r18450</span></div><div class="file-item"><span>scope hash</span><span class="right badge err">已变化</span></div><div class="file-item"><span>过期结论</span><span class="right">4 条</span></div></div><div class="sample-actions"><button class="button">使用最新差异重新审查</button><button class="button secondary">只查看旧结果</button></div></div><div class="state-sample" data-state-detail="destructive" hidden><p>还原会覆盖以下本地修改，且尚未生成可恢复 patch。</p><div class="file-list"><div class="file-item"><span class="state warning">M</span><span class="mono">src/order/checkout.ts</span><span class="right">未保存 3 行</span></div><div class="file-item"><span class="state success">A</span><span class="mono">src/order/types.ts</span><span class="right">新增文件</span></div></div><div class="sample-actions"><button class="button secondary">先导出恢复 Patch</button><button class="button ghost">取消</button><button class="button" style="background:var(--danger)">确认还原 2 个文件</button></div></div><div class="state-sample" data-state-detail="svnMissing" hidden><p>未找到 SVN CLI。文件浏览、缓存历史和设计草稿仍可用；提交、更新和状态刷新被禁用。</p><div class="form-grid"><label for="svnPath">SVN 可执行文件</label><input id="svnPath" class="input mono" placeholder="/opt/homebrew/bin/svn 或 C:\Program Files\...\svn.exe"><label>自动检测</label><div><span class="badge err">PATH 未找到</span> <span class="badge">已检查 6 个常见位置</span></div></div><div class="sample-actions"><button class="button">选择可执行文件</button><button class="button secondary">查看安装说明</button></div></div><div class="state-sample" data-state-detail="aiOff" hidden><p>AI 未配置。提交、更新、Diff、历史、Changelist、冲突编辑和文件操作全部保持可用。</p><div class="file-list"><div class="file-item"><svg class="icon success"><use href="#i-check"/></svg><span>本地规则：生成物、敏感模式、范围边界</span><span class="right badge ok">可用</span></div><div class="file-item"><svg class="icon"><use href="#i-spark"/></svg><span>语义审查、拆分、影响分析</span><span class="right badge">未配置</span></div></div><div class="sample-actions"><button class="button">配置 AI 模型</button><button class="button secondary">继续手动模式</button></div></div></section></div>
+      </section>
+
+      <section class="page" data-page="catalog" hidden>
+        <div class="section-head"><div><h1>历史、仓库管理与团队记忆</h1><p>低频但完整的 SVN 能力放在命令面板和高级工具中，不污染默认右键菜单。</p></div><div class="right"><button class="button secondary">打开命令面板</button></div></div>
+        <div class="catalog-grid"><article class="catalog-card"><h3><svg class="icon"><use href="#i-history"/></svg>完整历史与追溯</h3><ul><li>修订详情与 Changed Paths</li><li>任意两个修订对比</li><li>单文件历史与 Blame/Annotate</li><li>从历史修订恢复文件</li><li>AI 总结模块近期演进</li></ul></article><article class="catalog-card"><h3><svg class="icon"><use href="#i-branch"/></svg>分支、标签与切换</h3><ul><li>Branch/Tag 创建向导与命令预览</li><li>Switch 前检测本地修改</li><li>Relocate 仅在仓库根显示</li><li>操作前自动导出恢复 Patch</li></ul></article><article class="catalog-card"><h3><svg class="icon"><use href="#i-sync"/></svg>合并与仓库浏览</h3><ul><li>Merge 来源、范围和 revision 选择</li><li>合并预检与冲突概率提示</li><li>Repository Browser</li><li>冲突转入 VS Code Merge Editor</li></ul></article><article class="catalog-card"><h3><svg class="icon"><use href="#i-file"/></svg>Patch 与本地搁置</h3><ul><li>导出所选差异为 Patch</li><li>应用前预览与路径映射</li><li>本地搁置以可恢复 Patch 实现</li><li>明确标记“非 SVN 标准 Shelf”</li></ul></article><article class="catalog-card"><h3><svg class="icon"><use href="#i-file"/></svg>发布说明</h3><ul><li>按 revision 区间收集提交</li><li>按模块、工单和类型归类</li><li>每条摘要保留 revision 来源</li><li>输出 Markdown 或复制到剪贴板</li></ul></article><article class="catalog-card"><h3><svg class="icon"><use href="#i-lock"/></svg>文件与仓库操作</h3><ul><li>Add / Delete / Revert / Ignore</li><li>Lock / Unlock 与状态装饰</li><li>SVN Properties</li><li>Copy URL / Show in Repository</li><li>Refresh / Cleanup</li></ul></article></div>
+        <div class="memory-panel"><section class="panel"><div class="panel-head"><svg class="icon"><use href="#i-spark"/></svg>团队记忆来源 <span class="right badge ai">本地摘要</span></div><div class="memory-source"><svg class="icon success"><use href="#i-check"/></svg><div><strong>最近 20 次 SVN 修订</strong><br><span class="muted">仅提取模块、前缀和说明风格</span></div><span class="badge ok">已索引</span></div><div class="memory-source"><svg class="icon success"><use href="#i-check"/></svg><div><strong>.svn-workbench.json</strong><br><span class="muted">前缀、模块、工单号与忽略规则</span></div><span class="badge ok">仓库规则</span></div><div class="memory-source"><svg class="icon"><use href="#i-info"/></svg><div><strong>工作区引用关系</strong><br><span class="muted">只保存符号摘要，不缓存完整源文件</span></div><span class="badge">按需</span></div><div class="memory-source"><svg class="icon warning"><use href="#i-warning"/></svg><div><strong>外部模型上下文</strong><br><span class="muted">发送前展示文件数、字符预算和模型</span></div><span class="badge warn">需同意</span></div></section><aside class="panel"><div class="panel-head">隐私与预算</div><div class="setting-list"><div class="setting-row"><span>允许使用提交历史摘要</span><button class="toggle" aria-label="允许使用提交历史摘要"></button></div><div class="setting-row"><span>允许发送差异内容</span><button class="toggle" aria-label="允许发送差异内容"></button></div><div class="setting-row"><span>每次最大文件数</span><span class="right mono">40</span></div><div class="setting-row"><span>每次最大字符数</span><span class="right mono">120k</span></div><div class="setting-row"><span>本地缓存</span><button class="button small ghost right" data-demo="clearMemory">清除团队记忆</button></div></div></aside></div>
+      </section>
+    </main>
+    <footer class="statusbar"><span>SVN Workbench v3</span><span>功能完整性矩阵</span><span class="right">P0 33 · P1 14 · P2 7 · 上下文 8</span></footer>
+  </div>
+  <div id="toast" class="toast" role="status" aria-live="polite">操作已完成</div>
+
+  <script>
+    (() => {
+      'use strict';
+      const q = (selector, root = document) => root.querySelector(selector);
+      const qa = (selector, root = document) => Array.from(root.querySelectorAll(selector));
+      const agentSteps = [
+        { title:'步骤 1 · 确认范围与仓库', summary:'发现当前选择包含 order-platform 与 docs-external 两个工作副本。代理建议只保留 order-platform/src/order。', scope:'order-platform/src/order', risk:'混合仓库', undo:'不产生修改', command:'svn info --xml src/order\nsvn status --xml src/order\n阻止 docs-external/README.md 进入当前任务', privacy:'本步仅在本地读取路径、仓库 UUID 和状态；不会把文件内容发送给模型。' },
+        { title:'步骤 2 · 审查变化与敏感内容', summary:'将运行本地规则扫描，并把 5 个选中文件的裁剪差异发送给已配置模型。', scope:'5 个文件 · 84k 字符', risk:'发现 1 个高风险', undo:'只读操作', command:'本地：密钥 / 私钥 / 调试代码 / 生成物 / 大文件扫描\nAI：语义缺陷与测试缺口审查\n结果必须包含 path、line、evidence、confidence', privacy:'发送到 deepseek-reasoner：5 个文件的差异片段；不发送未选文件和完整历史。' },
+        { title:'步骤 3 · 更新并处理冲突', summary:'远端领先 3 个修订，lock.service.ts 与本地相交；更新后会转到 Merge Editor。', scope:'src/order', risk:'可能产生冲突', undo:'更新不可整体撤销', command:'svn status --show-updates --xml src/order\nsvn update src/order\n若冲突：打开 VS Code Merge Editor', privacy:'本步不调用 AI；产生冲突后才按用户选择生成合并建议。' },
+        { title:'步骤 4 · 建立 SVN Changelist', summary:'创建“金额校验”和“文档更新”两个 changelist，将 logger.ts 留在未分组。', scope:'7 个可提交文件', risk:'低', undo:'可移出 changelist', command:'svn changelist "金额校验" <5 paths>\nsvn changelist "文档更新" docs/order-api.md\nlogger.ts 保持未分组', privacy:'仅在本地执行 SVN changelist，不调用模型。' },
+        { title:'步骤 5 · 补充和运行测试', summary:'建议补充 JPY、超大金额和默认币种测试；生成代码前仍需逐文件确认。', scope:'tests/order', risk:'会修改测试文件', undo:'可通过 Diff 还原', command:'生成 3 个测试候选 → 在 Diff Editor 审阅\nnpm test -- checkout.spec.ts', privacy:'发送相关函数签名、现有测试和审查结论；预计 24k 字符。' },
+        { title:'步骤 6 · 生成说明并提交', summary:'重新检查远端状态，通过后提交“金额校验” changelist。', scope:'Changelist 金额校验 · 5 文件', risk:'创建远端 revision', undo:'需要反向合并', command:'svn status --show-updates --xml <5 paths>\nsvn commit --changelist "金额校验" -F <message-file>', privacy:'仅向模型发送最终文件摘要和团队规则生成提交说明；执行 commit 前必须再次确认。' }
+      ];
+      const stateMeta = {
+        auth:['连接 SVN 仓库','需要操作','#i-key','warn'], certificate:['验证 SVN 证书','安全确认','#i-lock','warn'], offline:['无法连接仓库','可重试','#i-globe','warn'], locked:['工作副本需要 Cleanup','阻止操作','#i-lock','err'], running:['SVN 操作进行中','可取消','#i-sync','ai'], mixedRepo:['选择跨越多个仓库','已阻止','#i-warning','err'], staleAi:['AI 结果已过期','需重跑','#i-spark','warn'], destructive:['确认破坏性操作','不可直接撤销','#i-trash','err'], svnMissing:['SVN CLI 不可用','需配置','#i-warning','err'], aiOff:['AI 未配置 · 手动模式','核心可用','#i-spark','ok']
+      };
+      let agentIndex = 0;
+      function toast(message) { const item=q('#toast'); item.textContent=message; item.classList.add('show'); clearTimeout(toast.timer); toast.timer=setTimeout(()=>item.classList.remove('show'),2300); }
+      function showPage(id) { const target=q('[data-page="'+id+'"]')?id:'scm'; qa('[data-page]').forEach(page=>{page.hidden=page.dataset.page!==target;}); qa('[data-tab]').forEach(tab=>tab.classList.toggle('active',tab.dataset.tab===target)); }
+      function showState(id) { qa('[data-state-detail]').forEach(detail=>{detail.hidden=detail.dataset.stateDetail!==id;}); qa('[data-state]').forEach(card=>card.classList.toggle('active',card.dataset.state===id)); const meta=stateMeta[id]; q('#stateTitle').textContent=meta[0]; q('#stateBadge').textContent=meta[1]; q('#stateBadge').className='badge '+meta[3]; q('#stateIcon use').setAttribute('href',meta[2]); q('#stateIcon').setAttribute('class','icon '+(meta[3]==='err'?'danger':meta[3]==='warn'?'warning':meta[3]==='ok'?'success':'')); }
+      function renderAgent() { const step=agentSteps[agentIndex]; q('#agentStepTitle').textContent=step.title; q('#agentStepSummary').textContent=step.summary; q('#agentScope').textContent=step.scope; q('#agentRisk').textContent=step.risk; q('#agentRisk').className=step.risk==='低'?'success':'warning'; q('#agentUndo').textContent=step.undo; q('#agentCommand').textContent=step.command; q('#agentPrivacy').textContent=step.privacy; qa('[data-agent-step]').forEach((item,index)=>{item.classList.toggle('active',index===agentIndex);item.classList.toggle('done',index<agentIndex);const badge=q('.badge',item);badge.textContent=index<agentIndex?'已批准':index===agentIndex?'待确认':'等待';badge.className='badge '+(index<agentIndex?'ok':index===agentIndex?'warn':'');}); q('#approveStep').textContent=agentIndex===agentSteps.length-1?'最终确认并提交':'批准并执行此步'; }
+      qa('[data-tab]').forEach(tab=>tab.addEventListener('click',()=>{showPage(tab.dataset.tab);history.replaceState(null,'','#'+tab.dataset.tab);}));
+      qa('[data-state]').forEach(card=>card.addEventListener('click',()=>showState(card.dataset.state)));
+      q('#startAgent').addEventListener('click',()=>{agentIndex=0;renderAgent();toast('执行计划已生成；每一步都需要你的批准');});
+      q('#approveStep').addEventListener('click',()=>{if(agentIndex<agentSteps.length-1){agentIndex+=1;renderAgent();toast('上一步已完成，状态已重新采集');}else{toast('最终提交仍需 VS Code 模态确认；原型不会执行真实命令');}});
+      qa('[data-agent-cancel]').forEach(button=>button.addEventListener('click',()=>toast('代理已停止；已完成的 SVN 步骤不会被静默回滚')));
+      q('#cancelProgress').addEventListener('click',()=>{q('#runningText').textContent='任务已取消 · 正在重新采集工作副本状态';q('#progressBar').style.width='100%';q('#progressBar').style.background='var(--warning)';q('#cancelProgress').disabled=true;q('#retryProgress').disabled=false;toast('取消请求已发送，状态采集完成后才能重试');});
+      q('#retryProgress').addEventListener('click',()=>toast('已从最新状态重新开始，不复用上一次中间结果'));
+      qa('[data-demo]').forEach(button=>button.addEventListener('click',()=>toast(button.dataset.demo==='clearMemory'?'团队记忆缓存已清除；仓库规则文件未删除':'正在并行刷新 3 个工作副本')));
+      window.addEventListener('hashchange',()=>showPage(location.hash.slice(1)));
+      renderAgent(); showState('auth'); showPage(location.hash.slice(1));
+    })();
+  </script>
+</body>
+</html>

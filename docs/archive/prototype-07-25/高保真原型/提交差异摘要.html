@@ -1,0 +1,718 @@
+<!--
+  SVN Workbench v1 · 提交差异摘要 (Commit Diff Summary) 自包含原型
+  设计系统：v1-design-tokens.md（所有颜色/字体/间距/圆角/阴影均走 --token，禁硬编码 hex）
+  运行环境：VS Code 内嵌 webview（深色默认，浅色自动；Svelte 受控渲染蓝图）
+  布局代表 Svelte 组件：以 <!-- Component: Xxx --> 划分边界
+  图标：inline SVG（单色 currentColor）+ 注释 codicon 对应名
+  绿色/红色差异色严格使用 --color-diff-add-fg / --color-diff-del-fg
+-->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SVN Workbench · 提交差异摘要</title>
+<style>
+  /* ============================================================
+     深色主题预览默认值（:root --vscode-*）
+     仅此处提供 vscode 变量默认，组件样式一律引用 --token，不写 hex
+     ============================================================ */
+  :root {
+    /* 前景 / 背景层级 */
+    --vscode-foreground: #cccccc;
+    --vscode-descriptionForeground: #9d9d9d;
+    --vscode-disabledForeground: #6b6b6b;
+    --vscode-textLink-foreground: #3794ff;
+    --vscode-icon-foreground: #c5c5c5;
+    --vscode-panel-background: #1e1e1e;
+    --vscode-sideBar-background: #252526;
+    --vscode-editor-background: #1e1e1e;
+    --vscode-list-background: #1e1e1e;
+    --vscode-input-background: #3c3c3c;
+    --vscode-dropdown-background: #3c3c3c;
+    --vscode-sideBarSectionHeader-background: #2d2d2d;
+    --vscode-list-hoverBackground: #2a2d2e;
+    --vscode-list-activeSelectionBackground: #094771;
+    --vscode-list-inactiveSelectionBackground: #37373d;
+    --vscode-list-activeSelectionForeground: #ffffff;
+    --vscode-editorWidget-background: #252526;
+    --vscode-panel-border: #2b2b2b;
+    --vscode-widget-border: #454545;
+    --vscode-contrastBorder: #454545;
+
+    /* 语义状态色 */
+    --vscode-errorForeground: #f48771;
+    --vscode-warningForeground: #cca700;
+    --vscode-charts-yellow: #cca700;
+    --vscode-charts-green: #89d185;
+    --vscode-charts-red: #f48771;
+    --vscode-charts-orange: #e2c08d;
+
+    /* 差异色 */
+    --vscode-diffEditor-insertedTextBackground: #9ccc2c33;
+    --vscode-diffEditor-removedTextBackground: #f14c4c33;
+    --vscode-editorGutter-addedBackground: #9ccc2c;
+    --vscode-editorGutter-deletedBackground: #f14c4c;
+    --vscode-editorGutter-modifiedBackground: #e2c08d;
+
+    /* 焦点 / 阴影 / 按钮 */
+    --vscode-focusBorder: #007fd4;
+    --vscode-widget-shadow: rgba(0,0,0,0.36);
+    --vscode-button-background: #0e639c;
+    --vscode-button-foreground: #ffffff;
+    --vscode-button-hoverBackground: #1177bb;
+    --vscode-button-secondaryBackground: #3a3d41;
+    --vscode-button-secondaryForeground: #cccccc;
+    --vscode-button-secondaryHoverBackground: #45494e;
+    --vscode-badge-background: #4d4d4d;
+    --vscode-badge-foreground: #ffffff;
+    --vscode-progressBar-background: #0e70c0;
+
+    /* 字体 / 控件 */
+    --vscode-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    --vscode-editor-font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    --vscode-input-placeholderForeground: #9d9d9d;
+    --vscode-checkbox-background: #3c3c3c;
+    --vscode-checkbox-foreground: #f0f0f0;
+    --vscode-checkbox-border: #6b6b6b;
+    --vscode-tree-indentGuidesStroke: #404040;
+  }
+
+  /* ============================================================
+     设计令牌映射（来自 v1-design-tokens.md §1–§5）
+     组件样式只使用以下 --token，禁止任何 hex
+     ============================================================ */
+  :root {
+    --color-fg: var(--vscode-foreground);
+    --color-fg-secondary: var(--vscode-descriptionForeground);
+    --color-fg-disabled: var(--vscode-disabledForeground);
+    --color-fg-link: var(--vscode-textLink-foreground);
+    --color-icon: var(--vscode-icon-foreground);
+    --color-bg-canvas: var(--vscode-panel-background);
+    --color-bg-surface: var(--vscode-sideBar-background);
+    --color-bg-editor: var(--vscode-editor-background);
+    --color-bg-list: var(--vscode-list-background);
+    --color-bg-input: var(--vscode-input-background);
+    --color-bg-dropdown: var(--vscode-dropdown-background);
+    --color-bg-section-header: var(--vscode-sideBarSectionHeader-background);
+    --color-bg-hover: var(--vscode-list-hoverBackground);
+    --color-bg-selected: var(--vscode-list-activeSelectionBackground);
+    --color-bg-selected-inactive: var(--vscode-list-inactiveSelectionBackground);
+    --color-fg-selected: var(--vscode-list-activeSelectionForeground);
+    --color-bg-widget: var(--vscode-editorWidget-background);
+    --color-border: var(--vscode-panel-border);
+    --color-border-widget: var(--vscode-widget-border);
+    --color-border-strong: var(--vscode-contrastBorder, var(--vscode-panel-border));
+
+    --color-error-fg: var(--vscode-errorForeground);
+    --color-error-bg: color-mix(in srgb, var(--vscode-errorForeground) 14%, var(--vscode-panel-background));
+    --color-warning-fg: var(--vscode-warningForeground, var(--vscode-charts-yellow));
+    --color-warning-bg: color-mix(in srgb, var(--vscode-warningForeground, var(--vscode-charts-yellow)) 14%, var(--vscode-panel-background));
+    --color-info-fg: var(--vscode-textLink-foreground);
+    --color-info-bg: color-mix(in srgb, var(--vscode-textLink-foreground) 14%, var(--vscode-panel-background));
+    --color-success-fg: var(--vscode-charts-green);
+    --color-success-bg: color-mix(in srgb, var(--vscode-charts-green) 14%, var(--vscode-panel-background));
+
+    --color-diff-add-fg: var(--vscode-charts-green);
+    --color-diff-add-bg: var(--vscode-diffEditor-insertedTextBackground, var(--vscode-charts-green));
+    --color-diff-add-gutter: var(--vscode-editorGutter-addedBackground, var(--vscode-charts-green));
+    --color-diff-del-fg: var(--vscode-charts-red, var(--vscode-errorForeground));
+    --color-diff-del-bg: var(--vscode-diffEditor-removedTextBackground, var(--vscode-charts-red));
+    --color-diff-del-gutter: var(--vscode-editorGutter-deletedBackground, var(--vscode-charts-red));
+    --color-diff-mod-fg: var(--vscode-charts-yellow, var(--vscode-charts-orange));
+    --color-diff-mod-gutter: var(--vscode-editorGutter-modifiedBackground, var(--vscode-charts-yellow));
+
+    --color-focus: var(--vscode-focusBorder);
+    --shadow-widget: var(--vscode-widget-shadow);
+    --color-btn-primary-bg: var(--vscode-button-background);
+    --color-btn-primary-fg: var(--vscode-button-foreground);
+    --color-btn-primary-hover: var(--vscode-button-hoverBackground);
+    --color-btn-secondary-bg: var(--vscode-button-secondaryBackground);
+    --color-btn-secondary-fg: var(--vscode-button-secondaryForeground);
+    --color-btn-secondary-hover: var(--vscode-button-secondaryHoverBackground);
+    --color-badge-bg: var(--vscode-badge-background);
+    --color-badge-fg: var(--vscode-badge-foreground);
+    --color-progress: var(--vscode-progressBar-background);
+
+    /* —— 内部辅助令牌（共享，几何值，见 设计令牌.md §4.1） —— */
+    --content-max-width: 1024px;
+    --content-max-width-narrow: 920px;
+    --control-min-width: 160px;
+    --preview-min-height: 96px;
+    --row-left-bar: 2px;
+    --hairline: 1px;
+    --bar-thickness: 4px;
+    --pill-radius: 999px;
+    --banner-bar: 3px;
+    --radius-round: 50%;
+    --status-dot: 8px;
+
+    --font-family: var(--vscode-font-family);
+    --font-family-mono: var(--vscode-editor-font-family, "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace);
+    --font-size-xs: 11px;
+    --font-size-sm: 12px;
+    --font-size-md: 13px;
+    --font-size-lg: 15px;
+    --font-size-xl: 18px;
+    --font-weight-regular: 400;
+    --font-weight-medium: 500;
+    --font-weight-semibold: 600;
+    --font-weight-bold: 700;
+    --line-height-tight: 1.3;
+    --line-height-base: 1.5;
+    --line-height-relaxed: 1.6;
+
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-5: 20px;
+    --space-6: 24px;
+    --space-7: 32px;
+    --space-8: 40px;
+    --control-height: 26px;
+    --control-height-sm: 22px;
+    --control-height-lg: 30px;
+    --row-height: 26px;
+    --row-height-header: 22px;
+    --radius-sm: 2px;
+    --radius-md: 3px;
+    --radius-badge: 3px;
+    --radius-lg: 4px;
+    --border-width: 1px;
+    --indent-step: 16px;
+
+    /* 内部辅助令牌（仅几何值，避免组件样式出现裸 px） */
+    --icon-size: 16px;
+    --icon-size-sm: 14px;
+    --icon-size-xs: 11px;
+    --progress-h: 2px;
+    --focus-offset: -1px;
+    --bar-min-w: 120px;
+  }
+
+  /* ============================================================
+     基础与布局
+     ============================================================ */
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: var(--font-family);
+    font-size: var(--font-size-md);
+    line-height: var(--line-height-base);
+    color: var(--color-fg);
+    background: var(--color-bg-canvas);
+  }
+  .panel { display: flex; flex-direction: column; min-height: 100vh; background: var(--color-bg-canvas); }
+  .icon { width: var(--icon-size); height: var(--icon-size); display: block; flex: none; }
+  .icon-sm { width: var(--icon-size-sm); height: var(--icon-size-sm); display: block; flex: none; }
+  .spacer { flex: 1; }
+
+  .icon-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: var(--control-height-sm); height: var(--control-height-sm);
+    border: var(--border-width) solid transparent; border-radius: var(--radius-sm);
+    background: transparent; color: var(--color-icon); cursor: pointer; padding: 0;
+  }
+  .icon-btn:hover { background: var(--color-bg-hover); }
+  .icon-btn:focus-visible { outline: var(--border-width) solid var(--color-focus); outline-offset: var(--focus-offset); }
+  .icon-btn:disabled { color: var(--color-fg-disabled); cursor: not-allowed; background: transparent; }
+
+  .btn {
+    display: inline-flex; align-items: center; gap: var(--space-1);
+    height: var(--control-height-lg); padding: 0 var(--space-3);
+    border-radius: var(--radius-sm); border: var(--border-width) solid transparent;
+    font-size: var(--font-size-sm); font-weight: var(--font-weight-medium);
+    font-family: var(--font-family); cursor: pointer; white-space: nowrap;
+  }
+  .btn .icon { width: var(--icon-size-sm); height: var(--icon-size-sm); }
+  .btn-primary { background: var(--color-btn-primary-bg); color: var(--color-btn-primary-fg); }
+  .btn-primary:hover { background: var(--color-btn-primary-hover); }
+  .btn-secondary { background: var(--color-btn-secondary-bg); color: var(--color-btn-secondary-fg); height: var(--control-height); }
+  .btn-secondary:hover { background: var(--color-btn-secondary-hover); }
+  .btn:focus-visible { outline: var(--border-width) solid var(--color-focus); outline-offset: var(--focus-offset); }
+  .btn:disabled { color: var(--color-fg-disabled); cursor: not-allowed; opacity: 0.7; }
+
+  /* ============================================================
+     Component: DemoBar（原型演示控制）
+     ============================================================ */
+    /* —— 连续性头（ContHead）：面包屑 + ScopeBar + 状态点（跨页连续性原语，见 设计令牌.md §5.9.1） —— */
+  .cont-head {
+    display: flex; align-items: center; gap: var(--space-4);
+    padding: var(--space-2) var(--space-4);
+    background: var(--color-bg-surface);
+    border-bottom: var(--hairline) solid var(--color-border);
+    min-height: calc(var(--row-height-header) + var(--space-2));
+  }
+  .breadcrumb {
+    display: flex; align-items: center; gap: var(--space-1);
+    font-size: var(--font-size-xs); color: var(--color-fg-secondary);
+    white-space: nowrap; flex: none;
+  }
+  .breadcrumb .crumb--current { color: var(--color-fg); font-weight: var(--font-weight-medium); }
+  .breadcrumb .crumb-sep { color: var(--color-fg-disabled); }
+  .cont-head .scope-bar {
+    display: flex; align-items: center; gap: var(--space-2);
+    min-width: 0; flex: 1 1 auto;
+  }
+  .scope-bar .scope-icon { color: var(--color-icon); display: inline-flex; flex: none; }
+  .scope-bar .path {
+    font-family: var(--font-family-mono); font-size: var(--font-size-sm);
+    color: var(--color-fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .scope-bar .scope { font-size: var(--font-size-sm); color: var(--color-fg-secondary); white-space: nowrap; }
+  .scope-bar .scope b { color: var(--color-fg); font-weight: var(--font-weight-medium); }
+  .health { display: flex; align-items: center; gap: var(--space-3); flex: none; margin-left: auto; }
+  .health .dot { width: var(--status-dot); height: var(--status-dot); border-radius: var(--radius-round); display: inline-block; flex: none; }
+  .health .dot--ready { background: var(--color-success-fg); }
+  .health .dot--idle  { background: var(--color-fg-disabled); }
+  .health .dot--err   { background: var(--color-error-fg); }
+
+.demo-bar {
+    display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-4);
+    padding: var(--space-2) var(--space-4);
+    background: var(--color-bg-section-header);
+    border-bottom: var(--border-width) solid var(--color-border);
+    font-size: var(--font-size-xs);
+  }
+  .demo-bar .demo-label { color: var(--color-fg-secondary); font-weight: var(--font-weight-semibold); letter-spacing: 0.04em; text-transform: uppercase; }
+  .demo-bar label { display: inline-flex; align-items: center; gap: var(--space-1); color: var(--color-fg-secondary); cursor: pointer; }
+  .demo-bar input[type="checkbox"] { accent-color: var(--color-focus); width: var(--icon-size-xs); height: var(--icon-size-xs); }
+
+  /* ============================================================
+     Component: ScopeBar
+     ============================================================ */
+  .scope-bar {
+    display: flex; align-items: center; gap: var(--space-2);
+    height: calc(var(--row-height-header) + var(--space-3));
+    padding: 0 var(--space-4);
+    background: var(--color-bg-surface);
+    border-bottom: var(--border-width) solid var(--color-border);
+  }
+  .scope-bar .scope-icon { color: var(--color-icon); display: inline-flex; }
+  .scope-bar .path { font-family: var(--font-family-mono); font-size: var(--font-size-sm); color: var(--color-fg); }
+  .scope-bar .scope { font-size: var(--font-size-sm); color: var(--color-fg-secondary); white-space: nowrap; }
+  .scope-bar .scope b { color: var(--color-fg); font-weight: var(--font-weight-medium); }
+
+  /* ============================================================
+     Component: StatusSummary（总量汇总条）
+     ============================================================ */
+  .status-summary {
+    display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap;
+    padding: var(--space-2) var(--space-4);
+    border-bottom: var(--border-width) solid var(--color-border);
+    font-size: var(--font-size-sm);
+  }
+  .badge {
+    display: inline-flex; align-items: center; gap: var(--space-1);
+    height: var(--control-height-sm); padding: 0 var(--space-2);
+    background: var(--color-badge-bg); color: var(--color-badge-fg);
+    border-radius: var(--radius-badge);
+    font-size: var(--font-size-xs); font-weight: var(--font-weight-medium);
+  }
+  .badge .icon { width: var(--icon-size-xs); height: var(--icon-size-xs); }
+  .badge--file { color: var(--color-fg); }
+  .badge--add { color: var(--color-diff-add-fg); }
+  .badge--del { color: var(--color-diff-del-fg); }
+  .badge--hunk { color: var(--color-fg-secondary); }
+  .trunc-note { display: inline-flex; align-items: center; gap: var(--space-1); color: var(--color-info-fg); font-size: var(--font-size-xs); }
+  .trunc-note .icon { width: var(--icon-size-xs); height: var(--icon-size-xs); }
+
+  /* ============================================================
+     Component: SvnCard（svn 缺失降级 · 规范 .gate-card--svn）
+     ============================================================ */
+  /* 本页原无 .gate-card 基础盒，此处补齐规范基础盒并叠加语义色覆盖 */
+  .gate-card {
+    display: flex; flex-direction: column; gap: var(--space-2);
+    border: var(--border-width) solid var(--color-border); border-radius: var(--radius-md);
+    background: var(--color-bg-surface); padding: var(--space-3);
+    margin: var(--space-3) var(--space-4);
+    border-left: var(--bar-thickness) solid var(--color-info-fg);
+  }
+  .gate-card--svn { border-left-color: var(--color-error-fg); }
+  .gate-card--ai  { border-left-color: var(--color-info-fg); }
+  .info-head { display: flex; align-items: center; gap: var(--space-2); font-weight: var(--font-weight-semibold); font-size: var(--font-size-md); color: var(--color-info-fg); }
+  .gate-card--svn .info-head { color: var(--color-error-fg); }
+  .gate-card--ai  .info-head { color: var(--color-info-fg); }
+  .info-body { font-size: var(--font-size-sm); color: var(--color-fg-secondary); line-height: var(--line-height-relaxed); }
+  .info-body code { font-family: var(--font-family-mono); font-size: var(--font-size-xs); color: var(--color-fg); background: var(--color-bg-input); padding: var(--border-width) var(--space-1); border-radius: var(--radius-sm); }
+  .info-actions { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+  .link-btn { background: none; border: none; color: var(--color-fg-link); cursor: pointer; font-size: var(--font-size-sm); padding: 0; font-family: var(--font-family); text-decoration: underline; }
+  .link-btn:hover { opacity: 0.85; }
+
+  /* ============================================================
+     Component: LoadingBar（加载进度）
+     ============================================================ */
+  .loading-bar {
+    display: flex; align-items: center; gap: var(--space-2);
+    padding: var(--space-2) var(--space-4);
+    border-bottom: var(--border-width) solid var(--color-border);
+    font-size: var(--font-size-sm); color: var(--color-fg-secondary);
+  }
+  .loading-bar .icon { color: var(--color-icon); animation: spin 0.9s linear infinite; }
+  .loading-bar .bar { flex: 1; height: var(--progress-h); background: var(--color-bg-input); border-radius: var(--radius-sm); overflow: hidden; min-width: var(--bar-min-w); }
+  .loading-bar .fill { display: block; height: 100%; width: 38%; background: var(--color-progress); }
+
+  /* ============================================================
+     Component: DiffFileList（差异文件列表）
+     ============================================================ */
+  .diff-list { background: var(--color-bg-list); }
+  .diff-row {
+    display: flex; align-items: center; gap: var(--space-2);
+    min-height: var(--row-height); padding: 0 var(--space-3);
+    border-bottom: var(--border-width) solid var(--color-border);
+    border-left: var(--row-left-bar) solid transparent;
+    cursor: default;
+  }
+  .diff-row:hover { background: var(--color-bg-hover); }
+  .diff-row .file-icon { color: var(--color-icon); display: inline-flex; flex: none; }
+  .diff-row .rel-path {
+    font-family: var(--font-family-mono); font-size: var(--font-size-sm);
+    color: var(--color-fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    min-width: 0;
+  }
+  .diff-tags { display: inline-flex; align-items: center; gap: var(--space-1); flex: none; }
+  .diff-tags .badge { height: var(--control-height-sm); }
+  .tag-neutral {
+    display: inline-flex; align-items: center; height: var(--control-height-sm);
+    padding: 0 var(--space-1); border: var(--border-width) solid var(--color-border);
+    border-radius: var(--radius-badge); font-size: var(--font-size-xs); color: var(--color-fg-disabled);
+  }
+  .tag-trunc {
+    display: inline-flex; align-items: center; height: var(--control-height-sm);
+    padding: 0 var(--space-1); border: var(--border-width) solid var(--color-border);
+    border-radius: var(--radius-badge); font-size: var(--font-size-xs); color: var(--color-fg-secondary);
+  }
+  .diff-row .open-diff {
+    margin-left: auto; flex: none;
+  }
+  .diff-row.is-error { color: var(--color-error-fg); border-left-color: var(--color-error-fg); cursor: default; }
+  .diff-row.is-error .rel-path, .diff-row.is-error .err-text { color: var(--color-error-fg); }
+  .diff-row .err-text { font-size: var(--font-size-sm); color: var(--color-error-fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* ============================================================
+     Component: EmptyState / LaterNote
+     ============================================================ */
+  .empty-state {
+    display: flex; flex-direction: column; gap: var(--space-2); align-items: flex-start;
+    padding: var(--space-6) var(--space-4);
+    margin: var(--space-4);
+    border: var(--border-width) dashed var(--color-border); border-left: var(--bar-thickness) solid var(--color-info-fg);
+    border-radius: var(--radius-md); background: var(--color-bg-surface);
+  }
+  .empty-state .es-head { display: flex; align-items: center; gap: var(--space-2); font-weight: var(--font-weight-semibold); color: var(--color-info-fg); font-size: var(--font-size-md); }
+  .empty-state .es-body { font-size: var(--font-size-sm); color: var(--color-fg-secondary); line-height: var(--line-height-relaxed); }
+
+  .later-note {
+    display: flex; align-items: center; gap: var(--space-1);
+    font-size: var(--font-size-xs); color: var(--color-fg-secondary);
+    padding: var(--space-1) var(--space-2);
+    border: var(--border-width) dashed var(--color-border); border-radius: var(--radius-sm);
+    margin: var(--space-3) var(--space-4);
+  }
+  .later-note .icon { width: var(--icon-size-xs); height: var(--icon-size-xs); color: var(--color-fg-secondary); }
+
+  @keyframes spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
+  /* 响应式：窄屏（≤720px）补充断点 —— 纯增量，不影响桌面布局 */
+  @media (max-width: 720px) {
+    .cont-head { flex-wrap: wrap; gap: var(--space-2); padding: var(--space-2) var(--space-3); }
+    .cont-head .health { margin-left: 0; }
+    .panel, .panel-body, .diff-list, .ac-canvas { padding-left: var(--space-3); padding-right: var(--space-3); }
+    .na-banner { flex-direction: column; align-items: stretch; }
+    .na-banner .btn-primary, .na-banner .btn { width: 100%; margin: var(--space-3) 0 0; }
+    .diff-row, .file-row, .risk-item, .suggestion-item, .rule-card, .ac-item, .kv, .card, .overview__row { min-width: 0; }
+    .diff-list, .suggestion-scroll, .panel-body, .ac-canvas { overflow-x: auto; }
+  }
+</style>
+</head>
+<body>
+  <!-- inline SVG 图标符号表（单色 currentColor；codicon 对应名见注释） -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="icon-folder" viewBox="0 0 16 16"><path d="M1.5 3.5h4.5l1.3 1.4H14.5v7.6H1.5z" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/></symbol>
+    <symbol id="icon-refresh" viewBox="0 0 16 16"><path d="M13.2 8a5.2 5.2 0 1 1-1.5-3.6" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><path d="M13.6 2.2v2.9h-2.9" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="icon-warning" viewBox="0 0 16 16"><path d="M8 1.4l6.6 11.6H1.4z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M8 6v3.1" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><circle cx="8" cy="11" r="0.8" fill="currentColor"/></symbol>
+    <symbol id="icon-error" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M8 5v3.4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="8" cy="11.2" r="0.8" fill="currentColor"/></symbol>
+    <symbol id="icon-info" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M8 7.2v4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><circle cx="8" cy="4.8" r="0.8" fill="currentColor"/></symbol>
+    <symbol id="icon-git-compare" viewBox="0 0 16 16"><circle cx="4.5" cy="4" r="2" fill="none" stroke="currentColor" stroke-width="1.1"/><circle cx="11.5" cy="12" r="2" fill="none" stroke="currentColor" stroke-width="1.1"/><path d="M4.5 6v4a2 2 0 0 0 2 2h5" fill="none" stroke="currentColor" stroke-width="1.1"/></symbol>
+    <symbol id="icon-file" viewBox="0 0 16 16"><path d="M3.5 1.5h6l3 3v10h-9z" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/><path d="M9.5 1.5v3h3" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/></symbol>
+    <symbol id="icon-close" viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></symbol>
+    <symbol id="icon-add" viewBox="0 0 16 16"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></symbol>
+    <symbol id="icon-settings-gear" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2" fill="none" stroke="currentColor" stroke-width="1.1"/><path d="M8 1v2M8 13v2M1 8h2M13 8h2M3 3l1.4 1.4M11.6 11.6L13 13M13 3l-1.4 1.4M4.4 11.6L3 13" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></symbol>
+  </svg>
+
+  <div class="panel">
+
+    <!-- Component: DemoBar（演示控制） -->
+    <div class="demo-bar" aria-label="原型演示控制">
+      <span class="demo-label">原型演示控制</span>
+      <label><input type="checkbox" data-demo="svnMissing" /> 模拟 svn 缺失</label>
+      <label><input type="checkbox" data-demo="loading" /> 模拟加载中</label>
+      <label><input type="checkbox" data-demo="empty" /> 模拟空范围</label>
+      <label><input type="checkbox" data-demo="truncated" /> 模拟超 80 文件截断</label>
+    </div>
+
+    <!-- Component: ContinuityHeader（连续性头 · 面包屑 + ScopeBar + 状态点） -->
+    <header class="cont-head">
+      <nav class="breadcrumb" aria-label="面包屑">
+        <span class="crumb">SVN 工作台</span>
+        <span class="crumb-sep">/</span>
+        <span class="crumb crumb--current">提交差异摘要</span>
+      </nav>
+      <div class="scope-bar">
+        <span class="scope-icon"><svg class="icon" aria-hidden="true"><use href="#icon-folder"/></svg></span>
+        <span class="path">D:\项目\订单系统</span>
+        <span class="scope">范围：<b>src\order</b>（右键文件夹）</span>
+      </div>
+      <div class="health" aria-label="服务状态">
+        <span class="dot dot--svn dot--ready" title="svn 已就绪（D:\项目\订单系统）"></span>
+        <span class="dot dot--ai dot--idle" title="AI 未配置（更新建议降级为手动模式）"></span>
+      </div>
+    </header>
+
+    <!-- Component: SvnCard（svn 缺失降级 · 关键不静默） -->
+    <section class="gate-card gate-card--svn" id="svnCard" hidden aria-label="svn 缺失降级" aria-live="polite">
+      <div class="info-head"><svg class="icon" aria-hidden="true"><use href="#icon-error"/></svg>未找到 SVN 可执行文件 · 无法计算差异</div>
+      <div class="info-body">
+        本页依赖 <code>svn diff</code> 统计逐文件改动，当前 SVN 不可用，因此无法列出差异文件（不会静默显示空列表）。
+        请在设置中配置 <code>svnWorkbench.svn.path</code> 后重试。
+      </div>
+      <div class="info-actions">
+        <button class="btn btn-secondary" data-action="svn-config"><svg class="icon" aria-hidden="true"><use href="#icon-settings-gear"/></svg>去配置 svn.path</button>
+        <button class="link-btn" data-action="refresh">刷新重试</button>
+      </div>
+    </section>
+
+    <!-- Component: StatusSummary（总量汇总条） -->
+    <div class="status-summary" id="statusSummary">
+      <span class="badge badge--file"><svg class="icon" aria-hidden="true"><use href="#icon-file"/></svg>文件 <b data-count="files">7</b></span>
+      <span class="badge badge--add"><svg class="icon" aria-hidden="true"><use href="#icon-add"/></svg>新增 <b data-count="added">114</b></span>
+      <span class="badge badge--del">删除 <b data-count="deleted">45</b></span>
+      <span class="badge badge--hunk">hunk <b data-count="hunks">13</b></span>
+      <span class="trunc-note" id="truncNote" hidden><svg class="icon" aria-hidden="true"><use href="#icon-info"/></svg>仅显示前 80 个文件</span>
+    </div>
+
+    <!-- Component: LoadingBar -->
+    <div class="loading-bar" id="loadingBar" hidden>
+      <svg class="icon" aria-hidden="true"><use href="#icon-refresh"/></svg>
+      <span class="text">正在逐个文件运行 svn diff…</span>
+      <span class="bar"><span class="fill"></span></span>
+    </div>
+
+    <!-- Component: DiffFileList（差异文件列表） -->
+    <main class="diff-list" id="diffList" aria-label="差异文件列表">
+
+      <div class="diff-row">
+        <span class="file-icon"><svg class="icon-sm" aria-hidden="true"><use href="#icon-file"/></svg></span>
+        <span class="rel-path" title="src/order/checkout.ts">src/order/checkout.ts</span>
+        <span class="diff-tags">
+          <span class="badge badge--add">+24</span>
+          <span class="badge badge--del">-8</span>
+          <span class="badge badge--hunk">hunk 3</span>
+        </span>
+        <span class="open-diff">
+          <button class="icon-btn" data-action="open-diff" title="打开差异对比" aria-label="打开差异对比"><svg class="icon" aria-hidden="true"><use href="#icon-git-compare"/></svg></button>
+        </span>
+      </div>
+
+      <div class="diff-row">
+        <span class="file-icon"><svg class="icon-sm" aria-hidden="true"><use href="#icon-file"/></svg></span>
+        <span class="rel-path" title="src/order/types.ts">src/order/types.ts</span>
+        <span class="diff-tags">
+          <span class="badge badge--add">+12</span>
+          <span class="badge badge--del">-0</span>
+          <span class="badge badge--hunk">hunk 1</span>
+        </span>
+        <span class="open-diff">
+          <button class="icon-btn" data-action="open-diff" title="打开差异对比" aria-label="打开差异对比"><svg class="icon" aria-hidden="true"><use href="#icon-git-compare"/></svg></button>
+        </span>
+      </div>
+
+      <div class="diff-row">
+        <span class="file-icon"><svg class="icon-sm" aria-hidden="true"><use href="#icon-file"/></svg></span>
+        <span class="rel-path" title="src/order/cache.service.ts">src/order/cache.service.ts</span>
+        <span class="diff-tags">
+          <span class="tag-neutral">二进制</span>
+        </span>
+        <span class="open-diff">
+          <button class="icon-btn" data-action="open-diff" title="打开差异对比" aria-label="打开差异对比"><svg class="icon" aria-hidden="true"><use href="#icon-git-compare"/></svg></button>
+        </span>
+      </div>
+
+      <div class="diff-row">
+        <span class="file-icon"><svg class="icon-sm" aria-hidden="true"><use href="#icon-file"/></svg></span>
+        <span class="rel-path" title="src/order/reports/export.ts">src/order/reports/export.ts</span>
+        <span class="diff-tags">
+          <span class="badge badge--add">+56</span>
+          <span class="badge badge--del">-31</span>
+          <span class="badge badge--hunk">hunk 5</span>
+        </span>
+        <span class="open-diff">
+          <button class="icon-btn" data-action="open-diff" title="打开差异对比" aria-label="打开差异对比"><svg class="icon" aria-hidden="true"><use href="#icon-git-compare"/></svg></button>
+        </span>
+      </div>
+
+      <div class="diff-row">
+        <span class="file-icon"><svg class="icon-sm" aria-hidden="true"><use href="#icon-file"/></svg></span>
+        <span class="rel-path" title="src/order/lock.service.ts">src/order/lock.service.ts</span>
+        <span class="diff-tags">
+          <span class="badge badge--add">+4</span>
+          <span class="badge badge--del">-4</span>
+          <span class="badge badge--hunk">hunk 2</span>
+          <span class="tag-trunc">已截断</span>
+        </span>
+        <span class="open-diff">
+          <button class="icon-btn" data-action="open-diff" title="打开差异对比" aria-label="打开差异对比"><svg class="icon" aria-hidden="true"><use href="#icon-git-compare"/></svg></button>
+        </span>
+      </div>
+
+      <div class="diff-row">
+        <span class="file-icon"><svg class="icon-sm" aria-hidden="true"><use href="#icon-file"/></svg></span>
+        <span class="rel-path" title="tests/order/order.spec.ts">tests/order/order.spec.ts</span>
+        <span class="diff-tags">
+          <span class="badge badge--add">+18</span>
+          <span class="badge badge--del">-2</span>
+          <span class="badge badge--hunk">hunk 2</span>
+        </span>
+        <span class="open-diff">
+          <button class="icon-btn" data-action="open-diff" title="打开差异对比" aria-label="打开差异对比"><svg class="icon" aria-hidden="true"><use href="#icon-git-compare"/></svg></button>
+        </span>
+      </div>
+
+      <!-- 逐文件错误行（partial failure：其余文件正常，不阻断整页） -->
+      <div class="diff-row is-error">
+        <span class="file-icon"><svg class="icon-sm" aria-hidden="true"><use href="#icon-error"/></svg></span>
+        <span class="rel-path" title="src/utils/format.ts">src/utils/format.ts</span>
+        <span class="err-text">svn diff 失败：路径不在当前范围（退出码 1）</span>
+        <span class="open-diff">
+          <button class="icon-btn" data-action="open-diff" title="打开差异对比" aria-label="打开差异对比" disabled><svg class="icon" aria-hidden="true"><use href="#icon-git-compare"/></svg></button>
+        </span>
+      </div>
+
+    </main>
+
+    <!-- Component: EmptyState（空范围） -->
+    <section class="empty-state" id="emptyState" hidden>
+      <div class="es-head"><svg class="icon" aria-hidden="true"><use href="#icon-info"/></svg>当前范围没有可统计的差异文件</div>
+      <div class="es-body">
+        右键选择范围内存在改动的文件后，再次运行 <code>SVN：打开差异对比</code> 即可查看逐文件增删概览。
+      </div>
+    </section>
+
+    <!-- Component: ActionBar -->
+    <footer class="batch-bar" style="display:flex;align-items:center;gap:var(--space-2);flex-wrap:wrap;padding:var(--space-3) var(--space-4);border-top:var(--border-width) solid var(--color-border);background:var(--color-bg-surface);">
+      <button class="btn btn-secondary" data-action="refresh"><svg class="icon" aria-hidden="true"><use href="#icon-refresh"/></svg>刷新</button>
+      <button class="btn btn-secondary" data-action="open-all"><svg class="icon" aria-hidden="true"><use href="#icon-git-compare"/></svg>打开全部差异对比</button>
+      <span class="spacer"></span>
+      <button class="btn btn-secondary" data-action="close"><svg class="icon" aria-hidden="true"><use href="#icon-close"/></svg>关闭</button>
+    </footer>
+
+    <!-- Component: LaterNote -->
+    <div class="later-note">
+      <svg class="icon" aria-hidden="true"><use href="#icon-info"/></svg>
+      提交差异摘要为 greenfield 设计，所有动作为命令占位（svnWorkbench.openDiff 等），不绑定真正实现。
+    </div>
+
+  </div>
+
+  <script>
+    // 所有交互均使用受控渲染：classList / hidden / setAttribute，禁用运行时拼接 HTML 字符串
+    (function () {
+      'use strict';
+
+      var demoInputs = Array.prototype.slice.call(document.querySelectorAll('[data-demo]'));
+
+      function computeGating(state) {
+        state = state || {};
+        var scope = state.scope || { outOfScope: 0, candidates: 0, excluded: 0 };
+        var conflicts = state.conflicts || [];
+        var svn = state.svn || { installed: true, configured: true, path: '' };
+        var ai = state.ai || { configured: true };
+        var selection = state.selection || { files: 0, empty: true };
+        var unknown = state.unknown || [];
+        var categories = [];
+        var dataCatSet = (typeof Set === 'function') ? new Set() : {};
+        function add(cat, count, files, items, copyKey, actions, priority) {
+          categories.push({ cat: cat, count: count, files: files, items: items || [], copyKey: copyKey, actions: actions || [] });
+          if (dataCatSet instanceof Set) { dataCatSet.add(cat); } else { dataCatSet[cat] = true; }
+        }
+        if (!svn.installed || !svn.configured) add('svnStatus', 1, 0, [{ path: svn.path || '', reason: 'SVN 缺失或未配置' }], 'svnStatus', ['svn-config', 'refresh'], 1);
+        if (conflicts.length) add('blocked', conflicts.length, conflicts.length, conflicts, 'blocked', ['open-conflict', 'refresh'], 2);
+        if (unknown.length) add('unknown', unknown.length, unknown.length, unknown, 'unknown', ['review', 'refresh'], 3);
+        if (selection.empty || selection.files === 0) add('emptySelection', 1, 0, [], 'emptySelection', ['regen', 'review'], 4);
+        if (scope.outOfScope > 0) add('scope', scope.outOfScope, scope.outOfScope, [], 'scope', ['regen', 'review'], 5);
+        if (scope.candidates > 0) add('candidate', scope.candidates, scope.candidates, [], 'candidate', ['regen', 'review'], 5);
+        if (scope.excluded > 0) add('excluded', scope.excluded, scope.excluded, [], 'excluded', ['review', 'refresh'], 5);
+        categories.sort(function (a, b) { return a.priority - b.priority; });
+        return { active: categories.length > 0, categories: categories, priority: categories.length ? categories[0].priority : 0, dataCatSet: dataCatSet };
+      }
+
+      var _svn = document.getElementById('svnGate') || document.getElementById('svnCard');
+      var _ai = document.getElementById('aiGate') || document.getElementById('aiInfoCard');
+      var _gating = computeGating({
+        svn: { installed: !(_svn && !_svn.hidden), configured: !(_svn && !_svn.hidden), path: '' },
+        ai: { configured: !(_ai && !_ai.hidden) },
+        scope: { outOfScope: 0, candidates: 0, excluded: 0 },
+        conflicts: [], selection: { files: 0, empty: false }, unknown: []
+      });
+
+      var svnCard = document.getElementById('svnCard');
+      var statusSummary = document.getElementById('statusSummary');
+      var loadingBar = document.getElementById('loadingBar');
+      var diffList = document.getElementById('diffList');
+      var emptyState = document.getElementById('emptyState');
+      var truncNote = document.getElementById('truncNote');
+      var actionBtns = Array.prototype.slice.call(document.querySelectorAll('[data-action]'));
+
+      function isOn(name) {
+        var el = document.querySelector('[data-demo="' + name + '"]');
+        return !!(el && el.checked);
+      }
+
+      function applyState() {
+        var svnMissing = isOn('svnMissing');
+        var loading = isOn('loading');
+        var empty = isOn('empty');
+        var truncated = isOn('truncated');
+
+        // svn 缺失：显示引导卡，隐藏列表/摘要/加载，不静默
+        svnCard.hidden = !svnMissing;
+        statusSummary.hidden = svnMissing || empty;
+        diffList.hidden = svnMissing || empty;
+        emptyState.hidden = !empty || svnMissing;
+        loadingBar.hidden = !loading || svnMissing || empty;
+        truncNote.hidden = !truncated || svnMissing || empty;
+
+        // 加载中：禁用动作
+        actionBtns.forEach(function (b) {
+          if (b.getAttribute('data-action') === 'refresh') return;
+          b.disabled = loading;
+        });
+      }
+
+      demoInputs.forEach(function (inp) {
+        inp.addEventListener('change', applyState);
+      });
+
+      // 刷新：图标旋转反馈（不阻断）
+      Array.prototype.forEach.call(document.querySelectorAll('[data-action="refresh"]'), function (b) {
+        b.addEventListener('click', function () {
+          var icon = b.querySelector('.icon');
+          if (!icon) return;
+          icon.style.animation = 'spin 0.7s linear';
+          setTimeout(function () { icon.style.animation = ''; }, 700);
+        });
+      });
+
+      // 命令占位（v1 桥接 VS Code 命令）
+      ['open-diff', 'open-all', 'svn-config', 'close'].forEach(function (act) {
+        var els = document.querySelectorAll('[data-action="' + act + '"]');
+        Array.prototype.forEach.call(els, function (el) {
+          el.addEventListener('click', function () { /* 原型占位 */ });
+        });
+      });
+
+      applyState();
+    })();
+  </script>
+</body>
+</html>

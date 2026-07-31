@@ -1,0 +1,24 @@
+{
+  "measuredAt": "2026-07-30T14:26:16.495Z",
+  "runs": 20,
+  "interactiveMs": {
+    "p50": 40,
+    "p95": 42,
+    "samples": [47, 41, 41, 42, 41, 40, 41, 41, 40, 40, 40, 40, 41, 41, 40, 41, 40, 40, 40, 40]
+  },
+  "bundleGzipBytes": {
+    "js": 28935,
+    "css": 15768,
+    "lazyChunks": 13
+  },
+  "largeList": {
+    "files": 5000,
+    "mountedRows": 18,
+    "scrollToEndMs": 35
+  },
+  "budgets": {
+    "shellJsGzipBytes": 163840,
+    "shellCssGzipBytes": 51200,
+    "interactiveP95Ms": 700
+  }
+}

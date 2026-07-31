@@ -1,0 +1,522 @@
+<!--
+  SVN Workbench v1 · 高保真原型总览（导航入口）
+  设计系统：v1-design-tokens.md（§2 完整 :root 令牌块 + 离线预览兜底 :root，与 11 个原型同一套）
+  约束落实：
+  - 组件样式只引用 --token，无裸几何值、无 hex（hex 仅出现在离线预览兜底 :root 块，与 11 个原型一致）。
+  - 图标统一 inline SVG <symbol> + <use href="#i-...">（单色 currentColor），标注 codicon 名，与 11 个原型观感一致。
+  - 自包含：CSS/JS/图标全内联，零外部资源；相对链接指向 高保真原型/ 下文件。
+  - 相对链接：<a href="高保真原型/xxx.html">，整文件夹拷贝后可直接打开。
+-->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SVN Workbench v1 · 高保真原型总览</title>
+<style>
+/* =========================================================================
+   设计令牌.md §2 完整 :root 令牌块（直接消费 · 组件全部引用以下派生令牌）
+   ========================================================================= */
+:root {
+  /* —— 前景 / 背景层级 —— */
+  --color-fg: var(--vscode-foreground);
+  --color-fg-secondary: var(--vscode-descriptionForeground);
+  --color-fg-disabled: var(--vscode-disabledForeground);
+  --color-fg-link: var(--vscode-textLink-foreground);
+  --color-icon: var(--vscode-icon-foreground);
+  --color-bg-canvas: var(--vscode-panel-background);
+  --color-bg-surface: var(--vscode-sideBar-background);
+  --color-bg-editor: var(--vscode-editor-background);
+  --color-bg-list: var(--vscode-list-background);
+  --color-bg-input: var(--vscode-input-background);
+  --color-bg-dropdown: var(--vscode-dropdown-background);
+  --color-bg-section-header: var(--vscode-sideBarSectionHeader-background);
+  --color-bg-hover: var(--vscode-list-hoverBackground);
+  --color-bg-selected: var(--vscode-list-activeSelectionBackground);
+  --color-bg-selected-inactive: var(--vscode-list-inactiveSelectionBackground);
+  --color-fg-selected: var(--vscode-list-activeSelectionForeground);
+  --color-bg-widget: var(--vscode-editorWidget-background);
+  --color-border: var(--vscode-panel-border);
+  --color-border-widget: var(--vscode-widget-border);
+  --color-border-strong: var(--vscode-contrastBorder, var(--vscode-panel-border));
+
+  /* —— 语义状态色（fg + bg 变体） —— */
+  --color-error-fg: var(--vscode-errorForeground);
+  --color-error-bg: color-mix(in srgb, var(--vscode-errorForeground) 14%, var(--vscode-panel-background));
+  --color-warning-fg: var(--vscode-warningForeground, var(--vscode-charts-yellow));
+  --color-warning-bg: color-mix(in srgb, var(--vscode-warningForeground, var(--vscode-charts-yellow)) 14%, var(--vscode-panel-background));
+  --color-info-fg: var(--vscode-textLink-foreground);
+  --color-info-bg: color-mix(in srgb, var(--vscode-textLink-foreground) 14%, var(--vscode-panel-background));
+  --color-success-fg: var(--vscode-charts-green);
+  --color-success-bg: color-mix(in srgb, var(--vscode-charts-green) 14%, var(--vscode-panel-background));
+
+  /* —— 差异色（增/删/改） —— */
+  --color-diff-add-fg: var(--vscode-charts-green);
+  --color-diff-add-bg: var(--vscode-diffEditor-insertedTextBackground, var(--vscode-charts-green));
+  --color-diff-add-gutter: var(--vscode-editorGutter-addedBackground, var(--vscode-charts-green));
+  --color-diff-del-fg: var(--vscode-charts-red, var(--vscode-errorForeground));
+  --color-diff-del-bg: var(--vscode-diffEditor-removedTextBackground, var(--vscode-charts-red));
+  --color-diff-del-gutter: var(--vscode-editorGutter-deletedBackground, var(--vscode-charts-red));
+  --color-diff-mod-fg: var(--vscode-charts-yellow, var(--vscode-charts-orange));
+  --color-diff-mod-gutter: var(--vscode-editorGutter-modifiedBackground, var(--vscode-charts-yellow));
+
+  /* —— 焦点 / 阴影 / 按钮 / 徽标 / 进度 —— */
+  --color-focus: var(--vscode-focusBorder);
+  --shadow-widget: var(--vscode-widget-shadow);
+  --color-btn-primary-bg: var(--vscode-button-background);
+  --color-btn-primary-fg: var(--vscode-button-foreground);
+  --color-btn-primary-hover: var(--vscode-button-hoverBackground);
+  --color-btn-secondary-bg: var(--vscode-button-secondaryBackground);
+  --color-btn-secondary-fg: var(--vscode-button-secondaryForeground);
+  --color-btn-secondary-hover: var(--vscode-button-secondaryHoverBackground);
+  --color-badge-bg: var(--vscode-badge-background);
+  --color-badge-fg: var(--vscode-badge-foreground);
+  --color-progress: var(--vscode-progressBar-background);
+}
+
+/* =========================================================================
+   离线预览兜底：深色主题 --vscode-* 默认值。
+   真实 webview 中全部由宿主主题注入覆盖；仅此块允许 hex，组件样式不写 hex。
+   ========================================================================= */
+:root {
+  --vscode-foreground: #cccccc;
+  --vscode-descriptionForeground: #9d9d9d;
+  --vscode-disabledForeground: #7f7f7f;
+  --vscode-textLink-foreground: #3794ff;
+  --vscode-icon-foreground: #c5c5c5;
+  --vscode-panel-background: #1e1e1e;
+  --vscode-editor-background: #1e1e1e;
+  --vscode-sideBar-background: #252526;
+  --vscode-sideBarSectionHeader-background: rgba(128, 128, 128, 0.16);
+  --vscode-list-background: #1e1e1e;
+  --vscode-input-background: #3c3c3c;
+  --vscode-input-foreground: #cccccc;
+  --vscode-input-placeholderForeground: #9d9d9d;
+  --vscode-dropdown-background: #3c3c3c;
+  --vscode-list-hoverBackground: #2a2d2e;
+  --vscode-list-activeSelectionBackground: #094771;
+  --vscode-list-inactiveSelectionBackground: #37373d;
+  --vscode-list-activeSelectionForeground: #ffffff;
+  --vscode-editorWidget-background: #252526;
+  --vscode-panel-border: #2b2b2b;
+  --vscode-widget-border: #2b2b2b;
+  --vscode-errorForeground: #f48771;
+  --vscode-warningForeground: #cca700;
+  --vscode-charts-green: #89d185;
+  --vscode-charts-red: #f48771;
+  --vscode-charts-yellow: #cca700;
+  --vscode-charts-orange: #e2c08d;
+  --vscode-diffEditor-insertedTextBackground: #9ccc2c33;
+  --vscode-diffEditor-removedTextBackground: #f14c4c33;
+  --vscode-editorGutter-addedBackground: #9ccc2c;
+  --vscode-editorGutter-deletedBackground: #f14c4c;
+  --vscode-editorGutter-modifiedBackground: #e2c08d;
+  --vscode-focusBorder: #007fd4;
+  --vscode-widget-shadow: rgba(0, 0, 0, 0.36);
+  --vscode-button-background: #0e639c;
+  --vscode-button-foreground: #ffffff;
+  --vscode-button-hoverBackground: #1177bb;
+  --vscode-button-secondaryBackground: #3a3d41;
+  --vscode-button-secondaryForeground: #cccccc;
+  --vscode-button-secondaryHoverBackground: #45494e;
+  --vscode-badge-background: #4d4d4d;
+  --vscode-badge-foreground: #ffffff;
+  --vscode-progressBar-background: #0e70c0;
+  --vscode-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+  --vscode-editor-font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, "Courier New", monospace;
+  --vscode-checkbox-background: #3c3c3c;
+  --vscode-checkbox-foreground: #f0f0f0;
+  --vscode-checkbox-border: #6b6b6b;
+  --vscode-tree-indentGuidesStroke: rgba(169, 169, 169, 0.20);
+
+  /* —— 字体令牌（px 几何值，非颜色，不违反禁 hex） —— */
+  --font-family: var(--vscode-font-family);
+  --font-family-mono: var(--vscode-editor-font-family, 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace);
+  --font-size-xs: 11px;
+  --font-size-sm: 12px;
+  --font-size-md: 13px;
+  --font-size-lg: 15px;
+  --font-size-xl: 18px;
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+  --line-height-tight: 1.3;
+  --line-height-base: 1.5;
+  --line-height-relaxed: 1.6;
+
+  /* —— 间距与尺寸令牌（4px 基准） —— */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 40px;
+  --control-height: 26px;
+  --control-height-sm: 22px;
+  --control-height-lg: 30px;
+  --row-height: 26px;
+  --row-height-header: 22px;
+  --radius-sm: 2px;
+  --radius-md: 3px;
+  --radius-badge: 3px;
+  --radius-lg: 4px;
+  --border-width: 1px;
+  --indent-step: 16px;
+}
+
+/* =========================================================================
+   基础重置
+   ========================================================================= */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  font-family: var(--font-family);
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-base);
+  color: var(--color-fg);
+  background: var(--color-bg-canvas);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+a { color: inherit; }
+::selection { background: var(--color-bg-selected); color: var(--color-fg-selected); }
+
+/* 图标（inline SVG <symbol>/<use>，单色 currentColor） */
+.ic {
+  width: var(--space-4);
+  height: var(--space-4);
+  display: inline-block; flex: none;
+  vertical-align: middle;
+  color: currentColor;
+}
+.ic--lg { width: 26px; height: 26px; }
+
+/* =========================================================================
+   总览页组件（仅引用 --token）
+   ========================================================================= */
+.hero {
+  display: flex;
+  gap: var(--space-4);
+  align-items: flex-start;
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: var(--space-6) var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--color-border);
+}
+.hero__mark {
+  flex: none;
+  width: 48px; height: 48px;
+  display: grid; place-items: center;
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-info-fg);
+}
+.hero__title {
+  margin: 0;
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-bold);
+  letter-spacing: 0.2px;
+  color: var(--color-fg);
+}
+.hero__sub {
+  margin: var(--space-1) 0 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-fg-secondary);
+}
+.hero__desc {
+  margin: var(--space-3) 0 0;
+  font-size: var(--font-size-md);
+  color: var(--color-fg-secondary);
+  line-height: var(--line-height-relaxed);
+  max-width: 76ch;
+}
+
+.wrap {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: var(--space-5) var(--space-4) var(--space-7);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.group__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+  color: var(--color-fg);
+}
+.group__head .ic { color: var(--color-icon); }
+.group__title {
+  margin: 0;
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+}
+.badge {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-badge-fg);
+  background: var(--color-badge-bg);
+  border-radius: var(--radius-badge);
+  padding: 1px var(--space-2);
+  margin-left: var(--space-1);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--space-3);
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  text-decoration: none;
+  color: inherit;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.card:hover { background: var(--color-bg-hover); border-color: var(--color-border-widget); }
+.card:focus-visible { outline: 1px solid var(--color-focus); outline-offset: -1px; }
+.card__icon {
+  width: 28px; height: 28px;
+  display: grid; place-items: center;
+  color: var(--color-icon);
+  background: var(--color-bg-canvas);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+.card__icon .ic { width: var(--space-4); height: var(--space-4); }
+.card__name {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-fg);
+}
+.card__desc {
+  font-size: var(--font-size-sm);
+  color: var(--color-fg-secondary);
+  line-height: var(--line-height-base);
+}
+.card__cmd {
+  align-self: flex-start;
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-fg-secondary);
+  background: var(--color-bg-canvas);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-badge);
+  padding: 2px var(--space-2);
+}
+
+.notes {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: var(--space-5) var(--space-4) var(--space-7);
+  border-top: 1px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.notes__title {
+  margin: 0;
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-fg);
+}
+.note { display: flex; gap: var(--space-3); }
+.note__icon { flex: none; color: var(--color-info-fg); margin-top: 2px; }
+.note h3 {
+  margin: 0 0 var(--space-1);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-fg);
+}
+.note p, .note li {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--color-fg-secondary);
+  line-height: var(--line-height-base);
+}
+.note ul { margin: var(--space-1) 0 0; padding-left: var(--space-4); display: flex; flex-direction: column; gap: 2px; }
+.note code, .note .mono {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-xs);
+  color: var(--color-fg);
+}
+</style>
+</head>
+<body>
+
+<!-- 内联图标精灵（codicon 占位，单色 currentColor，与 11 个原型一致） -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <symbol id="i-rocket" viewBox="0 0 16 16"><path d="M8 1.6c2.4 1.4 3.4 4.3 3.4 6.8l-1.4 2H6l-1.4-2C4.6 5.9 5.6 3 8 1.6z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><circle cx="8" cy="6" r="1.1" fill="none" stroke="currentColor" stroke-width="1.1"/><path d="M5 11.6L3.6 14M11 11.6L12.4 14M6.4 11.2h3.2" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></symbol>
+  <symbol id="i-git-commit" viewBox="0 0 16 16"><circle cx="8" cy="8" r="3" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M8 1.5v3M8 11.5v3M1.5 8h3M11.5 8h3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></symbol>
+  <symbol id="i-git-merge" viewBox="0 0 16 16"><circle cx="5" cy="4" r="1.6" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="5" cy="12" r="1.6" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="11" cy="8" r="1.6" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M5 5.6v4.8M5 8a6 6 0 0 0 6 0" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></symbol>
+  <symbol id="i-git-compare" viewBox="0 0 16 16"><circle cx="5" cy="5" r="2" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="11" cy="11" r="2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M5 7v1.5A2.5 2.5 0 0 0 7.5 11h.5" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></symbol>
+  <symbol id="i-list" viewBox="0 0 16 16"><path d="M3 4.4h10M3 8h10M3 11.6h10" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 16 16"><path d="M1.5 8S4 3.6 8 3.6 14.5 8 14.5 8 12 12.4 8 12.4 1.5 8 1.5 8z" fill="none" stroke="currentColor" stroke-width="1.2"/><circle cx="8" cy="8" r="2" fill="none" stroke="currentColor" stroke-width="1.2"/></symbol>
+  <symbol id="i-settings-gear" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M8 1v2.2M8 12.8V15M1 8h2.2M12.8 8H15M3.1 3.1l1.6 1.6M11.3 11.3l1.6 1.6M12.9 3.1l-1.6 1.6M4.7 11.3l-1.6 1.6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></symbol>
+  <symbol id="i-organization" viewBox="0 0 16 16"><circle cx="5" cy="5" r="1.9" fill="none" stroke="currentColor" stroke-width="1.2"/><circle cx="11" cy="5" r="1.9" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M5 7v2.4h6V7M8 9.4V12M3 12h10" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-filter" viewBox="0 0 16 16"><path d="M2 3.5h12L9 8.5v4l-2 1.5v-5.5L2 3.5z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></symbol>
+  <symbol id="i-sync" viewBox="0 0 16 16"><path d="M2.5 7a5.5 5.5 0 0 1 9.4-3.9M12 3.2V7H8.4" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M13.5 9a5.5 5.5 0 0 1-9.4 3.9M4 12.8V9H7.6" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-beaker" viewBox="0 0 16 16"><path d="M6 1.5h4M6.6 1.5v5L3 13.4A1 1 0 0 0 3.9 15h8.2a1 1 0 0 0 .9-1.6L9.4 6.5v-5" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></symbol>
+  <symbol id="i-check" viewBox="0 0 16 16"><path d="M3 8.5l3 3 7-8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-info" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M8 7v4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="8" cy="4.6" r="0.9" fill="currentColor"/></symbol>
+</svg>
+
+<header class="hero">
+  <div class="hero__mark"><svg class="ic ic--lg"><use href="#i-rocket"/></svg></div>
+  <div class="hero__text">
+    <h1 class="hero__title">SVN Workbench v1 · 高保真原型总览</h1>
+    <p class="hero__sub">基于 VS Code 设计语言的自包含 webview 原型合集 · 覆盖全部 11 个面板</p>
+    <p class="hero__desc">本合集以单文件 HTML 交付，CSS / JS / 图标全部内联、零外部资源；深色优先并随宿主主题自动切换。点击下方卡片即可在浏览器或 VS Code webview 宿主中打开对应面板原型。</p>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <section class="group">
+    <div class="group__head">
+      <svg class="ic"><use href="#i-git-commit"/></svg>
+      <h2 class="group__title">核心提交流</h2>
+      <span class="badge">5</span>
+    </div>
+    <div class="grid">
+      <a class="card" href="高保真原型/提交面板.html">
+        <span class="card__icon"><svg class="ic"><use href="#i-git-commit"/></svg></span>
+        <span class="card__name">提交面板（提交当前范围）</span>
+        <span class="card__desc">单页合并提交、筛选 / 分组 / 预设与 AI 建议勾选</span>
+        <code class="card__cmd">SVN：提交当前范围</code>
+      </a>
+      <a class="card" href="高保真原型/冲突中心.html">
+        <span class="card__icon"><svg class="ic"><use href="#i-git-merge"/></svg></span>
+        <span class="card__name">冲突中心</span>
+        <span class="card__desc">working / ours / theirs 三选一对比解决</span>
+        <code class="card__cmd">SVN：打开冲突中心</code>
+      </a>
+      <a class="card" href="高保真原型/提交拆分队列.html">
+        <span class="card__icon"><svg class="ic"><use href="#i-list"/></svg></span>
+        <span class="card__name">提交拆分队列</span>
+        <span class="card__desc">多批次队列、七类阻止项与 NextAction 十态</span>
+        <code class="card__cmd">svnWorkbench.commitSplitQueue</code>
+      </a>
+      <a class="card" href="高保真原型/提交拆分预览.html">
+        <span class="card__icon"><svg class="ic"><use href="#i-eye"/></svg></span>
+        <span class="card__name">提交拆分预览</span>
+        <span class="card__desc">单批次提交规划审阅（范围 / 说明 / 风险）</span>
+        <code class="card__cmd">commitSplitPlanPreview</code>
+      </a>
+      <a class="card" href="高保真原型/提交差异摘要.html">
+        <span class="card__icon"><svg class="ic"><use href="#i-git-compare"/></svg></span>
+        <span class="card__name">提交差异摘要</span>
+        <span class="card__desc">逐文件增删 / hunk 统计与 svn 缺失降级</span>
+        <code class="card__cmd">SVN：打开差异对比</code>
+      </a>
+    </div>
+  </section>
+
+  <section class="group">
+    <div class="group__head">
+      <svg class="ic"><use href="#i-settings-gear"/></svg>
+      <h2 class="group__title">配置</h2>
+      <span class="badge">3</span>
+    </div>
+    <div class="grid">
+      <a class="card" href="高保真原型/AI模型配置.html">
+        <span class="card__icon"><svg class="ic"><use href="#i-settings-gear"/></svg></span>
+        <span class="card__name">AI 模型配置</span>
+        <span class="card__desc">供应商预设、场景模型覆盖与 SecretStorage</span>
+        <code class="card__cmd">SVN：AI 配置模型</code>
+      </a>
+      <a class="card" href="高保真原型/团队规则配置.html">
+        <span class="card__icon"><svg class="ic"><use href="#i-organization"/></svg></span>
+        <span class="card__name">团队规则配置</span>
+        <span class="card__desc">提交前缀 / 模块 / 工单号规则与实时预览</span>
+        <code class="card__cmd">SVN：打开团队配置</code>
+      </a>
+      <a class="card" href="高保真原型/范围与筛选.html">
+        <span class="card__icon"><svg class="ic"><use href="#i-filter"/></svg></span>
+        <span class="card__name">范围与筛选</span>
+        <span class="card__desc">右键范围、模板分组与范围不扩大原则</span>
+        <code class="card__cmd">范围规则层（各命令右键范围）</code>
+      </a>
+    </div>
+  </section>
+
+  <section class="group">
+    <div class="group__head">
+      <svg class="ic"><use href="#i-beaker"/></svg>
+      <h2 class="group__title">辅助</h2>
+      <span class="badge">3</span>
+    </div>
+    <div class="grid">
+      <a class="card" href="高保真原型/更新建议.html">
+        <span class="card__icon"><svg class="ic"><use href="#i-sync"/></svg></span>
+        <span class="card__name">更新建议</span>
+        <span class="card__desc">范围内近似更新建议（非精确预览）</span>
+        <code class="card__cmd">SVN：更新当前范围</code>
+      </a>
+      <a class="card" href="高保真原型/环境检查.html">
+        <span class="card__icon"><svg class="ic"><use href="#i-beaker"/></svg></span>
+        <span class="card__name">环境检查 / 诊断</span>
+        <span class="card__desc">首次激活体检与 svn / AI 就绪诊断</span>
+        <code class="card__cmd">SVN：检查环境</code>
+      </a>
+      <a class="card" href="高保真原型/验收清单.html">
+        <span class="card__icon"><svg class="ic"><use href="#i-check"/></svg></span>
+        <span class="card__name">验收清单</span>
+        <span class="card__desc">跨平台（Win + macOS）验收项勾选</span>
+        <code class="card__cmd">SVN：打开验收清单</code>
+      </a>
+    </div>
+  </section>
+
+</main>
+
+<footer class="notes">
+  <h2 class="notes__title">使用与交付说明</h2>
+
+  <div class="note">
+    <span class="note__icon"><svg class="ic"><use href="#i-eye"/></svg></span>
+    <div>
+      <h3>① 预览方式</h3>
+      <p>浏览器双击本文件或任意 <code>高保真原型/*.html</code> 即可预览；也可在 VS Code 中由对应命令（如 <code>SVN：提交当前范围</code>）打开为 webview 宿主面板。原型深色优先，在 VS Code 浅色主题下随宿主变量自动切换为浅色。</p>
+    </div>
+  </div>
+
+  <div class="note">
+    <span class="note__icon"><svg class="ic"><use href="#i-settings-gear"/></svg></span>
+    <div>
+      <h3>② 设计系统归属</h3>
+      <p>本套原型一律采用 VS Code 设计语言（基底 = <code>var(--vscode-*)</code> 主题变量），组件颜色全部引用派生令牌，不写硬编码 hex、不引入任何第三方品牌色；图标以单色 inline SVG 占位（标注 codicon 名），字体继承 <code>var(--vscode-font-family)</code>。</p>
+    </div>
+  </div>
+
+  <div class="note">
+    <span class="note__icon"><svg class="ic"><use href="#i-info"/></svg></span>
+    <div>
+      <h3>③ 降级演示</h3>
+      <p>每个原型页面顶部均含 DemoBar（演示开关），可切换「AI 未配置 / svn 缺失 / 加载中 / 空态」等状态，仅用于原型演示；真实状态由 VS Code 宿主读取注入，不与实现绑定。</p>
+    </div>
+  </div>
+
+  <div class="note">
+    <span class="note__icon"><svg class="ic"><use href="#i-git-commit"/></svg></span>
+    <div>
+      <h3>④ 动作占位</h3>
+      <p>原型中所有按钮 / 下拉 / 列表项均为命令占位（如 <code>svnWorkbench.commitFolder</code>、<code>svnWorkbench.openConflictCenter</code>），不绑定真实后端实现；后续 Svelte 重写时按命令契约接入。</p>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

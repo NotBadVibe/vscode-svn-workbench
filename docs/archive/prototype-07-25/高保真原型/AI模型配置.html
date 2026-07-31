@@ -1,0 +1,881 @@
+<!--
+  SVN Workbench v1 · AI 模型配置面板（SVN：AI 配置模型 / AI 测试连接）自包含原型
+  设计令牌来源：设计令牌.md（视觉唯一依据，全部 --color-* / --font-* / --space-* 派生自 var(--vscode-*)）
+  需求来源：requirements-undesigned-5pages.md · 页面 1 · AI 模型配置面板
+  约束落实：
+   ① 组件样式仅引用 --token（含本文件 :root 顶部离线预览默认值），无硬编码 hex（:root 预览默认值除外，组件样式零 hex）；
+   ② font-family 首值 var(--vscode-font-family)；路径/diff/代码用 --font-family-mono；
+   ③ 间距/圆角/高度/字号/行高只走 --space-* / --radius-* / --control-height* / --row-height* / --font-size-*，组件样式无裸几何值；
+   ④ 成功色统一 --color-success-fg；状态色仅用于徽标文字/左条/关键计数/图标，不整块铺语义色；
+   ⑤ 图标用 inline SVG <symbol> + <use href="#icon-..."> 单色 currentColor，注释标注真实 codicon 名；
+   ⑥ 交互纯原生内联 <script>，操作 DOM textContent / classList / createElement / setAttribute，严禁运行时拼接 HTML 字符串；
+   ⑦ 顶部演示控制条（demo-only）模拟 空态 / 加载中 / 测试失败 / SecretStorage 三态，真实状态由宿主读取；
+   ⑧ 自包含：零外部资源；以 <!-- Component: Xxx --> 划分区块。
+-->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SVN Workbench · AI 模型配置</title>
+<style>
+/* =========================================================================
+   :root — 第 0 层：VS Code 深色主题预览默认值（仅离线渲染兜底；组件样式不引用以下 hex）
+   真实 webview 中全部 --vscode-* 由宿主主题注入并自动覆盖。
+   ========================================================================= */
+:root {
+  --vscode-foreground: #cccccc;
+  --vscode-descriptionForeground: #9d9d9d;
+  --vscode-disabledForeground: #6b6b6b;
+  --vscode-textLink-foreground: #3794ff;
+  --vscode-icon-foreground: #c5c5c5;
+  --vscode-panel-background: #1e1e1e;
+  --vscode-editor-background: #1e1e1e;
+  --vscode-sideBar-background: #252526;
+  --vscode-sideBarSectionHeader-background: #2d2d2d;
+  --vscode-list-background: #1e1e1e;
+  --vscode-input-background: #3c3c3c;
+  --vscode-input-foreground: #cccccc;
+  --vscode-input-placeholderForeground: #9d9d9d;
+  --vscode-dropdown-background: #3c3c3c;
+  --vscode-list-hoverBackground: #2a2d2e;
+  --vscode-list-activeSelectionBackground: #094771;
+  --vscode-list-inactiveSelectionBackground: #37373d;
+  --vscode-list-activeSelectionForeground: #ffffff;
+  --vscode-editorWidget-background: #252526;
+  --vscode-panel-border: #2b2b2b;
+  --vscode-widget-border: #2b2b2b;
+  --vscode-errorForeground: #f48771;
+  --vscode-warningForeground: #cca700;
+  --vscode-charts-green: #89d185;
+  --vscode-charts-red: #f48771;
+  --vscode-charts-yellow: #cca700;
+  --vscode-charts-orange: #e2c08d;
+  --vscode-diffEditor-insertedTextBackground: #9ccc2c33;
+  --vscode-diffEditor-removedTextBackground: #f14c4c33;
+  --vscode-editorGutter-addedBackground: #9ccc2c;
+  --vscode-editorGutter-deletedBackground: #f14c4c;
+  --vscode-editorGutter-modifiedBackground: #e2c08d;
+  --vscode-focusBorder: #007fd4;
+  --vscode-widget-shadow: rgba(0, 0, 0, 0.36);
+  --vscode-button-background: #0e639c;
+  --vscode-button-foreground: #ffffff;
+  --vscode-button-hoverBackground: #1177bb;
+  --vscode-button-secondaryBackground: #3a3d41;
+  --vscode-button-secondaryForeground: #cccccc;
+  --vscode-button-secondaryHoverBackground: #45494e;
+  --vscode-badge-background: #4d4d4d;
+  --vscode-badge-foreground: #ffffff;
+  --vscode-progressBar-background: #0e70c0;
+  --vscode-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+  --vscode-editor-font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, "Courier New", monospace;
+  --vscode-checkbox-background: #3c3c3c;
+  --vscode-checkbox-foreground: #f0f0f0;
+  --vscode-checkbox-border: #6b6b6b;
+  --vscode-tree-indentGuidesStroke: rgba(169, 169, 169, 0.20);
+}
+
+/* =========================================================================
+   :root — 第 1 层：设计令牌派生（来自 设计令牌.md §1–§4，全部引用 var(--vscode-*)）
+   组件样式一律引用以下 --token；另含"内部辅助令牌"（仅布局尺寸，非颜色，集中此处避免组件样式出现裸几何值）。
+   ========================================================================= */
+:root {
+  /* —— 前景 / 背景层级 —— */
+  --color-fg: var(--vscode-foreground);
+  --color-fg-secondary: var(--vscode-descriptionForeground);
+  --color-fg-disabled: var(--vscode-disabledForeground);
+  --color-fg-link: var(--vscode-textLink-foreground);
+  --color-icon: var(--vscode-icon-foreground);
+  --color-bg-canvas: var(--vscode-panel-background);
+  --color-bg-surface: var(--vscode-sideBar-background);
+  --color-bg-editor: var(--vscode-editor-background);
+  --color-bg-list: var(--vscode-list-background);
+  --color-bg-input: var(--vscode-input-background);
+  --color-bg-dropdown: var(--vscode-dropdown-background);
+  --color-bg-section-header: var(--vscode-sideBarSectionHeader-background);
+  --color-bg-hover: var(--vscode-list-hoverBackground);
+  --color-bg-selected: var(--vscode-list-activeSelectionBackground);
+  --color-bg-selected-inactive: var(--vscode-list-inactiveSelectionBackground);
+  --color-fg-selected: var(--vscode-list-activeSelectionForeground);
+  --color-bg-widget: var(--vscode-editorWidget-background);
+  --color-border: var(--vscode-panel-border);
+  --color-border-widget: var(--vscode-widget-border);
+  --color-border-strong: var(--vscode-contrastBorder, var(--vscode-panel-border));
+
+  /* —— 语义状态色（fg + bg 变体） —— */
+  --color-error-fg: var(--vscode-errorForeground);
+  --color-error-bg: color-mix(in srgb, var(--vscode-errorForeground) 14%, var(--vscode-panel-background));
+  --color-warning-fg: var(--vscode-warningForeground, var(--vscode-charts-yellow));
+  --color-warning-bg: color-mix(in srgb, var(--vscode-warningForeground, var(--vscode-charts-yellow)) 14%, var(--vscode-panel-background));
+  --color-info-fg: var(--vscode-textLink-foreground);
+  --color-info-bg: color-mix(in srgb, var(--vscode-textLink-foreground) 14%, var(--vscode-panel-background));
+  --color-success-fg: var(--vscode-charts-green);
+  --color-success-bg: color-mix(in srgb, var(--vscode-charts-green) 14%, var(--vscode-panel-background));
+
+  /* —— 差异色（增/删/改） —— */
+  --color-diff-add-fg: var(--vscode-charts-green);
+  --color-diff-add-bg: var(--vscode-diffEditor-insertedTextBackground, var(--vscode-charts-green));
+  --color-diff-add-gutter: var(--vscode-editorGutter-addedBackground, var(--vscode-charts-green));
+  --color-diff-del-fg: var(--vscode-charts-red, var(--vscode-errorForeground));
+  --color-diff-del-bg: var(--vscode-diffEditor-removedTextBackground, var(--vscode-charts-red));
+  --color-diff-del-gutter: var(--vscode-editorGutter-deletedBackground, var(--vscode-charts-red));
+  --color-diff-mod-fg: var(--vscode-charts-yellow, var(--vscode-charts-orange));
+  --color-diff-mod-gutter: var(--vscode-editorGutter-modifiedBackground, var(--vscode-charts-yellow));
+
+  /* —— 焦点 / 阴影 / 按钮 / 徽标 / 进度 —— */
+  --color-focus: var(--vscode-focusBorder);
+  --shadow-widget: var(--vscode-widget-shadow);
+  --color-btn-primary-bg: var(--vscode-button-background);
+  --color-btn-primary-fg: var(--vscode-button-foreground);
+  --color-btn-primary-hover: var(--vscode-button-hoverBackground);
+  --color-btn-secondary-bg: var(--vscode-button-secondaryBackground);
+  --color-btn-secondary-fg: var(--vscode-button-secondaryForeground);
+  --color-btn-secondary-hover: var(--vscode-button-secondaryHoverBackground);
+  --color-badge-bg: var(--vscode-badge-background);
+  --color-badge-fg: var(--vscode-badge-foreground);
+  --color-progress: var(--vscode-progressBar-background);
+
+  /* —— 内部辅助令牌（共享，几何值，见 设计令牌.md §4.1） —— */
+  --content-max-width: 1024px;
+  --content-max-width-narrow: 920px;
+  --control-min-width: 160px;
+  --preview-min-height: 96px;
+  --row-left-bar: 2px;
+  --hairline: 1px;
+  --bar-thickness: 4px;
+  --pill-radius: 999px;
+  --banner-bar: 3px;
+  --radius-round: 50%;
+  --status-dot: 8px;
+
+  /* —— 字体令牌 —— */
+  --font-family: var(--vscode-font-family);
+  --font-family-mono: var(--vscode-editor-font-family, 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace);
+  --font-size-xs: 11px;
+  --font-size-sm: 12px;
+  --font-size-md: 13px;
+  --font-size-lg: 15px;
+  --font-size-xl: 18px;
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+  --line-height-tight: 1.3;
+  --line-height-base: 1.5;
+  --line-height-relaxed: 1.6;
+
+  /* —— 间距 / 尺寸令牌（4px 基准） —— */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+  --space-8: 40px;
+  --control-height: 26px;
+  --control-height-sm: 22px;
+  --control-height-lg: 30px;
+  --row-height: 26px;
+  --row-height-header: 22px;
+  --radius-sm: 2px;
+  --radius-md: 3px;
+  --radius-badge: 3px;
+  --radius-lg: 4px;
+  --border-width: 1px;
+  --indent-step: 16px;
+
+  /* —— 内部辅助令牌（仅本原型布局尺寸，非颜色；集中此处，组件样式零裸几何值） —— */
+  --icon-size: 16px;
+  --icon-size-sm: 14px;
+  --icon-size-lg: 18px;
+  --dd-min-width: 200px;
+  --panel-max: 960px;
+  --outline-w: 1px;
+  --focus-offset: -1px;
+}
+
+/* =========================================================================
+   基础重置
+   ========================================================================= */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  font-family: var(--font-family);
+  font-size: var(--font-size-md);
+  line-height: var(--line-height-base);
+  color: var(--color-fg);
+  background: var(--color-bg-canvas);
+  -webkit-font-smoothing: antialiased;
+}
+button { font-family: inherit; cursor: pointer; }
+::selection { background: var(--color-bg-selected); color: var(--color-fg-selected); }
+.icon { width: var(--icon-size); height: var(--icon-size); display: inline-block; flex: none; vertical-align: middle; color: var(--color-icon); }
+
+/* =========================================================================
+   Component: DemoBar（演示控制条 · demo-only，真实状态由宿主读取）
+   ========================================================================= */
+  /* —— 连续性头（ContHead）：面包屑 + ScopeBar + 状态点（跨页连续性原语，见 设计令牌.md §5.9.1） —— */
+  .cont-head {
+    display: flex; align-items: center; gap: var(--space-4);
+    padding: var(--space-2) var(--space-4);
+    background: var(--color-bg-surface);
+    border-bottom: var(--hairline) solid var(--color-border);
+    min-height: calc(var(--row-height-header) + var(--space-2));
+  }
+  .breadcrumb {
+    display: flex; align-items: center; gap: var(--space-1);
+    font-size: var(--font-size-xs); color: var(--color-fg-secondary);
+    white-space: nowrap; flex: none;
+  }
+  .breadcrumb .crumb--current { color: var(--color-fg); font-weight: var(--font-weight-medium); }
+  .breadcrumb .crumb-sep { color: var(--color-fg-disabled); }
+  .cont-head .scope-bar {
+    display: flex; align-items: center; gap: var(--space-2);
+    min-width: 0; flex: 1 1 auto;
+  }
+  .scope-bar .scope-icon { color: var(--color-icon); display: inline-flex; flex: none; }
+  .scope-bar .path {
+    font-family: var(--font-family-mono); font-size: var(--font-size-sm);
+    color: var(--color-fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .scope-bar .scope { font-size: var(--font-size-sm); color: var(--color-fg-secondary); white-space: nowrap; }
+  .scope-bar .scope b { color: var(--color-fg); font-weight: var(--font-weight-medium); }
+  .health { display: flex; align-items: center; gap: var(--space-3); flex: none; margin-left: auto; }
+  .health .dot { width: var(--status-dot); height: var(--status-dot); border-radius: var(--radius-round); display: inline-block; flex: none; }
+  .health .dot--ready { background: var(--color-success-fg); }
+  .health .dot--idle  { background: var(--color-fg-disabled); }
+  .health .dot--err   { background: var(--color-error-fg); }
+
+.demo-bar {
+  display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap;
+  padding: var(--space-2) var(--space-4);
+  background: var(--color-bg-surface);
+  border-bottom: var(--border-width) solid var(--color-border);
+  font-size: var(--font-size-xs);
+  color: var(--color-fg-secondary);
+}
+.demo-bar .demo-label { display: inline-flex; align-items: center; gap: var(--space-1); font-weight: var(--font-weight-semibold); }
+.demo-bar .demo-label .icon { color: var(--color-fg-secondary); }
+.demo-bar .demo-opt { display: inline-flex; align-items: center; gap: var(--space-1); cursor: pointer; user-select: none; }
+.demo-bar .demo-opt input { accent-color: var(--color-focus); }
+.demo-bar select {
+  height: var(--control-height-sm);
+  background: var(--color-bg-input);
+  color: var(--color-fg);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-family);
+  font-size: var(--font-size-xs);
+  padding: 0 var(--space-2);
+}
+
+/* =========================================================================
+   主容器
+   ========================================================================= */
+.panel {
+  max-width: var(--panel-max);
+  margin: 0 auto;
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+/* 区块标题 */
+.block-label {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-fg-secondary);
+  margin: 0 0 var(--space-2);
+  display: flex; align-items: center; gap: var(--space-1);
+}
+.block-label .icon { color: var(--color-icon); }
+
+.hint { font-size: var(--font-size-sm); color: var(--color-fg-secondary); margin: var(--space-2) 0 0; line-height: var(--line-height-base); }
+.hint code { font-family: var(--font-family-mono); font-size: var(--font-size-xs); background: var(--color-bg-surface); border: var(--border-width) solid var(--color-border); border-radius: var(--radius-sm); padding: 0 var(--space-1); color: var(--color-fg); }
+
+/* =========================================================================
+   Component: TitleArea（标题区）
+   ========================================================================= */
+.title-area { display: flex; flex-direction: column; gap: var(--space-1); }
+.title-area h1 {
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-bold);
+  line-height: var(--line-height-tight);
+  margin: 0;
+  display: flex; align-items: center; gap: var(--space-2);
+}
+.title-area h1 .icon { color: var(--color-icon); }
+.title-area .subtitle { font-size: var(--font-size-sm); color: var(--color-fg-secondary); line-height: var(--line-height-base); }
+
+/* =========================================================================
+   Component: ProviderPreset（供应商预设选择）
+   ========================================================================= */
+.field-pair { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
+@media (max-width: 720px) {
+  .field-pair { grid-template-columns: 1fr; }
+  .cont-head { flex-wrap: wrap; gap: var(--space-2); padding: var(--space-2) var(--space-3); }
+  .cont-head .health { margin-left: 0; }
+  .panel { padding-left: var(--space-3); padding-right: var(--space-3); }
+  .field-row, .rule-list { min-width: 0; }
+}
+
+.form-row { display: flex; flex-direction: column; gap: var(--space-1); }
+.form-row > label { font-size: var(--font-size-sm); color: var(--color-fg); font-weight: var(--font-weight-medium); }
+.form-row > label .mono { font-family: var(--font-family-mono); }
+
+.input, .select, .textarea {
+  width: 100%;
+  height: var(--control-height);
+  background: var(--color-bg-input);
+  color: var(--color-fg);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 0 var(--space-2);
+  font-family: var(--font-family);
+  font-size: var(--font-size-md);
+}
+.input::placeholder, .textarea::placeholder { color: var(--vscode-input-placeholderForeground); }
+.input:focus, .select:focus, .textarea:focus { outline: none; border-color: var(--color-focus); }
+.select { font-family: var(--font-family-mono); min-width: var(--dd-min-width); cursor: pointer; }
+.textarea { height: auto; min-height: calc(var(--control-height) * 2 + var(--space-3)); padding: var(--space-2); font-family: var(--font-family-mono); line-height: var(--line-height-relaxed); resize: vertical; }
+
+/* =========================================================================
+   Component: PresetDescription（预设说明条 · 状态条风格）
+   ========================================================================= */
+.status-strip {
+  display: flex; align-items: flex-start; gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-bg-surface);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  color: var(--color-fg-secondary);
+  line-height: var(--line-height-base);
+}
+.status-strip .icon { color: var(--color-info-fg); flex: none; margin-top: var(--border-width); }
+.status-strip .ss-text { min-width: 0; }
+
+/* =========================================================================
+   Component: ScenarioModels（场景模型多行）
+   ========================================================================= */
+.scenario-list { display: flex; flex-direction: column; gap: var(--space-3); }
+.scenario-row { display: flex; flex-direction: column; gap: var(--space-1); }
+.scenario-row .sc-head { display: flex; align-items: center; gap: var(--space-2); }
+.scenario-row .sc-label { font-size: var(--font-size-sm); color: var(--color-fg); font-weight: var(--font-weight-medium); }
+.scenario-row .sc-note { font-size: var(--font-size-xs); color: var(--color-fg-secondary); margin-left: auto; }
+.scenario-row .sc-note.warn { color: var(--color-warning-fg); }
+.scenario-row .sc-desc { font-size: var(--font-size-xs); color: var(--color-fg-secondary); margin: 0; }
+
+/* =========================================================================
+   Component: ApiKey（API Key + 清除开关）
+   ========================================================================= */
+.toggle-row { display: flex; align-items: center; gap: var(--space-2); }
+.cbx { display: inline-flex; align-items: center; position: relative; flex: none; }
+.cbx input { position: absolute; width: var(--border-width); height: var(--border-width); opacity: 0; margin: 0; padding: 0; overflow: hidden; clip: rect(0 0 0 0); }
+.cbx-box {
+  width: var(--control-height-sm); height: var(--control-height-sm);
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--vscode-checkbox-background);
+  border: var(--border-width) solid var(--vscode-checkbox-border);
+  border-radius: var(--radius-sm);
+  color: var(--vscode-checkbox-foreground);
+}
+.cbx-box .icon { width: var(--icon-size-sm); height: var(--icon-size-sm); display: none; }
+.cbx input:checked + .cbx-box { border-color: var(--color-focus); }
+.cbx input:checked + .cbx-box .icon { display: inline-block; }
+.cbx input:focus-visible + .cbx-box { outline: var(--outline-w) solid var(--color-focus); outline-offset: var(--space-1); }
+.toggle-label { font-size: var(--font-size-sm); color: var(--color-fg); }
+
+/* =========================================================================
+   Component: SecretStorageStatus（SecretStorage 三态状态条）
+   ========================================================================= */
+.secret-status {
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-bg-surface);
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+}
+.secret-status .ss-icon { flex: none; }
+.secret-status .ss-text { font-weight: var(--font-weight-medium); }
+.secret-status.is-saved { border-left: var(--bar-thickness) solid var(--color-success-fg); }
+.secret-status.is-saved .ss-icon, .secret-status.is-saved .ss-text { color: var(--color-success-fg); }
+.secret-status.is-legacy { border-left: var(--bar-thickness) solid var(--color-warning-fg); }
+.secret-status.is-legacy .ss-icon, .secret-status.is-legacy .ss-text { color: var(--color-warning-fg); }
+.secret-status.is-unsaved { border-left: var(--bar-thickness) solid var(--color-fg-secondary); }
+.secret-status.is-unsaved .ss-icon, .secret-status.is-unsaved .ss-text { color: var(--color-fg-secondary); }
+.secret-status .ss-meta { margin-left: auto; font-size: var(--font-size-xs); color: var(--color-fg-secondary); font-family: var(--font-family-mono); }
+
+/* =========================================================================
+   按钮（Primary / Secondary / Icon-btn）
+   ========================================================================= */
+.btn-primary, .btn-secondary {
+  display: inline-flex; align-items: center; justify-content: center; gap: var(--space-1);
+  border: var(--border-width) solid transparent; border-radius: var(--radius-sm);
+  font-size: var(--font-size-md); font-weight: var(--font-weight-medium);
+  padding: 0 var(--space-3);
+}
+.btn-primary { height: var(--control-height-lg); background: var(--color-btn-primary-bg); color: var(--color-btn-primary-fg); }
+.btn-secondary { height: var(--control-height); background: var(--color-btn-secondary-bg); color: var(--color-btn-secondary-fg); border-color: var(--color-border); }
+.btn-primary:hover { background: var(--color-btn-primary-hover); }
+.btn-secondary:hover { background: var(--color-btn-secondary-hover); }
+.btn-primary:focus-visible, .btn-secondary:focus-visible { outline: var(--outline-w) solid var(--color-focus); outline-offset: var(--focus-offset); }
+.btn-primary:disabled, .btn-secondary:disabled { color: var(--color-fg-disabled); cursor: not-allowed; }
+.btn-primary:disabled { background: var(--color-btn-secondary-bg); }
+.btn-secondary:disabled { background: var(--color-btn-secondary-bg); }
+
+/* 进度条（加载中） */
+.progress { height: var(--control-height-sm); background: var(--color-bg-input); border: var(--border-width) solid var(--color-border); border-radius: var(--radius-sm); overflow: hidden; }
+.progress[hidden] { display: none; }
+.progress .bar { height: 100%; width: 0; background: var(--color-progress); transition: width 600ms ease; }
+
+/* =========================================================================
+   Component: ActionButtons（动作按钮）
+   ========================================================================= */
+.action-bar { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+
+/* =========================================================================
+   Component: ResultArea（结果区：连接成败 / 模型列表）
+   ========================================================================= */
+.result-area {
+  border: var(--border-width) solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-bg-canvas);
+  padding: var(--space-3);
+  display: flex; flex-direction: column; gap: var(--space-2);
+}
+.result-area[hidden] { display: none; }
+.result-line { font-size: var(--font-size-sm); display: flex; align-items: center; gap: var(--space-1); }
+.result-line.is-success { color: var(--color-success-fg); }
+.result-line.is-error { color: var(--color-error-fg); }
+.result-line .icon { flex: none; }
+.result-line code { font-family: var(--font-family-mono); font-size: var(--font-size-xs); color: var(--color-fg); background: var(--color-bg-surface); border: var(--border-width) solid var(--color-border); border-radius: var(--radius-sm); padding: 0 var(--space-1); }
+.model-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--space-1); }
+.model-list:empty { display: none; }
+.model-item {
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  background: var(--color-bg-surface); border: var(--border-width) solid var(--color-border); border-radius: var(--radius-sm);
+}
+.model-item .mi-name { font-family: var(--font-family-mono); font-size: var(--font-size-sm); color: var(--color-fg); }
+.model-item .mi-fill { margin-left: auto; }
+.mi-fill {
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  height: var(--control-height-sm); padding: 0 var(--space-2);
+  background: var(--color-btn-secondary-bg); color: var(--color-btn-secondary-fg);
+  border: var(--border-width) solid var(--color-border); border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+}
+.mi-fill:hover { background: var(--color-btn-secondary-hover); }
+
+/* =========================================================================
+   Component: FooterNote
+   ========================================================================= */
+.footer-note {
+  display: flex; align-items: center; gap: var(--space-2);
+  font-size: var(--font-size-xs); color: var(--color-fg-secondary);
+  padding-top: var(--space-2); border-top: var(--border-width) solid var(--color-border);
+}
+.footer-note .icon { color: var(--color-fg-disabled); }
+</style>
+</head>
+<body>
+
+<!-- 图标符号表（inline SVG 单色 currentColor；codicon 对应名见注释） -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="icon-settings-gear" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M8 1v2.2M8 12.8V15M1 8h2.2M12.8 8H15M3.1 3.1l1.6 1.6M11.3 11.3l1.6 1.6M12.9 3.1l-1.6 1.6M4.7 11.3l-1.6 1.6" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></symbol>
+  <symbol id="icon-info" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M8 7v4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><circle cx="8" cy="4.6" r="0.9" fill="currentColor"/></symbol>
+  <symbol id="icon-check" viewBox="0 0 16 16"><path d="M3 8.5l3 3 7-8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="icon-warning" viewBox="0 0 16 16"><path d="M8 2l6 11H2z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M8 6.5v3.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="8" cy="11.4" r="0.8" fill="currentColor"/></symbol>
+  <symbol id="icon-error" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M5.5 5.5l5 5M10.5 5.5l-5 5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></symbol>
+  <symbol id="icon-key" viewBox="0 0 16 16"><circle cx="5" cy="11" r="2.6" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M7 9l6-6M11 2.5l2.5 2.5M9.5 4l2 2" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="icon-save" viewBox="0 0 16 16"><path d="M2.5 3h8l3 3v7H2.5z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M5 3v3.5h5V3M5 13v-3.5h6V13" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></symbol>
+  <symbol id="icon-play" viewBox="0 0 16 16"><path d="M4 3l9 5-9 5z" fill="currentColor"/></symbol>
+  <symbol id="icon-cloud-download" viewBox="0 0 16 16"><path d="M4.5 9.5A3.5 3.5 0 0 1 5 2.7 4 4 0 0 1 12.6 4 3 3 0 0 1 12 9.5z" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M8 8.5V12M5.5 10 8 12.5 10.5 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="icon-refresh" viewBox="0 0 16 16"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><path d="M13.5 2.5V6H10" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="icon-close" viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></symbol>
+  <symbol id="icon-trash" viewBox="0 0 16 16"><path d="M3 4.5h10M6 4.5V3h4v1.5M4.5 4.5l.6 8.5h5.8l.6-8.5" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></symbol>
+</svg>
+
+<!-- ===================== Component: DemoBar（演示控制 · demo-only） ===================== -->
+<div class="demo-bar" aria-label="演示控制（仅前端模拟，真实状态由宿主读取）">
+  <span class="demo-label"><svg class="icon" aria-hidden="true"><use href="#icon-info"/></svg> 演示控制</span>
+  <label class="demo-opt"><input type="checkbox" id="demoEmpty" /> 模拟空态（首次进入）</label>
+  <label class="demo-opt"><input type="checkbox" id="demoLoading" /> 模拟加载中</label>
+  <label class="demo-opt"><input type="checkbox" id="demoFail" /> 模拟测试失败</label>
+  <label class="demo-opt">SecretStorage：
+    <select id="demoSecret">
+      <option value="saved">已保存</option>
+      <option value="legacy">旧版兼容</option>
+      <option value="unsaved">未保存</option>
+    </select>
+  </label>
+</div>
+
+<!-- Component: ContinuityHeader（连续性头 · 面包屑 + ScopeBar + 状态点） -->
+<header class="cont-head">
+  <nav class="breadcrumb" aria-label="面包屑">
+    <span class="crumb">SVN 工作台</span>
+    <span class="crumb-sep">/</span>
+    <span class="crumb crumb--current">AI 模型配置</span>
+  </nav>
+  <div class="scope-bar">
+    <span class="scope-icon"><svg class="icon" aria-hidden="true" viewBox="0 0 16 16"><path d="M1.5 3.5h4l1.5 1.5h7.5v7.5H1.5z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg></span>
+    <span class="path">D:\项目\订单系统</span>
+  </div>
+  <div class="health" aria-label="服务状态">
+    <span class="dot dot--svn dot--ready" title="svn 已就绪（D:\项目\订单系统）"></span>
+    <span class="dot dot--ai dot--idle" title="AI 未配置（更新建议降级为手动模式）"></span>
+  </div>
+</header>
+
+<main class="panel">
+
+  <!-- ===================== Component: TitleArea ===================== -->
+  <section class="title-area" aria-label="标题区">
+    <h1><svg class="icon" aria-hidden="true"><use href="#icon-settings-gear"/></svg> SVN AI 模型配置</h1>
+    <p class="subtitle">选择供应商预设后仍可编辑 Base URL 和模型名。API Key 保存到 VS Code SecretStorage，留空即沿用已保存密钥。</p>
+  </section>
+
+  <!-- ===================== Component: ProviderPreset ===================== -->
+  <section aria-label="供应商预设选择">
+    <p class="block-label"><svg class="icon" aria-hidden="true"><use href="#icon-settings-gear"/></svg> 供应商预设</p>
+    <div class="form-row">
+      <label for="provider">Provider 预设</label>
+      <select class="select" id="provider" aria-label="供应商预设">
+        <option value="deepseek">deepseek</option>
+        <option value="qwenDashscope">qwenDashscope</option>
+        <option value="zhipuCoding">zhipuCoding</option>
+        <option value="zhipuGeneral">zhipuGeneral</option>
+        <option value="kimi">kimi</option>
+        <option value="custom">custom（自托管 OpenAI 兼容端点）</option>
+      </select>
+    </div>
+  </section>
+
+  <!-- ===================== Component: PresetDescription ===================== -->
+  <section aria-label="预设说明条">
+    <div class="status-strip" id="presetDesc">
+      <svg class="icon" aria-hidden="true"><use href="#icon-info"/></svg>
+      <span class="ss-text" id="presetDescText">DeepSeek 通用对话模型，适合常规提交建议、代码解释与冲突说明。</span>
+    </div>
+  </section>
+
+  <!-- ===================== Component: BaseUrlModelGrid ===================== -->
+  <section aria-label="Base URL 与模型名">
+    <p class="block-label"><svg class="icon" aria-hidden="true"><use href="#icon-settings-gear"/></svg> Base URL 与模型名（可编辑覆盖）</p>
+    <div class="field-pair">
+      <div class="form-row">
+        <label for="baseUrl" class="mono">Base URL</label>
+        <input class="input" id="baseUrl" type="text" spellcheck="false" placeholder="https://api.deepseek.com/v1" />
+      </div>
+      <div class="form-row">
+        <label for="model" class="mono">模型名</label>
+        <input class="input" id="model" type="text" spellcheck="false" placeholder="deepseek-chat" />
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== Component: ScenarioModels ===================== -->
+  <section aria-label="场景模型覆盖">
+    <p class="block-label"><svg class="icon" aria-hidden="true"><use href="#icon-settings-gear"/></svg> 场景模型（留空继承默认）</p>
+    <div class="scenario-list">
+      <div class="scenario-row">
+        <div class="sc-head">
+          <span class="sc-label">生成提交信息</span>
+          <span class="sc-note">常规模型即可</span>
+        </div>
+        <input class="input" data-scenario="commitMessage" type="text" spellcheck="false" placeholder="留空继承默认" />
+        <p class="sc-desc">用于「建议勾选 / 生成提交说明」等常规辅助。</p>
+      </div>
+      <div class="scenario-row">
+        <div class="sc-head">
+          <span class="sc-label">冲突合并建议</span>
+          <span class="sc-note warn">建议更强模型</span>
+        </div>
+        <input class="input" data-scenario="conflictMerge" type="text" spellcheck="false" placeholder="留空继承默认" />
+        <p class="sc-desc">合并冲突需要更强的推理能力，建议指定更强的模型（用 <span style="color:var(--color-warning-fg)">警告色</span> 提示）。</p>
+      </div>
+      <div class="scenario-row">
+        <div class="sc-head">
+          <span class="sc-label">代码审查</span>
+          <span class="sc-note">适度增强</span>
+        </div>
+        <input class="input" data-scenario="codeReview" type="text" spellcheck="false" placeholder="留空继承默认" />
+        <p class="sc-desc">用于「AI 建议规则 / 代码体检」等审查场景。</p>
+      </div>
+      <div class="scenario-row">
+        <div class="sc-head">
+          <span class="sc-label">重命名检测</span>
+          <span class="sc-note">常规模型即可</span>
+        </div>
+        <input class="input" data-scenario="renameDetect" type="text" spellcheck="false" placeholder="留空继承默认" />
+        <p class="sc-desc">用于识别移动/重命名文件的语义关联。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== Component: ApiKey ===================== -->
+  <section aria-label="API Key 与清除开关">
+    <p class="block-label"><svg class="icon" aria-hidden="true"><use href="#icon-key"/></svg> API Key</p>
+    <div class="form-row" style="margin-bottom: var(--space-3);">
+      <label for="apiKey" class="mono">API Key</label>
+      <input class="input" id="apiKey" type="password" spellcheck="false" placeholder="留空表示继续使用已保存密钥" />
+    </div>
+    <label class="toggle-row">
+      <span class="cbx">
+        <input type="checkbox" id="clearKey" />
+        <span class="cbx-box"><svg class="icon" aria-hidden="true"><use href="#icon-check"/></svg></span>
+      </span>
+      <span class="toggle-label">清除已保存的 API Key（保存后将从 SecretStorage 移除）</span>
+    </label>
+  </section>
+
+  <!-- ===================== Component: SecretStorageStatus ===================== -->
+  <section aria-label="SecretStorage 状态">
+    <p class="block-label"><svg class="icon" aria-hidden="true"><use href="#icon-key"/></svg> SecretStorage 状态</p>
+    <div class="secret-status is-saved" id="secretStatus">
+      <svg class="icon ss-icon"><use href="#icon-check"/></svg>
+      <span class="ss-text" id="secretText">已保存 API Key</span>
+      <span class="ss-meta" id="secretMeta">svnWorkbench.ai.apiKey</span>
+    </div>
+  </section>
+
+  <!-- ===================== Component: ActionButtons ===================== -->
+  <section class="action-bar" aria-label="动作按钮">
+    <button class="btn-primary" id="saveBtn" type="button" data-action="save-model">
+      <svg class="icon" aria-hidden="true"><use href="#icon-save"/></svg> 保存配置
+    </button>
+    <button class="btn-secondary" id="testBtn" type="button" data-action="test-conn">
+      <svg class="icon" aria-hidden="true"><use href="#icon-play"/></svg> 测试连接
+    </button>
+    <button class="btn-secondary" id="fetchBtn" type="button" data-action="fetch-models">
+      <svg class="icon" aria-hidden="true"><use href="#icon-cloud-download"/></svg> 拉取模型列表
+    </button>
+  </section>
+
+  <!-- 加载中进度（仅在加载演示或真实请求时显示） -->
+  <div class="progress" id="progress" hidden><div class="bar" id="progressBar"></div></div>
+
+  <!-- ===================== Component: ResultArea ===================== -->
+  <section class="result-area" id="resultArea" hidden aria-label="结果区">
+    <div class="result-line" id="resultLine"></div>
+    <ul class="model-list" id="modelList"></ul>
+  </section>
+
+  <!-- ===================== Component: FooterNote ===================== -->
+  <div class="footer-note">
+    <svg class="icon" aria-hidden="true"><use href="#icon-info"/></svg>
+    <span>本页为「配置 AI」入口本身，不存在自身的"AI 未配置"降级；如需从其它面板跳转，跳转后即为已打开的配置态。所有动作走命令占位（svnWorkbench.aiConfigure / aiTestConnection）。</span>
+  </div>
+
+</main>
+
+<script>
+/* 受控渲染：全部操作 textContent / classList / createElement / setAttribute，严禁运行时拼接 HTML 字符串。 */
+(function () {
+  'use strict';
+
+  var PRESETS = {
+    deepseek:      { baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-chat', desc: 'DeepSeek 通用对话模型，适合常规提交建议、代码解释与冲突说明。' },
+    qwenDashscope: { baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', model: 'qwen-plus', desc: '阿里云百炼（DashScope）通义千问，国内低延迟，适合常规辅助。' },
+    zhipuCoding:   { baseUrl: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4.5', desc: '智谱 GLM 编码优化模型，代码生成与审查更强。' },
+    zhipuGeneral:  { baseUrl: 'https://open.bigmodel.cn/api/paas/v4', model: 'glm-4-plus', desc: '智谱 GLM 通用模型，适合常规辅助与文本整理。' },
+    kimi:          { baseUrl: 'https://api.moonshot.cn/v1', model: 'moonshot-v1-8k', desc: '月之暗面 Kimi，长上下文友好，适合大文件解读。' },
+    custom:        { baseUrl: '', model: '', desc: '自托管 OpenAI 兼容端点：请手动填写 Base URL 与模型名。' }
+  };
+
+  var provider = document.getElementById('provider');
+  var baseUrl = document.getElementById('baseUrl');
+  var model = document.getElementById('model');
+  var presetDescText = document.getElementById('presetDescText');
+
+  function applyPreset(key) {
+    var p = PRESETS[key] || PRESETS.custom;
+    // custom 不回填；其余回填但保留可编辑
+    if (key === 'custom') {
+      baseUrl.value = '';
+      model.value = '';
+    } else {
+      baseUrl.value = p.baseUrl;
+      model.value = p.model;
+    }
+    presetDescText.textContent = p.desc;
+  }
+  provider.addEventListener('change', function () { applyPreset(provider.value); });
+  applyPreset(provider.value);
+
+  /* —— SecretStorage 三态状态条 —— */
+  var secretStatus = document.getElementById('secretStatus');
+  var secretText = document.getElementById('secretText');
+  var secretMeta = document.getElementById('secretMeta');
+  function setSecret(state) {
+    secretStatus.classList.remove('is-saved', 'is-legacy', 'is-unsaved');
+    var icon = secretStatus.querySelector('.ss-icon use');
+    if (state === 'saved') {
+      secretStatus.classList.add('is-saved');
+      secretText.textContent = '已保存 API Key';
+      secretMeta.textContent = 'svnWorkbench.ai.apiKey';
+      icon.setAttribute('href', '#icon-check');
+    } else if (state === 'legacy') {
+      secretStatus.classList.add('is-legacy');
+      secretText.textContent = '旧版 settings 兼容存储（建议迁移到 SecretStorage）';
+      secretMeta.textContent = 'settings.svnWorkbench.ai.apiKey';
+      icon.setAttribute('href', '#icon-warning');
+    } else {
+      secretStatus.classList.add('is-unsaved');
+      secretText.textContent = '尚未保存 API Key';
+      secretMeta.textContent = '—';
+      icon.setAttribute('href', '#icon-info');
+    }
+  }
+  var demoSecret = document.getElementById('demoSecret');
+  demoSecret.addEventListener('change', function () { setSecret(demoSecret.value); });
+  setSecret('saved');
+
+  /* —— 演示：空态（首次进入，清空字段） —— */
+  var demoEmpty = document.getElementById('demoEmpty');
+  function applyEmpty() {
+    if (demoEmpty.checked) {
+      provider.value = 'custom';
+      baseUrl.value = '';
+      model.value = '';
+      presetDescText.textContent = PRESETS.custom.desc;
+      document.querySelectorAll('[data-scenario]').forEach(function (el) { el.value = ''; });
+      document.getElementById('apiKey').value = '';
+      setSecret('unsaved');
+      demoSecret.value = 'unsaved';
+    }
+  }
+  demoEmpty.addEventListener('change', applyEmpty);
+
+  /* —— 加载中进度（按钮禁用 + 进度条） —— */
+  var progress = document.getElementById('progress');
+  var progressBar = document.getElementById('progressBar');
+  var saveBtn = document.getElementById('saveBtn');
+  var testBtn = document.getElementById('testBtn');
+  var fetchBtn = document.getElementById('fetchBtn');
+  var demoLoading = document.getElementById('demoLoading');
+
+  function setLoading(on) {
+    var disabled = on || demoLoading.checked;
+    saveBtn.disabled = disabled;
+    testBtn.disabled = disabled;
+    fetchBtn.disabled = disabled;
+    if (disabled) {
+      progress.hidden = false;
+      progressBar.style.width = '0';
+      requestAnimationFrame(function () { progressBar.style.width = '100%'; });
+    } else {
+      progress.hidden = true;
+    }
+  }
+  demoLoading.addEventListener('change', function () { setLoading(demoLoading.checked); });
+
+  /* —— 结果区（受控渲染，无 HTML 字符串拼接） —— */
+  var resultArea = document.getElementById('resultArea');
+  var resultLine = document.getElementById('resultLine');
+  var modelList = document.getElementById('modelList');
+
+  function clearResult() {
+    resultLine.className = 'result-line';
+    while (resultLine.firstChild) resultLine.removeChild(resultLine.firstChild);
+    while (modelList.firstChild) modelList.removeChild(modelList.firstChild);
+  }
+  function setResult(ok, msg) {
+    resultArea.hidden = false;
+    clearResult();
+    resultLine.classList.add(ok ? 'is-success' : 'is-error');
+    var use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+    use.setAttribute('href', ok ? '#icon-check' : '#icon-error');
+    var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('class', 'ic');
+    svg.appendChild(use);
+    resultLine.appendChild(svg);
+    resultLine.appendChild(document.createTextNode(msg));
+  }
+  function addModel(name) {
+    var li = document.createElement('li');
+    li.className = 'model-item';
+    var nm = document.createElement('span');
+    nm.className = 'mi-name';
+    nm.textContent = name;
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'mi-fill';
+    var use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+    use.setAttribute('href', '#icon-check');
+    var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('class', 'ic');
+    svg.appendChild(use);
+    btn.appendChild(svg);
+    btn.appendChild(document.createTextNode('回填模型名'));
+    btn.addEventListener('click', function () { model.value = name; });
+    li.appendChild(nm);
+    li.appendChild(btn);
+    modelList.appendChild(li);
+  }
+
+  /* —— 测试连接 —— */
+  testBtn.addEventListener('click', function () {
+    if (testBtn.disabled) return;
+    setLoading(true);
+    var fail = demoLoading.checked ? false : document.getElementById('demoFail').checked;
+    setTimeout(function () {
+      setLoading(false);
+      if (fail) {
+        setResult(false, '连接失败：无法访问 ' + (baseUrl.value || '（空 Base URL）') + '，请检查 Base URL 与网络。');
+      } else {
+        setResult(true, '连接成功：' + (model.value || '默认模型') + ' 可用。');
+      }
+    }, 700);
+  });
+
+  /* —— 拉取模型列表 —— */
+  fetchBtn.addEventListener('click', function () {
+    if (fetchBtn.disabled) return;
+    setLoading(true);
+    setTimeout(function () {
+      setLoading(false);
+      resultArea.hidden = false;
+      clearResult();
+      resultLine.classList.add('is-success');
+      var use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+      use.setAttribute('href', '#icon-check');
+      var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('class', 'ic');
+      svg.appendChild(use);
+      resultLine.appendChild(svg);
+      resultLine.appendChild(document.createTextNode('已拉取可用模型，点击"回填"写入模型名：'));
+      ['deepseek-chat', 'deepseek-reasoner', 'deepseek-coder'].forEach(addModel);
+    }, 700);
+  });
+
+  /* —— 保存配置 —— */
+  saveBtn.addEventListener('click', function () {
+    if (saveBtn.disabled) return;
+    var clearKey = document.getElementById('clearKey').checked;
+    if (clearKey) {
+      setSecret('unsaved');
+      demoSecret.value = 'unsaved';
+      document.getElementById('apiKey').value = '';
+      setResult(true, '已保存配置，并清除了已保存的 API Key。');
+    } else {
+      setSecret('saved');
+      demoSecret.value = 'saved';
+      setResult(true, '配置已保存，API Key 已写入 SecretStorage。');
+    }
+  });
+
+  /* —— 清除 Key 开关联动提示 —— */
+  document.getElementById('clearKey').addEventListener('change', function () {
+    var on = document.getElementById('clearKey').checked;
+    document.getElementById('apiKey').placeholder = on ? '保存后将清除已保存密钥' : '留空表示继续使用已保存密钥';
+  });
+})();
+</script>
+</body>
+</html>

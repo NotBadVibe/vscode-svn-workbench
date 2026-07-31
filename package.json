@@ -1,0 +1,589 @@
+{
+  "name": "svn-workbench",
+  "displayName": "SVN 工作台",
+  "description": "面向中文用户的 AI 原生 SVN 工作台。",
+  "version": "0.0.1",
+  "publisher": "local",
+  "private": true,
+  "license": "UNLICENSED",
+  "keywords": [
+    "svn",
+    "subversion",
+    "ai",
+    "scm"
+  ],
+  "engines": {
+    "vscode": "^1.92.0"
+  },
+  "categories": [
+    "SCM Providers",
+    "Other"
+  ],
+  "activationEvents": [
+    "workspaceContains:.svn",
+    "onCommand:svnWorkbench.openWorkbench",
+    "onCommand:svnWorkbench.checkEnvironment",
+    "onCommand:svnWorkbench.refreshStatus",
+    "onCommand:svnWorkbench.updateScope",
+    "onCommand:svnWorkbench.openProperties",
+    "onCommand:svnWorkbench.openCleanup",
+    "onCommand:svnWorkbench.openRepositoryBrowser",
+    "onCommand:svnWorkbench.createBranch",
+    "onCommand:svnWorkbench.createTag",
+    "onCommand:svnWorkbench.switchWorkingCopy",
+    "onCommand:svnWorkbench.relocateWorkingCopy",
+    "onCommand:svnWorkbench.mergeToWorkingCopy",
+    "onCommand:svnWorkbench.openPatchShelf",
+    "onCommand:svnWorkbench.openReleaseNotes",
+    "onCommand:svnWorkbench.commitFolder",
+    "onCommand:svnWorkbench.openConflictCenter",
+    "onCommand:svnWorkbench.openDiff",
+    "onCommand:svnWorkbench.openHistory",
+    "onCommand:svnWorkbench.openTeamConfig",
+    "onCommand:svnWorkbench.configureTeamConfig",
+    "onCommand:svnWorkbench.showOutput",
+    "onCommand:svnWorkbench.aiConfigure",
+    "onCommand:svnWorkbench.aiTestConnection",
+    "onCommand:svnWorkbench.aiSelectScope",
+    "onCommand:svnWorkbench.aiReviewScope",
+    "onCommand:svnWorkbench.analyzeImpact",
+    "onCommand:svnWorkbench.openChangelists",
+    "onCommand:svnWorkbench.openAgent",
+    "onCommand:svnWorkbench.openAcceptanceChecklist"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "SVN 工作台",
+      "properties": {
+        "svnWorkbench.svn.path": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null,
+          "description": "svn 可执行文件路径。留空时自动搜索 PATH 和各平台常见安装位置。"
+        },
+        "svnWorkbench.ai.baseUrl": {
+          "type": "string",
+          "default": "",
+          "description": "OpenAI 兼容 API Base URL。建议通过“SVN：AI 配置模型”配置。"
+        },
+        "svnWorkbench.ai.providerPreset": {
+          "type": "string",
+          "default": "deepseek",
+          "enum": [
+            "deepseek",
+            "qwenDashscope",
+            "zhipuCoding",
+            "zhipuGeneral",
+            "kimi",
+            "custom"
+          ],
+          "description": "AI 服务商预设。预设只是可编辑模板，接口地址和模型仍可自行修改。"
+        },
+        "svnWorkbench.ai.model": {
+          "type": "string",
+          "default": "",
+          "description": "OpenAI 兼容服务使用的默认模型名称。"
+        },
+        "svnWorkbench.ai.scenarioModels": {
+          "type": "object",
+          "default": {},
+          "properties": {
+            "commitSelection": {
+              "type": "string",
+              "description": "可选：单独指定 AI 提交文件选择模型。"
+            },
+            "conflictAdvice": {
+              "type": "string",
+              "description": "可选：单独指定 AI 冲突建议模型。"
+            },
+            "commitMessage": {
+              "type": "string",
+              "description": "可选：单独指定 AI 提交说明生成模型。"
+            },
+            "commitSplit": {
+              "type": "string",
+              "description": "可选：单独指定 AI 提交拆分建议模型。"
+            },
+            "teamRules": {
+              "type": "string",
+              "description": "可选：单独指定 AI 团队规则推荐模型。"
+            },
+            "conflictMerge": {
+              "type": "string",
+              "description": "可选：单独指定 AI 冲突合并候选生成模型。"
+            }
+          },
+          "description": "按工作台使用场景覆盖 AI 模型；留空时继承默认模型设置。"
+        },
+        "svnWorkbench.ai.includeCommitHistory": {
+          "type": "boolean",
+          "default": false,
+          "description": "允许生成提交说明时使用已脱敏的本地成功提交摘要。"
+        },
+        "svnWorkbench.ai.historyLimit": {
+          "type": "number",
+          "default": 10,
+          "minimum": 1,
+          "maximum": 20,
+          "description": "启用历史后最多使用的脱敏提交摘要条数。"
+        },
+        "svnWorkbench.commitConvention.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "在 SVN 提交前启用团队提交说明规范检查。"
+        },
+        "svnWorkbench.commitConvention.requiredIssueId": {
+          "type": "boolean",
+          "default": false,
+          "description": "启用提交规范后，要求提交说明包含任务编号。"
+        },
+        "svnWorkbench.commitConvention.issueIdPattern": {
+          "type": "string",
+          "default": "[A-Z]+-\\d+|#\\d+",
+          "description": "用于校验提交说明中任务编号的正则表达式。"
+        },
+        "svnWorkbench.commitConvention.requiredModule": {
+          "type": "boolean",
+          "default": false,
+          "description": "要求提交说明首行包含模块，例如 feat(order): message。"
+        },
+        "svnWorkbench.commitConvention.allowedModules": {
+          "type": "array",
+          "default": [
+            "order",
+            "user",
+            "config",
+            "docs"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "description": "提交说明首行允许使用的模块名称。"
+        },
+        "svnWorkbench.commitConvention.requiredPrefix": {
+          "type": "boolean",
+          "default": false,
+          "description": "要求提交说明首行使用约定前缀。"
+        },
+        "svnWorkbench.commitConvention.allowedPrefixes": {
+          "type": "array",
+          "default": [
+            "feat",
+            "fix",
+            "config",
+            "docs",
+            "refactor",
+            "test",
+            "chore"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "description": "提交说明首行允许使用的约定前缀。"
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "svnWorkbench.openWorkbench",
+        "title": "SVN：查看工作副本修改"
+      },
+      {
+        "command": "svnWorkbench.checkEnvironment",
+        "title": "SVN：检查环境"
+      },
+      {
+        "command": "svnWorkbench.refreshStatus",
+        "title": "SVN：刷新状态"
+      },
+      {
+        "command": "svnWorkbench.updateScope",
+        "title": "SVN：更新当前范围"
+      },
+      {
+        "command": "svnWorkbench.openProperties",
+        "title": "SVN：查看与编辑属性"
+      },
+      {
+        "command": "svnWorkbench.openCleanup",
+        "title": "SVN：清理工作副本"
+      },
+      {
+        "command": "svnWorkbench.openRepositoryBrowser",
+        "title": "SVN：浏览仓库"
+      },
+      {
+        "command": "svnWorkbench.createBranch",
+        "title": "SVN：创建分支"
+      },
+      {
+        "command": "svnWorkbench.createTag",
+        "title": "SVN：创建标签"
+      },
+      {
+        "command": "svnWorkbench.switchWorkingCopy",
+        "title": "SVN：切换工作副本"
+      },
+      {
+        "command": "svnWorkbench.relocateWorkingCopy",
+        "title": "SVN：重定位仓库地址"
+      },
+      {
+        "command": "svnWorkbench.mergeToWorkingCopy",
+        "title": "SVN：合并到工作副本"
+      },
+      {
+        "command": "svnWorkbench.openPatchShelf",
+        "title": "SVN：补丁与本地搁置"
+      },
+      {
+        "command": "svnWorkbench.openReleaseNotes",
+        "title": "SVN：生成发布说明"
+      },
+      {
+        "command": "svnWorkbench.commitFolder",
+        "title": "SVN：提交当前范围"
+      },
+      {
+        "command": "svnWorkbench.openConflictCenter",
+        "title": "SVN：打开冲突中心"
+      },
+      {
+        "command": "svnWorkbench.openDiff",
+        "title": "SVN：打开差异对比"
+      },
+      {
+        "command": "svnWorkbench.openHistory",
+        "title": "SVN：查看历史"
+      },
+      {
+        "command": "svnWorkbench.openTeamConfig",
+        "title": "SVN：打开团队配置"
+      },
+      {
+        "command": "svnWorkbench.configureTeamConfig",
+        "title": "SVN：配置团队规则"
+      },
+      {
+        "command": "svnWorkbench.showOutput",
+        "title": "SVN：显示输出"
+      },
+      {
+        "command": "svnWorkbench.aiConfigure",
+        "title": "SVN：AI 配置模型"
+      },
+      {
+        "command": "svnWorkbench.aiTestConnection",
+        "title": "SVN：AI 测试连接"
+      },
+      {
+        "command": "svnWorkbench.aiSelectScope",
+        "title": "SVN：AI 审查当前范围"
+      },
+      {
+        "command": "svnWorkbench.aiReviewScope",
+        "title": "SVN：AI 变更审查"
+      },
+      {
+        "command": "svnWorkbench.analyzeImpact",
+        "title": "SVN：分析影响与测试"
+      },
+      {
+        "command": "svnWorkbench.openChangelists",
+        "title": "SVN：变更集与智能拆分"
+      },
+      {
+        "command": "svnWorkbench.openAgent",
+        "title": "SVN：受控 AI 任务代理"
+      },
+      {
+        "command": "svnWorkbench.openAcceptanceChecklist",
+        "title": "SVN：打开验收清单"
+      },
+      {
+        "command": "svnWorkbench.scmRefresh",
+        "title": "SVN：刷新所有工作副本",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "svnWorkbench.add",
+        "title": "SVN：加入版本控制（先预览）"
+      },
+      {
+        "command": "svnWorkbench.ignore",
+        "title": "SVN：添加到忽略列表（先预览）"
+      },
+      {
+        "command": "svnWorkbench.revert",
+        "title": "SVN：还原本地修改（先预览）"
+      },
+      {
+        "command": "svnWorkbench.lock",
+        "title": "SVN：锁定文件（先预览）"
+      },
+      {
+        "command": "svnWorkbench.unlock",
+        "title": "SVN：解锁文件（先预览）"
+      }
+    ],
+    "submenus": [
+      {
+        "id": "svnWorkbench.explorer",
+        "label": "SVN 工作台"
+      },
+      {
+        "id": "svnWorkbench.ai",
+        "label": "AI 助手"
+      },
+      {
+        "id": "svnWorkbench.recovery",
+        "label": "冲突与恢复"
+      },
+      {
+        "id": "svnWorkbench.repository",
+        "label": "更多 SVN 操作"
+      },
+      {
+        "id": "svnWorkbench.settings",
+        "label": "设置与诊断"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "submenu": "svnWorkbench.explorer",
+          "group": "navigation@50",
+          "when": "resourceScheme == file"
+        }
+      ],
+      "editor/context": [
+        {
+          "submenu": "svnWorkbench.explorer",
+          "group": "navigation@50",
+          "when": "resourceScheme == file"
+        }
+      ],
+      "svnWorkbench.explorer": [
+        {
+          "command": "svnWorkbench.openWorkbench",
+          "group": "1_core@1"
+        },
+        {
+          "command": "svnWorkbench.commitFolder",
+          "group": "1_core@2"
+        },
+        {
+          "command": "svnWorkbench.updateScope",
+          "group": "1_core@3"
+        },
+        {
+          "command": "svnWorkbench.openDiff",
+          "group": "1_core@4",
+          "when": "!explorerResourceIsFolder"
+        },
+        {
+          "command": "svnWorkbench.openHistory",
+          "group": "1_core@5"
+        },
+        {
+          "submenu": "svnWorkbench.ai",
+          "group": "2_modules@1"
+        },
+        {
+          "submenu": "svnWorkbench.recovery",
+          "group": "2_modules@2"
+        },
+        {
+          "submenu": "svnWorkbench.repository",
+          "group": "2_modules@3"
+        },
+        {
+          "submenu": "svnWorkbench.settings",
+          "group": "3_config@1"
+        }
+      ],
+      "svnWorkbench.ai": [
+        {
+          "command": "svnWorkbench.aiReviewScope",
+          "group": "1_ai@1"
+        },
+        {
+          "command": "svnWorkbench.analyzeImpact",
+          "group": "1_ai@2"
+        },
+        {
+          "command": "svnWorkbench.openChangelists",
+          "group": "1_ai@3"
+        },
+        {
+          "command": "svnWorkbench.openAgent",
+          "group": "1_ai@4"
+        }
+      ],
+      "svnWorkbench.recovery": [
+        {
+          "command": "svnWorkbench.openConflictCenter",
+          "group": "1_recovery@1"
+        },
+        {
+          "command": "svnWorkbench.openCleanup",
+          "group": "1_recovery@2",
+          "when": "explorerResourceIsFolder"
+        }
+      ],
+      "svnWorkbench.repository": [
+        {
+          "command": "svnWorkbench.openProperties",
+          "group": "1_repository@1"
+        },
+        {
+          "command": "svnWorkbench.openRepositoryBrowser",
+          "group": "1_repository@2"
+        },
+        {
+          "command": "svnWorkbench.createBranch",
+          "group": "2_advanced@1"
+        },
+        {
+          "command": "svnWorkbench.createTag",
+          "group": "2_advanced@2"
+        },
+        {
+          "command": "svnWorkbench.switchWorkingCopy",
+          "group": "2_advanced@3"
+        },
+        {
+          "command": "svnWorkbench.relocateWorkingCopy",
+          "group": "2_advanced@4"
+        },
+        {
+          "command": "svnWorkbench.mergeToWorkingCopy",
+          "group": "2_advanced@5"
+        },
+        {
+          "command": "svnWorkbench.openPatchShelf",
+          "group": "3_tools@1"
+        },
+        {
+          "command": "svnWorkbench.openReleaseNotes",
+          "group": "3_tools@2"
+        }
+      ],
+      "svnWorkbench.settings": [
+        {
+          "command": "svnWorkbench.checkEnvironment",
+          "group": "1_settings@1"
+        },
+        {
+          "command": "svnWorkbench.configureTeamConfig",
+          "group": "1_settings@2"
+        },
+        {
+          "command": "svnWorkbench.aiConfigure",
+          "group": "1_settings@3"
+        }
+      ],
+      "scm/title": [
+        {
+          "command": "svnWorkbench.scmRefresh",
+          "group": "navigation@1",
+          "when": "scmProvider == svnWorkbench"
+        }
+      ],
+      "scm/resourceState/context": [
+        {
+          "command": "svnWorkbench.openConflictCenter",
+          "group": "1_svn@1",
+          "when": "scmResourceState == svnWorkbench.conflicted"
+        },
+        {
+          "command": "svnWorkbench.add",
+          "group": "1_svn@1",
+          "when": "scmResourceState == svnWorkbench.unversioned"
+        },
+        {
+          "command": "svnWorkbench.ignore",
+          "group": "1_svn@2",
+          "when": "scmResourceState == svnWorkbench.unversioned"
+        },
+        {
+          "command": "svnWorkbench.openDiff",
+          "group": "1_svn@1",
+          "when": "scmResourceState == svnWorkbench.versioned"
+        },
+        {
+          "command": "svnWorkbench.revert",
+          "group": "1_svn@2",
+          "when": "scmResourceState == svnWorkbench.versioned"
+        },
+        {
+          "command": "svnWorkbench.openHistory",
+          "group": "2_svn@1",
+          "when": "scmProvider == svnWorkbench"
+        },
+        {
+          "command": "svnWorkbench.lock",
+          "group": "2_svn@2",
+          "when": "scmResourceState == svnWorkbench.versioned"
+        },
+        {
+          "command": "svnWorkbench.unlock",
+          "group": "2_svn@3",
+          "when": "scmResourceState == svnWorkbench.versioned"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run build",
+    "compile": "npm run build",
+    "compile:extension": "node scripts/clean-extension-build.js && node node_modules/typescript/bin/tsc -p ./",
+    "build:webview": "vite build --config src/webview/vite.config.mts",
+    "build": "npm run compile:extension && npm run build:webview",
+    "watch": "node node_modules/typescript/bin/tsc -p ./ --watch",
+    "dev:webview": "vite --config src/webview/vite.config.mts",
+    "check:webview": "svelte-check --tsconfig ./src/webview/tsconfig.json",
+    "check": "npm run compile:extension && npm run check:webview",
+    "test:unit": "vitest run --config vitest.config.mts",
+    "test:coverage": "node scripts/run-vitest-coverage.js",
+    "pretest:webview": "npm run build:webview",
+    "test:webview": "playwright test --project=webview",
+    "test:performance": "npm run build:webview && node scripts/measure-webview-performance.js",
+    "test:extension": "npm run build && node scripts/run-extension-tests.js",
+    "verify": "npm run check && npm run test:coverage && npm run test:webview && npm run test:performance && npm run test:extension",
+    "package:vsix": "npm run build && vsce package --no-dependencies --allow-missing-repository",
+    "validate:vsix-install": "node scripts/validate-vsix-install.js",
+    "prepare:manual-test-env": "node scripts/create-manual-acceptance-env.js"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.12.1",
+    "@codemirror/language": "^6.12.4",
+    "@codemirror/merge": "^6.12.2",
+    "@codemirror/search": "^6.7.1",
+    "@codemirror/state": "^6.7.1",
+    "@codemirror/view": "^6.43.7",
+    "@playwright/test": "^1.62.0",
+    "@sveltejs/vite-plugin-svelte": "^7.2.0",
+    "@tailwindcss/vite": "^4.3.3",
+    "@testing-library/jest-dom": "^7.0.0",
+    "@testing-library/svelte": "^5.4.2",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/node": "^22.10.2",
+    "@types/vscode": "1.92.0",
+    "@vitest/coverage-istanbul": "^4.1.10",
+    "@vscode/codicons": "^0.0.46-24",
+    "@vscode/test-electron": "^3.1.0",
+    "@vscode/vsce": "^3.9.2",
+    "bits-ui": "^2.18.1",
+    "jsdom": "^30.0.1",
+    "svelte": "^5.56.8",
+    "svelte-check": "^4.7.4",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^5.7.2",
+    "vite": "^8.2.0",
+    "vitest": "^4.1.10"
+  }
+}

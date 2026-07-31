@@ -1,0 +1,894 @@
+<!--
+  SVN Workbench v1 · 功能 2 冲突中心 (Conflict Center) 自包含原型
+  设计系统：设计令牌.md §2（所有颜色/字体/间距/圆角/阴影均走 --token，禁硬编码 hex）
+  运行环境：VS Code 内嵌 webview（深色默认，浅色自动；Svelte 受控渲染蓝图）
+  布局代表 Svelte 组件：以 <!-- Component: Xxx --> 划分边界
+  图标：inline SVG <symbol> + <use href="#i-...">（单色 currentColor）；注释标注对应 codicon 名
+  降级语义：① AI 未配置 → 手动模式 info 卡（icon-info + 左条 --color-info-fg，不抛错）；
+           ② svn 缺失 → 引导卡（icon-error 左条，指向 svnWorkbench.svn.path，不静默退出）。
+  演示开关：顶栏 DemoBar 提供纯前端模拟（demo 仅用于预览，真实状态由宿主读取）。
+-->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>SVN Workbench · 冲突中心</title>
+<style>
+  /* ============================================================
+     设计令牌 :root（粘贴自 设计令牌.md §2，组件样式一律引用 --token）
+     ============================================================ */
+  :root {
+    /* —— 前景 / 背景层级 —— */
+    --color-fg: var(--vscode-foreground);
+    --color-fg-secondary: var(--vscode-descriptionForeground);
+    --color-fg-disabled: var(--vscode-disabledForeground);
+    --color-fg-link: var(--vscode-textLink-foreground);
+    --color-icon: var(--vscode-icon-foreground);
+    --color-bg-canvas: var(--vscode-panel-background);
+    --color-bg-surface: var(--vscode-sideBar-background);
+    --color-bg-editor: var(--vscode-editor-background);
+    --color-bg-list: var(--vscode-list-background);
+    --color-bg-input: var(--vscode-input-background);
+    --color-bg-dropdown: var(--vscode-dropdown-background);
+    --color-bg-section-header: var(--vscode-sideBarSectionHeader-background);
+    --color-bg-hover: var(--vscode-list-hoverBackground);
+    --color-bg-selected: var(--vscode-list-activeSelectionBackground);
+    --color-bg-selected-inactive: var(--vscode-list-inactiveSelectionBackground);
+    --color-fg-selected: var(--vscode-list-activeSelectionForeground);
+    --color-bg-widget: var(--vscode-editorWidget-background);
+    --color-border: var(--vscode-panel-border);
+    --color-border-widget: var(--vscode-widget-border);
+    --color-border-strong: var(--vscode-contrastBorder, var(--vscode-panel-border));
+
+    /* —— 语义状态色（fg + bg 变体） —— */
+    --color-error-fg: var(--vscode-errorForeground);
+    --color-error-bg: color-mix(in srgb, var(--vscode-errorForeground) 14%, var(--vscode-panel-background));
+    --color-warning-fg: var(--vscode-warningForeground, var(--vscode-charts-yellow));
+    --color-warning-bg: color-mix(in srgb, var(--vscode-warningForeground, var(--vscode-charts-yellow)) 14%, var(--vscode-panel-background));
+    --color-info-fg: var(--vscode-textLink-foreground);
+    --color-info-bg: color-mix(in srgb, var(--vscode-textLink-foreground) 14%, var(--vscode-panel-background));
+    --color-success-fg: var(--vscode-charts-green);
+    --color-success-bg: color-mix(in srgb, var(--vscode-charts-green) 14%, var(--vscode-panel-background));
+
+    /* —— 差异色（增/删/改） —— */
+    --color-diff-add-fg: var(--vscode-charts-green);
+    --color-diff-add-bg: var(--vscode-diffEditor-insertedTextBackground, var(--vscode-charts-green));
+    --color-diff-add-gutter: var(--vscode-editorGutter-addedBackground, var(--vscode-charts-green));
+    --color-diff-del-fg: var(--vscode-charts-red, var(--vscode-errorForeground));
+    --color-diff-del-bg: var(--vscode-diffEditor-removedTextBackground, var(--vscode-charts-red));
+    --color-diff-del-gutter: var(--vscode-editorGutter-deletedBackground, var(--vscode-charts-red));
+    --color-diff-mod-fg: var(--vscode-charts-yellow, var(--vscode-charts-orange));
+    --color-diff-mod-gutter: var(--vscode-editorGutter-modifiedBackground, var(--vscode-charts-yellow));
+
+    /* —— 焦点 / 阴影 / 按钮 / 徽标 / 进度 —— */
+    --color-focus: var(--vscode-focusBorder);
+    --shadow-widget: var(--vscode-widget-shadow);
+    --color-btn-primary-bg: var(--vscode-button-background);
+    --color-btn-primary-fg: var(--vscode-button-foreground);
+    --color-btn-primary-hover: var(--vscode-button-hoverBackground);
+    --color-btn-secondary-bg: var(--vscode-button-secondaryBackground);
+    --color-btn-secondary-fg: var(--vscode-button-secondaryForeground);
+    --color-btn-secondary-hover: var(--vscode-button-secondaryHoverBackground);
+    --color-badge-bg: var(--vscode-badge-background);
+    --color-badge-fg: var(--vscode-badge-foreground);
+    --color-progress: var(--vscode-progressBar-background);
+  }
+
+  /* ============================================================
+     离线预览兜底默认值（仅此处允许 hex；真实 webview 由宿主 --vscode-* 覆盖）
+     ============================================================ */
+  :root {
+    --vscode-foreground: #cccccc;
+    --vscode-descriptionForeground: #9d9d9d;
+    --vscode-disabledForeground: #6b6b6b;
+    --vscode-textLink-foreground: #3794ff;
+    --vscode-icon-foreground: #c5c5c5;
+    --vscode-panel-background: #1e1e1e;
+    --vscode-sideBar-background: #252526;
+    --vscode-editor-background: #1e1e1e;
+    --vscode-list-background: #1e1e1e;
+    --vscode-input-background: #3c3c3c;
+    --vscode-dropdown-background: #3c3c3c;
+    --vscode-sideBarSectionHeader-background: #2d2d2d;
+    --vscode-list-hoverBackground: #2a2d2e;
+    --vscode-list-activeSelectionBackground: #094771;
+    --vscode-list-inactiveSelectionBackground: #37373d;
+    --vscode-list-activeSelectionForeground: #ffffff;
+    --vscode-editorWidget-background: #252526;
+    --vscode-panel-border: #2b2b2b;
+    --vscode-widget-border: #454545;
+    --vscode-contrastBorder: #454545;
+    --vscode-errorForeground: #f48771;
+    --vscode-warningForeground: #cca700;
+    --vscode-charts-yellow: #cca700;
+    --vscode-charts-green: #89d185;
+    --vscode-charts-red: #f48771;
+    --vscode-charts-orange: #e2c08d;
+    --vscode-diffEditor-insertedTextBackground: #9ccc2c33;
+    --vscode-diffEditor-removedTextBackground: #f14c4c33;
+    --vscode-editorGutter-addedBackground: #9ccc2c;
+    --vscode-editorGutter-deletedBackground: #f14c4c;
+    --vscode-editorGutter-modifiedBackground: #e2c08d;
+    --vscode-focusBorder: #007fd4;
+    --vscode-widget-shadow: rgba(0,0,0,0.36);
+    --vscode-button-background: #0e639c;
+    --vscode-button-foreground: #ffffff;
+    --vscode-button-hoverBackground: #1177bb;
+    --vscode-button-secondaryBackground: #3a3d41;
+    --vscode-button-secondaryForeground: #cccccc;
+    --vscode-button-secondaryHoverBackground: #45494e;
+    --vscode-badge-background: #4d4d4d;
+    --vscode-badge-foreground: #ffffff;
+    --vscode-progressBar-background: #0e70c0;
+    --vscode-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    --vscode-editor-font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    --vscode-input-placeholderForeground: #9d9d9d;
+    --vscode-checkbox-background: #3c3c3c;
+    --vscode-checkbox-foreground: #f0f0f0;
+    --vscode-checkbox-border: #6b6b6b;
+    --vscode-tree-indentGuidesStroke: #404040;
+  }
+
+  /* ============================================================
+     字体 / 间距 / 尺寸令牌（4px 基准；组件只走令牌，无裸几何值）
+     ============================================================ */
+  :root {
+    --font-family: var(--vscode-font-family);
+    --font-family-mono: var(--vscode-editor-font-family, 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace);
+    --font-size-xs: 11px;
+    --font-size-sm: 12px;
+    --font-size-md: 13px;
+    --font-size-lg: 15px;
+    --font-size-xl: 18px;
+    --font-weight-regular: 400;
+    --font-weight-medium: 500;
+    --font-weight-semibold: 600;
+    --font-weight-bold: 700;
+    --line-height-tight: 1.3;
+    --line-height-base: 1.5;
+    --line-height-relaxed: 1.6;
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-5: 20px;
+    --space-6: 24px;
+    --space-7: 32px;
+    --space-8: 40px;
+    --control-height: 26px;
+    --control-height-sm: 22px;
+    --control-height-lg: 30px;
+    --row-height: 26px;
+    --row-height-header: 22px;
+    --radius-sm: 2px;
+    --radius-md: 3px;
+    --radius-badge: 3px;
+    --radius-lg: 4px;
+    --border-width: 1px;
+    --indent-step: 16px;
+  }
+
+  /* ============================================================
+     基础与布局
+     ============================================================ */
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: var(--font-family);
+    font-size: var(--font-size-md);
+    line-height: var(--line-height-base);
+    color: var(--color-fg);
+    background: var(--color-bg-canvas);
+  }
+  .panel {
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+    background: var(--color-bg-canvas);
+  }
+  /* 图标：单色 currentColor，尺寸走令牌 */
+  .ic {
+    width: var(--space-4); height: var(--space-4);
+    display: block; flex: none; color: inherit;
+  }
+  .ic--sm { width: var(--space-3); height: var(--space-3); }
+  .ic--lg { width: var(--space-6); height: var(--space-6); }
+
+  .icon-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: var(--control-height-sm); height: var(--control-height-sm);
+    border: none; border-radius: var(--radius-sm);
+    background: transparent; color: var(--color-icon); cursor: pointer;
+    padding: 0;
+  }
+  .icon-btn:hover { background: var(--color-bg-hover); }
+  .icon-btn:focus-visible { outline: 1px solid var(--color-focus); outline-offset: -1px; }
+  .spacer { flex: 1; }
+
+  /* ============================================================
+     Component: DemoBar（纯前端演示开关，不写回宿主）
+     ============================================================ */
+  .demo-bar {
+    display: flex; align-items: center; gap: var(--space-4);
+    padding: var(--space-2) var(--space-4);
+    background: var(--color-bg-surface);
+    border-bottom: var(--border-width) solid var(--color-border);
+    font-size: var(--font-size-xs);
+    color: var(--color-fg-secondary);
+  }
+  .demo-bar .demo-tag {
+    display: inline-flex; align-items: center; gap: var(--space-1);
+    color: var(--color-fg-secondary); font-weight: var(--font-weight-medium);
+  }
+  .demo-opt {
+    display: inline-flex; align-items: center; gap: var(--space-1);
+    cursor: pointer; user-select: none;
+  }
+  .demo-opt input { accent-color: var(--color-focus); }
+  .demo-note { margin-left: auto; opacity: 0.8; }
+
+  /* ============================================================
+     Component: GateCard（降级引导卡 · svn 缺失 / AI 手动模式）
+     ============================================================ */
+  .gate-card {
+    margin: var(--space-4);
+    display: flex; gap: var(--space-3);
+    background: var(--color-bg-surface);
+    border: var(--border-width) solid var(--color-border);
+    border-left: 4px solid var(--color-border-strong);
+    border-radius: var(--radius-md);
+    padding: var(--space-3);
+  }
+  .gate-card--svn { border-left-color: var(--color-error-fg); }
+  .gate-card--ai  { border-left-color: var(--color-info-fg); }
+  .gate-card__icon { flex: none; margin-top: 1px; }
+  .gate-card--svn .gate-card__icon { color: var(--color-error-fg); }
+  .gate-card--ai  .gate-card__icon { color: var(--color-info-fg); }
+  .gate-card__body { min-width: 0; }
+  .gate-card__title {
+    font-size: var(--font-size-md); font-weight: var(--font-weight-semibold);
+    color: var(--color-fg); margin: 0 0 var(--space-1);
+    display: flex; align-items: center; gap: var(--space-2);
+  }
+  .gate-card__text {
+    font-size: var(--font-size-sm); color: var(--color-fg-secondary);
+    margin: 0 0 var(--space-2); line-height: var(--line-height-relaxed);
+  }
+  .gate-card__text code {
+    font-family: var(--font-family-mono); font-size: var(--font-size-xs);
+    color: var(--color-fg); background: var(--color-bg-input);
+    padding: 1px var(--space-1); border-radius: var(--radius-sm);
+  }
+  .gate-card__actions { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+
+  /* ============================================================
+     Component: ScopeBar（范围条 / 仓库条）
+     ============================================================ */
+  .scope-bar {
+    display: flex; align-items: center; gap: var(--space-2);
+    height: calc(var(--row-height-header) + var(--space-3));
+    padding: 0 var(--space-4);
+    background: var(--color-bg-surface);
+    border-bottom: var(--border-width) solid var(--color-border);
+  }
+  .scope-bar .scope-icon { color: var(--color-icon); display: inline-flex; }
+  .scope-bar .path {
+    font-family: var(--font-family-mono); font-size: var(--font-size-sm);
+    color: var(--color-fg);
+  }
+  .scope-bar .scope {
+    font-size: var(--font-size-sm); color: var(--color-fg-secondary);
+  }
+  .scope-bar .scope b { color: var(--color-fg); font-weight: var(--font-weight-medium); }
+
+  /* ============================================================
+     Component: StatusSummary（状态摘要条）
+     ============================================================ */
+  .status-summary {
+    display: flex; align-items: center; gap: var(--space-3);
+    padding: var(--space-2) var(--space-4);
+    border-bottom: var(--border-width) solid var(--color-border);
+    font-size: var(--font-size-sm);
+  }
+  .badge {
+    display: inline-flex; align-items: center; gap: var(--space-1);
+    height: var(--control-height-sm); padding: 0 var(--space-2);
+    background: var(--color-badge-bg); color: var(--color-badge-fg);
+    border-radius: var(--radius-badge);
+    font-size: var(--font-size-xs); font-weight: var(--font-weight-medium);
+  }
+  .badge .ic { width: var(--space-3); height: var(--space-3); }
+  .badge--conflict { color: var(--color-warning-fg); }
+  .badge--resolved { color: var(--color-success-fg); }
+  .badge--file { color: var(--color-fg); }
+
+  /* ============================================================
+     Component: ConflictFileList（冲突文件列表）
+     ============================================================ */
+  .conflict-list { background: var(--color-bg-list); }
+  .section-header {
+    display: flex; align-items: center; gap: var(--space-1);
+    height: var(--row-height-header);
+    padding: 0 var(--space-3);
+    background: var(--color-bg-section-header);
+    font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold);
+    color: var(--color-fg-secondary);
+    border-bottom: var(--border-width) solid var(--color-border);
+  }
+  .section-header .ic { width: var(--space-3); height: var(--space-3); color: var(--color-fg-secondary); }
+  .file-row {
+    display: flex; align-items: center; gap: var(--space-2);
+    height: var(--row-height); padding: 0 var(--space-3);
+    cursor: pointer; border-left: 2px solid transparent;
+    color: var(--color-fg);
+  }
+  .file-row:hover { background: var(--color-bg-hover); }
+  .file-row.is-selected {
+    background: var(--color-bg-selected); color: var(--color-fg-selected);
+    border-left-color: var(--color-border-strong);
+  }
+  .file-row .file-icon { color: var(--color-icon); display: inline-flex; }
+  .file-row .name {
+    font-family: var(--font-family-mono); font-size: var(--font-size-sm);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .file-row .status {
+    margin-left: auto; display: inline-flex; align-items: center; gap: var(--space-1);
+    font-size: var(--font-size-xs);
+  }
+  .status--unresolved { color: var(--color-warning-fg); }
+  .status--resolved { color: var(--color-success-fg); }
+
+  /* ============================================================
+     Component: WorkArea（主工作区）
+     ============================================================ */
+  .work-area {
+    display: flex; flex-direction: column; gap: var(--space-4);
+    padding: var(--space-4);
+  }
+  .work-header { display: flex; align-items: center; gap: var(--space-2); }
+  .work-header .fname {
+    font-family: var(--font-family-mono); font-size: var(--font-size-lg);
+    font-weight: var(--font-weight-semibold); color: var(--color-fg);
+  }
+  .work-header .hunk-idx { font-size: var(--font-size-sm); color: var(--color-fg-secondary); }
+  .work-header .conflict-tag {
+    display: inline-flex; align-items: center; gap: var(--space-1);
+    font-size: var(--font-size-xs); color: var(--color-warning-fg);
+  }
+
+  /* ---- AI 建议区（手动模式降级 / 已配置建议） ---- */
+  .ai-card {
+    border: var(--border-width) solid var(--color-border); border-radius: var(--radius-md);
+    background: var(--color-bg-surface); padding: var(--space-3);
+    display: flex; flex-direction: column; gap: var(--space-2);
+  }
+  .ai-card.info { border-left: 4px solid var(--color-info-fg); }
+  .ai-card.suggest { border-left: 4px solid var(--color-success-fg); }
+  .ai-head { display: flex; align-items: center; gap: var(--space-2); font-weight: var(--font-weight-medium); }
+  .ai-card.info .ai-head { color: var(--color-info-fg); }
+  .ai-card.suggest .ai-head { color: var(--color-success-fg); }
+  .ai-card .ai-body { font-size: var(--font-size-sm); color: var(--color-fg-secondary); line-height: var(--line-height-relaxed); }
+  .ai-card .ai-body code {
+    font-family: var(--font-family-mono); font-size: var(--font-size-xs);
+    color: var(--color-fg); background: var(--color-bg-input);
+    padding: 1px var(--space-1); border-radius: var(--radius-sm);
+  }
+  .ai-card .ai-foot { display: flex; align-items: center; gap: var(--space-3); }
+  .link-btn {
+    background: none; border: none; color: var(--color-fg-link); cursor: pointer;
+    font-size: var(--font-size-sm); padding: 0; font-family: var(--font-family);
+    text-decoration: underline;
+  }
+  .link-btn:hover { color: var(--color-fg-link); opacity: 0.85; }
+  .ai-toggle { display: inline-flex; align-items: center; gap: var(--space-1); font-size: var(--font-size-xs); color: var(--color-fg-secondary); margin-left: auto; cursor: pointer; }
+  .ai-toggle input { accent-color: var(--color-focus); }
+
+  /* ---- 三选一选择器（working / ours / theirs） ---- */
+  .threeway { display: flex; flex-direction: column; gap: var(--space-2); }
+  .threeway .label { font-size: var(--font-size-sm); color: var(--color-fg-secondary); font-weight: var(--font-weight-medium); }
+  .seg {
+    display: inline-flex; align-self: flex-start;
+    border: var(--border-width) solid var(--color-border); border-radius: var(--radius-sm);
+    overflow: hidden; background: var(--color-bg-surface);
+  }
+  .seg-item {
+    position: relative; display: inline-flex; align-items: center; gap: var(--space-1);
+    padding: 0 var(--space-3); height: var(--control-height);
+    font-size: var(--font-size-sm); cursor: pointer; color: var(--color-fg);
+    border-right: var(--border-width) solid var(--color-border);
+  }
+  .seg-item:last-child { border-right: none; }
+  .seg-item:hover { background: var(--color-bg-hover); }
+  .seg-item input { position: absolute; opacity: 0; pointer-events: none; }
+  .seg-item:has(input:checked) { background: var(--color-bg-selected); color: var(--color-fg-selected); }
+  .seg-item input:focus-visible + .seg-text { outline: 1px solid var(--color-focus); outline-offset: 2px; }
+  .seg-item .seg-text { display: inline-flex; align-items: center; gap: var(--space-1); }
+  .seg-item .seg-text .ic { width: var(--space-3); height: var(--space-3); }
+
+  /* ---- 左右双 pane 对比视图 ---- */
+  .split {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 1px;
+    background: var(--color-border);
+    border: var(--border-width) solid var(--color-border); border-radius: var(--radius-lg);
+    overflow: hidden;
+  }
+  .pane { background: var(--color-bg-editor); display: flex; flex-direction: column; min-width: 0; }
+  .pane-head {
+    display: flex; align-items: center; gap: var(--space-2);
+    height: var(--row-height-header); padding: 0 var(--space-2);
+    border-bottom: var(--border-width) solid var(--color-border);
+    background: var(--color-bg-section-header);
+    font-size: var(--font-size-sm);
+  }
+  .pane-head .pane-title { font-weight: var(--font-weight-medium); color: var(--color-fg); }
+  .pane-head .pane-side { color: var(--color-fg-secondary); font-family: var(--font-family-mono); font-size: var(--font-size-xs); }
+  .pane-tabs { display: inline-flex; gap: var(--space-1); margin-left: auto; }
+  .tab {
+    font-size: var(--font-size-xs); padding: 2px var(--space-2);
+    border: var(--border-width) solid var(--color-border); border-radius: var(--radius-sm);
+    background: transparent; color: var(--color-fg-secondary); cursor: pointer;
+    font-family: var(--font-family);
+  }
+  .tab:hover { background: var(--color-bg-hover); }
+  .tab.is-active { background: var(--color-bg-selected); color: var(--color-fg-selected); border-color: var(--color-border-strong); }
+
+  /* ---- 代码 / diff 文本 ---- */
+  .code {
+    font-family: var(--font-family-mono); font-size: var(--font-size-sm);
+    line-height: var(--line-height-base);
+    padding: var(--space-2) 0; overflow-x: auto; margin: 0;
+  }
+  .code .ln { display: flex; }
+  .code .gutter {
+    width: var(--space-6); flex: none; text-align: right; padding-right: var(--space-2);
+    color: var(--color-fg-secondary); user-select: none;
+  }
+  .code .txt { white-space: pre; padding-right: var(--space-3); color: var(--color-fg); }
+  .code .ln.add { background: var(--color-diff-add-bg); box-shadow: inset 2px 0 0 var(--color-diff-add-gutter); }
+  .code .ln.del { background: var(--color-diff-del-bg); box-shadow: inset 2px 0 0 var(--color-diff-del-gutter); }
+  .code .ln.marker .txt { color: var(--color-warning-fg); }
+
+  /* ---- 结果预览 ---- */
+  .result {
+    border: var(--border-width) solid var(--color-border-widget); border-radius: var(--radius-lg);
+    background: var(--color-bg-widget); box-shadow: var(--shadow-widget);
+  }
+  .result-head {
+    display: flex; align-items: center; gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    border-bottom: var(--border-width) solid var(--color-border);
+    font-size: var(--font-size-sm); font-weight: var(--font-weight-medium);
+  }
+  .result-head .ic { color: var(--color-icon); }
+  .result-head .choice { margin-left: auto; font-size: var(--font-size-xs); color: var(--color-fg-secondary); }
+
+  /* ---- 后期能力标注 ---- */
+  .later-note {
+    display: flex; align-items: center; gap: var(--space-1);
+    font-size: var(--font-size-xs); color: var(--color-fg-secondary);
+    padding: var(--space-1) var(--space-2);
+    border: 1px dashed var(--color-border); border-radius: var(--radius-sm);
+  }
+  .later-note .ic { width: var(--space-3); height: var(--space-3); color: var(--color-fg-secondary); }
+
+  /* ============================================================
+     Component: ActionBar（动作按钮条）
+     ============================================================ */
+  .action-bar {
+    display: flex; align-items: center; gap: var(--space-2);
+    padding: var(--space-3) var(--space-4);
+    border-top: var(--border-width) solid var(--color-border);
+    background: var(--color-bg-surface);
+    margin-top: auto;
+  }
+  .btn {
+    display: inline-flex; align-items: center; gap: var(--space-1);
+    height: var(--control-height-lg); padding: 0 var(--space-3);
+    border-radius: var(--radius-sm); border: var(--border-width) solid transparent;
+    font-size: var(--font-size-sm); font-weight: var(--font-weight-medium);
+    font-family: var(--font-family); cursor: pointer; white-space: nowrap;
+  }
+  .btn .ic { width: var(--space-3); height: var(--space-3); }
+  .btn-primary { background: var(--color-btn-primary-bg); color: var(--color-btn-primary-fg); }
+  .btn-primary:hover { background: var(--color-btn-primary-hover); }
+  .btn-secondary { background: var(--color-btn-secondary-bg); color: var(--color-btn-secondary-fg); height: var(--control-height); }
+  .btn-secondary:hover { background: var(--color-btn-secondary-hover); }
+  .btn:focus-visible { outline: 1px solid var(--color-focus); outline-offset: -1px; }
+
+  .spin { animation: spin 0.7s linear; }
+  @keyframes spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
+
+  /* 响应式：窄屏左右 pane 堆叠 */
+  @media (max-width: 720px) {
+    .split { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+  <!-- inline SVG 图标符号表（单色 currentColor；codicon 对应名见注释） -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="i-folder" viewBox="0 0 16 16"><path d="M1.5 3.5h4.5l1.3 1.4H14.5v7.6H1.5z" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 16 16"><path d="M13.2 8a5.2 5.2 0 1 1-1.5-3.6" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><path d="M13.6 2.2v2.9h-2.9" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-chevron-down" viewBox="0 0 16 16"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-chevron-right" viewBox="0 0 16 16"><path d="M6 4l-4 4 4 4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-warning" viewBox="0 0 16 16"><path d="M8 1.4l6.6 11.6H1.4z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M8 6v3.1" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><circle cx="8" cy="11" r="0.8" fill="currentColor"/></symbol>
+    <symbol id="i-error" viewBox="0 0 16 16"><path d="M8 1.4l6.6 11.6H1.4z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M8 6v3.1" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><circle cx="8" cy="11" r="0.8" fill="currentColor"/></symbol>
+    <symbol id="i-check" viewBox="0 0 16 16"><path d="M3 8.4l3 3 7-7.4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-info" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M8 7.2v4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><circle cx="8" cy="4.8" r="0.8" fill="currentColor"/></symbol>
+    <symbol id="i-git-merge" viewBox="0 0 16 16"><circle cx="4" cy="3.4" r="1.6" fill="none" stroke="currentColor" stroke-width="1.1"/><circle cx="4" cy="12.6" r="1.6" fill="none" stroke="currentColor" stroke-width="1.1"/><circle cx="12" cy="12.6" r="1.6" fill="none" stroke="currentColor" stroke-width="1.1"/><path d="M4 5v5.6M4 11.6c0-4 0-5 8-5.2" fill="none" stroke="currentColor" stroke-width="1.1"/></symbol>
+    <symbol id="i-split-horizontal" viewBox="0 0 16 16"><rect x="1.5" y="2.5" width="5.2" height="11" rx="0.6" fill="none" stroke="currentColor" stroke-width="1.1"/><rect x="9.3" y="2.5" width="5.2" height="11" rx="0.6" fill="none" stroke="currentColor" stroke-width="1.1"/></symbol>
+    <symbol id="i-play" viewBox="0 0 16 16"><path d="M4 3l9 5-9 5z" fill="currentColor"/></symbol>
+    <symbol id="i-git-compare" viewBox="0 0 16 16"><circle cx="4.5" cy="4" r="2" fill="none" stroke="currentColor" stroke-width="1.1"/><circle cx="11.5" cy="12" r="2" fill="none" stroke="currentColor" stroke-width="1.1"/><path d="M4.5 6v4a2 2 0 0 0 2 2h5" fill="none" stroke="currentColor" stroke-width="1.1"/></symbol>
+    <symbol id="i-file" viewBox="0 0 16 16"><path d="M3.5 1.5h6l3 3v10h-9z" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/><path d="M9.5 1.5v3h3" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/></symbol>
+    <symbol id="i-beaker" viewBox="0 0 16 16"><path d="M6.2 2v4.4L3.2 12a1.4 1.4 0 0 0 1.2 2.1h7.2A1.4 1.4 0 0 0 12.8 12L9.8 6.4V2" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linejoin="round"/><path d="M5.4 2h5.2M5.6 9.2h4.8" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/></symbol>
+    <symbol id="i-settings-gear" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2" fill="currentColor"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M12.6 3.4l-1.4 1.4M4.8 11.2l-1.4 1.4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></symbol>
+    <symbol id="i-link-external" viewBox="0 0 16 16"><path d="M6 3.5H3.5V12.5H12.5V10" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M9.5 3.5H12.5V6.5" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/><path d="M12.5 3.5L7 9" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  </svg>
+
+  <div class="panel">
+
+    <!-- Component: DemoBar（纯前端演示开关） -->
+    <div class="demo-bar">
+      <span class="demo-tag"><svg class="ic ic--sm"><use href="#i-beaker"/></svg>演示模拟</span>
+      <label class="demo-opt"><input type="checkbox" id="demoAi" /> 模拟 AI 已配置</label>
+      <label class="demo-opt"><input type="checkbox" id="demoSvn" /> 模拟 svn 缺失</label>
+      <span class="demo-note">演示开关仅用于预览降级态，真实状态由宿主读取</span>
+    </div>
+
+    <!-- Component: SvnMissingGate（svn 缺失 → 引导卡，默认隐藏，由 demoSvn 触发） -->
+    <section class="gate-card gate-card--svn" data-svn-gate hidden aria-label="svn 缺失引导">
+      <span class="gate-card__icon"><svg class="ic ic--lg"><use href="#i-error"/></svg></span>
+      <div class="gate-card__body">
+        <p class="gate-card__title"><svg class="ic ic--sm"><use href="#i-error"/></svg>svn 缺失</p>
+        <p class="gate-card__text">
+          未找到可用的 svn 可执行文件，冲突中心无法读取工作副本状态。请检查设置项
+          <code>svnWorkbench.svn.path</code>，或安装命令行 svn / TortoiseSVN 后重新体检。
+          扩展不会因此静默退出（§3.3 / §3.7）。
+        </p>
+        <div class="gate-card__actions">
+          <button class="btn btn-secondary" data-action="svn-config"><svg class="ic ic--sm"><use href="#i-settings-gear"/></svg>去配置</button>
+          <button class="btn btn-secondary" data-action="svn-install"><svg class="ic ic--sm"><use href="#i-link-external"/></svg>去安装</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Component: Panel（svn 可用时显示；svn 缺失时由 gate 替代） -->
+    <div class="panel-body" data-panel>
+
+      <!-- Component: ScopeBar -->
+      <header class="scope-bar">
+        <span class="scope-icon"><svg class="ic"><use href="#i-folder"/></svg></span>
+        <span class="path">D:\work\svn\web-platform</span>
+        <span class="scope">范围：<b>src\utils</b>（右键文件夹）</span>
+        <span class="spacer"></span>
+        <button class="icon-btn" data-action="refresh" title="刷新" aria-label="刷新">
+          <svg class="ic"><use href="#i-refresh"/></svg>
+        </button>
+      </header>
+
+      <!-- Component: StatusSummary -->
+      <div class="status-summary">
+        <span class="badge badge--conflict"><svg class="ic"><use href="#i-warning"/></svg>冲突 <span data-count="conflict">3</span></span>
+        <span class="badge badge--resolved"><svg class="ic"><use href="#i-check"/></svg>已解决 <span data-count="resolved">1</span></span>
+        <span class="badge badge--file">文件 <span data-count="files">4</span></span>
+      </div>
+
+      <!-- Component: ConflictFileList -->
+      <section class="conflict-list" aria-label="冲突文件列表">
+        <div class="section-header">
+          <svg class="ic"><use href="#i-chevron-down"/></svg>
+          冲突文件
+        </div>
+
+        <div class="file-row is-selected" data-file="merge.ts" tabindex="0" role="button" aria-pressed="true">
+          <span class="file-icon"><svg class="ic"><use href="#i-file"/></svg></span>
+          <span class="name">src/utils/merge.ts</span>
+          <span class="status status--unresolved"><svg class="ic"><use href="#i-warning"/></svg>未解决</span>
+        </div>
+
+        <div class="file-row" data-file="client.ts" tabindex="0" role="button" aria-pressed="false">
+          <span class="file-icon"><svg class="ic"><use href="#i-file"/></svg></span>
+          <span class="name">src/api/client.ts</span>
+          <span class="status status--unresolved"><svg class="ic"><use href="#i-warning"/></svg>未解决</span>
+        </div>
+
+        <div class="file-row" data-file="Card.tsx" tabindex="0" role="button" aria-pressed="false">
+          <span class="file-icon"><svg class="ic"><use href="#i-file"/></svg></span>
+          <span class="name">src/components/Card.tsx</span>
+          <span class="status status--unresolved"><svg class="ic"><use href="#i-warning"/></svg>未解决</span>
+        </div>
+
+        <div class="file-row" data-file="theme.css" tabindex="0" role="button" aria-pressed="false">
+          <span class="file-icon"><svg class="ic"><use href="#i-file"/></svg></span>
+          <span class="name">src/styles/theme.css</span>
+          <span class="status status--resolved"><svg class="ic"><use href="#i-check"/></svg>已解决</span>
+        </div>
+      </section>
+
+      <!-- Component: WorkArea -->
+      <main class="work-area">
+
+        <!-- 工作区标题 -->
+        <div class="work-header">
+          <span class="fname">src/utils/merge.ts</span>
+          <span class="hunk-idx">冲突 1 / 2</span>
+          <span class="conflict-tag"><svg class="ic ic--sm"><use href="#i-warning"/></svg>未解决</span>
+        </div>
+
+        <!-- Component: AiSuggestion（AI 解决建议区 · 降级手动模式，默认显示） -->
+        <section class="ai-card info" data-ai="manual" aria-label="AI 解决建议">
+          <div class="ai-head">
+            <svg class="ic"><use href="#i-info"/></svg>
+            手动模式（AI 未配置）
+          </div>
+          <div class="ai-body">
+            未检测到 AI 模型配置，已降级为手动解决，不阻断流程。运行
+            <code>SVN：AI 配置模型</code> 后可获得逐冲突的合并建议。
+          </div>
+          <div class="ai-foot">
+            <button class="link-btn" data-action="ai-config">运行 SVN：AI 配置模型</button>
+            <label class="ai-toggle"><input type="checkbox" id="aiToggle" /> 模拟 AI 已配置（预览）</label>
+          </div>
+        </section>
+
+        <!-- AI 已配置时的建议卡（默认隐藏，由开关切换；不抛错） -->
+        <section class="ai-card suggest" data-ai="suggest" hidden aria-label="AI 解决建议">
+          <div class="ai-head">
+            <svg class="ic"><use href="#i-git-merge"/></svg>
+            AI 建议：采用 ours
+          </div>
+          <div class="ai-body">
+            本冲突建议采用 <code>ours</code>：ours 的合并策略与 <code>mergeChanges</code> 上层调用一致，
+            选择 theirs 会引入签名顺序反转风险。下方结果预览已按建议预填。
+          </div>
+        </section>
+
+        <!-- Component: ThreeWaySelector（三选一解决） -->
+        <section class="threeway" data-resolve-form aria-label="三选一解决">
+          <span class="label">解决方式（working / ours / theirs 三选一）</span>
+          <div class="seg" role="radiogroup" aria-label="选择冲突解决方式">
+            <label class="seg-item">
+              <input type="radio" name="resolve" value="working" />
+              <span class="seg-text">working</span>
+            </label>
+            <label class="seg-item">
+              <input type="radio" name="resolve" value="ours" checked />
+              <span class="seg-text">ours</span>
+            </label>
+            <label class="seg-item">
+              <input type="radio" name="resolve" value="theirs" />
+              <span class="seg-text">theirs</span>
+            </label>
+          </div>
+        </section>
+
+        <!-- Component: SplitCompare（左右双 pane 对比） -->
+        <section class="split" aria-label="左右对比">
+          <!-- 左 pane：ours / theirs 可切换 -->
+          <div class="pane">
+            <div class="pane-head">
+              <span class="pane-title">对比基准</span>
+              <span class="pane-side" data-left-side>ours</span>
+              <span class="pane-tabs">
+                <button class="tab is-active" data-tab="ours">ours</button>
+                <button class="tab" data-tab="theirs">theirs</button>
+              </span>
+            </div>
+            <!-- ours 文本片段（中文注释冲突） -->
+            <pre class="code" data-left="ours"><span class="ln"><span class="gutter">1</span><span class="txt">// 合并工具：负责将两侧变更合入当前工作副本</span></span><span class="ln"><span class="gutter">2</span><span class="txt">export function mergeChanges(a: Change, b: Change): Change {</span></span><span class="ln add"><span class="gutter">3</span><span class="txt">  // ours 优先：先展开 ours，再用 theirs 覆盖</span></span><span class="ln add"><span class="gutter">4</span><span class="txt">  return { ...a, ...b };</span></span><span class="ln"><span class="gutter">5</span><span class="txt">}</span></span></pre>
+            <!-- theirs 文本片段（默认隐藏） -->
+            <pre class="code" data-left="theirs" hidden><span class="ln"><span class="gutter">1</span><span class="txt">// 合并工具：将两侧变更合并，保留 theirs 优先</span></span><span class="ln"><span class="gutter">2</span><span class="txt">export function mergeChanges(a: Change, b: Change): Change {</span></span><span class="ln add"><span class="gutter">3</span><span class="txt">  // theirs 优先：先展开 theirs，再用 ours 覆盖</span></span><span class="ln add"><span class="gutter">4</span><span class="txt">  return { ...b, ...a };</span></span><span class="ln"><span class="gutter">5</span><span class="txt">}</span></span></pre>
+          </div>
+
+          <!-- 右 pane：working（当前工作副本，含冲突标记） -->
+          <div class="pane">
+            <div class="pane-head">
+              <span class="pane-title">working</span>
+              <span class="pane-side">当前工作副本</span>
+            </div>
+            <pre class="code" data-right="working"><span class="ln"><span class="gutter">1</span><span class="txt">// 合并工具：处理 ours 与 theirs 之间的冲突</span></span><span class="ln"><span class="gutter">2</span><span class="txt">export function mergeChanges(a: Change, b: Change): Change {</span></span><span class="ln marker"><span class="gutter">3</span><span class="txt">&lt;&lt;&lt;&lt;&lt;&lt;&lt; .working</span></span><span class="ln del"><span class="gutter">4</span><span class="txt">  // 工作副本：暂未解决，抛出异常</span></span><span class="ln del"><span class="gutter">5</span><span class="txt">  throw new Error('存在未解决冲突');</span></span><span class="ln marker"><span class="gutter">6</span><span class="txt">=======</span></span><span class="ln add"><span class="gutter">7</span><span class="txt">  // 已合并：采用 theirs 的策略</span></span><span class="ln add"><span class="gutter">8</span><span class="txt">  return resolveConflict(a, b);</span></span><span class="ln marker"><span class="gutter">9</span><span class="txt">&gt;&gt;&gt;&gt;&gt;&gt;&gt; .merge-right</span></span><span class="ln"><span class="gutter">10</span><span class="txt">}</span></span></pre>
+          </div>
+        </section>
+
+        <!-- Component: ResultPreview（结果预览） -->
+        <section class="result" aria-label="结果预览">
+          <div class="result-head">
+            <svg class="ic"><use href="#i-split-horizontal"/></svg>
+            结果预览（合并后的 working 文件内容）
+            <span class="choice" data-result-choice>当前选择：ours</span>
+          </div>
+          <!-- 预渲染 three 变体：按 working/ours/theirs 三选一切换 hidden，始终带行号与行底色 -->
+          <pre class="code" data-result="working" hidden><span class="ln"><span class="gutter">1</span><span class="txt">// 合并工具：处理 ours 与 theirs 之间的冲突</span></span><span class="ln"><span class="gutter">2</span><span class="txt">export function mergeChanges(a: Change, b: Change): Change {</span></span><span class="ln"><span class="gutter">3</span><span class="txt">  // 工作副本：暂未解决，抛出异常</span></span><span class="ln"><span class="gutter">4</span><span class="txt">  throw new Error('存在未解决冲突');</span></span><span class="ln"><span class="gutter">5</span><span class="txt">}</span></span></pre>
+          <pre class="code" data-result="ours"><span class="ln"><span class="gutter">1</span><span class="txt">// 合并工具：负责将两侧变更合入当前工作副本</span></span><span class="ln"><span class="gutter">2</span><span class="txt">export function mergeChanges(a: Change, b: Change): Change {</span></span><span class="ln"><span class="gutter">3</span><span class="txt">  // ours 优先：先展开 ours，再用 theirs 覆盖</span></span><span class="ln"><span class="gutter">4</span><span class="txt">  return { ...a, ...b };</span></span><span class="ln"><span class="gutter">5</span><span class="txt">}</span></span></pre>
+          <pre class="code" data-result="theirs" hidden><span class="ln"><span class="gutter">1</span><span class="txt">// 合并工具：将两侧变更合并，保留 theirs 优先</span></span><span class="ln"><span class="gutter">2</span><span class="txt">export function mergeChanges(a: Change, b: Change): Change {</span></span><span class="ln"><span class="gutter">3</span><span class="txt">  // theirs 优先：先展开 theirs，再用 ours 覆盖</span></span><span class="ln"><span class="gutter">4</span><span class="txt">  return { ...b, ...a };</span></span><span class="ln"><span class="gutter">5</span><span class="txt">}</span></span></pre>
+        </section>
+
+        <!-- 后期能力标注（v1 不含三方合并器） -->
+        <div class="later-note">
+          <svg class="ic"><use href="#i-info"/></svg>
+          三方合并器为后期能力（v1 仅支持 working / ours / theirs 三选一）。
+        </div>
+
+      </main>
+
+      <!-- Component: ActionBar -->
+      <footer class="action-bar">
+        <button class="btn btn-primary" data-action="mark-resolved">
+          <svg class="ic"><use href="#i-check"/></svg>
+          标记为已解决
+        </button>
+        <button class="btn btn-primary" data-action="apply">
+          <svg class="ic"><use href="#i-play"/></svg>
+          应用
+        </button>
+        <span class="spacer"></span>
+        <button class="btn btn-secondary" data-action="refresh">
+          <svg class="ic"><use href="#i-refresh"/></svg>
+          刷新
+        </button>
+        <button class="btn btn-secondary" data-action="open-diff">
+          <svg class="ic"><use href="#i-git-compare"/></svg>
+          打开外部对比
+        </button>
+      </footer>
+    </div>
+  </div>
+
+  <script>
+    // 所有交互均使用受控渲染：textContent / classList / hidden，禁止 innerHTML 拼接
+    (function () {
+      'use strict';
+
+      var panel = document.querySelector('[data-panel]');
+      var svnGate = document.querySelector('[data-svn-gate]');
+
+      // —— 演示开关：svn 缺失 → 显示引导卡、隐藏主面板（不静默退出） ——
+      var demoSvn = document.getElementById('demoSvn');
+      demoSvn.addEventListener('change', function () {
+        var missing = demoSvn.checked;
+        svnGate.hidden = !missing;
+        panel.hidden = missing;
+      });
+
+      // —— 三选一：切换结果预览（预渲染 three 变体，按 hidden 切换，始终带行号/行底色） ——
+      var resultBlocks = {
+        working: document.querySelector('[data-result="working"]'),
+        ours: document.querySelector('[data-result="ours"]'),
+        theirs: document.querySelector('[data-result="theirs"]')
+      };
+      var resultChoice = document.querySelector('[data-result-choice]');
+      var form = document.querySelector('[data-resolve-form]');
+
+      function renderResult(choice) {
+        Object.keys(resultBlocks).forEach(function (key) {
+          resultBlocks[key].hidden = (key !== choice);
+        });
+        resultChoice.textContent = '当前选择：' + choice;
+      }
+      form.addEventListener('change', function (e) {
+        if (e.target && e.target.name === 'resolve') {
+          renderResult(e.target.value);
+        }
+      });
+
+      // —— ours / theirs 切换（左 pane 对比基准） ——
+      var leftOurs = document.querySelector('[data-left="ours"]');
+      var leftTheirs = document.querySelector('[data-left="theirs"]');
+      var leftSide = document.querySelector('[data-left-side]');
+      var tabOurs = document.querySelector('[data-tab="ours"]');
+      var tabTheirs = document.querySelector('[data-tab="theirs"]');
+
+      function selectLeft(side) {
+        var show = side === 'theirs' ? leftTheirs : leftOurs;
+        var hide = side === 'theirs' ? leftOurs : leftTheirs;
+        show.hidden = false;
+        hide.hidden = true;
+        leftSide.textContent = side;
+        tabOurs.classList.toggle('is-active', side === 'ours');
+        tabTheirs.classList.toggle('is-active', side === 'theirs');
+      }
+      tabOurs.addEventListener('click', function () { selectLeft('ours'); });
+      tabTheirs.addEventListener('click', function () { selectLeft('theirs'); });
+
+      // —— AI 手动模式 / 已配置建议 切换（降级不抛错） ——
+      var aiToggle = document.getElementById('aiToggle');
+      var aiManual = document.querySelector('[data-ai="manual"]');
+      var aiSuggest = document.querySelector('[data-ai="suggest"]');
+      aiToggle.addEventListener('change', function () {
+        var configured = aiToggle.checked;
+        aiManual.hidden = configured;
+        aiSuggest.hidden = !configured;
+      });
+      // 演示开关与卡片内开关联动
+      var demoAi = document.getElementById('demoAi');
+      demoAi.addEventListener('change', function () {
+        aiToggle.checked = demoAi.checked;
+        aiToggle.dispatchEvent(new Event('change'));
+      });
+
+      // —— 冲突文件列表：选中切换（受控） ——
+      var rows = Array.prototype.slice.call(document.querySelectorAll('.file-row'));
+      rows.forEach(function (row) {
+        function select() {
+          rows.forEach(function (r) {
+            var on = r === row;
+            r.classList.toggle('is-selected', on);
+            r.setAttribute('aria-pressed', on ? 'true' : 'false');
+          });
+        }
+        row.addEventListener('click', select);
+        row.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); select(); }
+        });
+      });
+
+      // —— 标记为已解决：更新行状态与摘要计数 ——
+      var conflictBadge = document.querySelector('[data-count="conflict"]');
+      var resolvedBadge = document.querySelector('[data-count="resolved"]');
+      var markBtn = document.querySelector('[data-action="mark-resolved"]');
+      markBtn.addEventListener('click', function () {
+        var row = document.querySelector('.file-row.is-selected');
+        if (!row) return;
+        var status = row.querySelector('.status');
+        if (status.classList.contains('status--resolved')) return; // 已解决则跳过
+        status.classList.remove('status--unresolved');
+        status.classList.add('status--resolved');
+        status.textContent = '';
+        var chk = document.createElement('span');
+        chk.style.display = 'inline-flex';
+        chk.style.alignItems = 'center';
+        chk.style.gap = 'var(--space-1)';
+        var use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+        use.setAttribute('href', '#i-check');
+        var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('class', 'ic');
+        svg.appendChild(use);
+        var label = document.createElement('span');
+        label.textContent = '已解决';
+        chk.appendChild(svg);
+        chk.appendChild(label);
+        status.appendChild(chk);
+        if (row.querySelector('.conflict-tag')) {
+          row.querySelector('.conflict-tag').textContent = '已解决';
+        }
+
+        var c = parseInt(conflictBadge.textContent, 10) || 0;
+        var r = parseInt(resolvedBadge.textContent, 10) || 0;
+        conflictBadge.textContent = Math.max(0, c - 1);
+        resolvedBadge.textContent = r + 1;
+      });
+
+      // —— 刷新：图标短暂旋转反馈（不阻断） ——
+      var refreshBtns = document.querySelectorAll('[data-action="refresh"]');
+      Array.prototype.forEach.call(refreshBtns, function (btn) {
+        btn.addEventListener('click', function () {
+          var icon = btn.querySelector('.ic');
+          if (!icon) return;
+          icon.classList.remove('spin');
+          void icon.offsetWidth; // 重启动画
+          icon.classList.add('spin');
+        });
+      });
+
+      // —— 打开外部对比 / AI 配置 / svn 配置：原型占位（Svelte 中桥接 VS Code 命令） ——
+      document.querySelector('[data-action="open-diff"]').addEventListener('click', function () {
+        // v1: 调用 svnWorkbench.openDiff；原型仅占位
+      });
+      document.querySelector('[data-action="ai-config"]').addEventListener('click', function () {
+        // v1: 调用 svnWorkbench.aiConfigure；原型仅占位
+      });
+      document.querySelector('[data-action="svn-config"]').addEventListener('click', function () {
+        // v1: 打开设置 svnWorkbench.svn.path；原型仅占位
+      });
+      document.querySelector('[data-action="svn-install"]').addEventListener('click', function () {
+        // v1: 跳转安装指引；原型仅占位
+      });
+      document.querySelector('[data-action="apply"]').addEventListener('click', function () {
+        // v1: 将当前结果预览写入 working 文件；原型仅占位
+      });
+    })();
+  </script>
+</body>
+</html>
