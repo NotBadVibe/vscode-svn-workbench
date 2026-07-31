@@ -3481,10 +3481,14 @@ async function testRealCommitFlow(): Promise<void> {
     const checkout = await runSvnCommand(svnPath, ['checkout', repositoryUrl, workingCopy], tempRoot);
     assert.equal(checkout.exitCode, 0, checkout.stderr);
     fs.appendFileSync(path.join(workingCopy, 'tracked.txt'), 'changed\n', 'utf8');
-    fs.writeFileSync(path.join(workingCopy, '新增 (#1).txt'), 'new\n', 'utf8');
+    // Windows CI uses an English native code page that cannot represent Chinese argv in SVN 1.14.
+    // Chinese path discovery remains covered by testRootCommitCandidates; this flow still verifies
+    // safe argument handling for spaces, parentheses and # on every platform.
+    const addedFileName = process.platform === 'win32' ? 'added (#1).txt' : '新增 (#1).txt';
+    fs.writeFileSync(path.join(workingCopy, addedFileName), 'new\n', 'utf8');
     const scope = createTestOperationScope(workingCopy);
     const candidates = await collectCommitCandidates(svnPath, scope);
-    const selected = candidates.filter((item) => item.relativePath === 'tracked.txt' || item.relativePath === '新增 (#1).txt').map((item) => item.absolutePath);
+    const selected = candidates.filter((item) => item.relativePath === 'tracked.txt' || item.relativePath === addedFileName).map((item) => item.absolutePath);
     const preview = buildCommitPlanPreview(scope, candidates, selected);
     assert.equal(preview.canCommit, true);
     assert.equal(preview.addPaths.length, 1);
