@@ -1,3 +1,4 @@
+import * as path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { workspace, ConfigurationTarget } from 'vscode';
 import {
@@ -33,10 +34,11 @@ afterEach(() => vi.restoreAllMocks());
 
 describe('AI 配置与结果安全边界', () => {
   it('规范化不可信选择并同时应用范围与候选白名单', () => {
-    const root = '/workspace/repo';
+    const root = path.resolve('/workspace/repo');
+    const sourceFile = path.join(root, 'src', 'a.ts');
     const scope: OperationScope = {
       id: 'scope', repositoryRoot: root, source: 'workspace',
-      roots: [{ absolutePath: `${root}/src`, relativePath: 'src', kind: 'folder' }],
+      roots: [{ absolutePath: path.join(root, 'src'), relativePath: 'src', kind: 'folder' }],
       allowExpandScope: false, includeExternals: false, includeNestedWorkingCopies: false, createdAt: 0
     };
     const normalized = normalizeAiSelectionResult({
@@ -51,8 +53,8 @@ describe('AI 配置与结果安全边界', () => {
         { path: 'src/invented.ts', reason: 'not allowed' },
         { path: '../outside.ts', reason: 'outside' }
       ], excluded: [], needsReview: [], blocked: []
-    }, [`${root}/src/a.ts`]);
-    expect(validated.recommended.map((item) => item.path)).toEqual([`${root}/src/a.ts`]);
+    }, [sourceFile]);
+    expect(validated.recommended.map((item) => item.path)).toEqual([sourceFile]);
   });
 
   it('读取、保存并按场景解析 SecretStorage 中的 AI 配置', async () => {

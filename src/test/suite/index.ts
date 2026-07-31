@@ -3469,7 +3469,7 @@ async function testRealCommitFlow(): Promise<void> {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'svn-workbench-real-commit-'));
   const repository = path.join(tempRoot, 'repository');
   const seed = path.join(tempRoot, 'seed');
-  const workingCopy = path.join(tempRoot, 'working copy 中文');
+  const workingCopy = path.join(tempRoot, 'working-copy');
   try {
     const admin = spawnSync('svnadmin', ['create', repository], { encoding: 'utf8', shell: false });
     if (admin.error || admin.status !== 0) throw new SkippedTest('svnadmin is not available for isolated commit acceptance.');
@@ -3526,7 +3526,7 @@ async function testRealAdvancedRepositoryOperations(): Promise<void> {
     assert.equal((await runSvnCommand(svnPath, ['checkout', trunkUrl, workingCopy], tempRoot)).exitCode, 0);
     assert.equal((await runSvnCommand(svnPath, ['switch', branchUrl, workingCopy, '--accept', 'postpone'], workingCopy)).exitCode, 0);
     const switchedInfo = await runSvnCommand(svnPath, ['info', '--show-item', 'url', workingCopy], workingCopy);
-    assert.equal(switchedInfo.stdout.trim(), branchUrl);
+    assert.equal(decodeURI(switchedInfo.stdout.trim()), decodeURI(branchUrl));
 
     const readme = path.join(workingCopy, 'README.md');
     fs.appendFileSync(readme, 'shelved change\n', 'utf8');

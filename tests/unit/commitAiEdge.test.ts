@@ -1,3 +1,4 @@
+import * as path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   buildCommitMessageAiRequest,
@@ -14,14 +15,15 @@ import {
 import type { CommitCandidate } from '../../src/commit/commitCandidateCollector';
 import type { OperationScope } from '../../src/scope/operationScope';
 
-const root = '/repo';
+const root = path.resolve('/repo');
+const absolute = (relativePath: string) => path.resolve(root, relativePath);
 const scope: OperationScope = {
   id: 'scope', repositoryRoot: root, source: 'workspace',
   roots: [{ absolutePath: root, relativePath: '.', kind: 'folder' }],
   allowExpandScope: false, includeExternals: false, includeNestedWorkingCopies: false, createdAt: 0
 };
 const candidate = (relativePath: string, overrides: Partial<CommitCandidate> = {}): CommitCandidate => ({
-  absolutePath: `${root}/${relativePath}`, relativePath, status: 'modified', fileType: 'ts',
+  absolutePath: absolute(relativePath), relativePath, status: 'modified', fileType: 'ts',
   templateGroup: 'frontend', generatedDecision: 'keep', selection: 'selected', reason: 'change', ...overrides
 });
 const convention = (overrides = {}) => ({
@@ -31,7 +33,7 @@ const convention = (overrides = {}) => ({
 
 describe('提交说明 AI 边界', () => {
   it('仅携带用户允许的最多 20 条历史上下文', () => {
-    const request = buildCommitMessageAiRequest(scope, [candidate('src/a.ts')], [`${root}/src/a.ts`], [], {
+    const request = buildCommitMessageAiRequest(scope, [candidate('src/a.ts')], [absolute('src/a.ts')], [], {
       recentHistory: Array.from({ length: 25 }, (_, index) => ({ revision: String(index + 1), summary: `history ${index + 1}` }))
     });
     expect(request.recentHistory).toHaveLength(20);
@@ -52,7 +54,7 @@ describe('提交说明 AI 边界', () => {
   });
 
   it('覆盖规范标题的前缀、模块、两者和无规范分支', () => {
-    const base = buildCommitMessageAiRequest(scope, [candidate('src/order/a.ts')], [`${root}/src/order/a.ts`]);
+    const base = buildCommitMessageAiRequest(scope, [candidate('src/order/a.ts')], [absolute('src/order/a.ts')]);
     expect(createMockCommitMessageResult(base).message).toMatch(/^变更：/);
     expect(createMockCommitMessageResult({ ...base, convention: convention() }).message).toMatch(/^feat\(order\):/);
     expect(createMockCommitMessageResult({ ...base, convention: convention({ requiredModule: false }) }).message).toMatch(/^feat:/);
@@ -62,7 +64,7 @@ describe('提交说明 AI 边界', () => {
   });
 
   it('补全所有模板字段且不覆盖用户内容，并规范化坏响应', () => {
-    const request = buildCommitMessageAiRequest(scope, [candidate('config/a.json', { templateGroup: 'config' })], [`${root}/config/a.json`], [], {
+    const request = buildCommitMessageAiRequest(scope, [candidate('config/a.json', { templateGroup: 'config' })], [absolute('config/a.json')], [], {
       mode: 'completeTemplate', currentMessage: '需求: 用户标题\n修复:\n范围:\n原因:\n影响:\n风险:\n自定义:\n无冒号行'
     });
     const message = createMockCommitMessageResult(request).message;
@@ -89,7 +91,7 @@ describe('提交拆分 AI 边界', () => {
     expect(request.files).toHaveLength(120);
     expect(request.selectedFileCount).toBe(122);
     expect(createLocalCommitSplitResult(request).warnings.some((item) => item.includes('前 120'))).toBe(true);
-    const byTemplate = buildCommitSplitAiRequest(scope, [candidate('root.ts'), candidate('guide.md', { templateGroup: 'document', fileType: 'md' })], [`${root}/root.ts`, `${root}/guide.md`]);
+    const byTemplate = buildCommitSplitAiRequest(scope, [candidate('root.ts'), candidate('guide.md', { templateGroup: 'document', fileType: 'md' })], [absolute('root.ts'), absolute('guide.md')]);
     expect(createLocalCommitSplitResult(byTemplate).splits).toHaveLength(2);
     expect(createLocalCommitSplitResult({ ...byTemplate, selectedFileCount: 0, files: [] }).warnings[0]).toContain('没有可拆分');
   });
@@ -114,12 +116,12 @@ describe('提交拆分 AI 边界', () => {
     const validated = validateCommitSplitResult(scope, {
       splits: [
         { id: '', title: 'a', summary: '', message: '', paths: ['src/a.ts', 'src/a.ts', '../outside'], reason: '', risks: [] },
-        { id: 'b', title: 'b', summary: '', message: '', paths: ['/repo/src/a.ts', 'src/b.ts'], reason: '', risks: [] }
+        { id: 'b', title: 'b', summary: '', message: '', paths: [absolute('src/a.ts'), 'src/b.ts'], reason: '', risks: [] }
       ], warnings: []
-    }, ['/repo/src/a.ts', '/repo/src/b.ts']);
+    }, [absolute('src/a.ts'), absolute('src/b.ts')]);
     expect(validated.splits).toEqual([
-      expect.objectContaining({ id: 'split-1', paths: ['/repo/src/a.ts'] }),
-      expect.objectContaining({ id: 'b', paths: ['/repo/src/b.ts'] })
+      expect.objectContaining({ id: 'split-1', paths: [absolute('src/a.ts')] }),
+      expect.objectContaining({ id: 'b', paths: [absolute('src/b.ts')] })
     ]);
   });
 });
