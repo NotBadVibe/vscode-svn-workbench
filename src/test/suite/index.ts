@@ -1242,7 +1242,7 @@ async function testRepositoryCommitCandidateFilterPresetReading(): Promise<void>
     assert.deepEqual(resolution.presets.map((preset) => preset.id), ['teamDocs']);
     assert.equal(resolution.warnings.length, 0);
   } finally {
-    fs.rmSync(tempRoot, { recursive: true, force: true });
+    fs.rmSync(tempRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }
 
@@ -2950,7 +2950,7 @@ async function testTeamRulesAiRequest(): Promise<void> {
     assert.equal(request.directories.includes('dist'), false);
     assert.ok(request.sampleFiles.includes('src/pages/order/OrderList.vue'));
   } finally {
-    fs.rmSync(tempRoot, { recursive: true, force: true });
+    fs.rmSync(tempRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }
 
@@ -3140,7 +3140,7 @@ async function testRepositoryCommitConventionResolution(): Promise<void> {
     assert.deepEqual(resolution.config.allowedModules, ['payment']);
     assert.equal(validateCommitMessageConvention('config(payment): PAY-321 调整支付配置', resolution.config).valid, true);
   } finally {
-    fs.rmSync(tempRoot, { recursive: true, force: true });
+    fs.rmSync(tempRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }
 
@@ -3160,7 +3160,7 @@ async function testTeamConfigCreation(): Promise<void> {
     await ensureSvnWorkbenchProjectConfig(tempRoot);
     assert.equal(fs.readFileSync(configPath, 'utf8'), '{"commitConvention":{"enabled":false}}\n');
   } finally {
-    fs.rmSync(tempRoot, { recursive: true, force: true });
+    fs.rmSync(tempRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }
 
@@ -3498,7 +3498,7 @@ async function testRealCommitFlow(): Promise<void> {
     const status = await runSvnCommand(svnPath, ['status', workingCopy], workingCopy);
     assert.equal(status.stdout.trim(), '');
   } finally {
-    fs.rmSync(tempRoot, { recursive: true, force: true });
+    fs.rmSync(tempRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }
 
@@ -3551,7 +3551,7 @@ async function testRealAdvancedRepositoryOperations(): Promise<void> {
     assert.ok(notes.count >= 3);
     assert.match(notes.markdown, /create branch/);
   } finally {
-    fs.rmSync(tempRoot, { recursive: true, force: true });
+    fs.rmSync(tempRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }
 
@@ -3868,7 +3868,7 @@ async function testConflictAiRequest(): Promise<void> {
     assert.equal(request.contents.working?.truncated, true);
     assert.equal(request.contents.mine?.content, 'mine line\n');
   } finally {
-    fs.rmSync(tempRoot, { recursive: true, force: true });
+    fs.rmSync(tempRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }
 
