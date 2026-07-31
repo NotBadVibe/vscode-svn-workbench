@@ -1,10 +1,10 @@
 {
   "ok": true,
-  "runId": "2026-07-31T13-37-45-118Z",
+  "runId": "2026-07-31T13-42-33-275Z",
   "expectedExtension": "local.svn-workbench@0.0.1",
   "vsixPath": "svn-workbench-0.0.1.vsix",
-  "vsixSha256": "7525C2A67A557C4578F3F402441E1328B581023099BA0469D27CA69217BC0209",
-  "vsixSizeBytes": 441576,
+  "vsixSha256": "445B4B4BA9E45505A8BC2C481D47D9530BF29E8995FE69466A60FCA0A28DF31C",
+  "vsixSizeBytes": 441691,
   "codeVersion": ["1.131.0", "e4c7e7b1d6d060162f4aa7f8225271b67ce1df75", "arm64"],
   "lifecycle": {
     "install": "通过",
