@@ -162,6 +162,23 @@ class SkippedTest extends Error {
   }
 }
 
+function removeTestTempDirectory(tempRoot: string): void {
+  try {
+    fs.rmSync(tempRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    const isDeferredWindowsCleanup = process.platform === 'win32'
+      && (code === 'EPERM' || code === 'EBUSY' || code === 'ENOTEMPTY');
+    if (isDeferredWindowsCleanup) {
+      // GitHub Windows Runner 偶尔会在 SVN 进程退出后继续短暂占用仓库文件。
+      // 测试断言已独立完成；临时 Runner 销毁时会回收该目录。
+      console.warn(`WARN deferred cleanup for Windows test directory (${code}): ${tempRoot}`);
+      return;
+    }
+    throw error;
+  }
+}
+
 export async function run(): Promise<void> {
   const tests = getExtensionTestCases();
   const failures: string[] = [];
@@ -1242,7 +1259,7 @@ async function testRepositoryCommitCandidateFilterPresetReading(): Promise<void>
     assert.deepEqual(resolution.presets.map((preset) => preset.id), ['teamDocs']);
     assert.equal(resolution.warnings.length, 0);
   } finally {
-    fs.rmSync(tempRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    removeTestTempDirectory(tempRoot);
   }
 }
 
@@ -2950,7 +2967,7 @@ async function testTeamRulesAiRequest(): Promise<void> {
     assert.equal(request.directories.includes('dist'), false);
     assert.ok(request.sampleFiles.includes('src/pages/order/OrderList.vue'));
   } finally {
-    fs.rmSync(tempRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    removeTestTempDirectory(tempRoot);
   }
 }
 
@@ -3140,7 +3157,7 @@ async function testRepositoryCommitConventionResolution(): Promise<void> {
     assert.deepEqual(resolution.config.allowedModules, ['payment']);
     assert.equal(validateCommitMessageConvention('config(payment): PAY-321 调整支付配置', resolution.config).valid, true);
   } finally {
-    fs.rmSync(tempRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    removeTestTempDirectory(tempRoot);
   }
 }
 
@@ -3160,7 +3177,7 @@ async function testTeamConfigCreation(): Promise<void> {
     await ensureSvnWorkbenchProjectConfig(tempRoot);
     assert.equal(fs.readFileSync(configPath, 'utf8'), '{"commitConvention":{"enabled":false}}\n');
   } finally {
-    fs.rmSync(tempRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    removeTestTempDirectory(tempRoot);
   }
 }
 
@@ -3498,7 +3515,7 @@ async function testRealCommitFlow(): Promise<void> {
     const status = await runSvnCommand(svnPath, ['status', workingCopy], workingCopy);
     assert.equal(status.stdout.trim(), '');
   } finally {
-    fs.rmSync(tempRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    removeTestTempDirectory(tempRoot);
   }
 }
 
@@ -3551,7 +3568,7 @@ async function testRealAdvancedRepositoryOperations(): Promise<void> {
     assert.ok(notes.count >= 3);
     assert.match(notes.markdown, /create branch/);
   } finally {
-    fs.rmSync(tempRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    removeTestTempDirectory(tempRoot);
   }
 }
 
@@ -3868,7 +3885,7 @@ async function testConflictAiRequest(): Promise<void> {
     assert.equal(request.contents.working?.truncated, true);
     assert.equal(request.contents.mine?.content, 'mine line\n');
   } finally {
-    fs.rmSync(tempRoot, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    removeTestTempDirectory(tempRoot);
   }
 }
 
