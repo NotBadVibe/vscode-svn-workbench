@@ -1,16 +1,27 @@
+const zhCnTimeZone = 'Asia/Shanghai';
+
 const dateTimeFormatter = new Intl.DateTimeFormat('zh-CN', {
   year: 'numeric',
   month: '2-digit',
   day: '2-digit',
   hour: '2-digit',
   minute: '2-digit',
-  hour12: false
+  hour12: false,
+  timeZone: zhCnTimeZone
 });
 
 const timeFormatter = new Intl.DateTimeFormat('zh-CN', {
   hour: '2-digit',
   minute: '2-digit',
-  hour12: false
+  hour12: false,
+  timeZone: zhCnTimeZone
+});
+
+const datePartsFormatter = new Intl.DateTimeFormat('en-CA', {
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  timeZone: zhCnTimeZone
 });
 
 const numberFormatter = new Intl.NumberFormat('zh-CN');
@@ -24,8 +35,8 @@ export function formatZhDateTime(value: string | number | Date, now: string | nu
   const reference = new Date(now);
   if (!Number.isFinite(date.getTime()) || !Number.isFinite(reference.getTime())) return '未知时间';
 
-  const day = startOfLocalDay(date);
-  const today = startOfLocalDay(reference);
+  const day = startOfZhCnDay(date);
+  const today = startOfZhCnDay(reference);
   const difference = Math.round((today - day) / 86_400_000);
   const time = timeFormatter.format(date);
   if (difference === 0) return `今天 ${time}`;
@@ -51,6 +62,10 @@ export function formatCount(value: number, unit: '文件' | '修订' | '路径' 
   return `${formatZhNumber(value)} ${classifiers[unit]}`;
 }
 
-function startOfLocalDay(value: Date): number {
-  return new Date(value.getFullYear(), value.getMonth(), value.getDate()).getTime();
+function startOfZhCnDay(value: Date): number {
+  const parts = datePartsFormatter.formatToParts(value);
+  const year = Number(parts.find((part) => part.type === 'year')?.value);
+  const month = Number(parts.find((part) => part.type === 'month')?.value);
+  const day = Number(parts.find((part) => part.type === 'day')?.value);
+  return Date.UTC(year, month - 1, day);
 }
