@@ -1,7 +1,12 @@
 import { expect, test, type Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
+import { mkdirSync } from 'node:fs';
+import path from 'node:path';
 
-const artifactDirectory = 'docs/releases/artifacts/2026-07-31/pages';
+const evidenceDirectory = process.env.SVN_WORKBENCH_EVIDENCE_DIR
+  ?? path.join('.validation', 'evidence', 'unscoped', `playwright-${process.pid}`);
+const artifactDirectory = path.join(evidenceDirectory, 'pages');
+mkdirSync(artifactDirectory, { recursive: true });
 const darkTheme = {
   '--vscode-foreground': '#cccccc',
   '--vscode-editor-foreground': '#d4d4d4',

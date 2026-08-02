@@ -24,7 +24,11 @@ export function runSvnCommand(
     const child = spawn(svnPath, invocation.args, {
       cwd,
       shell: false,
-      windowsHide: true
+      windowsHide: true,
+      // SVN's human-readable summaries are parsed for revision/conflict status.
+      // Keep only the message locale stable; preserving LANG/LC_CTYPE avoids
+      // changing how non-ASCII paths and file contents are encoded.
+      env: { ...process.env, LC_MESSAGES: 'C', LANGUAGE: 'en' }
     });
     if (invocation.stdin !== undefined) {
       child.stdin.on('error', () => undefined);

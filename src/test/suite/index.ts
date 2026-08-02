@@ -139,6 +139,7 @@ import { resolveWorkingCopySet } from '../../scope/workingCopyResolver';
 import { buildReleaseNotes, parseSvnListXml, validatePatchText } from '../../repository/advancedRepositoryTools';
 import { buildSvnExecutableCandidates, resolveSvnExecutable } from '../../svn/svnExecutableResolver';
 import { runSvnCommand } from '../../svn/svnCommandRunner';
+import { parseStatusXml } from '../../svn/parsers/statusXmlParser';
 import {
   buildUpdateExecutionFollowUp,
   buildUpdateScopeRiskConfirmationMessage,
@@ -564,7 +565,7 @@ export function getExtensionTestCases(): TestCase[] {
       run: testCommittedRevisionParsing
     },
     {
-      name: 'executes a guarded commit in an isolated real SVN repository',
+      name: 'executes a guarded Windows Unicode-path commit in an isolated real SVN repository',
       run: testRealCommitFlow
     },
     {
@@ -3478,6 +3479,7 @@ async function testCommitFlowPlanConversion(): Promise<void> {
 
 async function testCommittedRevisionParsing(): Promise<void> {
   assert.equal(parseCommittedRevision('Sending file\nCommitted revision 42.\n'), '42');
+  assert.equal(parseCommittedRevision('Enviando archivo\nConfirmada la revisión 43.\n'), '43');
   assert.equal(parseCommittedRevision('No revision in this output'), undefined);
 }
 
@@ -3487,33 +3489,52 @@ async function testRealCommitFlow(): Promise<void> {
   const repository = path.join(tempRoot, 'repository');
   const seed = path.join(tempRoot, 'seed');
   const workingCopy = path.join(tempRoot, 'working-copy');
+  const trackedFileName = process.platform === 'win32' ? '中文订单.txt' : 'tracked.txt';
   try {
     const admin = spawnSync('svnadmin', ['create', repository], { encoding: 'utf8', shell: false });
     if (admin.error || admin.status !== 0) throw new SkippedTest('svnadmin is not available for isolated commit acceptance.');
     fs.mkdirSync(seed, { recursive: true });
-    fs.writeFileSync(path.join(seed, 'tracked.txt'), 'base\n', 'utf8');
+    fs.writeFileSync(path.join(seed, trackedFileName), 'base\n', 'utf8');
     const repositoryUrl = `${pathToFileURL(repository).href}/trunk`;
     const imported = await runSvnCommand(svnPath, ['import', seed, repositoryUrl, '-m', 'initial', '--encoding', 'utf-8'], tempRoot);
     assert.equal(imported.exitCode, 0, imported.stderr);
     const checkout = await runSvnCommand(svnPath, ['checkout', repositoryUrl, workingCopy], tempRoot);
     assert.equal(checkout.exitCode, 0, checkout.stderr);
-    fs.appendFileSync(path.join(workingCopy, 'tracked.txt'), 'changed\n', 'utf8');
-    // Windows CI uses an English native code page that cannot represent Chinese argv in SVN 1.14.
-    // Chinese path discovery remains covered by testRootCommitCandidates; this flow still verifies
-    // safe argument handling for spaces, parentheses and # on every platform.
-    const addedFileName = process.platform === 'win32' ? 'added (#1).txt' : '新增 (#1).txt';
+    fs.appendFileSync(path.join(workingCopy, trackedFileName), 'changed\n', 'utf8');
+    // The tracked Chinese path exercises the guarded Windows root fallback while
+    // the added ASCII path proves that selected add operations remain scoped.
+    const addedFileName = 'added (#1).txt';
     fs.writeFileSync(path.join(workingCopy, addedFileName), 'new\n', 'utf8');
     const scope = createTestOperationScope(workingCopy);
     const candidates = await collectCommitCandidates(svnPath, scope);
-    const selected = candidates.filter((item) => item.relativePath === 'tracked.txt' || item.relativePath === addedFileName).map((item) => item.absolutePath);
+    const selected = candidates.filter((item) => item.relativePath === trackedFileName || item.relativePath === addedFileName).map((item) => item.absolutePath);
     const preview = buildCommitPlanPreview(scope, candidates, selected);
     assert.equal(preview.canCommit, true);
     assert.equal(preview.addPaths.length, 1);
     const result = await runCommitFlow(svnPath, toCommitFlowPlan(preview, 'test: 真实提交链路'));
     assert.equal(result.commitResult.exitCode, 0, result.commitResult.stderr);
-    assert.equal(result.revision, '2');
+    assert.equal(result.revision, '2', JSON.stringify({
+      stdout: result.commitResult.stdout,
+      stderr: result.commitResult.stderr
+    }));
     const status = await runSvnCommand(svnPath, ['status', workingCopy], workingCopy);
     assert.equal(status.stdout.trim(), '');
+
+    if (process.platform === 'win32') {
+      fs.appendFileSync(path.join(workingCopy, trackedFileName), 'selected unicode change\n', 'utf8');
+      fs.appendFileSync(path.join(workingCopy, addedFileName), 'unselected change\n', 'utf8');
+      const refreshedCandidates = await collectCommitCandidates(svnPath, scope);
+      const unicodeCandidate = refreshedCandidates.find((item) => item.relativePath === trackedFileName);
+      assert.ok(unicodeCandidate);
+      const guardedPreview = buildCommitPlanPreview(scope, refreshedCandidates, [unicodeCandidate.absolutePath]);
+      await assert.rejects(
+        runCommitFlow(svnPath, toCommitFlowPlan(guardedPreview, 'test: 阻止中文路径范围扩大')),
+        /未选中的可提交变更/
+      );
+      const guardedStatus = await runSvnCommand(svnPath, ['status', '--xml', workingCopy], workingCopy);
+      const guardedItems = parseStatusXml(guardedStatus.stdout, workingCopy);
+      assert.equal(guardedItems.filter((item) => item.status === 'modified').length, 2);
+    }
   } finally {
     removeTestTempDirectory(tempRoot);
   }

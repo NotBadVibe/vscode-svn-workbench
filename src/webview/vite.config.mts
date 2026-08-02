@@ -20,7 +20,7 @@ export default defineConfig({
   },
   server: {
     watch: {
-      ignored: ['**/docs/releases/artifacts/**', '**/playwright-report/**', '**/test-results/**', '**/coverage/**']
+      ignored: ['**/.validation/evidence/**', '**/docs/releases/v*/artifacts/**', '**/playwright-report/**', '**/test-results/**', '**/coverage/**']
     }
   },
   build: {

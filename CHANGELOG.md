@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.0.2 (Unreleased)
+
+### Changed
+
+- Windows 中文文件名提交增加安全参数回退，并补充真实 SVN 与单元回归。
+- Webview 内容安全策略覆盖 Vite 懒加载资源。
+- 文档统一为 `current`、`releases/vX.Y.Z`、`archive` 三层，版本清单映射源码、VSIX、测试和证据。
+- 普通 Webview 与性能证据写入 `.validation/evidence`；发布证据按版本和运行编号保存且禁止覆盖已发布版本。
+- CI 证据使用版本、平台和提交 SHA 命名，并增加文档与版本映射门禁。
+
 ## 0.0.1
 
 Svelte 统一 UI 改造候选版本。

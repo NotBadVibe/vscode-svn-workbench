@@ -5,6 +5,7 @@ const projectRoot = path.resolve(__dirname, '..');
 const validationRoot = process.platform === 'win32'
   ? 'C:\\svn-workbench-manual-ui-acceptance-v2'
   : '/tmp/svn-workbench-manual-ui-acceptance-v2';
+const testTempRoot = path.join(validationRoot, 'test-temp');
 const prepare = spawnSync(process.execPath, [path.join(__dirname, 'create-manual-acceptance-env.js')], {
   cwd: projectRoot,
   encoding: 'utf8',
@@ -14,6 +15,13 @@ if (prepare.status !== 0) {
   process.stderr.write(prepare.stderr || prepare.stdout || '无法创建覆盖率 SVN 验收夹具。\n');
   process.exit(prepare.status || 1);
 }
+require('node:fs').mkdirSync(testTempRoot, { recursive: true });
+
+const testEnvironment = {
+  ...process.env,
+  SVN_WORKBENCH_TEST_WORKSPACE: path.join(validationRoot, 'wc'),
+  ...(process.platform === 'win32' ? { TEMP: testTempRoot, TMP: testTempRoot } : {})
+};
 
 const vitest = spawnSync(process.execPath, [
   path.join(projectRoot, 'node_modules', 'vitest', 'vitest.mjs'),
@@ -21,6 +29,6 @@ const vitest = spawnSync(process.execPath, [
 ], {
   cwd: projectRoot,
   stdio: 'inherit',
-  env: { ...process.env, SVN_WORKBENCH_TEST_WORKSPACE: path.join(validationRoot, 'wc') }
+  env: testEnvironment
 });
 process.exit(vitest.status ?? 1);

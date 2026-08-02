@@ -31,6 +31,10 @@ function getValidationWorkspace(extensionDevelopmentPath: string): string | unde
 }
 
 function getLocalVsCodeExecutable(): string | undefined {
+  if (process.env.SVN_WORKBENCH_TEST_USE_DOWNLOADED_VSCODE === '1') {
+    return undefined;
+  }
+
   const configured = process.env.VSCODE_EXECUTABLE_PATH;
   if (configured && fs.existsSync(configured)) {
     return configured;

@@ -1,4 +1,4 @@
-> **归档声明（2026-07-30）**：本文只保留 SVN CLI、VS Code API、认证、编码、性能和远程开发等可行性论证。原 `docs/workbuddy/v1-spec-converged.md` 已不存在，原权威声明失效。当前产品决策以 [`SVN工作台原型v3`](../../SVN工作台原型v3/) 为准，技术契约以 [`SVN实现参考基线`](../../implementation-reference/SVN实现参考基线.md) 为准。
+> **归档声明（2026-07-30）**：本文只保留 SVN CLI、VS Code API、认证、编码、性能和远程开发等可行性论证。原权威声明已失效；当前规则以 [`current`](../../current/) 为准。
 > **本文在 v1 不落地的章节（已归后期）**：§4.1 SCM Provider、§4.2 Activity Bar 与 Tree View、§5.4 远端变更精确预览（v1 降为"更新建议"）、§7.2 内置三方合并面板、§13/§14 路线中 M2/M3/M4 高级能力。v1 仅 Explorer 右键命令 + webview（Svelte 重写）。
 
 # SVN 工作台技术可行性评估

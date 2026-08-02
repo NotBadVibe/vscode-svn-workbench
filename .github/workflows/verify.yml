@@ -16,6 +16,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v4
         with:
@@ -41,6 +43,16 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Resolve version context
+        id: release-context
+        shell: pwsh
+        run: |
+          $version = node -p "require('./package.json').version"
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+      - name: Verify documentation and version mapping
+        run: npm run docs:verify
 
       - name: Verify SVN CLI
         run: |
@@ -76,6 +88,14 @@ jobs:
         if: runner.os != 'Linux'
         run: npm run test:extension
 
+      - name: Upload versioned acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: svn-workbench-evidence-v${{ steps.release-context.outputs.version }}-${{ runner.os }}-${{ github.sha }}
+          path: .validation/evidence
+          if-no-files-found: ignore
+
       - name: Package VSIX and validate clean-profile lifecycle
         if: runner.os == 'Linux'
         run: |
@@ -86,5 +106,5 @@ jobs:
         if: runner.os == 'Linux'
         uses: actions/upload-artifact@v4
         with:
-          name: svn-workbench-vsix
+          name: svn-workbench-v${{ steps.release-context.outputs.version }}-${{ github.sha }}-vsix
           path: svn-workbench-*.vsix

@@ -1,5 +1,11 @@
 import { expect, test } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
+import { mkdirSync } from 'node:fs';
+import path from 'node:path';
+
+const artifactDirectory = process.env.SVN_WORKBENCH_EVIDENCE_DIR
+  ?? path.join('.validation', 'evidence', 'unscoped', `playwright-${process.pid}`);
+mkdirSync(artifactDirectory, { recursive: true });
 
 const themes = {
   light: {
@@ -32,7 +38,7 @@ for (const [theme, variables] of Object.entries(themes)) {
       await expect(page.getByRole('heading', { name: '工作副本修改' })).toBeVisible();
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
       expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
-      await page.screenshot({ path: `docs/releases/artifacts/2026-07-31/${theme}-${width}.png`, animations: 'disabled' });
+      await page.screenshot({ path: path.join(artifactDirectory, `${theme}-${width}.png`), animations: 'disabled' });
     });
   }
 }

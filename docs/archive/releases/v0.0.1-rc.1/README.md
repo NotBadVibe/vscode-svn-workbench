@@ -1,0 +1,163 @@
+# SVN Workbench v0.0.1 验收报告
+
+> 验收日期：2026-07-30  
+> 结论：**有条件通过，仅作为内部技术候选；当前不可对外发布**
+> 历史身份：`v0.0.1-rc.1`，不代表最终 `v0.0.1`
+
+## 1. 候选与环境
+
+| 项目 | 实测值 |
+| --- | --- |
+| 候选提交 | 当前仓库尚无可解析的 Git HEAD；本报告以 VSIX SHA256 锁定候选 |
+| VSIX | `svn-workbench-0.0.1.vsix` |
+| SHA256 | `91150F1931F25B544B35E4C3A6B78DD1A5039F2E221DEC76CD587DF8C8C659C9` |
+| VSIX 大小 | 388,619 字节；75 个文件 |
+| VS Code | 1.131.0，arm64 |
+| 操作系统 | macOS / Darwin 25.6.0，arm64 |
+| SVN | 1.14.5 |
+| Node/npm | v26.0.0 / 11.12.1 |
+| 手工夹具 | `/tmp/svn-workbench-manual-ui-acceptance-v2/wc` |
+
+说明：VSIX 是本次验收的不可变证据；任何源码、README、依赖或构建配置变化后都必须重新生成 SHA256。本候选首次打包曾因 README 相对链接可能断裂而失败，修复后已重新完整打包并通过后续校验。
+
+## 2. 自动化结果
+
+| 层级 | 命令 | 结果 | 关键证据 |
+| --- | --- | --- | --- |
+| 静态检查 | `npm run check` | 通过 | TypeScript 编译通过；Svelte 0 error / 0 warning |
+| 单元与组件 | `npm run test:unit` | 通过 | 15 个测试文件、29 项通过 |
+| Webview 行为 | `npm run test:webview` | 通过 | Playwright 25 项通过 |
+| Extension Host | `npm run test:extension` | 通过 | 106 项通过；VS Code Electron 正常激活扩展 |
+| 真实 SVN | 随 Extension Host 测试执行 | 通过（已有场景） | 独立仓库真实 commit、远端更新、冲突、范围、特殊路径、跨 WC 阻止 |
+| 全量门禁 | `SVN_WORKBENCH_TEST_WORKSPACE=/tmp/svn-workbench-manual-ui-acceptance-v2/wc npm run verify` | 通过 | 上述四层串行全部退出码 0 |
+| 性能 | `npm run test:performance` | 通过 | 20 次冷启动测量及 5000 文件窗口化 |
+| 打包 | `npm run package:vsix` | 通过 | 75 个文件，379.51 KB（vsce 显示） |
+| 干净安装 | `npm run validate:vsix-install` | 通过 | 安装→版本核对→卸载为空→重装→版本核对 |
+
+尚未把 Vitest/Istanbul 覆盖率接入强制门禁，因此文档要求的“关键分支 ≥90%、总体分支 ≥80%”本次没有量化证据。这是发布阻断项，不以测试数量代替覆盖率。
+
+## 3. 功能与架构结论
+
+| 范围 | 自动化 | 真实性 | 结论 | 备注 |
+| --- | --- | --- | --- | --- |
+| 单 Shell、模块懒加载、统一 Bridge | 通过 | 源码与 VSIX 审计通过 | 通过 | 仅 1 个 `createWebviewPanel`；仅 Bridge 获取 VS Code API/监听消息 |
+| 模块级右键入口 | 通过 | 待最终 VSIX 人工签字 | 有条件通过 | 不强制首页；Explorer 动态显隐仍受 `when` 条件限制 |
+| Changes 与文件操作 | 通过 | 部分真实 SVN | 有条件通过 | Add/Delete/Revert/Ignore/Lock/Unlock/Copy URL 已实现；真实锁服务器待验 |
+| Diff 与历史 | 通过 | 文本/空/二进制/>5MB/特殊路径夹具 | 通过（已有范围） | Revision Diff、Changed Paths、Blame、恢复具备显式确认 |
+| Commit 与 Update | 通过 | 真实 commit、远端检查和冲突夹具 | 通过（已有范围） | 状态哈希、范围、仓库 UUID、预览令牌、取消保护生效 |
+| 冲突与 Changelist | 通过 | 真实文本冲突、原生 Changelist | 有条件通过 | 块级三方人工合并编辑仍可增强 |
+| Repository 工具 | 通过（已实现部分） | Properties/Cleanup 已单独验证 | 有条件通过 | P2 Branch/Tag/Switch/Merge/Browser 等明确延期 |
+| AI 增强 | Mock/本地降级通过 | 未使用真实 Provider 密钥 | 有条件通过 | 智能选择、说明、审查、拆分、冲突、影响、代理均已接入；真实模型矩阵待验 |
+| 错误与恢复 | 分类/取消测试通过 | 未模拟全部企业环境 | **不通过发布门槛** | 缺插件内安全认证与证书信任向导 |
+
+逐 ID 状态见 [`v0.0.1 实现状态与验收追踪`](../../milestones/2026-07/v0.0.1实现状态与验收追踪.md)。
+
+## 4. 性能
+
+| 指标 | P50 | P95/实测 | 预算 | 结论 |
+| --- | --- | --- | --- | --- |
+| Mock 命令到可交互 | 40ms | 42ms | P95 ≤ 700ms | 通过 |
+| Shell JS gzip | — | 28,935 B | ≤ 163,840 B | 通过 |
+| Shell CSS gzip | — | 15,768 B | ≤ 51,200 B | 通过 |
+| 懒加载块 | — | 13 个 | 非当前模块不进入首包 | 通过 |
+| 5000 文件列表 | — | 18 行挂载；滚至末尾 35ms | 无持续 1 秒以上冻结 | 通过 |
+
+Diff 模块 gzip 82.97 KB，保持独立懒加载，未进入 Shell 首包。完整原始数据见 [`artifacts/performance.json`](./artifacts/performance.json)。
+
+## 5. 视觉与可访问性
+
+- 自动验证主题：Light、Dark、High Contrast。
+- 自动验证宽度：720px、1440px；1024px 抽测尚未单独留证。
+- 结果：无页面级横向溢出；axe 未发现自动可检测违规。
+- 键盘：Svelte Context Menu 已验证方向键、Enter 和 Escape；动作在菜单关闭后执行。
+- 视觉抽查：已人工查看 Light 1440、Dark 720、High Contrast 1440 截图，未发现明显布局和对比度问题。
+- 限制：截图运行在 Mock Bridge 浏览器环境，不等于最终 VSIX 在真实 VS Code 中的人工视觉签字。
+
+截图证据：
+
+- [Light 720](./artifacts/light-720.png) / [Light 1440](./artifacts/light-1440.png)
+- [Dark 720](./artifacts/dark-720.png) / [Dark 1440](./artifacts/dark-1440.png)
+- [High Contrast 720](./artifacts/highContrast-720.png) / [High Contrast 1440](./artifacts/highContrast-1440.png)
+
+## 6. 安全、恢复与制品审计
+
+| 检查项 | 结论 | 证据/限制 |
+| --- | --- | --- |
+| Secret/API Key | 通过 | 仅 Extension Host SecretStorage 读写；快照不返回 API Key |
+| CSP | 通过 | nonce、本地资源源；无 `unsafe-eval` 与远端脚本 |
+| 消息协议 | 通过 | 版本化联合类型、运行时类型检查、latest request 保护 |
+| 范围/仓库 | 通过 | repository UUID + scopeHash；独立 WC 混合选择测试通过 |
+| 破坏性确认 | 通过（已实现操作） | token + state/content hash + 执行前路径复验 |
+| AI 范围/隐私 | 通过（已有场景） | 外发前显示模型、文件/内容预算；返回路径重新校验；本地降级 |
+| 长任务取消 | 通过（已有场景） | Commit/Update/Cleanup 使用 AbortController；SVN 子进程 SIGTERM |
+| 输出上限 | 通过 | 大输出达到上限后终止并标记截断；大 Diff 安全降级 |
+| 旧 UI 残留 | 通过 | 源码和 VSIX 均无旧 Panel 文件名；构建前清理 `out` |
+| VSIX 内容 | 通过 | 无源码、测试、`.map`、本地验证目录或旧编译面板 |
+| 安装生命周期 | 通过 | VS Code 1.131.0 干净 profile 安装、卸载、重装后均核对状态 |
+
+## 7. 已知问题与延期
+
+| ID | 严重度 | 影响 | 关闭条件 | 计划 |
+| --- | --- | --- | --- | --- |
+| SAFE-01 | P0 / 阻断 | 插件内不能安全输入用户名/密码或选择系统凭据策略 | 安全设计、实现、脱敏和真实认证测试通过 | 下一候选 |
+| SAFE-02 | P0 / 阻断 | 证书异常只有分类与外部引导，没有指纹/信任范围 UI | 主机/指纹展示与仅本次/永久信任全流程通过 | 下一候选 |
+| COV-01 | 发布门禁 / 阻断 | 无法证明关键安全分支达到 90%/80% 门槛 | 覆盖率脚本、报告和 CI 阈值全绿 | 下一候选 |
+| MAN-01 | 发布门禁 / 阻断 | 最终 VSIX 尚无独立验收人在真实 VS Code 中完成主流程签字 | 按第 8 节执行并签字 | 发布前 |
+| AI-LIVE-01 | P0 环境证据 | 未使用真实 Provider 密钥验证超时、非法 JSON、限流和取消 | 至少两个兼容 Provider 的脱敏报告 | 发布前 |
+| SAFE-03/05 | P0 剩余证据 | 代理/DNS/离线和中断恢复尚未覆盖全部真实性夹具 | 企业网络与中断场景通过 | 发布前 |
+| CTX-07 | P1 体验 | 非 SVN 路径仍可能显示静态子菜单，执行时才拒绝 | 动态资源上下文或可接受的产品批准 | 后续评审 |
+| AI-10 | P1 延期 | 无团队记忆来源、历史、缓存和清除入口 | 完整隐私与清理设计通过 | 后续版本 |
+| ADMIN-01～07 | P2 延期 | 高级仓库管理暂不可用 | 分模块设计、实现与独立安全验收 | 路线图 |
+
+## 8. 开发完成后的最终人工验收
+
+### 8.1 准备
+
+1. 锁定提交、`package-lock.json` 和版本号；确保工作树没有未说明变更。
+2. 运行 `npm ci`，再运行 `npm run prepare:manual-test-env`。
+3. 执行 `npm run verify && npm run test:performance && npm run package:vsix && npm run validate:vsix-install`。
+4. 记录新 VSIX 的绝对路径、字节数和 `shasum -a 256`，确认与测试报告一致。
+5. 使用独立 VS Code profile 从 VSIX 安装，打开脚本输出的真实工作副本。
+
+### 8.2 主流程检查
+
+1. 从 Explorer 的文件、目录、多选、冲突文件和仓库根右键，确认直接进入目标模块且 ScopeBar 正确。
+2. 在 Changes 核对 modified、added、deleted、missing、conflicted、unversioned 和生成物；验证搜索、多选及 5000 项滚动。
+3. 对文本、空文件、二进制、>5MB 和中文特殊路径打开 Diff，确认降级信息准确且 UI 不卡死。
+4. 在隔离分支完成 Update 预览/取消/执行，以及 Commit 选择/说明/远端检查/确认/真实提交/刷新。
+5. 在冲突模块检查 mine/base/theirs 内容；先取消，再预览并显式 resolve；确认文件变化后旧令牌失效。
+6. 创建、移动、移出 Changelist；检查 Properties 新增/编辑/删除；执行安全 Cleanup。
+7. 查看历史、Changed Paths、任意修订 Diff、Blame；从修订恢复时先取消，再确认只修改 working file、不自动提交。
+8. 关闭 AI 后重复核心 SVN 流程；开启真实 Provider 后检查外发预览、虚构路径拒绝、超时/限流/非法结构降级。
+
+### 8.3 异常与安全检查
+
+1. 分别模拟 CLI 缺失、认证失败、证书异常、DNS、代理、离线、WC locked 和操作中断。
+2. 检查错误分类、恢复入口和重试；确认密码、token、Authorization、API Key 不出现在 Webview、Output、日志和截图。
+3. 在预览后修改文件、切换 revision 或改变选择，确认 Commit/Revert/Resolve/Restore/Property 等旧预览全部拒绝执行。
+4. 在运行中尝试切换模块、关闭 Panel、重载 Webview 和取消任务，确认不会重复执行或静默丢失结果。
+5. 使用两个独立 WC、nested WC 和 external 混合多选，确认无法作为一次提交执行，并能识别归属。
+
+### 8.4 UI 与安装检查
+
+1. 在 Light/Dark/High Contrast 和 720/1024/1440 宽度检查溢出、焦点、对比度、Tooltip、错误与空状态。
+2. 全程仅用键盘完成模块导航、菜单、Dialog、选择、预览和取消；用屏幕阅读器抽查名称与状态。
+3. 从干净 profile 卸载并重装同一 VSIX，确认命令、图标、静态资源、设置和 SecretStorage 行为正确。
+4. Windows 与 macOS 各执行一次 P0 冒烟；Windows 覆盖盘符、反斜杠、大小写和常见 SVN 安装路径。
+
+### 8.5 签字栏
+
+| 角色 | 姓名 | 日期 | 结论/备注 |
+| --- | --- | --- | --- |
+| 开发自测 | Codex（自动化与代码审计） | 2026-07-30 | 有条件通过 |
+| 产品/设计 | 待填写 | — | — |
+| 独立测试/验收 | 待填写 | — | — |
+| 发布负责人 | 待填写 | — | — |
+
+## 9. 结论
+
+- [ ] 通过，可发布
+- [x] 有条件通过
+- [ ] 不通过
+
+条件含义：统一 Svelte 架构和当前实现范围通过技术验收，可继续内部体验与缺口开发；在 `SAFE-01`、`SAFE-02`、覆盖率门禁、真实 AI/认证/证书异常和最终人工签字完成前，**不得对外发布**。

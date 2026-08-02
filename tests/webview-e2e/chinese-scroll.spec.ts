@@ -131,8 +131,8 @@ test('SCR-07：仓库子任务按需显示，目录与属性列表均可滚到�
   await expect(page.locator('[data-repository-task="repository/update"]')).toBeVisible();
   await expect(page.getByRole('heading', { name: '更新当前范围', exact: true }).last()).toBeVisible();
   await expect(page.getByRole('heading', { name: '仓库浏览器' })).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => performance.getEntriesByType('resource').some((entry) => /UpdateTask-.*\.js/.test(entry.name)))).toBe(true);
   const loadedTaskChunks = await page.evaluate(() => performance.getEntriesByType('resource').map((entry) => entry.name));
-  expect(loadedTaskChunks.some((name) => /UpdateTask-.*\.js/.test(name))).toBe(true);
   for (const taskChunk of ['BrowseTask', 'PropertiesTask', 'AdvancedTask', 'PatchShelfTask', 'ReleaseNotesTask']) {
     expect(loadedTaskChunks.some((name) => name.includes(`${taskChunk}-`)), `${taskChunk} 不应随更新任务加载`).toBe(false);
   }

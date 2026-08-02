@@ -1,4 +1,4 @@
-> **归档声明（2026-07-30）**：本文仅用于追溯早期产品论证。原 `docs/workbuddy/v1-spec-converged.md` 已不存在，原权威声明失效。当前产品决策以 [`SVN工作台原型v3`](../../SVN工作台原型v3/) 为准，技术契约以 [`SVN实现参考基线`](../../implementation-reference/SVN实现参考基线.md) 为准。
+> **归档声明（2026-07-30）**：本文仅用于追溯早期产品论证。原权威声明已失效；当前规则以 [`current`](../../current/) 为准。
 > **本文在 v1 不落地的章节（已归后期）**：§5.1 Activity Bar SVN 工作台（5 视图）、§5.2 Source Control / SCM Provider 深度接入、§6.2/§6.3 第一/二阶段增强、§8 SCM Provider 接入、里程碑 M2/M3/M4。v1 仅做 Explorer 右键命令 + webview，UI 栈定为 Svelte。
 
 # VSCode SVN 管理器产品与技术方案

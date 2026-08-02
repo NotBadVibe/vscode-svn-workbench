@@ -3,6 +3,7 @@ const { spawn } = require('node:child_process');
 const { mkdirSync, readFileSync, readdirSync, writeFileSync } = require('node:fs');
 const { gzipSync } = require('node:zlib');
 const path = require('node:path');
+const { resolveEvidenceDirectory } = require('./evidence-context');
 
 const root = path.resolve(__dirname, '..');
 const port = 41732;
@@ -92,8 +93,7 @@ async function main() {
     if (result.largeList.scrollToEndMs > budgets.largeListScrollMs) failures.push(`large-list scroll ${result.largeList.scrollToEndMs}ms > ${budgets.largeListScrollMs}ms`);
     result.passed = failures.length === 0;
     result.failures = failures;
-    const releaseDate = process.env.SVN_WORKBENCH_RELEASE_DATE || new Date().toLocaleDateString('sv-SE');
-    const artifactDirectory = path.join(root, 'docs/releases/artifacts', releaseDate);
+    const artifactDirectory = resolveEvidenceDirectory(root);
     mkdirSync(artifactDirectory, { recursive: true });
     writeFileSync(path.join(artifactDirectory, 'performance.json'), `${JSON.stringify(result, null, 2)}\n`, 'utf8');
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);

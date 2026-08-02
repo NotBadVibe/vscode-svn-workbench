@@ -12,6 +12,19 @@ import { runSvnCommand } from '../../src/svn/svnCommandRunner';
 import { clearSvnSecurityContext, setSvnSecurityContext } from '../../src/security/svnSecurityContext';
 
 describe('runSvnCommand', () => {
+  it('uses stable English command messages without replacing the character locale', async () => {
+    const result = await runSvnCommand(process.execPath, [
+      '-e',
+      'console.log(JSON.stringify({lcMessages:process.env.LC_MESSAGES,language:process.env.LANGUAGE,lang:process.env.LANG}))'
+    ]);
+
+    expect(JSON.parse(result.stdout)).toEqual({
+      lcMessages: 'C',
+      language: 'en',
+      ...(process.env.LANG === undefined ? {} : { lang: process.env.LANG })
+    });
+  });
+
   it('terminates a running process when the operation is cancelled', async () => {
     const controller = new AbortController();
     const resultPromise = runSvnCommand(

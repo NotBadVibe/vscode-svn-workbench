@@ -78,7 +78,7 @@ npm run package:vsix
 npm run validate:vsix-install
 ```
 
-`npm run verify` 会依次执行静态检查、覆盖率门禁、30 项 Webview/视觉/无障碍验收、性能预算和 Extension Host/真实 SVN 验收。页面截图写入 `docs/releases/artifacts/<日期>/pages/`。
+`npm run verify` 会依次执行文档映射、静态检查、覆盖率门禁、Webview/视觉/无障碍验收、性能预算和 Extension Host/真实 SVN 验收。普通截图与性能证据写入 `.validation/evidence/v<版本>/<运行编号>/`；只有 `npm run evidence:release` 会向对应版本发布目录写入不可覆盖的证据运行。
 
 详细架构、逐项验收方法、功能状态和候选版本结论见项目中的 `docs/README.md`。
 
