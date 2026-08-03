@@ -1,8 +1,8 @@
-import * as path from 'node:path';
-import { OperationScope } from '../scope/operationScope';
-import { isPathInScope } from '../scope/pathBoundaryGuard';
-import { runSvnCommand } from '../svn/svnCommandRunner';
-import { SvnCommandResult } from '../svn/svnTypes';
+import * as path from "node:path";
+import { OperationScope } from "../scope/operationScope";
+import { isPathInScope } from "../scope/pathBoundaryGuard";
+import { runSvnCommand } from "../svn/svnCommandRunner";
+import { SvnCommandResult } from "../svn/svnTypes";
 
 export interface ResolveConflictPreview {
   cwd: string;
@@ -17,12 +17,15 @@ export interface ResolveConflictResult {
   resolved: boolean;
 }
 
-export function buildResolveConflictPreview(scope: OperationScope, filePath: string): ResolveConflictPreview {
+export function buildResolveConflictPreview(
+  scope: OperationScope,
+  filePath: string,
+): ResolveConflictPreview {
   const absolutePath = path.resolve(filePath);
   const issues: string[] = [];
 
   if (!isPathInScope(scope, absolutePath)) {
-    issues.push('文件不在当前冲突处理范围内，已阻止。');
+    issues.push("文件不在当前冲突处理范围内，已阻止。");
   }
 
   return {
@@ -30,29 +33,29 @@ export function buildResolveConflictPreview(scope: OperationScope, filePath: str
     filePath: absolutePath,
     commands: [`svn resolve --accept working ${quotePath(absolutePath)}`],
     canResolve: issues.length === 0,
-    issues
+    issues,
   };
 }
 
 export async function resolveConflictUsingWorking(
   svnPath: string,
   scope: OperationScope,
-  filePath: string
+  filePath: string,
 ): Promise<ResolveConflictResult> {
   const preview = buildResolveConflictPreview(scope, filePath);
   if (!preview.canResolve) {
-    throw new Error(preview.issues.join('\n'));
+    throw new Error(preview.issues.join("\n"));
   }
 
   const result = await runSvnCommand(
     svnPath,
-    ['resolve', '--accept', 'working', preview.filePath],
-    scope.repositoryRoot
+    ["resolve", "--accept", "working", preview.filePath],
+    scope.repositoryRoot,
   );
 
   return {
     result,
-    resolved: result.exitCode === 0 && isResolveSuccessful(result.stdout)
+    resolved: result.exitCode === 0 && isResolveSuccessful(result.stdout),
   };
 }
 

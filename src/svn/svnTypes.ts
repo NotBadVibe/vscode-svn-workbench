@@ -1,17 +1,17 @@
 export type SvnStatus =
-  | 'normal'
-  | 'modified'
-  | 'added'
-  | 'deleted'
-  | 'missing'
-  | 'unversioned'
-  | 'conflicted'
-  | 'ignored'
-  | 'external'
-  | 'obstructed'
-  | 'replaced'
-  | 'incomplete'
-  | 'unknown';
+  | "normal"
+  | "modified"
+  | "added"
+  | "deleted"
+  | "missing"
+  | "unversioned"
+  | "conflicted"
+  | "ignored"
+  | "external"
+  | "obstructed"
+  | "replaced"
+  | "incomplete"
+  | "unknown";
 
 export interface SvnExecutable {
   path: string;

@@ -23,7 +23,14 @@ playwright.config.*
 vitest.config.*
 svelte.config.mjs
 .gitignore
+.editorconfig
+.nvmrc
+.prettierignore
+CONTRIBUTING.md
+SECURITY.md
+eslint.config.mjs
 package-lock.json
+prettier.config.mjs
 tsconfig.json
 *.tsbuildinfo
 pnpm-lock.yaml

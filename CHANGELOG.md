@@ -6,9 +6,14 @@
 
 - Windows 中文文件名提交增加安全参数回退，并补充真实 SVN 与单元回归。
 - Webview 内容安全策略覆盖 Vite 懒加载资源。
+- Webview CSP nonce 改为使用 `crypto.randomBytes` 生成，并有静态回归测试。
+- 开发工具链固定为 Node.js 22/npm 10，增加仓库元数据、ESLint、Prettier、高危依赖审计与关键提交流分文件覆盖率门禁。
+- CI 使用最小权限和固定 SHA 的 GitHub Actions，新增 CodeQL 与 Dependabot。
+- Workbench Host 的会话状态、展示/输入、文件操作、状态哈希和仓库工作流拆到独立模块，并为边界补充单测。
 - 文档统一为 `current`、`releases/vX.Y.Z`、`archive` 三层，版本清单映射源码、VSIX、测试和证据。
 - 普通 Webview 与性能证据写入 `.validation/evidence`；发布证据按版本和运行编号保存且禁止覆盖已发布版本。
 - CI 证据使用版本、平台和提交 SHA 命名，并增加文档与版本映射门禁。
+- 更正 v0.0.1 manifest 的证据树指纹记录；归档证据内容未发生变更。
 
 ## 0.0.1
 

@@ -1,13 +1,9 @@
-import * as path from 'node:path';
-import { CommitCandidate } from '../commit/commitCandidateCollector';
-import { AiFileDecision, AiSelectionResult } from './aiProvider';
+import * as path from "node:path";
+import { CommitCandidate } from "../commit/commitCandidateCollector";
+import { AiFileDecision, AiSelectionResult } from "./aiProvider";
 
 export type CommitSelectionAiDecision =
-  | 'recommended'
-  | 'needsReview'
-  | 'excluded'
-  | 'blocked'
-  | 'none';
+  "recommended" | "needsReview" | "excluded" | "blocked" | "none";
 
 export interface CommitSelectionExplanationItem {
   absolutePath: string;
@@ -24,19 +20,24 @@ export interface CommitSelectionExplanation {
 
 export function buildCommitSelectionExplanation(
   candidates: CommitCandidate[],
-  result: AiSelectionResult
+  result: AiSelectionResult,
 ): CommitSelectionExplanation {
-  const decisionByPath = new Map<string, { decision: CommitSelectionAiDecision; reason: string }>();
-  addDecisions(decisionByPath, result.recommended, 'recommended');
-  addDecisions(decisionByPath, result.needsReview, 'needsReview');
-  addDecisions(decisionByPath, result.excluded, 'excluded');
-  addDecisions(decisionByPath, result.blocked, 'blocked');
+  const decisionByPath = new Map<
+    string,
+    { decision: CommitSelectionAiDecision; reason: string }
+  >();
+  addDecisions(decisionByPath, result.recommended, "recommended");
+  addDecisions(decisionByPath, result.needsReview, "needsReview");
+  addDecisions(decisionByPath, result.excluded, "excluded");
+  addDecisions(decisionByPath, result.blocked, "blocked");
 
   const summary = createEmptySummary();
   const items = candidates.map((candidate) => {
-    const decision = decisionByPath.get(normalizePathKey(candidate.absolutePath)) ?? {
-      decision: 'none' as const,
-      reason: 'AI 未给出建议，保留当前默认选择。'
+    const decision = decisionByPath.get(
+      normalizePathKey(candidate.absolutePath),
+    ) ?? {
+      decision: "none" as const,
+      reason: "AI 未给出建议，保留当前默认选择。",
     };
     summary[decision.decision] += 1;
     return {
@@ -44,25 +45,25 @@ export function buildCommitSelectionExplanation(
       relativePath: candidate.relativePath,
       decision: decision.decision,
       reason: decision.reason,
-      selectedByAi: decision.decision === 'recommended'
+      selectedByAi: decision.decision === "recommended",
     };
   });
 
   return {
     items,
-    summary
+    summary,
   };
 }
 
 function addDecisions(
   target: Map<string, { decision: CommitSelectionAiDecision; reason: string }>,
   items: AiFileDecision[],
-  decision: CommitSelectionAiDecision
+  decision: CommitSelectionAiDecision,
 ): void {
   for (const item of items) {
     target.set(normalizePathKey(item.path), {
       decision,
-      reason: item.reason || 'AI 未提供原因。'
+      reason: item.reason || "AI 未提供原因。",
     });
   }
 }
@@ -73,11 +74,11 @@ function createEmptySummary(): Record<CommitSelectionAiDecision, number> {
     needsReview: 0,
     excluded: 0,
     blocked: 0,
-    none: 0
+    none: 0,
   };
 }
 
 function normalizePathKey(filePath: string): string {
   const resolved = path.resolve(filePath);
-  return process.platform === 'win32' ? resolved.toLocaleLowerCase() : resolved;
+  return process.platform === "win32" ? resolved.toLocaleLowerCase() : resolved;
 }

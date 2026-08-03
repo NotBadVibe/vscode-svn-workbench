@@ -7,20 +7,37 @@ import {
   type WorkbenchModuleId,
   type WorkbenchModuleSnapshot,
   type WorkbenchScopeView,
-  type WorkbenchTaskId
-} from '@protocol/workbenchProtocol';
-import { workbenchBridge } from '../bridge/vscodeBridge';
+  type WorkbenchTaskId,
+} from "@protocol/workbenchProtocol";
+import { workbenchBridge } from "../bridge/vscodeBridge";
 
 export class WorkbenchState {
   connected = $state(false);
   loading = $state(true);
-  moduleId = $state<WorkbenchModuleId>('changes');
-  taskId = $state<WorkbenchTaskId>(defaultWorkbenchTask('changes'));
+  moduleId = $state<WorkbenchModuleId>("changes");
+  taskId = $state<WorkbenchTaskId>(defaultWorkbenchTask("changes"));
   scope = $state<WorkbenchScopeView | undefined>();
   snapshot = $state<WorkbenchModuleSnapshot | undefined>();
-  error = $state<Extract<HostToWebviewMessage, { type: 'operation/error' }>['payload'] | undefined>();
-  progress = $state<{ title: string; message?: string; stage?: string; scope?: string; percent?: number; cancellable?: boolean; outputAvailable?: boolean; startedAt: number } | undefined>();
-  notification = $state<{ tone: 'success' | 'warning'; title: string; message: string } | undefined>();
+  error = $state<
+    | Extract<HostToWebviewMessage, { type: "operation/error" }>["payload"]
+    | undefined
+  >();
+  progress = $state<
+    | {
+        title: string;
+        message?: string;
+        stage?: string;
+        scope?: string;
+        percent?: number;
+        cancellable?: boolean;
+        outputAvailable?: boolean;
+        startedAt: number;
+      }
+    | undefined
+  >();
+  notification = $state<
+    { tone: "success" | "warning"; title: string; message: string } | undefined
+  >();
   repositoryUuid = $state<string | undefined>();
   scopeHash = $state<string | undefined>();
 
@@ -33,43 +50,46 @@ export class WorkbenchState {
   ready(): void {
     workbenchBridge.post({
       protocolVersion: WORKBENCH_PROTOCOL_VERSION,
-      type: 'webview/ready',
+      type: "webview/ready",
       moduleId: this.moduleId,
       taskId: this.taskId,
       repositoryUuid: this.repositoryUuid,
       scopeHash: this.scopeHash,
-      payload: {}
+      payload: {},
     });
   }
 
   action(action: WebviewAction, data?: Record<string, unknown>): void {
     workbenchBridge.post({
       protocolVersion: WORKBENCH_PROTOCOL_VERSION,
-      type: 'workbench/action',
+      type: "workbench/action",
       requestId: createRequestId(action),
       moduleId: this.moduleId,
       taskId: this.taskId,
       repositoryUuid: this.repositoryUuid,
       scopeHash: this.scopeHash,
-      payload: { action, data }
+      payload: { action, data },
     });
   }
 
-  openModule(moduleId: WorkbenchModuleId, taskId: WorkbenchTaskId = defaultWorkbenchTask(moduleId)): void {
+  openModule(
+    moduleId: WorkbenchModuleId,
+    taskId: WorkbenchTaskId = defaultWorkbenchTask(moduleId),
+  ): void {
     if (moduleId === this.moduleId && taskId === this.taskId) {
       return;
     }
     this.loading = true;
     this.error = undefined;
-    this.action('open-module', { moduleId, taskId });
+    this.action("open-module", { moduleId, taskId });
   }
 
   private handle(message: HostToWebviewMessage): void {
     if (message.protocolVersion !== WORKBENCH_PROTOCOL_VERSION) {
       this.error = {
-        title: '协议版本不兼容',
+        title: "协议版本不兼容",
         message: `工作台协议版本 ${message.protocolVersion} 无法处理。`,
-        recoverable: false
+        recoverable: false,
       };
       return;
     }
@@ -81,50 +101,54 @@ export class WorkbenchState {
     this.taskId = message.taskId ?? defaultWorkbenchTask(message.moduleId);
 
     switch (message.type) {
-      case 'app/initialize':
+      case "app/initialize":
         this.scope = message.payload.scope;
         this.snapshot = message.payload.snapshot;
         this.loading = !message.payload.snapshot;
         this.error = undefined;
         break;
-      case 'module/loading':
+      case "module/loading":
         this.loading = true;
         this.progress = undefined;
         this.notification = undefined;
         this.error = undefined;
         break;
-      case 'module/snapshot':
+      case "module/snapshot":
         this.snapshot = message.payload.snapshot;
         this.loading = false;
         this.progress = undefined;
         this.error = undefined;
         break;
-      case 'operation/error':
+      case "operation/error":
         this.loading = false;
         this.progress = undefined;
         this.error = message.payload;
         break;
-      case 'operation/progress':
-        this.progress = { ...message.payload, outputAvailable: message.payload.outputAvailable ?? true, startedAt: this.progress?.startedAt ?? Date.now() };
+      case "operation/progress":
+        this.progress = {
+          ...message.payload,
+          outputAvailable: message.payload.outputAvailable ?? true,
+          startedAt: this.progress?.startedAt ?? Date.now(),
+        };
         break;
-      case 'operation/result':
+      case "operation/result":
         message.payload.message = `${message.payload.message}${this.elapsedSuffix()}`;
         this.progress = undefined;
-        this.notification = { tone: 'success', ...message.payload };
+        this.notification = { tone: "success", ...message.payload };
         break;
-      case 'operation/cancelled':
+      case "operation/cancelled":
         message.payload.message = `${message.payload.message}${this.elapsedSuffix()}`;
         this.progress = undefined;
-        this.notification = { tone: 'warning', ...message.payload };
+        this.notification = { tone: "warning", ...message.payload };
         break;
-      case 'scope/changed':
+      case "scope/changed":
         this.scope = message.payload.scope;
         break;
     }
   }
 
   private elapsedSuffix(): string {
-    if (!this.progress) return '';
+    if (!this.progress) return "";
     return ` · 用时 ${Math.max(0, Math.round((Date.now() - this.progress.startedAt) / 1000))} 秒`;
   }
 }

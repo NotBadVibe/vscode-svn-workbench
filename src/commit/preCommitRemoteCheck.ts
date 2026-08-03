@@ -1,7 +1,7 @@
-import * as path from 'node:path';
-import { OperationScope } from '../scope/operationScope';
-import { isPathInScope } from '../scope/pathBoundaryGuard';
-import { runSvnCommand } from '../svn/svnCommandRunner';
+import * as path from "node:path";
+import { OperationScope } from "../scope/operationScope";
+import { isPathInScope } from "../scope/pathBoundaryGuard";
+import { runSvnCommand } from "../svn/svnCommandRunner";
 
 export interface RemoteUpdateItem {
   absolutePath: string;
@@ -17,21 +17,28 @@ export interface PreCommitRemoteCheckResult {
 export async function checkPreCommitRemoteUpdates(
   svnPath: string,
   scope: OperationScope,
-  commitPaths: string[]
+  commitPaths: string[],
 ): Promise<PreCommitRemoteCheckResult> {
   if (commitPaths.length === 0) {
     return { outOfDateItems: [] };
   }
 
-  const result = await runSvnCommand(svnPath, ['status', '--show-updates', '--xml', ...commitPaths], scope.repositoryRoot);
+  const result = await runSvnCommand(
+    svnPath,
+    ["status", "--show-updates", "--xml", ...commitPaths],
+    scope.repositoryRoot,
+  );
   if (result.exitCode !== 0) {
-    throw new Error(result.stderr || '提交前检查远端 SVN 更新失败。');
+    throw new Error(result.stderr || "提交前检查远端 SVN 更新失败。");
   }
 
   return parseRemoteUpdateStatusXml(result.stdout, scope);
 }
 
-export function parseRemoteUpdateStatusXml(xml: string, scope: OperationScope): PreCommitRemoteCheckResult {
+export function parseRemoteUpdateStatusXml(
+  xml: string,
+  scope: OperationScope,
+): PreCommitRemoteCheckResult {
   const outOfDateItems: RemoteUpdateItem[] = [];
   const checkedRevision = /<against\s+revision="([^"]+)"\s*\/>/.exec(xml)?.[1];
   const entryPattern = /<entry\s+path="([^"]+)"\s*>([\s\S]*?)<\/entry>/g;
@@ -45,14 +52,21 @@ export function parseRemoteUpdateStatusXml(xml: string, scope: OperationScope): 
     }
 
     const repositoryStatus = getRepositoryStatus(entryMatch[2]);
-    if (!repositoryStatus || repositoryStatus === 'none' || repositoryStatus === 'normal') {
+    if (
+      !repositoryStatus ||
+      repositoryStatus === "none" ||
+      repositoryStatus === "normal"
+    ) {
       continue;
     }
 
     outOfDateItems.push({
       absolutePath,
-      relativePath: normalizeRelativePath(path.relative(scope.repositoryRoot, absolutePath) || path.basename(absolutePath)),
-      repositoryStatus
+      relativePath: normalizeRelativePath(
+        path.relative(scope.repositoryRoot, absolutePath) ||
+          path.basename(absolutePath),
+      ),
+      repositoryStatus,
     });
   }
 
@@ -65,7 +79,7 @@ function getRepositoryStatus(entryBody: string): string | undefined {
     return undefined;
   }
 
-  return getAttribute(reposStatus[1], 'item');
+  return getAttribute(reposStatus[1], "item");
 }
 
 function getAttribute(source: string, name: string): string | undefined {
@@ -77,11 +91,11 @@ function decodeXml(value: string): string {
   return value
     .replace(/&quot;/g, '"')
     .replace(/&apos;/g, "'")
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&amp;/g, '&');
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&");
 }
 
 function normalizeRelativePath(relativePath: string): string {
-  return relativePath.split(path.sep).join('/');
+  return relativePath.split(path.sep).join("/");
 }

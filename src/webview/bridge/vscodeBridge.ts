@@ -1,4 +1,7 @@
-import type { HostToWebviewMessage, WebviewToHostMessage } from '@protocol/workbenchProtocol';
+import type {
+  HostToWebviewMessage,
+  WebviewToHostMessage,
+} from "@protocol/workbenchProtocol";
 
 interface VsCodeApi<State = unknown> {
   postMessage(message: WebviewToHostMessage): void;
@@ -18,11 +21,14 @@ type MessageListener = (message: HostToWebviewMessage) => void;
 const listeners = new Set<MessageListener>();
 const vscodeApi = window.acquireVsCodeApi?.<Record<string, unknown>>();
 
-window.addEventListener('message', (event: MessageEvent<HostToWebviewMessage>) => {
-  for (const listener of listeners) {
-    listener(event.data);
-  }
-});
+window.addEventListener(
+  "message",
+  (event: MessageEvent<HostToWebviewMessage>) => {
+    for (const listener of listeners) {
+      listener(event.data);
+    }
+  },
+);
 
 export const workbenchBridge = {
   isMock: !vscodeApi,
@@ -31,7 +37,9 @@ export const workbenchBridge = {
       vscodeApi.postMessage(message);
       return;
     }
-    window.dispatchEvent(new CustomEvent('svn-workbench:mock-action', { detail: message }));
+    window.dispatchEvent(
+      new CustomEvent("svn-workbench:mock-action", { detail: message }),
+    );
   },
   subscribe(listener: MessageListener): () => void {
     listeners.add(listener);
@@ -47,5 +55,5 @@ export const workbenchBridge = {
     for (const listener of listeners) {
       listener(message);
     }
-  }
+  },
 };

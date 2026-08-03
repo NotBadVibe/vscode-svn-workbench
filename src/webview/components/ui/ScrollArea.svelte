@@ -1,17 +1,17 @@
 <script lang="ts">
-  import { onMount, type Snippet } from 'svelte';
+  import { onMount, type Snippet } from "svelte";
 
   let {
     label,
-    class: className = '',
-    role = 'region',
+    class: className = "",
+    role = "region",
     element = $bindable(),
     onScroll,
-    children
+    children,
   }: {
     label: string;
     class?: string;
-    role?: 'region' | 'list' | 'log';
+    role?: "region" | "list" | "log";
     element?: HTMLElement;
     onScroll?: (event: Event) => void;
     children: Snippet;
@@ -25,9 +25,11 @@
   function updateOverflow(): void {
     if (!element) return;
     canScrollUp = element.scrollTop > 1;
-    canScrollDown = element.scrollTop + element.clientHeight < element.scrollHeight - 1;
+    canScrollDown =
+      element.scrollTop + element.clientHeight < element.scrollHeight - 1;
     canScrollLeft = element.scrollLeft > 1;
-    canScrollRight = element.scrollLeft + element.clientWidth < element.scrollWidth - 1;
+    canScrollRight =
+      element.scrollLeft + element.clientWidth < element.scrollWidth - 1;
   }
 
   function handleScroll(event: Event): void {
@@ -37,10 +39,17 @@
 
   onMount(() => {
     if (!element) return;
-    const resizeObserver = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(updateOverflow);
+    const resizeObserver =
+      typeof ResizeObserver === "undefined"
+        ? undefined
+        : new ResizeObserver(updateOverflow);
     const mutationObserver = new MutationObserver(updateOverflow);
     resizeObserver?.observe(element);
-    mutationObserver.observe(element, { childList: true, subtree: true, characterData: true });
+    mutationObserver.observe(element, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
     const frame = requestAnimationFrame(updateOverflow);
     return () => {
       cancelAnimationFrame(frame);
@@ -50,7 +59,7 @@
   });
 </script>
 
-<!-- svelte-ignore a11y_no_noninteractive_tabindex -- 键盘聚焦是滚动区支持方向键、PageUp/PageDown 和 End 的必要条件。 -->
+<!-- svelte-ignore a11y_no_noninteractive_tabindex -- 可滚动区域需要获得键盘焦点，以支持方向键、PageUp/PageDown 和 End。 -->
 <div
   bind:this={element}
   class={`scroll-region ${className}`}

@@ -1,12 +1,12 @@
-import { CommitCandidate } from '../commit/commitCandidateCollector';
-import { OperationScope } from '../scope/operationScope';
-import { AiSelectionRequest, AiSelectionResult } from './aiProvider';
+import { CommitCandidate } from "../commit/commitCandidateCollector";
+import { OperationScope } from "../scope/operationScope";
+import { AiSelectionRequest, AiSelectionResult } from "./aiProvider";
 
 const MAX_FILES_IN_SELECTION_REQUEST = 200;
 
 export function buildCommitSelectionAiRequest(
   scope: OperationScope,
-  candidates: CommitCandidate[]
+  candidates: CommitCandidate[],
 ): AiSelectionRequest {
   const files = candidates
     .slice(0, MAX_FILES_IN_SELECTION_REQUEST)
@@ -19,46 +19,48 @@ export function buildCommitSelectionAiRequest(
       templateGroup: candidate.templateGroup,
       generatedDecision: candidate.generatedDecision,
       defaultSelection: candidate.selection,
-      reason: candidate.reason
+      reason: candidate.reason,
     }));
 
   return {
-    scope: scope.roots.map((root) => root.relativePath).join(', ') || '.',
+    scope: scope.roots.map((root) => root.relativePath).join(", ") || ".",
     files,
-    locale: 'zh-CN',
+    locale: "zh-CN",
     policy: {
       rightClickScopeOnly: true,
       excludeGeneratedByDefault: true,
-      userFinalDecision: true
-    }
+      userFinalDecision: true,
+    },
   };
 }
 
-export function createLocalCommitSelectionResult(candidates: CommitCandidate[]): AiSelectionResult {
+export function createLocalCommitSelectionResult(
+  candidates: CommitCandidate[],
+): AiSelectionResult {
   const result: AiSelectionResult = {
     recommended: [],
     excluded: [],
     needsReview: [],
-    blocked: []
+    blocked: [],
   };
 
   for (const candidate of candidates) {
     const decision = {
       path: candidate.absolutePath,
-      reason: `本地规则：${candidate.reason}`
+      reason: `本地规则：${candidate.reason}`,
     };
 
     switch (candidate.selection) {
-      case 'selected':
+      case "selected":
         result.recommended.push(decision);
         break;
-      case 'needsReview':
+      case "needsReview":
         result.needsReview.push(decision);
         break;
-      case 'excluded':
+      case "excluded":
         result.excluded.push(decision);
         break;
-      case 'blocked':
+      case "blocked":
         result.blocked.push(decision);
         break;
     }

@@ -24,7 +24,7 @@ export interface AiFileContext {
 export interface AiSelectionRequest {
   scope: string;
   files: AiFileContext[];
-  locale?: 'zh-CN';
+  locale?: "zh-CN";
   policy?: {
     rightClickScopeOnly: boolean;
     excludeGeneratedByDefault: boolean;
@@ -78,8 +78,8 @@ export interface AiCommitMessageRequest {
   selectedFileCount: number;
   omittedFileCount: number;
   files: AiCommitMessageFileContext[];
-  locale: 'zh-CN';
-  mode?: 'draft' | 'completeTemplate';
+  locale: "zh-CN";
+  mode?: "draft" | "completeTemplate";
   templateId?: string;
   templateLabel?: string;
   currentMessage?: string;
@@ -107,7 +107,7 @@ export interface AiCommitSplitRequest {
   selectedFileCount: number;
   omittedFileCount: number;
   files: AiCommitSplitFileContext[];
-  locale: 'zh-CN';
+  locale: "zh-CN";
   policy: {
     userFinalDecision: boolean;
     noAutoCommit: boolean;
@@ -136,7 +136,7 @@ export interface AiTeamRulesRequest {
   directories: string[];
   sampleFiles: string[];
   currentConvention?: AiCommitConventionHint;
-  locale: 'zh-CN';
+  locale: "zh-CN";
 }
 
 export interface AiTeamRulesRecommendation {
@@ -148,13 +148,13 @@ export interface AiTeamRulesRecommendation {
 }
 
 export type AiConflictRecommendation =
-  | 'acceptWorking'
-  | 'acceptMine'
-  | 'acceptTheirs'
-  | 'manualMerge'
-  | 'noSafeSuggestion';
+  | "acceptWorking"
+  | "acceptMine"
+  | "acceptTheirs"
+  | "manualMerge"
+  | "noSafeSuggestion";
 
-export type AiConfidence = 'low' | 'medium' | 'high';
+export type AiConfidence = "low" | "medium" | "high";
 
 export interface AiConflictFileContent {
   path?: string;
@@ -189,8 +189,14 @@ export interface AiProvider {
   testConnection(): Promise<void>;
   listModels(): Promise<AiModelInfo[]>;
   selectFiles(request: AiSelectionRequest): Promise<AiSelectionResult>;
-  generateCommitMessage(request: AiCommitMessageRequest): Promise<AiCommitMessageResult>;
-  suggestCommitSplits(request: AiCommitSplitRequest): Promise<AiCommitSplitResult>;
-  recommendTeamRules(request: AiTeamRulesRequest): Promise<AiTeamRulesRecommendation>;
+  generateCommitMessage(
+    request: AiCommitMessageRequest,
+  ): Promise<AiCommitMessageResult>;
+  suggestCommitSplits(
+    request: AiCommitSplitRequest,
+  ): Promise<AiCommitSplitResult>;
+  recommendTeamRules(
+    request: AiTeamRulesRequest,
+  ): Promise<AiTeamRulesRecommendation>;
   adviseConflict(request: AiConflictRequest): Promise<AiConflictAdvice>;
 }

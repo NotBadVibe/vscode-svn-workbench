@@ -1,11 +1,18 @@
-import * as vscode from 'vscode';
-import { WebviewAssets } from './WebviewAssetManifest';
+import { randomBytes } from "node:crypto";
+import * as vscode from "vscode";
+import { WebviewAssets } from "./WebviewAssetManifest";
 
-export function renderWebviewShell(webview: vscode.Webview, assets: WebviewAssets): string {
+export function renderWebviewShell(
+  webview: vscode.Webview,
+  assets: WebviewAssets,
+): string {
   const nonce = createNonce();
   const styles = assets.styleUris
-    .map((uri) => `<link rel="stylesheet" href="${escapeAttribute(uri.toString())}">`)
-    .join('\n');
+    .map(
+      (uri) =>
+        `<link rel="stylesheet" href="${escapeAttribute(uri.toString())}">`,
+    )
+    .join("\n");
 
   return `<!doctype html>
 <html lang="zh-CN">
@@ -33,23 +40,18 @@ export function renderWebviewBuildError(message: string): string {
 }
 
 function createNonce(): string {
-  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-  let value = '';
-  for (let index = 0; index < 32; index += 1) {
-    value += alphabet.charAt(Math.floor(Math.random() * alphabet.length));
-  }
-  return value;
+  return randomBytes(32).toString("base64url");
 }
 
 function escapeAttribute(value: string): string {
-  return escapeHtml(value).replace(/`/g, '&#96;');
+  return escapeHtml(value).replace(/`/g, "&#96;");
 }
 
 function escapeHtml(value: string): string {
   return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }

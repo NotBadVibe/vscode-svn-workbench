@@ -70,15 +70,18 @@ AI 是可选增强能力。未配置、调用失败或结果无效时，核心 S
 
 ## 开发与验收
 
+开发环境固定使用 Node.js 22 与 npm 10；执行 `nvm use` 会读取仓库中的 `.nvmrc`。
+
 ```bash
 npm ci
+npm run check
 npm run verify
 npm run prepare:manual-test-env
 npm run package:vsix
 npm run validate:vsix-install
 ```
 
-`npm run verify` 会依次执行文档映射、静态检查、覆盖率门禁、Webview/视觉/无障碍验收、性能预算和 Extension Host/真实 SVN 验收。普通截图与性能证据写入 `.validation/evidence/v<版本>/<运行编号>/`；只有 `npm run evidence:release` 会向对应版本发布目录写入不可覆盖的证据运行。
+`npm run check` 同时执行 ESLint、Prettier、TypeScript 与 Svelte 校验。`npm run verify` 会依次执行文档映射、高危依赖审计、静态检查、覆盖率门禁、Webview/视觉/无障碍验收、性能预算和 Extension Host/真实 SVN 验收。普通截图与性能证据写入 `.validation/evidence/v<版本>/<运行编号>/`；只有 `npm run evidence:release` 会向对应版本发布目录写入不可覆盖的证据运行。
 
 详细架构、逐项验收方法、功能状态和候选版本结论见项目中的 `docs/README.md`。
 

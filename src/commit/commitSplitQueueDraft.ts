@@ -1,11 +1,11 @@
-import * as path from 'node:path';
-import { OperationScope, OperationScopeRoot } from '../scope/operationScope';
+import * as path from "node:path";
+import { OperationScope, OperationScopeRoot } from "../scope/operationScope";
 import {
   CommitSplitQueueItem,
   CommitSplitQueueItemStatus,
   CommitSplitQueuePlanFilter,
-  CommitSplitQueueViewFilter
-} from './commitSplitQueue';
+  CommitSplitQueueViewFilter,
+} from "./commitSplitQueue";
 
 export const COMMIT_SPLIT_QUEUE_DRAFT_VERSION = 1;
 
@@ -28,22 +28,26 @@ export interface CommitSplitQueueDraft {
   savedAt: number;
 }
 
-export function getCommitSplitQueueDraftStorageKey(scope: OperationScope): string {
-  return `svnWorkbench.commitSplitQueueDraft.${Buffer.from(buildCommitSplitQueueDraftScopeKey(scope)).toString('base64url')}`;
+export function getCommitSplitQueueDraftStorageKey(
+  scope: OperationScope,
+): string {
+  return `svnWorkbench.commitSplitQueueDraft.${Buffer.from(buildCommitSplitQueueDraftScopeKey(scope)).toString("base64url")}`;
 }
 
-export function buildCommitSplitQueueDraftScopeKey(scope: OperationScope): string {
+export function buildCommitSplitQueueDraftScopeKey(
+  scope: OperationScope,
+): string {
   const roots = scope.roots
     .map((root) => `${normalizeKeyPathSegment(root.relativePath)}:${root.kind}`)
     .sort()
-    .join('|');
+    .join("|");
   return `${normalizeKeyPath(scope.repositoryRoot)}::${roots}`;
 }
 
 export function createCommitSplitQueueDraft(
   scope: OperationScope,
   payload: CommitSplitQueueDraftPayload | undefined,
-  now = Date.now()
+  now = Date.now(),
 ): CommitSplitQueueDraft | undefined {
   const queue = sanitizeCommitSplitQueueDraftItems(payload?.queue ?? []);
   if (queue.length === 0) {
@@ -56,16 +60,20 @@ export function createCommitSplitQueueDraft(
     repositoryRoot: path.resolve(scope.repositoryRoot),
     roots: scope.roots.map((root) => ({ ...root })),
     queue,
-    splitQueueFilter: sanitizeCommitSplitQueueViewFilter(payload?.splitQueueFilter),
-    splitQueuePlanFilter: sanitizeCommitSplitQueuePlanFilter(payload?.splitQueuePlanFilter),
+    splitQueueFilter: sanitizeCommitSplitQueueViewFilter(
+      payload?.splitQueueFilter,
+    ),
+    splitQueuePlanFilter: sanitizeCommitSplitQueuePlanFilter(
+      payload?.splitQueuePlanFilter,
+    ),
     hideCompletedSplitQueue: Boolean(payload?.hideCompletedSplitQueue),
-    savedAt: now
+    savedAt: now,
   };
 }
 
 export function restoreCommitSplitQueueDraft(
   draft: CommitSplitQueueDraft | undefined,
-  scope: OperationScope
+  scope: OperationScope,
 ): CommitSplitQueueDraft | undefined {
   if (!draft || draft.version !== COMMIT_SPLIT_QUEUE_DRAFT_VERSION) {
     return undefined;
@@ -83,60 +91,88 @@ export function restoreCommitSplitQueueDraft(
   return {
     ...draft,
     queue,
-    splitQueueFilter: sanitizeCommitSplitQueueViewFilter(draft.splitQueueFilter),
-    splitQueuePlanFilter: sanitizeCommitSplitQueuePlanFilter(draft.splitQueuePlanFilter),
-    hideCompletedSplitQueue: Boolean(draft.hideCompletedSplitQueue)
+    splitQueueFilter: sanitizeCommitSplitQueueViewFilter(
+      draft.splitQueueFilter,
+    ),
+    splitQueuePlanFilter: sanitizeCommitSplitQueuePlanFilter(
+      draft.splitQueuePlanFilter,
+    ),
+    hideCompletedSplitQueue: Boolean(draft.hideCompletedSplitQueue),
   };
 }
 
-export function sanitizeCommitSplitQueueDraftItems(queue: CommitSplitQueueItem[]): CommitSplitQueueItem[] {
+export function sanitizeCommitSplitQueueDraftItems(
+  queue: CommitSplitQueueItem[],
+): CommitSplitQueueItem[] {
   return queue
-    .filter((item) => item.status !== 'completed')
-    .filter((item) => Array.isArray(item.suggestion?.paths) && item.suggestion.paths.length > 0)
+    .filter((item) => item.status !== "completed")
+    .filter(
+      (item) =>
+        Array.isArray(item.suggestion?.paths) &&
+        item.suggestion.paths.length > 0,
+    )
     .map((item) => ({
       ...item,
       status: sanitizeRestoredStatus(item.status),
-      planStatus: 'notPreviewed' as const,
+      planStatus: "notPreviewed" as const,
       lastPreviewIssueCount: undefined,
       lastPreviewIssues: undefined,
       revision: undefined,
       completedAt: undefined,
-      lastSubmissionError: item.status === 'submitting'
-        ? '提交页关闭前仍在提交中，请重新预览后确认状态。'
-        : item.lastSubmissionError
+      lastSubmissionError:
+        item.status === "submitting"
+          ? "提交页关闭前仍在提交中，请重新预览后确认状态。"
+          : item.lastSubmissionError,
     }));
 }
 
-export function sanitizeCommitSplitQueueViewFilter(value: unknown): CommitSplitQueueViewFilter {
-  return ['all', 'pending', 'applied', 'submitting', 'completed', 'failed'].includes(String(value))
-    ? String(value) as CommitSplitQueueViewFilter
-    : 'all';
+export function sanitizeCommitSplitQueueViewFilter(
+  value: unknown,
+): CommitSplitQueueViewFilter {
+  return [
+    "all",
+    "pending",
+    "applied",
+    "submitting",
+    "completed",
+    "failed",
+  ].includes(String(value))
+    ? (String(value) as CommitSplitQueueViewFilter)
+    : "all";
 }
 
-export function sanitizeCommitSplitQueuePlanFilter(value: unknown): CommitSplitQueuePlanFilter {
-  return ['all', 'notPreviewed', 'ready', 'blocked'].includes(String(value))
-    ? String(value) as CommitSplitQueuePlanFilter
-    : 'all';
+export function sanitizeCommitSplitQueuePlanFilter(
+  value: unknown,
+): CommitSplitQueuePlanFilter {
+  return ["all", "notPreviewed", "ready", "blocked"].includes(String(value))
+    ? (String(value) as CommitSplitQueuePlanFilter)
+    : "all";
 }
 
-function sanitizeRestoredStatus(status: CommitSplitQueueItemStatus): CommitSplitQueueItemStatus {
-  if (status === 'failed') {
-    return 'failed';
+function sanitizeRestoredStatus(
+  status: CommitSplitQueueItemStatus,
+): CommitSplitQueueItemStatus {
+  if (status === "failed") {
+    return "failed";
   }
 
-  if (status === 'submitting') {
-    return 'failed';
+  if (status === "submitting") {
+    return "failed";
   }
 
-  return 'pending';
+  return "pending";
 }
 
 function normalizeKeyPath(value: string): string {
-  const normalized = path.resolve(value).replace(/\\/g, '/');
-  return process.platform === 'win32' ? normalized.toLocaleLowerCase() : normalized;
+  const normalized = path.resolve(value).replace(/\\/g, "/");
+  return process.platform === "win32"
+    ? normalized.toLocaleLowerCase()
+    : normalized;
 }
 
 function normalizeKeyPathSegment(value: string): string {
-  const normalized = value.replace(/\\/g, '/');
-  return process.platform === 'win32' ? normalized.toLocaleLowerCase() : normalized;
+  const normalized = value.replace(/\\/g, "/");
+  return process.platform === "win32"
+    ? normalized.toLocaleLowerCase()
+    : normalized;
 }

@@ -1,7 +1,7 @@
-import { AiCommitSplitSuggestion } from '../ai/aiProvider';
-import { OperationScope } from '../scope/operationScope';
-import { CommitCandidate } from './commitCandidateCollector';
-import { buildCommitPlanPreview, CommitPlanPreview } from './commitPlanBuilder';
+import { AiCommitSplitSuggestion } from "../ai/aiProvider";
+import { OperationScope } from "../scope/operationScope";
+import { CommitCandidate } from "./commitCandidateCollector";
+import { buildCommitPlanPreview, CommitPlanPreview } from "./commitPlanBuilder";
 
 export interface CommitSplitPlanPreview {
   splitId: string;
@@ -15,7 +15,7 @@ export interface CommitSplitPlanPreview {
 export function buildCommitSplitPlanPreview(
   scope: OperationScope,
   candidates: CommitCandidate[],
-  split: AiCommitSplitSuggestion
+  split: AiCommitSplitSuggestion,
 ): CommitSplitPlanPreview {
   const preview = buildCommitPlanPreview(scope, candidates, split.paths);
   return {
@@ -25,8 +25,10 @@ export function buildCommitSplitPlanPreview(
     message: split.message,
     risks: [
       ...split.risks,
-      ...preview.issues.map((issue) => issue.path ? `${issue.path}: ${issue.reason}` : issue.reason)
+      ...preview.issues.map((issue) =>
+        issue.path ? `${issue.path}: ${issue.reason}` : issue.reason,
+      ),
     ],
-    preview
+    preview,
   };
 }

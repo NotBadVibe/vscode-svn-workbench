@@ -1,146 +1,151 @@
 export const WORKBENCH_PROTOCOL_VERSION = 1 as const;
 
 export type WorkbenchModuleId =
-  | 'changes'
-  | 'commit'
-  | 'diff'
-  | 'history'
-  | 'conflicts'
-  | 'changelists'
-  | 'ai-review'
-  | 'impact'
-  | 'agent'
-  | 'repository'
-  | 'settings'
-  | 'diagnostics';
+  | "changes"
+  | "commit"
+  | "diff"
+  | "history"
+  | "conflicts"
+  | "changelists"
+  | "ai-review"
+  | "impact"
+  | "agent"
+  | "repository"
+  | "settings"
+  | "diagnostics";
 
 export type WorkbenchTaskId =
-  | 'changes/overview'
-  | 'commit/compose'
-  | 'diff/working'
-  | 'history/revisions'
-  | 'conflicts/resolve'
-  | 'changelists/manage'
-  | 'ai-review/review'
-  | 'impact/analyze'
-  | 'agent/plan'
-  | 'repository/update'
-  | 'repository/recovery'
-  | 'repository/browse'
-  | 'repository/branch'
-  | 'repository/tag'
-  | 'repository/switch'
-  | 'repository/relocate'
-  | 'repository/merge'
-  | 'repository/patch-shelf'
-  | 'repository/release-notes'
-  | 'repository/properties'
-  | 'settings/ai'
-  | 'settings/team'
-  | 'settings/svn'
-  | 'diagnostics/environment'
-  | 'diagnostics/acceptance';
+  | "changes/overview"
+  | "commit/compose"
+  | "diff/working"
+  | "history/revisions"
+  | "conflicts/resolve"
+  | "changelists/manage"
+  | "ai-review/review"
+  | "impact/analyze"
+  | "agent/plan"
+  | "repository/update"
+  | "repository/recovery"
+  | "repository/browse"
+  | "repository/branch"
+  | "repository/tag"
+  | "repository/switch"
+  | "repository/relocate"
+  | "repository/merge"
+  | "repository/patch-shelf"
+  | "repository/release-notes"
+  | "repository/properties"
+  | "settings/ai"
+  | "settings/team"
+  | "settings/svn"
+  | "diagnostics/environment"
+  | "diagnostics/acceptance";
 
 const defaultTasks: Record<WorkbenchModuleId, WorkbenchTaskId> = {
-  changes: 'changes/overview',
-  commit: 'commit/compose',
-  diff: 'diff/working',
-  history: 'history/revisions',
-  conflicts: 'conflicts/resolve',
-  changelists: 'changelists/manage',
-  'ai-review': 'ai-review/review',
-  impact: 'impact/analyze',
-  agent: 'agent/plan',
-  repository: 'repository/update',
-  settings: 'settings/ai',
-  diagnostics: 'diagnostics/environment'
+  changes: "changes/overview",
+  commit: "commit/compose",
+  diff: "diff/working",
+  history: "history/revisions",
+  conflicts: "conflicts/resolve",
+  changelists: "changelists/manage",
+  "ai-review": "ai-review/review",
+  impact: "impact/analyze",
+  agent: "agent/plan",
+  repository: "repository/update",
+  settings: "settings/ai",
+  diagnostics: "diagnostics/environment",
 };
 
 const taskModules: Record<WorkbenchTaskId, WorkbenchModuleId> = {
-  'changes/overview': 'changes',
-  'commit/compose': 'commit',
-  'diff/working': 'diff',
-  'history/revisions': 'history',
-  'conflicts/resolve': 'conflicts',
-  'changelists/manage': 'changelists',
-  'ai-review/review': 'ai-review',
-  'impact/analyze': 'impact',
-  'agent/plan': 'agent',
-  'repository/update': 'repository',
-  'repository/recovery': 'repository',
-  'repository/browse': 'repository',
-  'repository/branch': 'repository',
-  'repository/tag': 'repository',
-  'repository/switch': 'repository',
-  'repository/relocate': 'repository',
-  'repository/merge': 'repository',
-  'repository/patch-shelf': 'repository',
-  'repository/release-notes': 'repository',
-  'repository/properties': 'repository',
-  'settings/ai': 'settings',
-  'settings/team': 'settings',
-  'settings/svn': 'settings',
-  'diagnostics/environment': 'diagnostics',
-  'diagnostics/acceptance': 'diagnostics'
+  "changes/overview": "changes",
+  "commit/compose": "commit",
+  "diff/working": "diff",
+  "history/revisions": "history",
+  "conflicts/resolve": "conflicts",
+  "changelists/manage": "changelists",
+  "ai-review/review": "ai-review",
+  "impact/analyze": "impact",
+  "agent/plan": "agent",
+  "repository/update": "repository",
+  "repository/recovery": "repository",
+  "repository/browse": "repository",
+  "repository/branch": "repository",
+  "repository/tag": "repository",
+  "repository/switch": "repository",
+  "repository/relocate": "repository",
+  "repository/merge": "repository",
+  "repository/patch-shelf": "repository",
+  "repository/release-notes": "repository",
+  "repository/properties": "repository",
+  "settings/ai": "settings",
+  "settings/team": "settings",
+  "settings/svn": "settings",
+  "diagnostics/environment": "diagnostics",
+  "diagnostics/acceptance": "diagnostics",
 };
 
-export function defaultWorkbenchTask(moduleId: WorkbenchModuleId): WorkbenchTaskId {
+export function defaultWorkbenchTask(
+  moduleId: WorkbenchModuleId,
+): WorkbenchTaskId {
   return defaultTasks[moduleId];
 }
 
 export function isWorkbenchTaskId(value: unknown): value is WorkbenchTaskId {
-  return typeof value === 'string' && value in taskModules;
+  return typeof value === "string" && value in taskModules;
 }
 
-export function isWorkbenchTaskForModule(taskId: unknown, moduleId: WorkbenchModuleId): taskId is WorkbenchTaskId {
+export function isWorkbenchTaskForModule(
+  taskId: unknown,
+  moduleId: WorkbenchModuleId,
+): taskId is WorkbenchTaskId {
   return isWorkbenchTaskId(taskId) && taskModules[taskId] === moduleId;
 }
 
 export type WorkbenchFileStatus =
-  | 'normal'
-  | 'modified'
-  | 'added'
-  | 'deleted'
-  | 'missing'
-  | 'unversioned'
-  | 'conflicted'
-  | 'ignored'
-  | 'external'
-  | 'obstructed'
-  | 'replaced'
-  | 'incomplete'
-  | 'unknown';
+  | "normal"
+  | "modified"
+  | "added"
+  | "deleted"
+  | "missing"
+  | "unversioned"
+  | "conflicted"
+  | "ignored"
+  | "external"
+  | "obstructed"
+  | "replaced"
+  | "incomplete"
+  | "unknown";
 
 export interface WorkbenchScopeView {
   repositoryName: string;
   roots: Array<{
-    kind: 'file' | 'folder';
+    kind: "file" | "folder";
     relativePath: string;
   }>;
-  source: 'explorer' | 'editor' | 'scm' | 'commandPalette' | 'internal';
+  source: "explorer" | "editor" | "scm" | "commandPalette" | "internal";
 }
 
 export interface WorkbenchFileView {
   relativePath: string;
   status: WorkbenchFileStatus;
   repositoryName?: string;
-  ownership?: 'current' | 'external' | 'nested';
+  ownership?: "current" | "external" | "nested";
   propStatus?: WorkbenchFileStatus;
   fileType?: string;
-  selection?: 'selected' | 'needsReview' | 'excluded' | 'blocked';
+  selection?: "selected" | "needsReview" | "excluded" | "blocked";
   reason?: string;
 }
 
 export interface ChangesSnapshot {
-  kind: 'changes';
+  kind: "changes";
   commitDraft: string;
   files: WorkbenchFileView[];
   summary: Record<string, number>;
   refreshedAt: string;
   operationPreview?: {
     token: string;
-    operation: 'add' | 'remove' | 'revert' | 'lock' | 'unlock' | 'ignore';
-    ignoreMode?: 'directory' | 'repository';
+    operation: "add" | "remove" | "revert" | "lock" | "unlock" | "ignore";
+    ignoreMode?: "directory" | "repository";
     paths: string[];
     command: string;
     consequences: string[];
@@ -153,7 +158,7 @@ export interface ChangesSnapshot {
 }
 
 export interface DiffSnapshot {
-  kind: 'diff';
+  kind: "diff";
   relativePath: string;
   original: string;
   modified: string;
@@ -177,7 +182,7 @@ export interface CommitPlanView {
 }
 
 export interface CommitSnapshot {
-  kind: 'commit';
+  kind: "commit";
   files: WorkbenchFileView[];
   summary: {
     total: number;
@@ -193,13 +198,13 @@ export interface CommitSnapshot {
   templates: Array<{ id: string; label: string; body: string }>;
   preview?: CommitPlanView;
   ai?: {
-    source: 'local-rule' | 'configured-model' | 'local-rule-fallback';
+    source: "local-rule" | "configured-model" | "local-rule-fallback";
     summary: string;
     warnings: string[];
     fallbackReason?: string;
   };
   aiPrivacy: Array<{
-    scenario: 'selection' | 'message';
+    scenario: "selection" | "message";
     model: string;
     fileLimit: number;
     data: string;
@@ -222,13 +227,18 @@ export interface HistoryRevisionView {
 }
 
 export interface HistorySnapshot {
-  kind: 'history';
+  kind: "history";
   revisions: HistoryRevisionView[];
   selectedRevision?: string;
   compareRevisions: string[];
   limit: number;
   fileActionsAvailable: boolean;
-  blame?: Array<{ line: number; revision: string; author: string; content: string }>;
+  blame?: Array<{
+    line: number;
+    revision: string;
+    author: string;
+    content: string;
+  }>;
   restorePreview?: {
     token: string;
     revision: string;
@@ -247,7 +257,7 @@ export interface ConflictFileContentView {
 }
 
 export interface ConflictSnapshot {
-  kind: 'conflicts';
+  kind: "conflicts";
   conflicts: Array<{
     relativePath: string;
     operation?: string;
@@ -275,12 +285,17 @@ export interface ConflictSnapshot {
     };
   };
   advice?: {
-    recommendation: 'acceptWorking' | 'acceptMine' | 'acceptTheirs' | 'manualMerge' | 'noSafeSuggestion';
-    confidence: 'low' | 'medium' | 'high';
+    recommendation:
+      | "acceptWorking"
+      | "acceptMine"
+      | "acceptTheirs"
+      | "manualMerge"
+      | "noSafeSuggestion";
+    confidence: "low" | "medium" | "high";
     summary: string;
     risks: string[];
     steps: string[];
-    source: 'local-rule' | 'configured-model' | 'local-rule-fallback';
+    source: "local-rule" | "configured-model" | "local-rule-fallback";
     fallbackReason?: string;
   };
   resolvePreview?: {
@@ -290,19 +305,31 @@ export interface ConflictSnapshot {
     canResolve: boolean;
     issues: string[];
   };
-  aiPrivacy?: { model: string; characters: number; maxCharacters: number; data: string; historyIncluded: false };
+  aiPrivacy?: {
+    model: string;
+    characters: number;
+    maxCharacters: number;
+    data: string;
+    historyIncluded: false;
+  };
 }
 
 export interface SettingsSnapshot {
-  kind: 'settings';
+  kind: "settings";
   svnSecurity: {
     authenticationActive: boolean;
     hasStoredAuthentication: boolean;
-    passwordTransport: 'stdin';
-    certificateTrust: 'explicit-svn-cache';
+    passwordTransport: "stdin";
+    certificateTrust: "explicit-svn-cache";
   };
   ai: {
-    presets: Array<{ id: string; label: string; baseUrl: string; model: string; description: string }>;
+    presets: Array<{
+      id: string;
+      label: string;
+      baseUrl: string;
+      model: string;
+      description: string;
+    }>;
     scenarios: Array<{ id: string; label: string; description: string }>;
     providerPreset: string;
     baseUrl: string;
@@ -312,7 +339,7 @@ export interface SettingsSnapshot {
     includeCommitHistory: boolean;
     historyLimit: number;
     models: Array<{ id: string; owner?: string }>;
-    feedback?: { tone: 'success' | 'warning' | 'error'; message: string };
+    feedback?: { tone: "success" | "warning" | "error"; message: string };
   };
   team: {
     configPath: string;
@@ -325,7 +352,7 @@ export interface SettingsSnapshot {
     allowedPrefixesText: string;
     warnings: string[];
     memory: {
-      source: '当前仓库成功提交';
+      source: "当前仓库成功提交";
       count: number;
       maxEntries: number;
       externallyShared: false;
@@ -335,29 +362,40 @@ export interface SettingsSnapshot {
       summary: string;
       reasons: string[];
       warnings: string[];
-      confidence: 'low' | 'medium' | 'high';
-      source: 'local-rule' | 'configured-model' | 'local-rule-fallback';
+      confidence: "low" | "medium" | "high";
+      source: "local-rule" | "configured-model" | "local-rule-fallback";
       fallbackReason?: string;
     };
   };
 }
 
 export interface DiagnosticsSnapshot {
-  kind: 'diagnostics';
-  status: 'pass' | 'warn' | 'fail';
+  kind: "diagnostics";
+  status: "pass" | "warn" | "fail";
   checks: Array<{
     id: string;
     label: string;
-    status: 'pass' | 'warn' | 'fail';
+    status: "pass" | "warn" | "fail";
     detail: string;
     action?: string;
   }>;
   acceptance: {
-    summary: { sections: number; items: number; steps: number; expectedResults: number };
+    summary: {
+      sections: number;
+      items: number;
+      steps: number;
+      expectedResults: number;
+    };
     sections: Array<{
       id: string;
       title: string;
-      items: Array<{ id: string; title: string; description: string; steps: string[]; expected: string[] }>;
+      items: Array<{
+        id: string;
+        title: string;
+        description: string;
+        steps: string[];
+        expected: string[];
+      }>;
     }>;
   };
   generatedAt: string;
@@ -365,9 +403,9 @@ export interface DiagnosticsSnapshot {
 }
 
 export interface RepositorySnapshot {
-  kind: 'repository';
+  kind: "repository";
   recovery?: {
-    category: 'working-copy-locked' | 'interrupted';
+    category: "working-copy-locked" | "interrupted";
     title: string;
     detectedAt: string;
     steps: string[];
@@ -385,7 +423,7 @@ export interface RepositorySnapshot {
     localCount: number;
     remoteCount?: number;
     checkedRevision?: string;
-    risk: 'low' | 'medium' | 'high';
+    risk: "low" | "medium" | "high";
     overlapPaths: string[];
     messages: string[];
     commands: string[];
@@ -429,12 +467,26 @@ export interface RepositorySnapshot {
     browser?: {
       url: string;
       parentUrl?: string;
-      entries: Array<{ name: string; kind: 'file' | 'dir'; size?: number; revision?: string; author?: string; date?: string }>;
+      entries: Array<{
+        name: string;
+        kind: "file" | "dir";
+        size?: number;
+        revision?: string;
+        author?: string;
+        date?: string;
+      }>;
       error?: string;
     };
     preview?: {
       token: string;
-      operation: 'branch' | 'tag' | 'switch' | 'relocate' | 'merge' | 'apply-patch' | 'shelf';
+      operation:
+        | "branch"
+        | "tag"
+        | "switch"
+        | "relocate"
+        | "merge"
+        | "apply-patch"
+        | "shelf";
       title: string;
       commands: string[];
       details: string[];
@@ -442,48 +494,70 @@ export interface RepositorySnapshot {
       canExecute: boolean;
       destructive: boolean;
     };
-    releaseNotes?: { markdown: string; count: number; fromRevision?: string; toRevision?: string };
+    releaseNotes?: {
+      markdown: string;
+      count: number;
+      fromRevision?: string;
+      toRevision?: string;
+    };
     feedback?: string;
   };
 }
 
 export interface AiReviewSnapshot {
-  kind: 'ai-review';
-  state: 'ready' | 'empty' | 'stale';
-  source: 'local-rule' | 'configured-model' | 'local-rule-fallback';
+  kind: "ai-review";
+  state: "ready" | "empty" | "stale";
+  source: "local-rule" | "configured-model" | "local-rule-fallback";
   generatedAt: string;
-  privacy: { files: number; characters: number; maxCharacters: number; historyIncluded: boolean; model: string };
+  privacy: {
+    files: number;
+    characters: number;
+    maxCharacters: number;
+    historyIncluded: boolean;
+    model: string;
+  };
   summary: { critical: number; warning: number; note: number };
   findings: Array<{
     id: string;
-    severity: 'critical' | 'warning' | 'note';
-    category: 'security' | 'debug' | 'generated' | 'quality' | 'testing';
+    severity: "critical" | "warning" | "note";
+    category: "security" | "debug" | "generated" | "quality" | "testing";
     relativePath?: string;
     line?: number;
     title: string;
     evidence: string;
     recommendation: string;
-    confidence: 'low' | 'medium' | 'high';
+    confidence: "low" | "medium" | "high";
   }>;
   warnings: string[];
 }
 
 export interface ImpactSnapshot {
-  kind: 'impact';
+  kind: "impact";
   generatedAt: string;
-  source: 'local-rule' | 'configured-model' | 'local-rule-fallback';
+  source: "local-rule" | "configured-model" | "local-rule-fallback";
   changedFiles: number;
-  areas: Array<{ id: string; title: string; detail: string; paths: string[]; risk: 'low' | 'medium' | 'high' }>;
+  areas: Array<{
+    id: string;
+    title: string;
+    detail: string;
+    paths: string[];
+    risk: "low" | "medium" | "high";
+  }>;
   tests: Array<{ title: string; reason: string; command?: string }>;
   observations: string[];
   warnings: string[];
 }
 
 export interface ChangelistsSnapshot {
-  kind: 'changelists';
-  source: 'local-rule' | 'configured-model' | 'local-rule-fallback';
+  kind: "changelists";
+  source: "local-rule" | "configured-model" | "local-rule-fallback";
   fallbackReason?: string;
-  aiPrivacy: { model: string; fileLimit: number; data: string; historyIncluded: false };
+  aiPrivacy: {
+    model: string;
+    fileLimit: number;
+    data: string;
+    historyIncluded: false;
+  };
   groups: Array<{ name: string; paths: string[] }>;
   unassigned: WorkbenchFileView[];
   suggestions: Array<{
@@ -509,20 +583,20 @@ export interface ChangelistsSnapshot {
 }
 
 export interface AgentSnapshot {
-  kind: 'agent';
-  status: 'idle' | 'planned' | 'running' | 'completed' | 'cancelled' | 'failed';
+  kind: "agent";
+  status: "idle" | "planned" | "running" | "completed" | "cancelled" | "failed";
   objective: string;
   guardrails: string[];
   steps: Array<{
     id: string;
     title: string;
     detail: string;
-    capability: 'svn-read' | 'local-analysis';
+    capability: "svn-read" | "local-analysis";
     command?: string;
     scope: string;
     risk: string;
     reversibility: string;
-    status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+    status: "pending" | "running" | "completed" | "failed" | "cancelled";
     output?: string;
     requiresApproval: boolean;
   }>;
@@ -556,219 +630,266 @@ export interface MessageEnvelope<TType extends string, TPayload> {
 }
 
 export type HostToWebviewMessage =
-  | MessageEnvelope<'app/initialize', {
-      moduleId: WorkbenchModuleId;
-      scope: WorkbenchScopeView;
-      snapshot?: WorkbenchModuleSnapshot;
-    }>
-  | MessageEnvelope<'module/loading', { moduleId: WorkbenchModuleId }>
-  | MessageEnvelope<'module/snapshot', { snapshot: WorkbenchModuleSnapshot }>
-  | MessageEnvelope<'operation/error', {
-      title: string;
-      message: string;
-      recoverable: boolean;
-      category?: 'authentication' | 'certificate' | 'network' | 'working-copy-locked' | 'interrupted' | 'cli-missing' | 'generic';
-      categoryLabel?: string;
-      guidance?: string[];
-      certificate?: {
-        host?: string;
-        fingerprint?: string;
-        issuer?: string;
-        validFrom?: string;
-        validUntil?: string;
-        failures: Array<'unknown-ca' | 'cn-mismatch' | 'expired' | 'not-yet-valid' | 'other'>;
-        canTrust: boolean;
-      };
-      network?: {
-        kind: 'dns' | 'proxy' | 'offline' | 'timeout' | 'connection-refused' | 'unknown';
-      };
-      recovery?: {
-        moduleId: 'repository';
-      };
-    }>
-  | MessageEnvelope<'operation/progress', { title: string; message?: string; stage?: string; scope?: string; percent?: number; cancellable?: boolean; outputAvailable?: boolean }>
-  | MessageEnvelope<'operation/result', { title: string; message: string }>
-  | MessageEnvelope<'operation/cancelled', { title: string; message: string }>
-  | MessageEnvelope<'scope/changed', { scope: WorkbenchScopeView }>;
+  | MessageEnvelope<
+      "app/initialize",
+      {
+        moduleId: WorkbenchModuleId;
+        scope: WorkbenchScopeView;
+        snapshot?: WorkbenchModuleSnapshot;
+      }
+    >
+  | MessageEnvelope<"module/loading", { moduleId: WorkbenchModuleId }>
+  | MessageEnvelope<"module/snapshot", { snapshot: WorkbenchModuleSnapshot }>
+  | MessageEnvelope<
+      "operation/error",
+      {
+        title: string;
+        message: string;
+        recoverable: boolean;
+        category?:
+          | "authentication"
+          | "certificate"
+          | "network"
+          | "working-copy-locked"
+          | "interrupted"
+          | "cli-missing"
+          | "generic";
+        categoryLabel?: string;
+        guidance?: string[];
+        certificate?: {
+          host?: string;
+          fingerprint?: string;
+          issuer?: string;
+          validFrom?: string;
+          validUntil?: string;
+          failures: Array<
+            "unknown-ca" | "cn-mismatch" | "expired" | "not-yet-valid" | "other"
+          >;
+          canTrust: boolean;
+        };
+        network?: {
+          kind:
+            | "dns"
+            | "proxy"
+            | "offline"
+            | "timeout"
+            | "connection-refused"
+            | "unknown";
+        };
+        recovery?: {
+          moduleId: "repository";
+        };
+      }
+    >
+  | MessageEnvelope<
+      "operation/progress",
+      {
+        title: string;
+        message?: string;
+        stage?: string;
+        scope?: string;
+        percent?: number;
+        cancellable?: boolean;
+        outputAvailable?: boolean;
+      }
+    >
+  | MessageEnvelope<"operation/result", { title: string; message: string }>
+  | MessageEnvelope<"operation/cancelled", { title: string; message: string }>
+  | MessageEnvelope<"scope/changed", { scope: WorkbenchScopeView }>;
 
 export type WebviewAction =
-  | 'refresh'
-  | 'open-module'
-  | 'open-diff'
-  | 'open-file'
-  | 'copy-text'
-  | 'security/configure-authentication'
-  | 'security/clear-authentication'
-  | 'security/review-certificate'
-  | 'security/open-proxy-settings'
-  | 'commit/update-draft'
-  | 'commit/update-selection'
-  | 'commit/ai-select'
-  | 'commit/apply-template'
-  | 'commit/generate-message'
-  | 'commit/preview'
-  | 'commit/execute'
-  | 'history/select'
-  | 'history/compare'
-  | 'history/blame'
-  | 'history/preview-restore'
-  | 'history/execute-restore'
-  | 'conflict/select'
-  | 'conflict/advise'
-  | 'conflict/save-working'
-  | 'conflict/preview-resolve'
-  | 'conflict/resolve'
-  | 'settings/save-ai'
-  | 'settings/test-ai'
-  | 'settings/list-models'
-  | 'settings/save-team'
-  | 'settings/recommend-team'
-  | 'settings/open-team-file'
-  | 'settings/clear-team-memory'
-  | 'diagnostics/run'
-  | 'diagnostics/show-output'
-  | 'repository/preview-update'
-  | 'repository/execute-update'
-  | 'repository/preview-property'
-  | 'repository/execute-property'
-  | 'repository/preview-cleanup'
-  | 'repository/execute-cleanup'
-  | 'repository/browse'
-  | 'repository/preview-advanced'
-  | 'repository/execute-advanced'
-  | 'repository/export-patch'
-  | 'repository/select-patch'
-  | 'repository/generate-release-notes'
-  | 'ai-review/run'
-  | 'impact/run'
-  | 'changelist/suggest'
-  | 'changelist/preview-apply'
-  | 'changelist/execute-apply'
-  | 'agent/create-plan'
-  | 'agent/approve-step'
-  | 'agent/cancel'
-  | 'changes/preview-operation'
-  | 'changes/execute-operation'
-  | 'changes/copy-url'
-  | 'changes/show-in-repository'
-  | 'operation/cancel';
+  | "refresh"
+  | "open-module"
+  | "open-diff"
+  | "open-file"
+  | "copy-text"
+  | "security/configure-authentication"
+  | "security/clear-authentication"
+  | "security/review-certificate"
+  | "security/open-proxy-settings"
+  | "commit/update-draft"
+  | "commit/update-selection"
+  | "commit/ai-select"
+  | "commit/apply-template"
+  | "commit/generate-message"
+  | "commit/preview"
+  | "commit/execute"
+  | "history/select"
+  | "history/compare"
+  | "history/blame"
+  | "history/preview-restore"
+  | "history/execute-restore"
+  | "conflict/select"
+  | "conflict/advise"
+  | "conflict/save-working"
+  | "conflict/preview-resolve"
+  | "conflict/resolve"
+  | "settings/save-ai"
+  | "settings/test-ai"
+  | "settings/list-models"
+  | "settings/save-team"
+  | "settings/recommend-team"
+  | "settings/open-team-file"
+  | "settings/clear-team-memory"
+  | "diagnostics/run"
+  | "diagnostics/show-output"
+  | "repository/preview-update"
+  | "repository/execute-update"
+  | "repository/preview-property"
+  | "repository/execute-property"
+  | "repository/preview-cleanup"
+  | "repository/execute-cleanup"
+  | "repository/browse"
+  | "repository/preview-advanced"
+  | "repository/execute-advanced"
+  | "repository/export-patch"
+  | "repository/select-patch"
+  | "repository/generate-release-notes"
+  | "ai-review/run"
+  | "impact/run"
+  | "changelist/suggest"
+  | "changelist/preview-apply"
+  | "changelist/execute-apply"
+  | "agent/create-plan"
+  | "agent/approve-step"
+  | "agent/cancel"
+  | "changes/preview-operation"
+  | "changes/execute-operation"
+  | "changes/copy-url"
+  | "changes/show-in-repository"
+  | "operation/cancel";
 
 export type WebviewToHostMessage =
-  | MessageEnvelope<'webview/ready', Record<string, never>>
-  | MessageEnvelope<'workbench/action', {
-      action: WebviewAction;
-      data?: Record<string, unknown>;
-    }>;
+  | MessageEnvelope<"webview/ready", Record<string, never>>
+  | MessageEnvelope<
+      "workbench/action",
+      {
+        action: WebviewAction;
+        data?: Record<string, unknown>;
+      }
+    >;
 
 const moduleIds = new Set<WorkbenchModuleId>([
-  'changes',
-  'commit',
-  'diff',
-  'history',
-  'conflicts',
-  'changelists',
-  'ai-review',
-  'impact',
-  'agent',
-  'repository',
-  'settings',
-  'diagnostics'
+  "changes",
+  "commit",
+  "diff",
+  "history",
+  "conflicts",
+  "changelists",
+  "ai-review",
+  "impact",
+  "agent",
+  "repository",
+  "settings",
+  "diagnostics",
 ]);
 
 const actions = new Set<WebviewAction>([
-  'refresh',
-  'open-module',
-  'open-diff',
-  'open-file',
-  'copy-text',
-  'security/configure-authentication',
-  'security/clear-authentication',
-  'security/review-certificate',
-  'security/open-proxy-settings',
-  'commit/update-draft',
-  'commit/update-selection',
-  'commit/ai-select',
-  'commit/apply-template',
-  'commit/generate-message',
-  'commit/preview',
-  'commit/execute',
-  'history/select',
-  'history/compare',
-  'history/blame',
-  'history/preview-restore',
-  'history/execute-restore',
-  'conflict/select',
-  'conflict/advise',
-  'conflict/save-working',
-  'conflict/preview-resolve',
-  'conflict/resolve',
-  'settings/save-ai',
-  'settings/test-ai',
-  'settings/list-models',
-  'settings/save-team',
-  'settings/recommend-team',
-  'settings/open-team-file',
-  'settings/clear-team-memory',
-  'diagnostics/run',
-  'diagnostics/show-output',
-  'repository/preview-update',
-  'repository/execute-update',
-  'repository/preview-property',
-  'repository/execute-property',
-  'repository/preview-cleanup',
-  'repository/execute-cleanup',
-  'repository/browse',
-  'repository/preview-advanced',
-  'repository/execute-advanced',
-  'repository/export-patch',
-  'repository/select-patch',
-  'repository/generate-release-notes',
-  'ai-review/run',
-  'impact/run',
-  'changelist/suggest',
-  'changelist/preview-apply',
-  'changelist/execute-apply',
-  'agent/create-plan',
-  'agent/approve-step',
-  'agent/cancel',
-  'changes/preview-operation',
-  'changes/execute-operation',
-  'changes/copy-url',
-  'changes/show-in-repository',
-  'operation/cancel'
+  "refresh",
+  "open-module",
+  "open-diff",
+  "open-file",
+  "copy-text",
+  "security/configure-authentication",
+  "security/clear-authentication",
+  "security/review-certificate",
+  "security/open-proxy-settings",
+  "commit/update-draft",
+  "commit/update-selection",
+  "commit/ai-select",
+  "commit/apply-template",
+  "commit/generate-message",
+  "commit/preview",
+  "commit/execute",
+  "history/select",
+  "history/compare",
+  "history/blame",
+  "history/preview-restore",
+  "history/execute-restore",
+  "conflict/select",
+  "conflict/advise",
+  "conflict/save-working",
+  "conflict/preview-resolve",
+  "conflict/resolve",
+  "settings/save-ai",
+  "settings/test-ai",
+  "settings/list-models",
+  "settings/save-team",
+  "settings/recommend-team",
+  "settings/open-team-file",
+  "settings/clear-team-memory",
+  "diagnostics/run",
+  "diagnostics/show-output",
+  "repository/preview-update",
+  "repository/execute-update",
+  "repository/preview-property",
+  "repository/execute-property",
+  "repository/preview-cleanup",
+  "repository/execute-cleanup",
+  "repository/browse",
+  "repository/preview-advanced",
+  "repository/execute-advanced",
+  "repository/export-patch",
+  "repository/select-patch",
+  "repository/generate-release-notes",
+  "ai-review/run",
+  "impact/run",
+  "changelist/suggest",
+  "changelist/preview-apply",
+  "changelist/execute-apply",
+  "agent/create-plan",
+  "agent/approve-step",
+  "agent/cancel",
+  "changes/preview-operation",
+  "changes/execute-operation",
+  "changes/copy-url",
+  "changes/show-in-repository",
+  "operation/cancel",
 ]);
 
-export function isWorkbenchModuleId(value: unknown): value is WorkbenchModuleId {
-  return typeof value === 'string' && moduleIds.has(value as WorkbenchModuleId);
+export function isWorkbenchModuleId(
+  value: unknown,
+): value is WorkbenchModuleId {
+  return typeof value === "string" && moduleIds.has(value as WorkbenchModuleId);
 }
 
-export function isWebviewToHostMessage(value: unknown): value is WebviewToHostMessage {
+export function isWebviewToHostMessage(
+  value: unknown,
+): value is WebviewToHostMessage {
   if (!isRecord(value)) {
     return false;
   }
-  if (value.protocolVersion !== WORKBENCH_PROTOCOL_VERSION || !isWorkbenchModuleId(value.moduleId)) {
+  if (
+    value.protocolVersion !== WORKBENCH_PROTOCOL_VERSION ||
+    !isWorkbenchModuleId(value.moduleId)
+  ) {
     return false;
   }
-  if (value.taskId !== undefined && !isWorkbenchTaskForModule(value.taskId, value.moduleId)) {
+  if (
+    value.taskId !== undefined &&
+    !isWorkbenchTaskForModule(value.taskId, value.moduleId)
+  ) {
     return false;
   }
-  if (value.type === 'webview/ready') {
+  if (value.type === "webview/ready") {
     return isRecord(value.payload);
   }
-  if (value.type !== 'workbench/action' || !isRecord(value.payload)) {
+  if (value.type !== "workbench/action" || !isRecord(value.payload)) {
     return false;
   }
-  return typeof value.repositoryUuid === 'string'
-    && typeof value.scopeHash === 'string'
-    && typeof value.payload.action === 'string'
-    && actions.has(value.payload.action as WebviewAction);
+  return (
+    typeof value.repositoryUuid === "string" &&
+    typeof value.scopeHash === "string" &&
+    typeof value.payload.action === "string" &&
+    actions.has(value.payload.action as WebviewAction)
+  );
 }
 
-export function createRequestId(prefix = 'request'): string {
-  const random = Math.random().toString(36).slice(2, 10);
+export function createRequestId(prefix = "request"): string {
+  const random = globalThis.crypto.randomUUID().replaceAll("-", "");
   return `${prefix}-${Date.now().toString(36)}-${random}`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

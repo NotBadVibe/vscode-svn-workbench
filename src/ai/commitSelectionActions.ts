@@ -1,55 +1,68 @@
-import * as path from 'node:path';
-import { CommitCandidate } from '../commit/commitCandidateCollector';
+import * as path from "node:path";
+import { CommitCandidate } from "../commit/commitCandidateCollector";
 import {
   CommitSelectionAiDecision,
-  CommitSelectionExplanation
-} from './commitSelectionExplanation';
+  CommitSelectionExplanation,
+} from "./commitSelectionExplanation";
 
-export type CommitSelectionDecisionFilter = CommitSelectionAiDecision | 'all';
+export type CommitSelectionDecisionFilter = CommitSelectionAiDecision | "all";
 
-export function getDefaultSelectedCandidatePaths(candidates: CommitCandidate[]): string[] {
+export function getDefaultSelectedCandidatePaths(
+  candidates: CommitCandidate[],
+): string[] {
   return candidates
-    .filter((candidate) => candidate.selection === 'selected')
+    .filter((candidate) => candidate.selection === "selected")
     .map((candidate) => candidate.absolutePath);
 }
 
 export function getAiRecommendedCandidatePaths(
   candidates: CommitCandidate[],
-  explanation: CommitSelectionExplanation
+  explanation: CommitSelectionExplanation,
 ): string[] {
   return candidates
-    .filter((candidate) => candidate.selection !== 'excluded' && candidate.selection !== 'blocked')
-    .filter((candidate) => getAiDecisionForCandidate(candidate, explanation) === 'recommended')
+    .filter(
+      (candidate) =>
+        candidate.selection !== "excluded" && candidate.selection !== "blocked",
+    )
+    .filter(
+      (candidate) =>
+        getAiDecisionForCandidate(candidate, explanation) === "recommended",
+    )
     .map((candidate) => candidate.absolutePath);
 }
 
 export function filterCandidatesByAiDecision(
   candidates: CommitCandidate[],
   explanation: CommitSelectionExplanation | undefined,
-  decision: CommitSelectionDecisionFilter
+  decision: CommitSelectionDecisionFilter,
 ): CommitCandidate[] {
-  if (decision === 'all') {
+  if (decision === "all") {
     return candidates;
   }
 
-  return candidates.filter((candidate) => getAiDecisionForCandidate(candidate, explanation) === decision);
+  return candidates.filter(
+    (candidate) =>
+      getAiDecisionForCandidate(candidate, explanation) === decision,
+  );
 }
 
 export function getAiDecisionForCandidate(
   candidate: CommitCandidate,
-  explanation: CommitSelectionExplanation | undefined
+  explanation: CommitSelectionExplanation | undefined,
 ): CommitSelectionAiDecision {
   if (!explanation) {
-    return 'none';
+    return "none";
   }
 
   const item = explanation.items.find(
-    (entry) => normalizePathKey(entry.absolutePath) === normalizePathKey(candidate.absolutePath)
+    (entry) =>
+      normalizePathKey(entry.absolutePath) ===
+      normalizePathKey(candidate.absolutePath),
   );
-  return item?.decision ?? 'none';
+  return item?.decision ?? "none";
 }
 
 function normalizePathKey(filePath: string): string {
   const resolved = path.resolve(filePath);
-  return process.platform === 'win32' ? resolved.toLocaleLowerCase() : resolved;
+  return process.platform === "win32" ? resolved.toLocaleLowerCase() : resolved;
 }
