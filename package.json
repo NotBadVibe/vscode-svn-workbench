@@ -591,7 +591,7 @@
     "@testing-library/svelte": "^5.4.2",
     "@testing-library/user-event": "^14.6.1",
     "@types/node": "^22.10.2",
-    "@types/vscode": "1.92.0",
+    "@types/vscode": "1.125.0",
     "@vitest/coverage-istanbul": "^4.1.10",
     "@vscode/codicons": "^0.0.46-24",
     "@vscode/test-electron": "^3.1.0",
