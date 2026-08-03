@@ -89,6 +89,28 @@ describe.sequential("提交执行链路", () => {
     await expect(fs.access(messageFile!)).rejects.toThrow();
   });
 
+  it("非 Windows 平台使用系统临时目录保存提交消息", async () => {
+    let messageFile: string | undefined;
+    runSvnCommand.mockImplementation(async (_svnPath, args) => {
+      if (args[0] === "commit") {
+        messageFile = args[args.indexOf("-F") + 1];
+      }
+      return successfulResult();
+    });
+
+    await withPlatform("linux", async () =>
+      runCommitFlow("svn", {
+        cwd: "/working-copy",
+        addPaths: [],
+        removePaths: [],
+        commitPaths: ["changed.ts"],
+        message: "test: system temp directory",
+      }),
+    );
+
+    expect(messageFile).toContain(os.tmpdir());
+  });
+
   it("add 失败时终止流程，且不会误执行后续 remove 或 commit", async () => {
     runSvnCommand.mockResolvedValue(
       successfulResult({ exitCode: 1, stderr: "add denied" }),
