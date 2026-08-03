@@ -4,6 +4,7 @@
 
 ### Changed
 
+- 项目改为使用 MIT License 公开发布，并补充开源协作与安全报告说明。
 - Windows 中文文件名提交增加安全参数回退，并补充真实 SVN 与单元回归。
 - Webview 内容安全策略覆盖 Vite 懒加载资源。
 - Webview CSP nonce 改为使用 `crypto.randomBytes` 生成，并有静态回归测试。

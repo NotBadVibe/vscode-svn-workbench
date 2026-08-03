@@ -2,6 +2,8 @@
 
 SVN Workbench 是面向 VS Code 的 AI-first Subversion 工作台。正式业务界面统一使用 Svelte 5，Explorer、编辑器和命令面板中的入口会直接打开对应功能模块，不强制进入一个完整首页。
 
+本项目采用 [MIT License](LICENSE) 开源；欢迎通过 Issue 和 Pull Request 参与改进，提交前请先阅读 [贡献指南](CONTRIBUTING.md) 与 [安全策略](SECURITY.md)。
+
 ## 主要能力
 
 - 在文件、目录和多选资源的右键菜单中直接打开 Changes、Diff、历史、提交、冲突和 AI 模块。
@@ -70,7 +72,7 @@ AI 是可选增强能力。未配置、调用失败或结果无效时，核心 S
 
 ## 开发与验收
 
-开发环境固定使用 Node.js 22 与 npm 10；执行 `nvm use` 会读取仓库中的 `.nvmrc`。
+开发环境固定使用 Node.js 26 与 npm 12；执行 `nvm use` 会读取仓库中的 `.nvmrc`。
 
 ```bash
 npm ci
@@ -100,3 +102,7 @@ npm run package:vsix
 ```bash
 npm run validate:vsix-install
 ```
+
+## 许可证
+
+本项目采用 [MIT License](LICENSE)。
