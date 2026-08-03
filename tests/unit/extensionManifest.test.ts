@@ -38,9 +38,9 @@ describe("VS Code 扩展清单", () => {
       "https://github.com/NotBadVibe/vscode-svn-workbench/issues",
     );
     expect(manifest.homepage).toContain("#readme");
-    expect(manifest.packageManager).toBe("npm@10.9.9");
-    expect(manifest.engines.node).toBe(">=22.13.0 <27");
-    expect(manifest.engines.npm).toBe(">=10.9.0 <12");
+    expect(manifest.packageManager).toBe("npm@12.0.2");
+    expect(manifest.engines.node).toBe(">=26.0.0 <27");
+    expect(manifest.engines.npm).toBe(">=12.0.2 <13");
     expect(manifest.engines.vscode).toBe("^1.92.0");
   });
 
