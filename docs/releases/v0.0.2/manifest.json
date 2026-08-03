@@ -1,14 +1,25 @@
 {
   "schemaVersion": 1,
   "version": "0.0.2",
-  "status": "draft",
+  "status": "released",
   "baseVersion": "0.0.1",
-  "releaseDate": null,
-  "gitTag": null,
-  "gitCommit": null,
-  "sourceState": "dirty",
-  "vsix": null,
-  "tests": null,
-  "acceptedEvidenceRun": null,
-  "evidencePath": null
+  "releaseDate": "2026-08-03",
+  "gitTag": "v0.0.2",
+  "gitCommit": "db3df0f8d809588ea7e7671f6f31f8579e9149a9",
+  "sourceState": "clean",
+  "vsix": {
+    "fileName": "svn-workbench-0.0.2.vsix",
+    "sizeBytes": 454176,
+    "sha256": "536CB71B664096C7952922AE1E7D01E655E8BFD0C0E081885549F5D201BCB4DE"
+  },
+  "tests": {
+    "unit": 221,
+    "webview": 42,
+    "extensionHost": "passed",
+    "performance": "passed",
+    "platforms": ["windows", "macos", "linux"]
+  },
+  "acceptedEvidenceRun": "2026-08-03T09-36-16-412Z-264e6db7",
+  "evidencePath": "artifacts/2026-08-03T09-36-16-412Z-264e6db7",
+  "evidenceTreeSha256": "1B8B4B6DE69BA86B09CB45CDC67967AEC34C3EF1FC35F40B59EF68D2F9B3BD82"
 }
