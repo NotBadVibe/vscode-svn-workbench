@@ -5176,6 +5176,18 @@ async function testResolveConflictOutputParsing(): Promise<void> {
   assert.equal(isResolveSuccessful("No conflict here"), false);
 }
 
+function createSelectionEvaluation(
+  decision: CommitCandidate["evaluation"]["decision"],
+  overrides: Partial<CommitCandidate["evaluation"]> = {},
+): CommitCandidate["evaluation"] {
+  return {
+    decision,
+    reasonKey: "statusPolicy",
+    safetyLocked: false,
+    ...overrides,
+  };
+}
+
 function createCommitSelectionActionCandidates(): CommitCandidate[] {
   const root = path.join(os.tmpdir(), "svn-workbench-selection-actions");
   return [
@@ -5188,6 +5200,9 @@ function createCommitSelectionActionCandidates(): CommitCandidate[] {
       generatedDecision: "include",
       selection: "selected",
       reason: "常规可提交变更",
+      evaluation: createSelectionEvaluation("recommended", {
+        statusPolicyKey: "modified",
+      }),
     },
     {
       absolutePath: path.join(root, "config", "app.json"),
@@ -5198,6 +5213,9 @@ function createCommitSelectionActionCandidates(): CommitCandidate[] {
       generatedDecision: "include",
       selection: "needsReview",
       reason: "未版本控制文件，需要确认是否加入 SVN",
+      evaluation: createSelectionEvaluation("needsReview", {
+        statusPolicyKey: "unversioned",
+      }),
     },
     {
       absolutePath: path.join(root, "bin", "app.dll"),
@@ -5208,6 +5226,11 @@ function createCommitSelectionActionCandidates(): CommitCandidate[] {
       generatedDecision: "exclude",
       selection: "excluded",
       reason: "命中生成物规则，默认排除",
+      evaluation: createSelectionEvaluation("excluded", {
+        reasonKey: "pathRule",
+        matchedRuleId: "bin-debug",
+        ruleSource: "builtin",
+      }),
     },
     {
       absolutePath: path.join(root, "src", "order.conflicted"),
@@ -5218,6 +5241,10 @@ function createCommitSelectionActionCandidates(): CommitCandidate[] {
       generatedDecision: "include",
       selection: "blocked",
       reason: "需要先处理冲突或异常状态",
+      evaluation: createSelectionEvaluation("blocked", {
+        reasonKey: "safetyBlocked",
+        safetyLocked: true,
+      }),
     },
   ];
 }
@@ -5234,6 +5261,9 @@ function createCommitCandidateGroupingCandidates(): CommitCandidate[] {
       generatedDecision: "include",
       selection: "selected",
       reason: "常规可提交变更",
+      evaluation: createSelectionEvaluation("recommended", {
+        statusPolicyKey: "modified",
+      }),
     },
     {
       absolutePath: path.join(root, "src", "pages", "user", "UserList.vue"),
@@ -5244,6 +5274,9 @@ function createCommitCandidateGroupingCandidates(): CommitCandidate[] {
       generatedDecision: "include",
       selection: "selected",
       reason: "常规可提交变更",
+      evaluation: createSelectionEvaluation("recommended", {
+        statusPolicyKey: "modified",
+      }),
     },
     {
       absolutePath: path.join(root, "docs", "readme.md"),
@@ -5254,6 +5287,9 @@ function createCommitCandidateGroupingCandidates(): CommitCandidate[] {
       generatedDecision: "include",
       selection: "needsReview",
       reason: "本地缺失文件，需要确认是否作为删除提交",
+      evaluation: createSelectionEvaluation("needsReview", {
+        statusPolicyKey: "missing",
+      }),
     },
   ];
 }

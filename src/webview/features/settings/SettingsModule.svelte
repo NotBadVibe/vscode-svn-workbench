@@ -7,6 +7,7 @@
   import ScrollArea from "../../components/ui/ScrollArea.svelte";
   import { formatZhDateTime } from "../../i18n/formatters";
   import { confidenceLabels, sourceLabels } from "../../i18n/terminology";
+  import SelectionTask from "./SelectionTask.svelte";
 
   let {
     snapshot,
@@ -18,7 +19,7 @@
     onAction: (action: WebviewAction, data?: Record<string, unknown>) => void;
   } = $props();
 
-  let tab = $state<"ai" | "team" | "svn">("ai");
+  let tab = $state<"ai" | "selection" | "team" | "svn">("ai");
   let providerPreset = $state("");
   let baseUrl = $state("");
   let model = $state("");
@@ -37,11 +38,13 @@
 
   $effect(() => {
     tab =
-      taskId === "settings/team"
-        ? "team"
-        : taskId === "settings/svn"
-          ? "svn"
-          : "ai";
+      taskId === "settings/selection"
+        ? "selection"
+        : taskId === "settings/team"
+          ? "team"
+          : taskId === "settings/svn"
+            ? "svn"
+            : "ai";
     providerPreset = snapshot.ai.providerPreset;
     baseUrl = snapshot.ai.baseUrl;
     model = snapshot.ai.model;
@@ -93,7 +96,7 @@
     };
   }
 
-  function selectTab(next: "ai" | "team" | "svn"): void {
+  function selectTab(next: "ai" | "selection" | "team" | "svn"): void {
     tab = next;
     onAction("open-module", {
       moduleId: "settings",
@@ -120,6 +123,12 @@
     >
     <button
       role="tab"
+      aria-selected={tab === "selection"}
+      class:active={tab === "selection"}
+      onclick={() => selectTab("selection")}>提交选择规则</button
+    >
+    <button
+      role="tab"
       aria-selected={tab === "team"}
       class:active={tab === "team"}
       onclick={() => selectTab("team")}>团队提交规范</button
@@ -132,7 +141,9 @@
     >
   </div>
 
-  {#if tab === "ai"}
+  {#if tab === "selection"}
+    <SelectionTask {snapshot} {onAction} />
+  {:else if tab === "ai"}
     <div class="settings-grid">
       <section class="settings-card settings-card--primary">
         <div class="section-heading">

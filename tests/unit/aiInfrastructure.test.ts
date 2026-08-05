@@ -59,12 +59,14 @@ describe("AI 配置与结果安全边界", () => {
       includeNestedWorkingCopies: false,
       createdAt: 0,
     };
+    // V003-CR-04：结构无效（缺分类字段、字段非数组、条目缺 path）现在
+    // 整体抛错拒绝，宽松输入的拒绝用例见 aiSelectionResultValidation.test.ts；
+    // 此处保留合法输入的规范化（trim、空 reason 兜底）与范围/候选校验。
     const normalized = normalizeAiSelectionResult({
-      recommended: [
-        { path: " src/a.ts ", reason: " " },
-        { path: 1, reason: null },
-      ] as never,
-      excluded: "bad" as never,
+      recommended: [{ path: " src/a.ts ", reason: " " }],
+      excluded: [],
+      needsReview: [],
+      blocked: [],
     });
     expect(normalized.recommended).toEqual([
       { path: "src/a.ts", reason: "AI 未提供原因" },
@@ -188,8 +190,9 @@ describe("OpenAI-compatible Provider", () => {
           choices: [
             {
               message: {
+                // V003-CR-04：四分类字段必须齐全，缺字段的响应会被拒绝。
                 content:
-                  '```json\n{"recommended":[{"path":"a","reason":"r"}]}\n```',
+                  '```json\n{"recommended":[{"path":"a","reason":"r"}],"excluded":[],"needsReview":[],"blocked":[]}\n```',
               },
             },
           ],

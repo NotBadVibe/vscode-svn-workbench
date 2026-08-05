@@ -50,16 +50,97 @@ test("previews a commit before enabling execution", async ({ page }) => {
 test("keeps AI file selection advisory and user-editable", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "提交", exact: true }).click();
-  await page.getByRole("button", { name: "AI 建议选择" }).click();
+  await page.getByRole("button", { name: "获取 AI 建议" }).click();
   await expect(
     page.getByText("建议选择 1 个文件；1 个需要人工确认，1 个建议排除。"),
   ).toBeVisible();
+  await expect(page.getByText(/来源：已配置模型/)).toBeVisible();
   await expect(page.getByLabel("选择 src/extension.ts")).toBeChecked();
   await expect(
     page.getByLabel("选择 src/webview/App.svelte"),
   ).not.toBeChecked();
   await page.getByLabel("选择 src/webview/App.svelte").check();
   await expect(page.getByLabel("选择 src/webview/App.svelte")).toBeChecked();
+});
+
+test("offers 配置 AI entry instead of an AI-labelled action when unconfigured", async ({
+  page,
+}) => {
+  await page.goto("/?commitAi=none");
+  await page.getByRole("button", { name: "提交", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "提交当前范围" }),
+  ).toBeVisible();
+  // 未配置 AI 时不再把本地规则称为 AI 建议。
+  await expect(
+    page.getByRole("button", { name: /AI 建议选择/ }),
+  ).not.toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "获取 AI 建议" }),
+  ).not.toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "应用本地规则" }),
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: "配置 AI" }).click();
+  await expect(page.getByRole("tab", { name: "AI 模型" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+});
+
+test("applies local rules with Chinese feedback", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "提交", exact: true }).click();
+  await page.getByRole("button", { name: "应用本地规则" }).click();
+  await expect(
+    page.getByText(
+      "已按本地规则应用推荐选择 2 个文件；1 个文件待确认，可手动勾选。",
+    ),
+  ).toBeVisible();
+});
+
+test("keeps the current selection and offers local-rule recovery when AI fails", async ({
+  page,
+}) => {
+  await page.goto("/?commitAi=fail");
+  await page.getByRole("button", { name: "提交", exact: true }).click();
+  await page.getByRole("button", { name: "获取 AI 建议" }).click();
+  await expect(
+    page.getByText("AI 建议获取失败，已保留当前选择。"),
+  ).toBeVisible();
+  await expect(page.getByText(/失败原因：/)).toBeVisible();
+  // 当前选择保留，未被失败结果替换。
+  await expect(page.getByLabel("选择 src/extension.ts")).toBeChecked();
+
+  await page.getByRole("button", { name: "应用本地规则" }).last().click();
+  await expect(
+    page.getByText(
+      "已按本地规则应用推荐选择 2 个文件；1 个文件待确认，可手动勾选。",
+    ),
+  ).toBeVisible();
+});
+
+test("marks stale AI results as view-only", async ({ page }) => {
+  await page.goto("/?commitAi=stale");
+  await page.getByRole("button", { name: "提交", exact: true }).click();
+  await page.getByRole("button", { name: "获取 AI 建议" }).click();
+  await expect(page.getByText(/结果已过期/)).toBeVisible();
+  await expect(
+    page.getByText(/只能查看，不能直接采用；请重新获取 AI 建议。/),
+  ).toBeVisible();
+});
+
+test("shows the rules-updated notice after selection rules change", async ({
+  page,
+}) => {
+  await page.goto("/?commitRules=updated");
+  await page.getByRole("button", { name: "提交", exact: true }).click();
+  await expect(
+    page.getByText(
+      "提交选择规则已更新，候选分类已按新规则刷新；可点击“应用本地规则”重新计算推荐选择。",
+    ),
+  ).toBeVisible();
 });
 
 test("compares two revisions inside the unified workbench", async ({
@@ -271,5 +352,88 @@ test("makes working-copy cleanup an explicit non-destructive confirmation", asyn
   await page.getByRole("button", { name: "确认清理工作副本" }).click();
   await expect(
     page.getByText("清理已完成；未删除未版本化文件，请重新检查状态。"),
+  ).toBeVisible();
+});
+
+test("edits commit selection rules with local preview and host save", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await page.getByRole("tab", { name: "提交选择规则" }).click();
+  await expect(page.getByText("规则来源与覆盖关系")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "用户默认" })).toBeVisible();
+  await expect(page.getByText(/当前仓库（本页编辑）/)).toBeVisible();
+  // 来源与决策以文字表达，不只靠颜色
+  await expect(page.getByText("内置默认").first()).toBeVisible();
+  await expect(
+    page.getByText("已应用：1 条状态策略 · 1 条路径规则"),
+  ).toBeVisible();
+  await expect(page.getByLabel("文件缺失的默认决策")).toBeVisible();
+  await expect(page.getByText("不可配置的状态")).toBeVisible();
+
+  const preview = page.getByRole("region", { name: "提交选择规则预览结果" });
+  const fixtureRow = preview.locator(".selection-preview-row", {
+    hasText: "tests/fixtures/case.ts",
+  });
+  await expect(fixtureRow).toContainText("需要确认");
+  await expect(fixtureRow).toContainText("team-fixtures");
+  const extensionRow = preview.locator(".selection-preview-row", {
+    hasText: "src/extension.ts",
+  });
+  await expect(extensionRow).toContainText("推荐提交");
+
+  // 新增并编辑规则：预览在 debounce 后本地重算，命中规则与决策随之变化
+  await page.getByRole("button", { name: "新增规则" }).click();
+  await page.getByLabel("规则 ID").nth(1).fill("team-src");
+  await page.getByLabel("Glob 表达式").nth(1).fill("src/**");
+  await page.getByLabel("中文原因").nth(1).fill("源码目录统一复核");
+  await expect(extensionRow).toContainText("team-src", { timeout: 3000 });
+  await expect(extensionRow).toContainText("需要确认");
+  await page.getByLabel("规则 team-src 的决策").selectOption("excluded");
+  await expect(extensionRow).toContainText("排除", { timeout: 3000 });
+
+  // 保存经 Host 校验后返回成功反馈
+  await page.getByRole("button", { name: "保存当前仓库规则" }).click();
+  await expect(
+    page.getByText(/提交选择规则已保存到 .svn-workbench.json/),
+  ).toBeVisible();
+});
+
+test("shows selection shadow, broken-config, empty and no-repo states", async ({
+  page,
+}) => {
+  await page.goto("/?selection=shadowed");
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await page.getByRole("tab", { name: "提交选择规则" }).click();
+  await expect(page.getByText(/永远不会命中/)).toBeVisible();
+
+  await page.goto("/?selection=corrupt");
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await page.getByRole("tab", { name: "提交选择规则" }).click();
+  await expect(page.getByText("校验失败，已忽略该层配置")).toBeVisible();
+  await expect(page.getByText(/仓库层配置解析失败/)).toBeVisible();
+
+  await page.goto("/?selection=no-candidates");
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await page.getByRole("tab", { name: "提交选择规则" }).click();
+  await expect(page.getByText(/当前仓库没有可预览的候选文件/)).toBeVisible();
+
+  await page.goto("/?selection=no-repo");
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await page.getByRole("tab", { name: "提交选择规则" }).click();
+  await expect(page.getByText(/无法生成规则预览/)).toBeVisible();
+});
+
+test("rejects saving invalid selection rules with structured feedback", async ({
+  page,
+}) => {
+  await page.goto("/?selection=save-error");
+  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await page.getByRole("tab", { name: "提交选择规则" }).click();
+  await page.getByRole("button", { name: "保存当前仓库规则" }).click();
+  await expect(page.getByText(/模拟写入错误/)).toBeVisible();
+  await expect(
+    page.getByText("模拟保存失败：无法写入 .svn-workbench.json。"),
   ).toBeVisible();
 });

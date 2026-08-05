@@ -52,6 +52,7 @@ export class OpenAiCompatibleProvider implements AiProvider {
       "Only choose from the provided files array. Do not invent paths.",
       "Return the exact path value from each chosen file item.",
       "Respect generatedDecision and defaultSelection. Generated files should usually be excluded unless clearly intentional.",
+      "Each file carries the local rule conclusion in localDecision and safetyLocked. You may only adjust files between recommended and needsReview. Never recommend a file whose localDecision is excluded or blocked, and never override safetyLocked conclusions.",
       "Return strict JSON with keys recommended, excluded, needsReview, blocked.",
       "Each item must contain path and reason.",
       JSON.stringify(request),
@@ -181,9 +182,10 @@ export function parseModelListResponse(data: unknown): AiModelInfo[] {
 }
 
 function parseJsonResult(text: string): AiSelectionResult {
-  return normalizeAiSelectionResult(
-    parseJsonObject(text) as Partial<AiSelectionResult>,
-  );
+  // 结构无效（缺分类字段、条目缺 path/reason、路径跨分类重复）时
+  // normalizeAiSelectionResult 抛出结构化错误，由 Controller 进入
+  // local-rule-fallback 降级（V003-CR-04）。
+  return normalizeAiSelectionResult(parseJsonObject(text));
 }
 
 function parseJsonObject(text: string): unknown {

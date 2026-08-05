@@ -4,6 +4,11 @@ import { AiSelectionRequest, AiSelectionResult } from "./aiProvider";
 
 const MAX_FILES_IN_SELECTION_REQUEST = 200;
 
+/**
+ * 构造 AI 提交选择请求：只发送当前范围候选的相对路径、SVN 状态、文件类型
+ * 与本地规则结论（localDecision + safetyLocked），不发送本地绝对路径
+ * （规划 5.5；path/relativePath 均为相对路径）。
+ */
 export function buildCommitSelectionAiRequest(
   scope: OperationScope,
   candidates: CommitCandidate[],
@@ -20,6 +25,8 @@ export function buildCommitSelectionAiRequest(
       generatedDecision: candidate.generatedDecision,
       defaultSelection: candidate.selection,
       reason: candidate.reason,
+      localDecision: candidate.evaluation.decision,
+      safetyLocked: candidate.evaluation.safetyLocked,
     }));
 
   return {

@@ -2,7 +2,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import * as vscode from "vscode";
-import { collectCommitCandidates } from "../../commit/commitCandidateCollector";
+import type { CommitCandidate } from "../../commit/commitCandidateCollector";
 import { collectSvnHistory } from "../../history/svnHistory";
 import { collectSvnProperties } from "../../properties/svnProperties";
 import {
@@ -55,6 +55,8 @@ export interface RepositoryWorkbenchHost {
     recoverable: boolean,
     requestId?: string,
   ): Promise<void>;
+  /** 统一候选采集入口：经规则服务解析有效规则，保证与各模块一致分类（规划 7.3）。 */
+  collectScopeCandidates(session: WorkbenchSession): Promise<CommitCandidate[]>;
   buildRepositorySnapshot(
     session: WorkbenchSession,
   ): Promise<RepositorySnapshot>;
@@ -63,7 +65,7 @@ export interface RepositoryWorkbenchHost {
   ): NonNullable<NonNullable<WorkbenchSession["repositoryState"]>["advanced"]>;
   createLocalShelf(
     session: WorkbenchSession,
-    candidates: Awaited<ReturnType<typeof collectCommitCandidates>>,
+    candidates: CommitCandidate[],
     shelfName: string,
     signal: AbortSignal,
   ): Promise<string>;
@@ -256,10 +258,7 @@ export class RepositoryWorkbenchActions {
       infoResult.exitCode === 0
         ? parseInfoXml(infoResult.stdout, session.scope.repositoryRoot)
         : undefined;
-    const candidates = await collectCommitCandidates(
-      session.svnPath,
-      session.scope,
-    );
+    const candidates = await this.host.collectScopeCandidates(session);
     const issues: string[] = [];
     const commands: string[] = [];
     const details: string[] = [];
@@ -419,10 +418,7 @@ export class RepositoryWorkbenchActions {
             { maxOutputBytes: MAX_DIFF_BYTES },
           )
         : undefined;
-    const candidates = await collectCommitCandidates(
-      session.svnPath,
-      session.scope,
-    );
+    const candidates = await this.host.collectScopeCandidates(session);
     const state = this.host.ensureAdvancedRepositoryState(session);
     state.preview = {
       token: randomUUID(),
@@ -470,10 +466,7 @@ export class RepositoryWorkbenchActions {
       );
       return;
     }
-    const candidates = await collectCommitCandidates(
-      session.svnPath,
-      session.scope,
-    );
+    const candidates = await this.host.collectScopeCandidates(session);
     if (hashCandidateState(candidates, "", []) !== preview.candidateHash) {
       state.preview = undefined;
       await this.host.sendError(
@@ -623,7 +616,7 @@ export class RepositoryWorkbenchActions {
 
   async createLocalShelf(
     session: WorkbenchSession,
-    candidates: Awaited<ReturnType<typeof collectCommitCandidates>>,
+    candidates: CommitCandidate[],
     shelfName: string,
     signal: AbortSignal,
   ): Promise<string> {
@@ -793,10 +786,7 @@ export class RepositoryWorkbenchActions {
     session: WorkbenchSession,
     requestId?: string,
   ): Promise<void> {
-    const candidates = await collectCommitCandidates(
-      session.svnPath,
-      session.scope,
-    );
+    const candidates = await this.host.collectScopeCandidates(session);
     const base = buildUpdateScopePreview(session.scope, candidates);
     let remoteChanges:
       Awaited<ReturnType<typeof checkUpdateScopeRemoteChanges>> | undefined;

@@ -7,6 +7,10 @@ import {
 import { OpenAiCompatibleProvider } from "./ai/openAiCompatibleProvider";
 import { appendOutput, showOutput } from "./diagnostics/outputChannel";
 import { ensureSvnWorkbenchProjectConfig } from "./commit/commitConvention";
+import {
+  CommitSelectionRuleService,
+  registerCommitSelectionRuleWatchers,
+} from "./commit/commitSelectionRuleService";
 import { createScopeFromExplorer } from "./scope/operationScope";
 import {
   resolveWorkingCopyRoot,
@@ -24,13 +28,24 @@ let sourceControlManager: SvnSourceControlManager | undefined;
 
 export function activate(context: vscode.ExtensionContext): void {
   extensionContext = context;
-  workbenchController = new WorkbenchController(context);
-  sourceControlManager = new SvnSourceControlManager(getSvnPath);
+  // 统一的提交选择规则解析服务：工作台与 SCM 共享，保证所有候选入口
+  // 在同一仓库解析出相同有效规则；监听配置与仓库文件变化并失效缓存。
+  const commitSelectionRuleService = new CommitSelectionRuleService();
+  workbenchController = new WorkbenchController(
+    context,
+    commitSelectionRuleService,
+  );
+  sourceControlManager = new SvnSourceControlManager(
+    getSvnPath,
+    commitSelectionRuleService,
+  );
   appendOutput("SVN 工作台已激活。");
 
   context.subscriptions.push(
     workbenchController,
     sourceControlManager,
+    commitSelectionRuleService,
+    ...registerCommitSelectionRuleWatchers(commitSelectionRuleService),
     vscode.commands.registerCommand(
       "svnWorkbench.openWorkbench",
       openWorkbench,

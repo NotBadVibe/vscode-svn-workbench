@@ -19,6 +19,10 @@ export interface AiFileContext {
   generatedDecision?: string;
   defaultSelection?: string;
   reason?: string;
+  /** 本地规则结论：最终决策（recommended/needsReview/excluded/blocked）。 */
+  localDecision?: string;
+  /** 本地规则结论是否属于不可覆盖的安全结果（安全锁定）。 */
+  safetyLocked?: boolean;
 }
 
 export interface AiSelectionRequest {

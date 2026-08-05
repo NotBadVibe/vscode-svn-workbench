@@ -66,6 +66,7 @@ export function getModuleTitle(
     "settings/ai": "AI 模型设置",
     "settings/team": "团队提交规范",
     "settings/svn": "SVN 安全设置",
+    "settings/selection": "提交选择规则",
     "diagnostics/environment": "环境诊断",
     "diagnostics/acceptance": "验收清单",
   };

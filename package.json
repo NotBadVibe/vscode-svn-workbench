@@ -2,7 +2,7 @@
   "name": "svn-workbench",
   "displayName": "SVN 工作台",
   "description": "面向中文用户的 AI 原生 SVN 工作台。",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "publisher": "local",
   "private": true,
   "license": "MIT",
@@ -195,9 +195,153 @@
             "type": "string"
           },
           "description": "提交说明首行允许使用的约定前缀。"
+        },
+        "svnWorkbench.commitSelection.statusRules": {
+          "type": "object",
+          "default": {},
+          "properties": {
+            "modified": {
+              "type": "string",
+              "enum": [
+                "recommended",
+                "needsReview",
+                "excluded"
+              ],
+              "description": "modified 状态的默认决策。"
+            },
+            "added": {
+              "type": "string",
+              "enum": [
+                "recommended",
+                "needsReview",
+                "excluded"
+              ],
+              "description": "added 状态的默认决策。"
+            },
+            "deleted": {
+              "type": "string",
+              "enum": [
+                "recommended",
+                "needsReview",
+                "excluded"
+              ],
+              "description": "deleted 状态的默认决策。"
+            },
+            "replaced": {
+              "type": "string",
+              "enum": [
+                "recommended",
+                "needsReview",
+                "excluded"
+              ],
+              "description": "replaced 状态的默认决策。"
+            },
+            "propertyModified": {
+              "type": "string",
+              "enum": [
+                "recommended",
+                "needsReview",
+                "excluded"
+              ],
+              "description": "仅 SVN 属性变化（status=normal 且 propStatus=modified）的默认决策。"
+            },
+            "missing": {
+              "type": "string",
+              "enum": [
+                "recommended",
+                "needsReview",
+                "excluded"
+              ],
+              "description": "missing 状态的默认决策。"
+            },
+            "unversioned": {
+              "type": "string",
+              "enum": [
+                "recommended",
+                "needsReview",
+                "excluded"
+              ],
+              "description": "unversioned 状态的默认决策。"
+            },
+            "unknown": {
+              "type": "string",
+              "enum": [
+                "recommended",
+                "needsReview",
+                "excluded"
+              ],
+              "description": "unknown 状态的默认决策。"
+            },
+            "normal": {
+              "type": "string",
+              "enum": [
+                "recommended",
+                "needsReview",
+                "excluded"
+              ],
+              "description": "normal 状态的默认决策；不影响仅属性变化的判断。"
+            }
+          },
+          "description": "提交文件选择的 SVN 状态默认策略。决策值：recommended（推荐提交）、needsReview（需要确认）、excluded（排除）。ignored、external、conflicted、obstructed、incomplete 为安全状态，不可配置。仓库级规则见 .svn-workbench.json 的 commitSelection 键。"
+        },
+        "svnWorkbench.commitSelection.pathRules": {
+          "type": "array",
+          "default": [],
+          "maxItems": 200,
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "pattern",
+              "decision"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$",
+                "description": "稳定规则 ID；与内置规则同 ID 时覆盖内置定义。"
+              },
+              "enabled": {
+                "type": "boolean",
+                "default": true,
+                "description": "是否启用该规则。"
+              },
+              "pattern": {
+                "type": "string",
+                "maxLength": 200,
+                "description": "Glob 路径表达式：相对仓库根、统一 / 分隔、支持 **。"
+              },
+              "decision": {
+                "type": "string",
+                "enum": [
+                  "recommended",
+                  "needsReview",
+                  "excluded"
+                ],
+                "description": "命中后的决策：recommended（推荐提交）、needsReview（需要确认）、excluded（排除）。"
+              },
+              "reason": {
+                "type": "string",
+                "default": "",
+                "description": "该规则的中文原因说明。"
+              },
+              "caseSensitive": {
+                "type": "boolean",
+                "default": true,
+                "description": "匹配是否大小写敏感。"
+              }
+            }
+          },
+          "description": "提交文件选择的 Glob 路径规则，第一条命中生效，优先级高于状态默认策略；自定义规则按顺序在内置规则之前评估。blocked 决策不可配置。仓库级规则见 .svn-workbench.json 的 commitSelection 键。"
         }
       }
     },
+    "jsonValidation": [
+      {
+        "fileMatch": ".svn-workbench.json",
+        "url": "./schemas/svn-workbench.schema.json"
+      }
+    ],
     "commands": [
       {
         "command": "svnWorkbench.openWorkbench",
@@ -572,7 +716,7 @@
     "audit:dependencies": "npm audit --audit-level=high",
     "evidence:release": "node scripts/run-release-evidence.js",
     "verify": "npm run docs:verify && npm run audit:dependencies && npm run check && npm run test:coverage && npm run test:webview && npm run test:performance && npm run test:extension",
-    "package:vsix": "npm run build && vsce package --no-dependencies",
+    "package:vsix": "npm run build && vsce package",
     "validate:vsix-install": "node scripts/validate-vsix-install.js",
     "prepare:manual-test-env": "node scripts/create-manual-acceptance-env.js"
   },
@@ -591,6 +735,7 @@
     "@testing-library/svelte": "^5.4.2",
     "@testing-library/user-event": "^14.6.1",
     "@types/node": "^26.1.2",
+    "@types/picomatch": "^4.0.3",
     "@types/vscode": "1.92.0",
     "@vitest/coverage-istanbul": "^4.1.10",
     "@vscode/codicons": "^0.0.46-24",
@@ -610,5 +755,8 @@
     "typescript-eslint": "^8.65.0",
     "vite": "^8.2.0",
     "vitest": "^4.1.10"
+  },
+  "dependencies": {
+    "picomatch": "^4.0.5"
   }
 }

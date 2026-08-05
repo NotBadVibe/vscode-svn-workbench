@@ -6,7 +6,13 @@
   } from "@protocol/workbenchProtocol";
   import ScrollArea from "../../components/ui/ScrollArea.svelte";
   import { isExplicitSubmitShortcut } from "../../i18n/keyboard";
-  import { fileStatusLabels, sourceLabels } from "../../i18n/terminology";
+  import { formatZhDateTime } from "../../i18n/formatters";
+  import {
+    commitSelectionAiSourceLabels,
+    describeCommitSelectionEvaluation,
+    fileStatusLabels,
+    sourceLabels,
+  } from "../../i18n/terminology";
 
   let {
     snapshot,
@@ -34,7 +40,9 @@
     ),
   );
   const selectionPrivacy = $derived(
-    snapshot.aiPrivacy.find((item) => item.scenario === "selection"),
+    snapshot.selectionAi.configured
+      ? snapshot.aiPrivacy.find((item) => item.scenario === "selection")
+      : undefined,
   );
   const messagePrivacy = $derived(
     snapshot.aiPrivacy.find((item) => item.scenario === "message"),
@@ -77,19 +85,48 @@
       </div>
     </div>
     <div class="commit-summary">
-      <span>可提交 {snapshot.summary.selected}</span>
+      <span>推荐 {snapshot.summary.selected}</span>
       <span>待确认 {snapshot.summary.needsReview}</span>
+      <span>排除 {snapshot.summary.excluded}</span>
       <span class:danger={snapshot.summary.blocked > 0}
         >阻止 {snapshot.summary.blocked}</span
       >
-      <span>已排除 {snapshot.summary.excluded}</span>
     </div>
-    <button
-      class="button button--secondary ai-select-button"
-      onclick={() => onAction("commit/ai-select")}
-      ><span class="codicon codicon-sparkle" aria-hidden="true"></span>AI
-      建议选择</button
-    >
+    {#if snapshot.feedback}
+      <div
+        class={`commit-feedback commit-feedback--${snapshot.feedback.tone}`}
+        role="status"
+      >
+        {snapshot.feedback.message}
+      </div>
+    {/if}
+    <div class="commit-action-row">
+      <button
+        class="button button--secondary"
+        onclick={() => onAction("commit/apply-local-rules")}
+        ><span class="codicon codicon-checklist" aria-hidden="true"
+        ></span>应用本地规则</button
+      >
+      {#if snapshot.selectionAi.configured}
+        <button
+          class="button button--secondary"
+          onclick={() => onAction("commit/ai-select")}
+          ><span class="codicon codicon-sparkle" aria-hidden="true"></span>获取
+          AI 建议</button
+        >
+      {:else}
+        <button
+          class="button button--secondary"
+          onclick={() =>
+            onAction("open-module", {
+              moduleId: "settings",
+              taskId: "settings/ai",
+            })}
+          ><span class="codicon codicon-settings-gear" aria-hidden="true"
+          ></span>配置 AI</button
+        >
+      {/if}
+    </div>
     {#if selectionPrivacy}<div class="privacy-note">
         <strong>外发预览</strong><span
           >{selectionPrivacy.data}；最多 {selectionPrivacy.fileLimit} 个文件；模型
@@ -112,9 +149,14 @@
             onchange={() => toggle(file.relativePath)}
           />
           <span class="codicon codicon-file" aria-hidden="true"></span>
-          <span class="commit-file-path" title={file.relativePath}
-            >{file.relativePath}</span
-          >
+          <span class="commit-file-text">
+            <span class="commit-file-path" title={file.relativePath}
+              >{file.relativePath}</span
+            >
+            {#if file.evaluation}<span class="commit-file-decision"
+                >{describeCommitSelectionEvaluation(file.evaluation)}</span
+              >{/if}
+          </span>
           <span class={`status-badge status-badge--${file.status}`}
             >{fileStatusLabels[file.status]}</span
           >
@@ -200,20 +242,42 @@
         <div class="ai-summary">
           <span class="codicon codicon-sparkle" aria-hidden="true"></span>
           <div>
-            <strong>{snapshot.ai.summary}</strong>
-            <small
-              >{sourceLabels[snapshot.ai.source]}{snapshot.ai.source ===
-              "local-rule-fallback"
-                ? " · 模型暂时不可用"
-                : ""}</small
-            >
-            {#if snapshot.ai.fallbackReason}<p>
-                降级原因：{snapshot.ai.fallbackReason}
-              </p>{/if}
-            {#each snapshot.ai.warnings as warning, warningIndex (warningIndex)}<p
+            {#if snapshot.ai.failed}
+              <strong>{snapshot.ai.summary}</strong>
+              <small>来源：{commitSelectionAiSourceLabels.failed}</small>
+              {#if snapshot.ai.fallbackReason}<p>
+                  失败原因：{snapshot.ai.fallbackReason}
+                </p>{/if}
+              <button
+                type="button"
+                class="button button--secondary ai-recover-button"
+                onclick={() => onAction("commit/apply-local-rules")}
+                ><span class="codicon codicon-checklist" aria-hidden="true"
+                ></span>应用本地规则</button
               >
-                {warning}
-              </p>{/each}
+            {:else}
+              <strong>{snapshot.ai.summary}</strong>
+              <small
+                >来源：{sourceLabels[snapshot.ai.source]}{snapshot.ai.source ===
+                "local-rule-fallback"
+                  ? " · 模型暂时不可用"
+                  : ""}{#if snapshot.ai.source === "configured-model" && snapshot.ai.binding}
+                  · 模型 {snapshot.ai.binding.model ?? "已配置模型"} · {formatZhDateTime(
+                    snapshot.ai.binding.generatedAt,
+                  )}{/if}{#if snapshot.ai.stale}
+                  · {commitSelectionAiSourceLabels.staleBadge}{/if}</small
+              >
+              {#if snapshot.ai.stale}<p>
+                  {commitSelectionAiSourceLabels.staleHint}
+                </p>{/if}
+              {#if snapshot.ai.fallbackReason}<p>
+                  降级原因：{snapshot.ai.fallbackReason}
+                </p>{/if}
+              {#each snapshot.ai.warnings as warning, warningIndex (warningIndex)}<p
+                >
+                  {warning}
+                </p>{/each}
+            {/if}
           </div>
         </div>
       {/if}

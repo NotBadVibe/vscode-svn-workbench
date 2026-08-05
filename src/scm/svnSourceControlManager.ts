@@ -1,6 +1,7 @@
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { collectCommitCandidates } from "../commit/commitCandidateCollector";
+import type { CommitSelectionRuleService } from "../commit/commitSelectionRuleService";
 import type { OperationScope } from "../scope/operationScope";
 import { resolveWorkingCopyRoot } from "../scope/workingCopyResolver";
 import { appendOutput } from "../diagnostics/outputChannel";
@@ -18,7 +19,10 @@ export class SvnSourceControlManager implements vscode.Disposable {
   private readonly disposables: vscode.Disposable[] = [];
   private refreshTimer: NodeJS.Timeout | undefined;
 
-  constructor(private readonly svnPath: () => Promise<string>) {}
+  constructor(
+    private readonly svnPath: () => Promise<string>,
+    private readonly commitSelectionRuleService?: CommitSelectionRuleService,
+  ) {}
 
   async initialize(): Promise<void> {
     await this.discoverRepositories();
@@ -130,9 +134,14 @@ export class SvnSourceControlManager implements vscode.Disposable {
         includeNestedWorkingCopies: false,
         createdAt: Date.now(),
       };
+      // 与工作台共享同一规则解析服务，保证 SCM 摘要与提交页分类一致（规划 7.3）。
+      const rules = await this.commitSelectionRuleService?.getEffectiveRules(
+        repository.root,
+      );
       const candidates = await collectCommitCandidates(
         await this.svnPath(),
         scope,
+        rules ? { rules } : undefined,
       );
       const states = candidates.map((candidate) =>
         this.toResourceState(candidate),

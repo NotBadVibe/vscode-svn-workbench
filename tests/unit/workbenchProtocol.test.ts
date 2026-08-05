@@ -7,7 +7,21 @@ import {
   isWorkbenchModuleId,
   isWorkbenchTaskForModule,
   isWorkbenchTaskId,
+  webviewActions,
+  type SettingsSnapshot,
 } from "../../src/protocol/workbenchProtocol";
+
+function actionMessage(action: string): unknown {
+  return {
+    protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+    type: "workbench/action",
+    moduleId: "settings",
+    taskId: "settings/selection",
+    repositoryUuid: "repo-uuid",
+    scopeHash: "scope-hash",
+    payload: { action },
+  };
+}
 
 describe("workbench protocol validation", () => {
   it("accepts known modules and rejects invented modules", () => {
@@ -136,5 +150,191 @@ describe("workbench protocol validation", () => {
     expect(createRequestId("安全操作")).toMatch(
       /^安全操作-[a-z0-9]+-[a-f0-9]{32}$/,
     );
+  });
+});
+
+describe("settings/selection 深链接", () => {
+  it("登记为 settings 模块的合法任务，默认任务保持 settings/ai", () => {
+    expect(isWorkbenchTaskId("settings/selection")).toBe(true);
+    expect(isWorkbenchTaskForModule("settings/selection", "settings")).toBe(
+      true,
+    );
+    expect(isWorkbenchTaskForModule("settings/selection", "commit")).toBe(
+      false,
+    );
+    expect(defaultWorkbenchTask("settings")).toBe("settings/ai");
+  });
+
+  it("taskId 与模块不匹配的消息被拒绝", () => {
+    expect(
+      isWebviewToHostMessage({
+        protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+        type: "webview/ready",
+        moduleId: "commit",
+        taskId: "settings/selection",
+        payload: {},
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("settings/selection 动作与运行时清单一致性", () => {
+  const selectionActions = [
+    "settings/save-selection",
+    "settings/restore-selection-defaults",
+    "settings/open-selection-file",
+    "settings/refresh-selection-preview",
+    "settings/open-selection-vscode-settings",
+  ];
+
+  it("新增动作被消息守卫接受", () => {
+    for (const action of selectionActions) {
+      expect(isWebviewToHostMessage(actionMessage(action))).toBe(true);
+    }
+  });
+
+  it("webviewActions 运行时清单无重复且覆盖全部字面量联合成员", () => {
+    // 字面量联合 → 清单的方向由协议内 WebviewActionListConsistency 编译期断言保证；
+    // 这里在运行时反向校验：清单无重复、每个成员都被守卫接受。
+    expect(new Set(webviewActions).size).toBe(webviewActions.length);
+    for (const action of webviewActions) {
+      expect(isWebviewToHostMessage(actionMessage(action))).toBe(true);
+    }
+  });
+
+  it("运行时清单包含全部新增 settings/selection 动作", () => {
+    for (const action of selectionActions) {
+      expect(webviewActions).toContain(action);
+    }
+  });
+});
+
+describe("SettingsSnapshot.selection 快照结构", () => {
+  it("包含作用域、分层配置、有效合并、校验状态与规则预览", () => {
+    const snapshot: SettingsSnapshot = {
+      kind: "settings",
+      svnSecurity: {
+        authenticationActive: false,
+        hasStoredAuthentication: false,
+        passwordTransport: "stdin",
+        certificateTrust: "explicit-svn-cache",
+      },
+      ai: {
+        presets: [],
+        scenarios: [],
+        providerPreset: "custom",
+        baseUrl: "",
+        model: "",
+        scenarioModels: {},
+        hasApiKey: false,
+        includeCommitHistory: false,
+        historyLimit: 10,
+        models: [],
+      },
+      team: {
+        configPath: ".svn-workbench.json",
+        enabled: false,
+        requiredIssueId: false,
+        issueIdPattern: "",
+        requiredModule: false,
+        allowedModulesText: "",
+        requiredPrefix: false,
+        allowedPrefixesText: "",
+        warnings: [],
+        memory: {
+          source: "当前仓库成功提交",
+          count: 0,
+          maxEntries: 50,
+          externallyShared: false,
+          recent: [],
+        },
+      },
+      selection: {
+        editingScope: "repository",
+        configPath: ".svn-workbench.json",
+        layers: {
+          user: { editable: false, state: "empty", errors: [], warnings: [] },
+          workspace: {
+            editable: false,
+            state: "empty",
+            errors: [],
+            warnings: [],
+          },
+          repository: {
+            editable: true,
+            state: "applied",
+            config: {
+              version: 1,
+              statusRules: { unversioned: "recommended" },
+            },
+            errors: [],
+            warnings: [],
+          },
+        },
+        effective: {
+          statusRules: {
+            modified: "recommended",
+            added: "recommended",
+            deleted: "recommended",
+            replaced: "recommended",
+            propertyModified: "recommended",
+            missing: "needsReview",
+            unversioned: "recommended",
+            unknown: "needsReview",
+            normal: "excluded",
+          },
+          pathRules: [
+            {
+              id: "generated-dist",
+              enabled: true,
+              pattern: "**/dist/**",
+              decision: "excluded",
+              reason: "构建输出目录",
+              source: "builtin",
+              normalizedPattern: "**/dist/**",
+            },
+          ],
+        },
+        errors: [],
+        warnings: [],
+        preview: {
+          state: "ready",
+          items: [
+            {
+              relativePath: "src/a.ts",
+              status: "modified",
+              decision: "recommended",
+              reasonKey: "statusPolicy",
+              statusPolicyKey: "modified",
+              safetyLocked: false,
+            },
+            {
+              relativePath: "src/conflict.ts",
+              status: "conflicted",
+              decision: "blocked",
+              reasonKey: "safetyBlocked",
+              safetyLocked: true,
+            },
+          ],
+        },
+      },
+    };
+
+    const roundTripped = JSON.parse(
+      JSON.stringify(snapshot),
+    ) as SettingsSnapshot;
+    expect(roundTripped.selection.editingScope).toBe("repository");
+    expect(roundTripped.selection.layers.repository.editable).toBe(true);
+    expect(roundTripped.selection.layers.user.editable).toBe(false);
+    expect(
+      roundTripped.selection.layers.repository.config?.statusRules?.unversioned,
+    ).toBe("recommended");
+    expect(roundTripped.selection.effective.pathRules[0].source).toBe(
+      "builtin",
+    );
+    expect(roundTripped.selection.preview.items[1]).toMatchObject({
+      decision: "blocked",
+      safetyLocked: true,
+    });
   });
 });
