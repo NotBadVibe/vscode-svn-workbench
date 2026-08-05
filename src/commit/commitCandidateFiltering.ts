@@ -1,11 +1,14 @@
-import * as fs from "node:fs/promises";
-import * as path from "node:path";
 import { CommitSelectionAiDecision } from "../ai/commitSelectionExplanation";
+import {
+  SVN_WORKBENCH_CONFIG_FILE,
+  describeSvnWorkbenchConfigError,
+  parseSvnWorkbenchConfigContent,
+  readSvnWorkbenchConfig,
+} from "../config/svnWorkbenchConfig";
 import {
   CommitCandidate,
   CommitTemplateGroup,
 } from "./commitCandidateCollector";
-import { SVN_WORKBENCH_CONFIG_FILE } from "./commitConvention";
 
 export interface CommitCandidateFilterOptions {
   search?: string;
@@ -182,56 +185,52 @@ export function resolveCommitCandidateFilterPreset(
 export async function readRepositoryCommitCandidateFilterPresets(
   repositoryRoot: string,
 ): Promise<RepositoryCommitCandidateFilterPresetResolution> {
-  const configPath = path.join(repositoryRoot, SVN_WORKBENCH_CONFIG_FILE);
-  try {
-    const content = await fs.readFile(configPath, "utf8");
-    const parsed = parseRepositoryCommitCandidateFilterPresets(content);
+  const result = await readSvnWorkbenchConfig(repositoryRoot);
+  if (result.readError !== undefined) {
     return {
-      configPath,
-      ...parsed,
-    };
-  } catch (error) {
-    if (isFileNotFound(error)) {
-      return {
-        configPath,
-        presets: [],
-        warnings: [],
-      };
-    }
-
-    return {
-      configPath,
+      configPath: result.configPath,
       presets: [],
       warnings: [
-        `读取 ${SVN_WORKBENCH_CONFIG_FILE} 提交候选筛选预设失败：${error instanceof Error ? error.message : String(error)}`,
+        `读取 ${SVN_WORKBENCH_CONFIG_FILE} 提交候选筛选预设失败：${describeSvnWorkbenchConfigError(result.readError)}`,
       ],
     };
   }
+
+  if (!result.exists) {
+    return {
+      configPath: result.configPath,
+      presets: [],
+      warnings: [],
+    };
+  }
+
+  const parsed = result.raw
+    ? extractRepositoryCommitCandidateFilterPresets(result.raw)
+    : { presets: [], warnings: result.warnings };
+  return {
+    configPath: result.configPath,
+    ...parsed,
+  };
 }
 
 export function parseRepositoryCommitCandidateFilterPresets(content: string): {
   presets: CommitCandidateFilterPreset[];
   warnings: string[];
 } {
-  let raw: unknown;
-  try {
-    raw = JSON.parse(content);
-  } catch (error) {
-    return {
-      presets: [],
-      warnings: [
-        `${SVN_WORKBENCH_CONFIG_FILE} 不是合法 JSON：${error instanceof Error ? error.message : String(error)}`,
-      ],
-    };
+  const parsed = parseSvnWorkbenchConfigContent(content);
+  if (!parsed.raw) {
+    return { presets: [], warnings: parsed.warnings };
   }
 
-  if (!isRecord(raw)) {
-    return {
-      presets: [],
-      warnings: [`${SVN_WORKBENCH_CONFIG_FILE} 顶层必须是 JSON 对象。`],
-    };
-  }
+  return extractRepositoryCommitCandidateFilterPresets(parsed.raw);
+}
 
+function extractRepositoryCommitCandidateFilterPresets(
+  raw: Record<string, unknown>,
+): {
+  presets: CommitCandidateFilterPreset[];
+  warnings: string[];
+} {
   const value = raw.commitCandidateFilterPresets;
   if (value === undefined) {
     return {
@@ -448,13 +447,4 @@ function isAiDecision(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isFileNotFound(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: unknown }).code === "ENOENT"
-  );
 }

@@ -1,7 +1,16 @@
-import * as fs from "node:fs/promises";
-import * as path from "node:path";
 import * as vscode from "vscode";
 import { AiCommitConventionHint } from "../ai/aiProvider";
+import {
+  SVN_WORKBENCH_CONFIG_FILE,
+  describeSvnWorkbenchConfigError,
+  ensureSvnWorkbenchConfigFile,
+  mergeSvnWorkbenchConfigContent,
+  parseSvnWorkbenchConfigContent,
+  readSvnWorkbenchConfig,
+  readSvnWorkbenchConfigContent,
+  serializeSvnWorkbenchConfig,
+  updateSvnWorkbenchConfig,
+} from "../config/svnWorkbenchConfig";
 
 export interface CommitConventionConfig {
   enabled: boolean;
@@ -57,7 +66,7 @@ export interface CommitConventionEditState {
   warnings: string[];
 }
 
-export const SVN_WORKBENCH_CONFIG_FILE = ".svn-workbench.json";
+export { SVN_WORKBENCH_CONFIG_FILE };
 
 export const defaultCommitConventionConfig: CommitConventionConfig = {
   enabled: false,
@@ -156,52 +165,54 @@ export async function readProjectCommitConventionConfig(
   configPath: string;
   warnings: string[];
 }> {
-  const configPath = path.join(repositoryRoot, SVN_WORKBENCH_CONFIG_FILE);
-  try {
-    const content = await fs.readFile(configPath, "utf8");
-    const parsed = parseSvnWorkbenchProjectConfig(content);
+  const result = await readSvnWorkbenchConfig(repositoryRoot);
+  if (result.readError !== undefined) {
     return {
-      config: parsed.config,
-      configPath,
-      warnings: parsed.warnings,
-    };
-  } catch (error) {
-    if (isFileNotFound(error)) {
-      return {
-        configPath,
-        warnings: [],
-      };
-    }
-
-    return {
-      configPath,
+      configPath: result.configPath,
       warnings: [
-        `读取 ${SVN_WORKBENCH_CONFIG_FILE} 失败：${error instanceof Error ? error.message : String(error)}`,
+        `读取 ${SVN_WORKBENCH_CONFIG_FILE} 失败：${describeSvnWorkbenchConfigError(result.readError)}`,
       ],
     };
   }
+
+  if (!result.exists) {
+    return {
+      configPath: result.configPath,
+      warnings: [],
+    };
+  }
+
+  if (!result.raw) {
+    return {
+      configPath: result.configPath,
+      warnings: result.warnings,
+    };
+  }
+
+  const parsed = extractCommitConventionConfig(result.raw);
+  return {
+    config: parsed.config,
+    configPath: result.configPath,
+    warnings: parsed.warnings,
+  };
 }
 
 export function parseSvnWorkbenchProjectConfig(
   content: string,
 ): ProjectCommitConventionParseResult {
-  let raw: unknown;
-  try {
-    raw = JSON.parse(content);
-  } catch (error) {
+  const parsed = parseSvnWorkbenchConfigContent(content);
+  if (!parsed.raw) {
     return {
-      warnings: [
-        `${SVN_WORKBENCH_CONFIG_FILE} 不是合法 JSON：${error instanceof Error ? error.message : String(error)}`,
-      ],
+      warnings: parsed.warnings,
     };
   }
 
-  if (!isRecord(raw)) {
-    return {
-      warnings: [`${SVN_WORKBENCH_CONFIG_FILE} 顶层必须是 JSON 对象。`],
-    };
-  }
+  return extractCommitConventionConfig(parsed.raw);
+}
 
+function extractCommitConventionConfig(
+  raw: Record<string, unknown>,
+): ProjectCommitConventionParseResult {
   const commitConvention = raw.commitConvention;
   if (commitConvention === undefined) {
     return {
@@ -246,7 +257,7 @@ export async function readCommitConventionEditState(
   repositoryRoot: string,
 ): Promise<CommitConventionEditState> {
   const configPath = await ensureSvnWorkbenchProjectConfig(repositoryRoot);
-  const content = await fs.readFile(configPath, "utf8");
+  const content = await readSvnWorkbenchConfigContent(repositoryRoot);
   const parsed = parseSvnWorkbenchProjectConfig(content);
   return {
     configPath,
@@ -275,30 +286,18 @@ export function createDefaultSvnWorkbenchProjectConfig(): SvnWorkbenchProjectCon
 export function serializeSvnWorkbenchProjectConfig(
   config: SvnWorkbenchProjectConfig,
 ): string {
-  return `${JSON.stringify(config, null, 2)}\n`;
+  return serializeSvnWorkbenchConfig(config);
 }
 
 export async function ensureSvnWorkbenchProjectConfig(
   repositoryRoot: string,
 ): Promise<string> {
-  const configPath = path.join(repositoryRoot, SVN_WORKBENCH_CONFIG_FILE);
-  try {
-    await fs.access(configPath);
-    return configPath;
-  } catch (error) {
-    if (!isFileNotFound(error)) {
-      throw error;
-    }
-  }
-
-  await fs.writeFile(
-    configPath,
+  return ensureSvnWorkbenchConfigFile(
+    repositoryRoot,
     serializeSvnWorkbenchProjectConfig(
       createDefaultSvnWorkbenchProjectConfig(),
     ),
-    "utf8",
   );
-  return configPath;
 }
 
 export function buildCommitConventionConfigFromEditorInput(
@@ -351,47 +350,20 @@ export function updateSvnWorkbenchProjectConfigContent(
   content: string,
   commitConvention: CommitConventionConfig,
 ): { content: string; warnings: string[] } {
-  const warnings: string[] = [];
-  let raw: SvnWorkbenchProjectConfig = {};
-  if (content.trim()) {
-    try {
-      const parsed = JSON.parse(content);
-      if (isRecord(parsed)) {
-        raw = { ...parsed };
-      } else {
-        warnings.push(
-          `${SVN_WORKBENCH_CONFIG_FILE} 顶层不是对象，保存时已重建。`,
-        );
-      }
-    } catch (error) {
-      warnings.push(
-        `${SVN_WORKBENCH_CONFIG_FILE} 不是合法 JSON，保存时已重建：${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-  }
-
-  raw.commitConvention = commitConvention;
-  return {
-    content: serializeSvnWorkbenchProjectConfig(raw),
-    warnings,
-  };
+  return mergeSvnWorkbenchConfigContent(content, { commitConvention });
 }
 
 export async function saveProjectCommitConventionConfig(
   repositoryRoot: string,
   commitConvention: CommitConventionConfig,
 ): Promise<{ configPath: string; warnings: string[] }> {
-  const configPath = await ensureSvnWorkbenchProjectConfig(repositoryRoot);
-  const content = await fs.readFile(configPath, "utf8");
-  const next = updateSvnWorkbenchProjectConfigContent(
-    content,
-    commitConvention,
+  return updateSvnWorkbenchConfig(
+    repositoryRoot,
+    { commitConvention },
+    serializeSvnWorkbenchProjectConfig(
+      createDefaultSvnWorkbenchProjectConfig(),
+    ),
   );
-  await fs.writeFile(configPath, next.content, "utf8");
-  return {
-    configPath,
-    warnings: next.warnings,
-  };
 }
 
 export function validateCommitMessageConvention(
@@ -571,15 +543,6 @@ function normalizePartialCommitConventionConfig(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isFileNotFound(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: unknown }).code === "ENOENT"
-  );
 }
 
 function normalizePattern(value: string): string {

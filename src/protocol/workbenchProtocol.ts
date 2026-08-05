@@ -1,3 +1,14 @@
+import type {
+  CommitSelectionDecision,
+  CommitSelectionExplanation,
+  CommitSelectionLayerConfig,
+  CommitSelectionReasonKey,
+  CommitSelectionRuleSource,
+  CommitSelectionStatusKey,
+  CommitSelectionStatusPolicies,
+  ResolvedCommitSelectionPathRule,
+} from "../commit/commitSelectionRules";
+
 export const WORKBENCH_PROTOCOL_VERSION = 1 as const;
 
 export type WorkbenchModuleId =
@@ -38,6 +49,7 @@ export type WorkbenchTaskId =
   | "settings/ai"
   | "settings/team"
   | "settings/svn"
+  | "settings/selection"
   | "diagnostics/environment"
   | "diagnostics/acceptance";
 
@@ -80,6 +92,7 @@ const taskModules: Record<WorkbenchTaskId, WorkbenchModuleId> = {
   "settings/ai": "settings",
   "settings/team": "settings",
   "settings/svn": "settings",
+  "settings/selection": "settings",
   "diagnostics/environment": "diagnostics",
   "diagnostics/acceptance": "diagnostics",
 };
@@ -134,6 +147,11 @@ export interface WorkbenchFileView {
   fileType?: string;
   selection?: "selected" | "needsReview" | "excluded" | "blocked";
   reason?: string;
+  /**
+   * 本地规则决策解释（规划 4.3、5.4）：最终决策、决策原因、命中规则及来源、
+   * 是否不可覆盖的安全结果；提交页据此展示决策依据。
+   */
+  evaluation?: CommitSelectionExplanation;
 }
 
 export interface ChangesSnapshot {
@@ -197,11 +215,45 @@ export interface CommitSnapshot {
   conventionHint: string;
   templates: Array<{ id: string; label: string; body: string }>;
   preview?: CommitPlanView;
+  /**
+   * 提交文件选择场景的 AI 配置状态（规划 4.2）：
+   * configured 为 true 时提交页才提供“获取 AI 建议”，否则显示“配置 AI”入口。
+   */
+  selectionAi: {
+    configured: boolean;
+    model?: string;
+  };
+  /**
+   * 提交页一次性反馈（规划 4.2、4.3）：应用本地规则结果、规则更新提示等；
+   * Host 在下发后的下一次快照构建时清除。
+   */
+  feedback?: { tone: "success" | "warning" | "error"; message: string };
   ai?: {
     source: "local-rule" | "configured-model" | "local-rule-fallback";
     summary: string;
     warnings: string[];
     fallbackReason?: string;
+    /**
+     * AI 建议获取失败（规划 4.2）：未配置、超时或返回无效结构时保留当前选择，
+     * 界面展示失败原因与“应用本地规则”恢复动作，不再静默替换为本地规则结果。
+     */
+    failed?: boolean;
+    /**
+     * binding 与当前范围/候选哈希不匹配（规划 6.3）：结果已过期，
+     * 只能查看或重新生成，不能直接采用。
+     */
+    stale?: boolean;
+    /**
+     * AI 结果绑定信息（规划 5.5、6.3）：关键状态（仓库、范围、候选状态）
+     * 变化后结果失效；规则来源变化时由 Host 清除。
+     */
+    binding?: {
+      repositoryUuid: string;
+      scopeHash: string;
+      candidateHash: string;
+      generatedAt: string;
+      model?: string;
+    };
   };
   aiPrivacy: Array<{
     scenario: "selection" | "message";
@@ -314,6 +366,69 @@ export interface ConflictSnapshot {
   };
 }
 
+/** 提交选择规则设置的可编辑作用域；当前版本仅仓库级可编辑。 */
+export type CommitSelectionSettingsScope = "user" | "workspace" | "repository";
+
+/** 设置快照中单层（用户/工作区/仓库）提交选择规则配置视图。 */
+export interface CommitSelectionSettingsLayerView {
+  /** 该层是否可在设置页表单中编辑；用户/工作区级只读，走 VS Code 原生设置。 */
+  editable: boolean;
+  /** empty=未配置；applied=已应用；failed=校验失败已回退。 */
+  state: "empty" | "applied" | "failed";
+  /** 该层解析后的原始配置（state 为 applied 时存在）。 */
+  config?: CommitSelectionLayerConfig;
+  errors: string[];
+  warnings: string[];
+}
+
+/** 设置页实时预览条目：候选文件 + 本地规则最终决策与解释。 */
+export interface CommitSelectionPreviewItem {
+  relativePath: string;
+  status: WorkbenchFileStatus;
+  propStatus?: WorkbenchFileStatus;
+  decision: CommitSelectionDecision;
+  reasonKey: CommitSelectionReasonKey;
+  statusPolicyKey?: CommitSelectionStatusKey;
+  matchedRuleId?: string;
+  ruleSource?: CommitSelectionRuleSource;
+  safetyLocked: boolean;
+}
+
+/**
+ * 设置快照的提交选择规则段（v0.0.3 阶段 3，规划 7.4）。
+ * 实时预览所需的合并结果与候选清单随快照一次性下发；
+ * 规则评估在 Webview 端本地执行，协议不承担高频预览往返。
+ */
+export interface CommitSelectionSettingsSection {
+  /** 当前编辑作用域；保存与恢复默认只作用于该作用域（当前版本固定仓库级）。 */
+  editingScope: CommitSelectionSettingsScope;
+  /** 仓库配置文件相对仓库根的路径。 */
+  configPath: string;
+  layers: Record<
+    CommitSelectionSettingsScope,
+    CommitSelectionSettingsLayerView
+  >;
+  /** 有效合并结果：状态策略 + 有序路径规则（第一条命中生效，含来源）。 */
+  effective: {
+    statusRules: CommitSelectionStatusPolicies;
+    pathRules: ResolvedCommitSelectionPathRule[];
+  };
+  /** 校验错误（含配置损坏降级说明）。 */
+  errors: string[];
+  /** 校验警告（含被更宽前置规则遮蔽的规则警告）。 */
+  warnings: string[];
+  /** 当前候选文件的规则预览；只进行本地计算，不调用 AI。 */
+  preview: {
+    state: "ready" | "empty" | "error";
+    error?: string;
+    items: CommitSelectionPreviewItem[];
+  };
+  /** 保存/恢复/刷新等动作的反馈。 */
+  feedback?: { tone: "success" | "warning" | "error"; message: string };
+  /** 保存被拒绝时的结构化校验错误列表（仅保存失败时出现）。 */
+  saveErrors?: string[];
+}
+
 export interface SettingsSnapshot {
   kind: "settings";
   svnSecurity: {
@@ -367,6 +482,7 @@ export interface SettingsSnapshot {
       fallbackReason?: string;
     };
   };
+  selection: CommitSelectionSettingsSection;
 }
 
 export interface DiagnosticsSnapshot {
@@ -709,6 +825,7 @@ export type WebviewAction =
   | "security/open-proxy-settings"
   | "commit/update-draft"
   | "commit/update-selection"
+  | "commit/apply-local-rules"
   | "commit/ai-select"
   | "commit/apply-template"
   | "commit/generate-message"
@@ -731,6 +848,11 @@ export type WebviewAction =
   | "settings/recommend-team"
   | "settings/open-team-file"
   | "settings/clear-team-memory"
+  | "settings/save-selection"
+  | "settings/restore-selection-defaults"
+  | "settings/open-selection-file"
+  | "settings/refresh-selection-preview"
+  | "settings/open-selection-vscode-settings"
   | "diagnostics/run"
   | "diagnostics/show-output"
   | "repository/preview-update"
@@ -784,7 +906,11 @@ const moduleIds = new Set<WorkbenchModuleId>([
   "diagnostics",
 ]);
 
-const actions = new Set<WebviewAction>([
+/**
+ * Webview 动作运行时清单（规划 9.2）：与 WebviewAction 字面量联合双处维护。
+ * 下方 WebviewActionListConsistency 在编译期断言两侧同步，防止遗漏。
+ */
+export const webviewActions = [
   "refresh",
   "open-module",
   "open-diff",
@@ -796,6 +922,7 @@ const actions = new Set<WebviewAction>([
   "security/open-proxy-settings",
   "commit/update-draft",
   "commit/update-selection",
+  "commit/apply-local-rules",
   "commit/ai-select",
   "commit/apply-template",
   "commit/generate-message",
@@ -818,6 +945,11 @@ const actions = new Set<WebviewAction>([
   "settings/recommend-team",
   "settings/open-team-file",
   "settings/clear-team-memory",
+  "settings/save-selection",
+  "settings/restore-selection-defaults",
+  "settings/open-selection-file",
+  "settings/refresh-selection-preview",
+  "settings/open-selection-vscode-settings",
   "diagnostics/run",
   "diagnostics/show-output",
   "repository/preview-update",
@@ -845,7 +977,16 @@ const actions = new Set<WebviewAction>([
   "changes/copy-url",
   "changes/show-in-repository",
   "operation/cancel",
-]);
+] as const satisfies readonly WebviewAction[];
+
+type AssertNever<T extends never> = T;
+
+/** 编译期一致性断言：字面量联合有而运行时清单没有的成员会让本行编译失败。 */
+export type WebviewActionListConsistency = AssertNever<
+  Exclude<WebviewAction, (typeof webviewActions)[number]>
+>;
+
+const actions = new Set<WebviewAction>(webviewActions);
 
 export function isWorkbenchModuleId(
   value: unknown,

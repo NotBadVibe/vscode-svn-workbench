@@ -1038,9 +1038,38 @@ summary:focus-visible {
   background: var(--surface-2);
   font-size: 11px;
 }
-.ai-select-button {
-  width: 100%;
+.commit-action-row {
+  display: flex;
+  gap: 8px;
   margin-top: 8px;
+}
+.commit-action-row .button {
+  flex: 1;
+  min-width: 0;
+}
+.commit-feedback {
+  margin-top: 8px;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.commit-feedback--success {
+  color: var(--success);
+  border-color: color-mix(in srgb, var(--success) 35%, transparent);
+  background: color-mix(in srgb, var(--success) 7%, transparent);
+}
+.commit-feedback--warning {
+  color: var(--warning);
+  border-color: color-mix(in srgb, var(--warning) 35%, transparent);
+  background: color-mix(in srgb, var(--warning) 7%, transparent);
+}
+.commit-feedback--error {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 35%, transparent);
+  background: color-mix(in srgb, var(--danger) 7%, transparent);
 }
 .privacy-note {
   display: flex;
@@ -1086,10 +1115,23 @@ summary:focus-visible {
 .commit-file-row--blocked {
   background: color-mix(in srgb, var(--danger) 6%, transparent);
 }
+.commit-file-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
 .commit-file-path {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.commit-file-decision {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 10px;
 }
 .compose-section {
   padding-bottom: 18px;
@@ -1177,6 +1219,9 @@ summary:focus-visible {
 .ai-summary p {
   margin: 3px 0 0;
   color: var(--muted);
+}
+.ai-recover-button {
+  margin-top: 6px;
 }
 .ready-banner {
   display: flex;
@@ -3144,5 +3189,281 @@ summary:focus-visible {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+/* 提交选择规则设置（v0.0.3 阶段 3） */
+.selection-scope-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+.selection-scope-card {
+  display: grid;
+  gap: 6px;
+  align-content: start;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+.selection-scope-card--active {
+  border-color: color-mix(in srgb, var(--border-strong) 65%, var(--border));
+}
+.selection-scope-card h3 {
+  margin: 0;
+  font-size: 13px;
+}
+.selection-scope-card .notice {
+  margin: 0;
+}
+.selection-scope-meta {
+  color: var(--muted);
+  font-size: 12px;
+}
+.selection-status-list {
+  display: grid;
+}
+.selection-status-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(170px, 220px);
+  gap: 10px;
+  align-items: center;
+  padding: 7px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+}
+.selection-status-row:last-child {
+  border-bottom: 0;
+}
+.selection-status-row > span {
+  display: grid;
+  gap: 2px;
+}
+.selection-status-row select,
+.selection-rule-line select,
+.selection-rule-id-input {
+  min-height: 30px;
+  padding: 4px 8px;
+  border: 1px solid var(--vscode-input-border, var(--border));
+  border-radius: var(--radius-sm);
+  color: var(--vscode-input-foreground, inherit);
+  background: var(--vscode-input-background, var(--surface-0));
+}
+.selection-safety-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+.selection-safety-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.selection-safety-row > span:last-child {
+  display: grid;
+  gap: 2px;
+}
+.selection-safety-row small {
+  color: var(--muted);
+}
+.decision-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border: 1px solid;
+  border-radius: 999px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.decision-badge--recommended {
+  color: var(--success);
+  border-color: color-mix(in srgb, var(--success) 55%, transparent);
+}
+.decision-badge--needsReview {
+  color: var(--warning);
+  border-color: color-mix(in srgb, var(--warning) 55%, transparent);
+}
+.decision-badge--excluded {
+  color: var(--muted);
+  border-color: color-mix(in srgb, var(--muted) 45%, transparent);
+}
+.decision-badge--blocked {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 55%, transparent);
+}
+.source-badge {
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.selection-rule-list {
+  max-height: 420px;
+  margin-top: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.selection-rule-header,
+.selection-rule-line {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1.4fr) minmax(120px, 0.7fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+.selection-rule-header {
+  padding: 6px 10px;
+  color: var(--muted);
+  font-size: 11px;
+  border-bottom: 1px solid var(--border);
+}
+.selection-rule-row {
+  display: grid;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+}
+.selection-rule-row:last-child {
+  border-bottom: 0;
+}
+.selection-rule-row--disabled .selection-rule-id code,
+.selection-rule-row--disabled .selection-rule-pattern {
+  opacity: 0.55;
+}
+.selection-rule-id {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.selection-rule-id code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.selection-rule-id-input {
+  max-width: 220px;
+}
+.selection-rule-actions {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.selection-rule-line--fields {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+.selection-rule-field {
+  margin-bottom: 0;
+}
+.selection-rule-pattern {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.selection-rule-issue {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  font-size: 12px;
+}
+.selection-rule-issue--error {
+  color: var(--danger);
+}
+.selection-rule-issue--warning {
+  color: var(--warning);
+}
+.selection-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin: 10px 0;
+  color: var(--muted);
+}
+.selection-summary > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.selection-preview-list {
+  max-height: 360px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.selection-preview-header,
+.selection-preview-row {
+  display: grid;
+  grid-template-columns:
+    minmax(0, 1.6fr) minmax(90px, 0.7fr) minmax(0, 1fr)
+    minmax(90px, 0.7fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 6px 10px;
+}
+.selection-preview-header {
+  color: var(--muted);
+  font-size: 11px;
+  border-bottom: 1px solid var(--border);
+}
+.selection-preview-row {
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+}
+.selection-preview-row:last-child {
+  border-bottom: 0;
+}
+.selection-preview-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.selection-actions-card .toolbar-actions {
+  margin-top: 10px;
+}
+.selection-save-hint {
+  margin: 8px 0 0;
+}
+@media (max-width: 720px) {
+  .selection-scope-grid {
+    grid-template-columns: 1fr;
+  }
+  .selection-status-row {
+    grid-template-columns: 1fr;
+  }
+  .selection-rule-header {
+    display: none;
+  }
+  .selection-rule-line {
+    display: flex;
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+  .selection-rule-id {
+    flex: 1 1 60%;
+  }
+  .selection-rule-line--fields {
+    display: grid;
+    grid-template-columns: 1fr;
+    width: 100%;
+  }
+  .selection-preview-header {
+    display: none;
+  }
+  .selection-preview-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+}
+@media (max-height: 600px) {
+  .selection-rule-list {
+    max-height: 300px;
+  }
+  .selection-preview-list {
+    max-height: 240px;
   }
 }

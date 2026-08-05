@@ -93,3 +93,35 @@ test("5000-file dataset remains windowed while scrolling", async ({ page }) => {
   ).toBeVisible();
   expect(await list.getByRole("listitem").count()).toBeLessThan(100);
 });
+
+test("selection rules tab keeps source, warning and decision text visible in all themes", async ({
+  page,
+}) => {
+  for (const [theme, variables] of Object.entries(themes)) {
+    await test.step(theme, async () => {
+      await page.setViewportSize({ width: 1024, height: 700 });
+      await page.goto("/?selection=shadowed");
+      await page.evaluate((values) => {
+        for (const [name, value] of Object.entries(values))
+          document.documentElement.style.setProperty(name, value);
+      }, variables);
+      await page.getByRole("button", { name: "设置", exact: true }).click();
+      await page.getByRole("tab", { name: "提交选择规则" }).click();
+      // 来源、决策与遮蔽警告都有文字表达，不依赖颜色
+      await expect(page.getByText("内置默认").first()).toBeVisible();
+      await expect(
+        page
+          .locator(".selection-rule-list .source-badge", {
+            hasText: "当前仓库",
+          })
+          .first(),
+      ).toBeVisible();
+      await expect(page.getByText(/永远不会命中/).first()).toBeVisible();
+      await expect(page.getByText("阻止提交").first()).toBeVisible();
+      const results = await new AxeBuilder({ page })
+        .include(".selection-settings")
+        .analyze();
+      expect(results.violations).toEqual([]);
+    });
+  }
+});

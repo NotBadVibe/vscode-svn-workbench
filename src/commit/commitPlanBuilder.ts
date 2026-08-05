@@ -4,6 +4,7 @@ import { isPathInScope } from "../scope/pathBoundaryGuard";
 import { SvnStatus } from "../svn/svnTypes";
 import { CommitCandidate } from "./commitCandidateCollector";
 import { CommitFlowPlan } from "./commitFlow";
+import { blockedCommitSelectionStatuses } from "./commitSelectionRules";
 
 export interface CommitPlanIssue {
   path?: string;
@@ -100,10 +101,20 @@ export function toCommitFlowPlan(
   };
 }
 
+const blockedStatuses: readonly string[] = blockedCommitSelectionStatuses;
+
 function getBlockedCommitReason(
   candidate: CommitCandidate,
 ): string | undefined {
-  if (candidate.selection === "blocked") {
+  // 安全复验使用 (status, propStatus) 二元组，与规则评估器的安全契约一致
+  // （V003-CR-01/02）：仅属性冲突（如 status=normal 且 propStatus=conflicted）
+  // 同样是阻止状态，不依赖上游 selection 是否已同步。
+  if (
+    candidate.selection === "blocked" ||
+    blockedStatuses.includes(candidate.status) ||
+    (candidate.propStatus !== undefined &&
+      blockedStatuses.includes(candidate.propStatus))
+  ) {
     return "文件处于阻止状态，需要先处理冲突或异常。";
   }
 
@@ -111,14 +122,26 @@ function getBlockedCommitReason(
     return "文件已被规则排除，不能直接进入提交计划。";
   }
 
-  if (!isCommittableStatus(candidate.status)) {
+  if (!isCommittableStatus(candidate.status, candidate.propStatus)) {
     return `当前 SVN 状态 ${candidate.status} 不支持直接提交。`;
   }
 
   return undefined;
 }
 
-function isCommittableStatus(status: SvnStatus): boolean {
+/**
+ * 提交可行性使用 (status, propStatus) 二元组（与 commitSelectionRuleEvaluator
+ * 的 propertyModified 契约一致）：仅 SVN 属性变化（status=normal 且
+ * propStatus=modified）可直接提交，进入 commitPaths 但不进入
+ * addPaths/removePaths；普通 normal 仍不可提交。
+ */
+function isCommittableStatus(
+  status: SvnStatus,
+  propStatus?: SvnStatus,
+): boolean {
+  if (status === "normal") {
+    return propStatus === "modified";
+  }
   return (
     status === "modified" ||
     status === "added" ||

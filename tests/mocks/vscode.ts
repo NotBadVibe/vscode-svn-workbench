@@ -29,6 +29,7 @@ export const workspace = {
   getConfiguration: () => ({
     get: <T>(_key: string, defaultValue?: T): T | undefined => defaultValue,
     update: async () => undefined,
+    inspect: () => undefined,
   }),
   fs: {
     stat: async (uri: { fsPath: string }) => {

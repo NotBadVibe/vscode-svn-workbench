@@ -39,6 +39,12 @@ const candidate = (
   generatedDecision: "keep",
   selection: "selected",
   reason: "change",
+  evaluation: {
+    decision: "recommended",
+    reasonKey: "statusPolicy",
+    statusPolicyKey: "modified",
+    safetyLocked: false,
+  },
   ...overrides,
 });
 const convention = (overrides = {}) => ({

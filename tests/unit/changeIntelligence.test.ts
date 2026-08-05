@@ -20,6 +20,12 @@ const candidate = (relativePath: string): CommitCandidate => ({
   generatedDecision: "keep",
   selection: "selected",
   reason: "本地修改",
+  evaluation: {
+    decision: "recommended",
+    reasonKey: "statusPolicy",
+    statusPolicyKey: "modified",
+    safetyLocked: false,
+  },
 });
 
 describe("change intelligence", () => {

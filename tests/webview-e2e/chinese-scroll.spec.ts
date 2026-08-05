@@ -353,3 +353,57 @@ test("SCR-12/13/14/15 与 ZH-10：高度和 100%～200% 缩放矩阵无永久裁
     });
   }
 });
+
+test("SCR-08b：提交选择规则在小高度下规则列表、预览与底部操作可达", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 720, height: 480 });
+  await page.goto("/?dataset=scroll");
+  await openModule(page, "设置");
+  await page.getByRole("tab", { name: "提交选择规则" }).click();
+
+  const ruleList = page.getByRole("region", { name: "提交选择路径规则列表" });
+  await assertScrollable(
+    ruleList,
+    ruleList.locator(".selection-rule-row").last(),
+  );
+  const previewList = page.getByRole("region", {
+    name: "提交选择规则预览结果",
+  });
+  await assertScrollable(
+    previewList,
+    previewList.locator(".selection-preview-row").last(),
+  );
+
+  // 键盘到达规则列表末项：聚焦滚动区后 PageDown 逐屏滚动到底，末行在可视区域内
+  await ruleList.focus();
+  const atBottom = () =>
+    ruleList.evaluate(
+      (element) =>
+        element.scrollTop + element.clientHeight >= element.scrollHeight - 1,
+    );
+  for (let index = 0; index < 48 && !(await atBottom()); index += 1) {
+    await ruleList.press("PageDown");
+  }
+  expect(await atBottom()).toBe(true);
+  const lastRow = ruleList.locator(".selection-rule-row").last();
+  const [listBox, lastRowBox] = await Promise.all([
+    ruleList.boundingBox(),
+    lastRow.boundingBox(),
+  ]);
+  expect(lastRowBox!.y + lastRowBox!.height).toBeLessThanOrEqual(
+    listBox!.y + listBox!.height + 1,
+  );
+
+  // 底部主操作在页面滚动容器内可达（720×480 不允许永久不可达）
+  const saveButton = page.getByRole("button", { name: "保存当前仓库规则" });
+  await saveButton.scrollIntoViewIfNeeded();
+  const [contentBox, buttonBox] = await Promise.all([
+    page.locator(".workbench-content").boundingBox(),
+    saveButton.boundingBox(),
+  ]);
+  expect(buttonBox!.y).toBeGreaterThanOrEqual(contentBox!.y - 1);
+  expect(buttonBox!.y + buttonBox!.height).toBeLessThanOrEqual(
+    contentBox!.y + contentBox!.height + 1,
+  );
+});

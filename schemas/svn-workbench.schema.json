@@ -1,0 +1,225 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "SVN 工作台仓库配置",
+  "description": ".svn-workbench.json 仓库级配置文件。未识别的顶层字段会被保留，不会因保存其他设置区域而丢失。",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "可选。JSON Schema 声明；安装 SVN 工作台扩展后无需填写即可自动关联。"
+    },
+    "commitConvention": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "团队提交说明规范。仓库级配置与 VS Code 设置合并，仓库级优先。",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "是否在 SVN 提交前启用团队提交说明规范检查。"
+        },
+        "requiredIssueId": {
+          "type": "boolean",
+          "description": "启用提交规范后，要求提交说明包含任务编号。"
+        },
+        "issueIdPattern": {
+          "type": "string",
+          "description": "用于校验提交说明中任务编号的正则表达式。"
+        },
+        "requiredModule": {
+          "type": "boolean",
+          "description": "要求提交说明首行包含模块，例如 feat(order): message。"
+        },
+        "allowedModules": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "提交说明首行允许使用的模块名称。"
+        },
+        "requiredPrefix": {
+          "type": "boolean",
+          "description": "要求提交说明首行使用约定前缀。"
+        },
+        "allowedPrefixes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "提交说明首行允许使用的约定前缀。"
+        }
+      }
+    },
+    "commitCandidateFilterPresets": {
+      "type": "array",
+      "description": "提交候选列表的自定义筛选预设，只负责列表显示筛选；与内置预设 id 重复时跳过。",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["id", "label", "filters"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$",
+            "description": "稳定预设 ID；不得与内置预设重复。"
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "description": "预设显示名称。"
+          },
+          "description": {
+            "type": "string",
+            "description": "预设用途说明。"
+          },
+          "filters": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "筛选条件；缺省项取内置默认值。",
+            "properties": {
+              "search": {
+                "type": "string",
+                "description": "按相对路径包含的子串筛选（不区分大小写）。"
+              },
+              "status": {
+                "type": "string",
+                "description": "按 SVN 状态筛选，例如 modified、added；all 表示不过滤。"
+              },
+              "fileType": {
+                "type": "string",
+                "description": "按文件类型筛选；all 表示不过滤。"
+              },
+              "templateGroup": {
+                "type": "string",
+                "enum": [
+                  "all",
+                  "frontend",
+                  "backend",
+                  "document",
+                  "config",
+                  "asset",
+                  "other"
+                ],
+                "description": "按变更模板分组筛选。"
+              },
+              "hideGenerated": {
+                "type": "boolean",
+                "default": true,
+                "description": "是否隐藏本地规则判定为排除的生成物。"
+              },
+              "aiDecision": {
+                "type": "string",
+                "enum": [
+                  "all",
+                  "recommended",
+                  "needsReview",
+                  "excluded",
+                  "blocked",
+                  "none"
+                ],
+                "description": "按 AI 提交选择建议筛选。"
+              }
+            }
+          }
+        }
+      }
+    },
+    "commitSelection": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "提交文件选择的本地规则。决策值：recommended（推荐提交）、needsReview（需要确认）、excluded（排除）；blocked 只由安全规则产出，不可配置。",
+      "properties": {
+        "version": {
+          "type": "integer",
+          "enum": [1],
+          "description": "配置格式版本，用于后续配置迁移；当前仅支持 1。"
+        },
+        "statusRules": {
+          "type": "object",
+          "additionalProperties": true,
+          "description": "SVN 状态默认策略。conflicted、obstructed、incomplete 始终阻止，external、ignored 始终排除，均为不可覆盖的安全状态。",
+          "properties": {
+            "modified": {
+              "$ref": "#/definitions/configurableDecision"
+            },
+            "added": {
+              "$ref": "#/definitions/configurableDecision"
+            },
+            "deleted": {
+              "$ref": "#/definitions/configurableDecision"
+            },
+            "replaced": {
+              "$ref": "#/definitions/configurableDecision"
+            },
+            "propertyModified": {
+              "$ref": "#/definitions/configurableDecision",
+              "description": "仅 SVN 属性变化（status=normal 且 propStatus=modified）的默认决策。"
+            },
+            "missing": {
+              "$ref": "#/definitions/configurableDecision"
+            },
+            "unversioned": {
+              "$ref": "#/definitions/configurableDecision"
+            },
+            "unknown": {
+              "$ref": "#/definitions/configurableDecision"
+            },
+            "normal": {
+              "$ref": "#/definitions/configurableDecision",
+              "description": "normal 状态的默认决策；不影响仅属性变化的判断。"
+            }
+          }
+        },
+        "pathRules": {
+          "type": "array",
+          "maxItems": 200,
+          "description": "Glob 路径规则，第一条命中生效，优先级高于状态默认策略；自定义规则按顺序在内置规则之前评估。与内置规则同 ID 时覆盖内置定义。",
+          "items": {
+            "type": "object",
+            "additionalProperties": true,
+            "required": ["id", "pattern", "decision"],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$",
+                "description": "稳定规则 ID；同层不得重复。"
+              },
+              "enabled": {
+                "type": "boolean",
+                "default": true,
+                "description": "是否启用该规则。"
+              },
+              "pattern": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200,
+                "description": "Glob 路径表达式：相对仓库根、统一 / 分隔、支持 **；不允许反斜杠、开头 / 与盘符绝对路径。"
+              },
+              "decision": {
+                "$ref": "#/definitions/configurableDecision",
+                "description": "命中后的决策。"
+              },
+              "reason": {
+                "type": "string",
+                "default": "",
+                "description": "该规则的中文原因说明。"
+              },
+              "caseSensitive": {
+                "type": "boolean",
+                "default": true,
+                "description": "匹配是否大小写敏感。"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "configurableDecision": {
+      "type": "string",
+      "enum": ["recommended", "needsReview", "excluded"],
+      "description": "recommended（推荐提交）、needsReview（需要确认）、excluded（排除）。"
+    }
+  }
+}

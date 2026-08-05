@@ -49,6 +49,12 @@ const candidate = (
   generatedDecision: "keep",
   selection: "selected",
   reason: "test",
+  evaluation: {
+    decision: "needsReview",
+    reasonKey: "statusPolicy",
+    statusPolicyKey: "unversioned",
+    safetyLocked: false,
+  },
   ...overrides,
 });
 

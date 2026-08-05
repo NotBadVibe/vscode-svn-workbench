@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "version": "0.0.3",
+  "status": "draft",
+  "baseVersion": "0.0.2",
+  "releaseDate": null,
+  "gitTag": null,
+  "gitCommit": null,
+  "sourceState": "planning",
+  "vsix": null,
+  "tests": {},
+  "acceptedEvidenceRun": null,
+  "evidencePath": null
+}

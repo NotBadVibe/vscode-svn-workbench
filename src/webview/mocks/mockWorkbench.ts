@@ -2,11 +2,25 @@ import {
   defaultWorkbenchTask,
   isWorkbenchTaskForModule,
   WORKBENCH_PROTOCOL_VERSION,
+  type CommitSelectionPreviewItem,
+  type CommitSelectionSettingsLayerView,
+  type CommitSelectionSettingsSection,
   type HostToWebviewMessage,
   type WorkbenchModuleId,
   type WorkbenchModuleSnapshot,
   type WorkbenchTaskId,
 } from "@protocol/workbenchProtocol";
+import {
+  COMMIT_SELECTION_CONFIG_VERSION,
+  validateCommitSelectionLayerConfig,
+} from "../../commit/commitSelectionRules";
+import {
+  resolveCommitSelectionRules,
+  type CommitSelectionLayerResolution,
+  type ResolvedCommitSelectionRules,
+} from "../../commit/commitSelectionRuleResolver";
+import { createCommitSelectionEvaluator } from "../../commit/commitSelectionRuleEvaluator";
+import type { SvnStatus } from "../../svn/svnTypes";
 import { workbenchBridge } from "../bridge/vscodeBridge";
 
 const files = [
@@ -220,18 +234,59 @@ export function startMockWorkbench(): void {
         }),
       );
     }
-    if (action === "commit/ai-select") {
+    if (action === "commit/apply-local-rules") {
       injectSnapshot(
         "commit",
         commitSnapshot({
-          selectedPaths: ["src/extension.ts"],
-          ai: {
-            source: "configured-model",
-            summary: "建议选择 1 个文件；1 个需要人工确认，1 个建议排除。",
-            warnings: [],
+          selectedPaths: ["src/extension.ts", "src/webview/App.svelte"],
+          feedback: {
+            tone: "success",
+            message:
+              "已按本地规则应用推荐选择 2 个文件；1 个文件待确认，可手动勾选。",
           },
         }),
       );
+    }
+    if (action === "commit/ai-select") {
+      const commitAiScenario = new URLSearchParams(window.location.search).get(
+        "commitAi",
+      );
+      if (commitAiScenario === "fail") {
+        // AI 失败：保留当前选择，展示失败原因与“应用本地规则”恢复动作。
+        injectSnapshot(
+          "commit",
+          commitSnapshot({
+            ai: {
+              source: "local-rule-fallback",
+              summary: "AI 建议获取失败，已保留当前选择。",
+              warnings: [],
+              fallbackReason: "模拟失败：AI 服务连接超时。",
+              failed: true,
+            },
+          }),
+        );
+      } else {
+        const aiResult = {
+          source: "configured-model",
+          summary: "建议选择 1 个文件；1 个需要人工确认，1 个建议排除。",
+          warnings: [],
+          stale: commitAiScenario === "stale" ? true : undefined,
+          binding: {
+            repositoryUuid: "mock-repository-uuid",
+            scopeHash: "mock-scope-hash",
+            candidateHash: "mock-candidate-hash",
+            generatedAt: "2026-08-04T09:30:00.000Z",
+            model: "deepseek-v4-flash",
+          },
+        };
+        injectSnapshot(
+          "commit",
+          commitSnapshot({
+            selectedPaths: ["src/extension.ts"],
+            ai: aiResult,
+          }),
+        );
+      }
     }
     if (action === "commit/preview") {
       injectSnapshot(
@@ -432,6 +487,89 @@ export function startMockWorkbench(): void {
           },
         }),
       );
+    }
+    if (action === "settings/save-selection") {
+      // 与 Host 相同的保存前校验（领域纯函数）；save-error 场景模拟写入失败。
+      const candidate: Record<string, unknown> = {
+        version: COMMIT_SELECTION_CONFIG_VERSION,
+      };
+      if (data.statusRules !== undefined) {
+        candidate.statusRules = data.statusRules;
+      }
+      if (data.pathRules !== undefined) {
+        candidate.pathRules = data.pathRules;
+      }
+      const validation = validateCommitSelectionLayerConfig(
+        candidate,
+        "当前仓库",
+      );
+      if (mockSelectionScenario() === "save-error") {
+        mockSelectionState = {
+          ...mockSelectionState,
+          feedback: {
+            tone: "error",
+            message:
+              "保存提交选择规则失败：模拟写入错误，.svn-workbench.json 不可写。",
+          },
+          saveErrors: ["模拟保存失败：无法写入 .svn-workbench.json。"],
+        };
+      } else if (!validation.config) {
+        mockSelectionState = {
+          ...mockSelectionState,
+          feedback: {
+            tone: "error",
+            message:
+              "保存被拒绝：提交选择规则校验失败，未写入任何内容。请修正下列错误后重试。",
+          },
+          saveErrors: validation.errors,
+        };
+      } else {
+        const resolved = resolveCommitSelectionRules({
+          repository: validation.config,
+        });
+        mockSelectionState = {
+          repository: validation.config,
+          saveErrors: undefined,
+          feedback:
+            resolved.warnings.length > 0
+              ? {
+                  tone: "warning",
+                  message: `提交选择规则已保存到 .svn-workbench.json；存在 ${resolved.warnings.length} 条警告（含遮蔽规则），请检查规则列表。`,
+                }
+              : {
+                  tone: "success",
+                  message:
+                    "提交选择规则已保存到 .svn-workbench.json，文件其他配置与未知字段保持不变。",
+                },
+        };
+      }
+      injectSnapshot("settings", settingsSnapshot());
+    }
+    if (action === "settings/restore-selection-defaults") {
+      mockSelectionState = {
+        repository: undefined,
+        feedback: {
+          tone: "success",
+          message:
+            "已删除 .svn-workbench.json 中的 commitSelection 配置，恢复为用户/工作区配置与内置默认；文件其他内容未改动。",
+        },
+      };
+      injectSnapshot("settings", settingsSnapshot());
+    }
+    if (action === "settings/open-selection-file") {
+      // Mock 不打开真实文件（与 settings/open-team-file 惯例一致），重新下发快照表示动作已被接收。
+      injectSnapshot("settings", settingsSnapshot());
+    }
+    if (action === "settings/refresh-selection-preview") {
+      mockSelectionState = {
+        ...mockSelectionState,
+        feedback: undefined,
+        saveErrors: undefined,
+      };
+      injectSnapshot("settings", settingsSnapshot());
+    }
+    if (action === "settings/open-selection-vscode-settings") {
+      // 与 security/open-proxy-settings 惯例一致：Mock 环境不打开 VS Code 设置页，无响应。
     }
     if (action === "diagnostics/run") {
       injectSnapshot("diagnostics", diagnosticsSnapshot());
@@ -820,14 +958,22 @@ function changesSnapshot(
 function commitSnapshot(
   overrides: Record<string, unknown> = {},
 ): WorkbenchModuleSnapshot {
-  const snapshotFiles = isScrollDataset()
-    ? Array.from({ length: 80 }, (_, index) => ({
-        relativePath: `项目资料/提交候选/第-${String(index + 1).padStart(2, "0")}-个文件.ts`,
-        status:
-          index % 7 === 0 ? ("unversioned" as const) : ("modified" as const),
-        selection: "selected" as const,
-      }))
-    : files.slice(0, 3);
+  const commitAiScenario = new URLSearchParams(window.location.search).get(
+    "commitAi",
+  );
+  const commitRulesScenario = new URLSearchParams(window.location.search).get(
+    "commitRules",
+  );
+  const snapshotFiles = (
+    isScrollDataset()
+      ? Array.from({ length: 80 }, (_, index) => ({
+          relativePath: `项目资料/提交候选/第-${String(index + 1).padStart(2, "0")}-个文件.ts`,
+          status:
+            index % 7 === 0 ? ("unversioned" as const) : ("modified" as const),
+          selection: "selected" as const,
+        }))
+      : files.slice(0, 3)
+  ).map((item) => ({ ...item, evaluation: mockCommitEvaluation(item.status) }));
   return {
     kind: "commit",
     files: snapshotFiles,
@@ -842,6 +988,18 @@ function commitSnapshot(
     message: "",
     messageIssues: ["提交说明不能为空。"],
     conventionHint: "前缀：feat, fix；模块：workbench",
+    selectionAi:
+      commitAiScenario === "none"
+        ? { configured: false }
+        : { configured: true, model: "deepseek-v4-flash" },
+    feedback:
+      commitRulesScenario === "updated"
+        ? {
+            tone: "warning",
+            message:
+              "提交选择规则已更新，候选分类已按新规则刷新；可点击“应用本地规则”重新计算推荐选择。",
+          }
+        : undefined,
     aiPrivacy: [
       {
         scenario: "selection",
@@ -864,6 +1022,27 @@ function commitSnapshot(
     ],
     ...overrides,
   } as WorkbenchModuleSnapshot;
+}
+
+/** 提交页 Mock 候选的本地规则决策解释（与内置默认策略一致的最小集合）。 */
+function mockCommitEvaluation(status: string) {
+  if (status === "modified" || status === "added") {
+    return {
+      decision: "recommended" as const,
+      reasonKey: "statusPolicy" as const,
+      statusPolicyKey: status as "modified" | "added",
+      safetyLocked: false,
+    };
+  }
+  if (status === "unversioned") {
+    return {
+      decision: "needsReview" as const,
+      reasonKey: "statusPolicy" as const,
+      statusPolicyKey: "unversioned" as const,
+      safetyLocked: false,
+    };
+  }
+  return undefined;
 }
 
 function historySnapshot(
@@ -978,6 +1157,214 @@ function mockConflictAdvice() {
   };
 }
 
+/**
+ * 提交选择规则设置的 Mock 状态与构建器（v0.0.3 阶段 3 设置页）。
+ *
+ * 合并、校验与预览评估直接复用领域纯函数（与 Host 同一套逻辑），
+ * 仅把 IO 与反馈编排替换为内存态。场景通过 URL 参数切换：
+ * ?selection=no-repo（无仓库）/ no-candidates（无候选）/ corrupt（配置损坏）/
+ * save-error（保存失败）/ shadowed（遮蔽警告）。
+ */
+
+type MockSelectionScenario =
+  | "default"
+  | "no-repo"
+  | "no-candidates"
+  | "corrupt"
+  | "save-error"
+  | "shadowed";
+
+function mockSelectionScenario(): MockSelectionScenario {
+  if (typeof window === "undefined") {
+    return "default";
+  }
+  const value = new URLSearchParams(window.location.search).get("selection");
+  return value === "no-repo" ||
+    value === "no-candidates" ||
+    value === "corrupt" ||
+    value === "save-error" ||
+    value === "shadowed"
+    ? value
+    : "default";
+}
+
+interface MockSelectionState {
+  /** 仓库层原始配置（未知结构，模拟手工编辑后的文件内容）。 */
+  repository?: unknown;
+  feedback?: { tone: "success" | "warning" | "error"; message: string };
+  saveErrors?: string[];
+}
+
+function defaultMockSelectionRepository(): unknown {
+  if (isScrollDataset()) {
+    return {
+      version: 1,
+      statusRules: { unversioned: "recommended" },
+      pathRules: Array.from({ length: 24 }, (_, index) => ({
+        id: `team-rule-${index + 1}`,
+        enabled: true,
+        pattern: `generated/batch-${index + 1}/**`,
+        decision: index % 3 === 0 ? "needsReview" : "excluded",
+        reason: `第 ${index + 1} 条团队生成物目录规则`,
+      })),
+    };
+  }
+  return {
+    version: 1,
+    statusRules: { unversioned: "recommended" },
+    pathRules: [
+      {
+        id: "team-fixtures",
+        enabled: true,
+        pattern: "tests/fixtures/**",
+        decision: "needsReview",
+        reason: "测试夹具需要人工确认",
+      },
+    ],
+  };
+}
+
+function initialMockSelectionState(): MockSelectionState {
+  const scenario = mockSelectionScenario();
+  if (scenario === "shadowed") {
+    return {
+      repository: {
+        version: 1,
+        pathRules: [
+          {
+            id: "team-dist",
+            enabled: true,
+            pattern: "**/dist/**",
+            decision: "needsReview",
+            reason: "团队构建目录需要复核",
+          },
+          {
+            id: "team-dist-report",
+            enabled: true,
+            pattern: "**/dist/report/**",
+            decision: "recommended",
+            reason: "报告目录建议提交",
+          },
+        ],
+      },
+    };
+  }
+  if (scenario === "corrupt") {
+    return { repository: { version: 99, pathRules: "not-an-array" } };
+  }
+  if (scenario === "no-repo") {
+    return {};
+  }
+  return { repository: defaultMockSelectionRepository() };
+}
+
+let mockSelectionState: MockSelectionState = initialMockSelectionState();
+
+function mockSelectionCandidateInputs(): Array<{
+  relativePath: string;
+  status: SvnStatus;
+  propStatus?: SvnStatus;
+}> {
+  if (isScrollDataset()) {
+    const statuses: SvnStatus[] = [
+      "modified",
+      "added",
+      "unversioned",
+      "deleted",
+      "missing",
+    ];
+    return Array.from({ length: 40 }, (_, index) => ({
+      relativePath: `src/批量模块/module-${index + 1}/文件-${index + 1}.ts`,
+      status: statuses[index % statuses.length],
+    }));
+  }
+  return [
+    { relativePath: "src/extension.ts", status: "modified" },
+    { relativePath: "dist/debug.log", status: "unversioned" },
+    { relativePath: "src/conflict/example.ts", status: "conflicted" },
+    {
+      relativePath: "assets/icon.svg",
+      status: "normal",
+      propStatus: "modified",
+    },
+    { relativePath: "tests/fixtures/case.ts", status: "added" },
+  ];
+}
+
+function mockSelectionPreviewItems(
+  resolved: ResolvedCommitSelectionRules,
+): CommitSelectionPreviewItem[] {
+  const evaluator = createCommitSelectionEvaluator({
+    statusRules: resolved.statusRules,
+    pathRules: resolved.pathRules,
+  });
+  return mockSelectionCandidateInputs().map((input) => {
+    const evaluation = evaluator.evaluate(input);
+    return {
+      relativePath: input.relativePath,
+      status: input.status,
+      propStatus: input.propStatus,
+      decision: evaluation.decision,
+      reasonKey: evaluation.reasonKey,
+      statusPolicyKey: evaluation.statusPolicyKey,
+      matchedRuleId: evaluation.matchedRuleId,
+      ruleSource: evaluation.ruleSource,
+      safetyLocked: evaluation.safetyLocked,
+    };
+  });
+}
+
+function toMockSelectionLayerView(
+  resolution: CommitSelectionLayerResolution,
+  editable: boolean,
+): CommitSelectionSettingsLayerView {
+  return {
+    editable,
+    state: resolution.state,
+    config: resolution.config,
+    errors: [...resolution.errors],
+    warnings: [...resolution.warnings],
+  };
+}
+
+function buildMockSelectionSection(): CommitSelectionSettingsSection {
+  const scenario = mockSelectionScenario();
+  const resolved = resolveCommitSelectionRules({
+    repository: mockSelectionState.repository,
+  });
+  const previewError =
+    scenario === "no-repo"
+      ? "当前没有可用的 SVN 工作副本。请打开包含 .svn 的文件夹后重试。"
+      : undefined;
+  const items =
+    scenario === "no-candidates" || previewError
+      ? []
+      : mockSelectionPreviewItems(resolved);
+  return {
+    editingScope: "repository",
+    configPath: ".svn-workbench.json",
+    layers: {
+      user: toMockSelectionLayerView(resolved.layers.user, false),
+      workspace: toMockSelectionLayerView(resolved.layers.workspace, false),
+      repository: toMockSelectionLayerView(resolved.layers.repository, true),
+    },
+    effective: {
+      statusRules: { ...resolved.statusRules },
+      pathRules: resolved.pathRules.map((rule) => ({ ...rule })),
+    },
+    errors: [...resolved.errors],
+    warnings: [...resolved.warnings],
+    preview: previewError
+      ? { state: "error", error: previewError, items: [] }
+      : { state: items.length > 0 ? "ready" : "empty", items },
+    feedback: mockSelectionState.feedback,
+    saveErrors:
+      mockSelectionState.saveErrors && mockSelectionState.saveErrors.length > 0
+        ? [...mockSelectionState.saveErrors]
+        : undefined,
+  };
+}
+
 const settingsSnapshotValue = {
   kind: "settings" as const,
   svnSecurity: {
@@ -1053,6 +1440,8 @@ const settingsSnapshotValue = {
       ],
     },
   },
+  // 提交选择规则段由 buildMockSelectionSection 动态构建（合并/评估复用领域纯函数）。
+  selection: buildMockSelectionSection(),
 };
 
 function settingsSnapshot(
@@ -1085,7 +1474,12 @@ function settingsSnapshot(
         },
       }
     : settingsSnapshotValue;
-  return { ...snapshot, ...overrides } as WorkbenchModuleSnapshot;
+  // selection 段每次重新构建，让保存/恢复/刷新等 Mock 动作后的状态变化生效。
+  return {
+    ...snapshot,
+    selection: buildMockSelectionSection(),
+    ...overrides,
+  } as WorkbenchModuleSnapshot;
 }
 
 function diagnosticsSnapshot(): WorkbenchModuleSnapshot {

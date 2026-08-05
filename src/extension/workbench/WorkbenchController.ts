@@ -10,7 +10,10 @@ import {
   buildCommitSelectionAiRequest,
   createLocalCommitSelectionResult,
 } from "../../ai/commitSelectionAi";
-import { validateAiSelectionResult } from "../../ai/aiResultValidator";
+import {
+  enforceAiSelectionLocalBoundary,
+  validateAiSelectionResult,
+} from "../../ai/aiResultValidator";
 import {
   buildLocalChangeReview,
   buildLocalImpactAnalysis,
@@ -53,17 +56,28 @@ import {
   collectCommitCandidates,
   summarizeCommitCandidates,
 } from "../../commit/commitCandidateCollector";
+import type { CommitCandidate } from "../../commit/commitCandidateCollector";
+import {
+  CommitSelectionRuleService,
+  type CommitSelectionRulesInvalidationEvent,
+} from "../../commit/commitSelectionRuleService";
+import {
+  buildCommitSelectionSettingsSection,
+  validateCommitSelectionSaveInput,
+} from "../../commit/commitSelectionSettingsSupport";
 import { collectCommitDiffSummaries } from "../../commit/commitDiffSummary";
 import {
   formatCommitConventionList,
   readCommitConventionEditState,
   resolveCommitConventionConfig,
   saveProjectCommitConventionConfig,
+  ensureSvnWorkbenchProjectConfig,
   toAiCommitConventionHint,
   validateCommitConventionConfig,
   validateCommitMessageConvention,
 } from "../../commit/commitConvention";
 import { runCommitFlow } from "../../commit/commitFlow";
+import { SVN_WORKBENCH_CONFIG_FILE } from "../../config/svnWorkbenchConfig";
 import {
   buildCommitPlanPreview,
   toCommitFlowPlan,
@@ -192,6 +206,7 @@ import {
   RepositoryWorkbenchActions,
   type RepositoryWorkbenchHost,
 } from "./repositoryWorkbenchActions";
+import { applyCommitSelectionRulesInvalidation } from "./commitSelectionInvalidation";
 
 export class WorkbenchController implements vscode.Disposable {
   private panel: vscode.WebviewPanel | undefined;
@@ -200,11 +215,27 @@ export class WorkbenchController implements vscode.Disposable {
   private disposed = false;
   private readonly latestModuleRequests = new Map<WorkbenchModuleId, string>();
   private readonly repositoryActions: RepositoryWorkbenchActions;
+  private readonly commitSelectionRuleService: CommitSelectionRuleService;
+  private readonly ruleInvalidationSubscription: vscode.Disposable;
+  /**
+   * 设置页保存/恢复动作触发的规则失效由动作处理器自行发送带反馈的快照；
+   * 此标志抑制失效监听的重复模块刷新（仍保留提交预览/AI 结果清除）。
+   */
+  private suppressSelectionInvalidationReload = false;
 
-  constructor(private readonly context: vscode.ExtensionContext) {
+  constructor(
+    private readonly context: vscode.ExtensionContext,
+    commitSelectionRuleService?: CommitSelectionRuleService,
+  ) {
     this.repositoryActions = new RepositoryWorkbenchActions(
       this as unknown as RepositoryWorkbenchHost,
     );
+    this.commitSelectionRuleService =
+      commitSelectionRuleService ?? new CommitSelectionRuleService();
+    this.ruleInvalidationSubscription =
+      this.commitSelectionRuleService.onDidInvalidate((event) =>
+        this.handleCommitSelectionRulesInvalidated(event),
+      );
   }
 
   async open(request: OpenWorkbenchRequest): Promise<void> {
@@ -262,12 +293,46 @@ export class WorkbenchController implements vscode.Disposable {
 
   dispose(): void {
     this.disposed = true;
+    this.ruleInvalidationSubscription.dispose();
     this.session?.activeOperation?.controller.abort();
     if (this.session)
       clearSvnSecurityContext(this.session.scope.repositoryRoot);
     this.panel?.dispose();
     this.panel = undefined;
     this.session = undefined;
+  }
+
+  /**
+   * 统一候选采集入口：经规则服务解析当前仓库的有效规则后再采集，
+   * 保证提交页、SCM、Changelist、仓库动作与执行前复验得到一致分类（规划 7.3）。
+   */
+  private async collectScopeCandidates(
+    session: WorkbenchSession,
+  ): Promise<CommitCandidate[]> {
+    const rules = await this.commitSelectionRuleService.getEffectiveRules(
+      session.scope.repositoryRoot,
+    );
+    return collectCommitCandidates(session.svnPath, session.scope, { rules });
+  }
+
+  /**
+   * 规则来源变化后的失效链路：清除旧提交预览与 AI 选择结果缓存，
+   * 保留用户已手动确认的提交篮选择，并基于新规则重建当前模块快照。
+   */
+  private handleCommitSelectionRulesInvalidated(
+    event: CommitSelectionRulesInvalidationEvent,
+  ): void {
+    const session = this.session;
+    if (!session || this.disposed) {
+      return;
+    }
+    if (!applyCommitSelectionRulesInvalidation(session, event.repositoryRoot)) {
+      return;
+    }
+    if (this.suppressSelectionInvalidationReload) {
+      return;
+    }
+    void this.loadModule(session.moduleId, session.targetFile);
   }
 
   private async ensurePanel(): Promise<vscode.WebviewPanel> {
@@ -533,11 +598,28 @@ export class WorkbenchController implements vscode.Disposable {
         await this.sendCommitSnapshot(session, message.requestId);
         return;
       }
+      case "commit/apply-local-rules": {
+        // 始终经统一入口重新采集并评估，不复用陈旧候选（规划 4.2）；
+        // 用户显式触发，应用推荐选择属于预期覆盖。
+        const candidates = await this.collectScopeCandidates(session);
+        const state = this.ensureCommitState(session);
+        const recommended = candidates
+          .filter((candidate) => candidate.selection === "selected")
+          .map((candidate) => candidate.relativePath);
+        const needsReview = candidates.filter(
+          (candidate) => candidate.selection === "needsReview",
+        ).length;
+        state.selectedPaths = recommended;
+        state.preview = undefined;
+        state.feedback = {
+          tone: "success",
+          message: `已按本地规则应用推荐选择 ${recommended.length} 个文件；${needsReview} 个文件待确认，可手动勾选。`,
+        };
+        await this.sendCommitSnapshot(session, message.requestId, candidates);
+        return;
+      }
       case "commit/ai-select": {
-        const candidates = await collectCommitCandidates(
-          session.svnPath,
-          session.scope,
-        );
+        const candidates = await this.collectScopeCandidates(session);
         const allowedPaths = candidates.map((item) => item.absolutePath);
         const request = buildCommitSelectionAiRequest(
           session.scope,
@@ -549,13 +631,30 @@ export class WorkbenchController implements vscode.Disposable {
           (provider) => provider.selectFiles(request),
         );
         const { result, source, fallbackReason } = aiResult;
+        const state = this.ensureCommitState(session);
+        if (source === "local-rule-fallback") {
+          // AI 未配置、超时或返回无效结构：保留当前选择与预览，
+          // 展示失败原因和“应用本地规则”恢复动作，不再静默替换来源（规划 4.2）。
+          state.ai = {
+            source,
+            summary: "AI 建议获取失败，已保留当前选择。",
+            warnings: [],
+            fallbackReason,
+            failed: true,
+          };
+          await this.sendCommitSnapshot(session, message.requestId, candidates);
+          return;
+        }
         const validated = validateAiSelectionResult(
           session.scope,
           result,
           allowedPaths,
         );
-        const state = this.ensureCommitState(session);
-        state.selectedPaths = validated.recommended
+        // AI 只能在 recommended 与 needsReview 之间调整；越过本地阻止、
+        // 强制排除或用户配置排除的推荐条目在此丢弃并计入警告（规划 5.5）。
+        const boundary = enforceAiSelectionLocalBoundary(candidates, validated);
+        const effective = boundary.result;
+        state.selectedPaths = effective.recommended
           .map((item) =>
             normalizeRelative(
               path.relative(session.scope.repositoryRoot, item.path),
@@ -572,12 +671,21 @@ export class WorkbenchController implements vscode.Disposable {
         state.preview = undefined;
         state.ai = {
           source,
-          summary: `建议选择 ${state.selectedPaths.length} 个文件；${validated.needsReview.length} 个需要人工确认，${validated.excluded.length} 个建议排除。`,
-          warnings:
-            validated.blocked.length > 0
-              ? [`${validated.blocked.length} 个阻止项未进入选择。`]
-              : [],
+          summary: `建议选择 ${state.selectedPaths.length} 个文件；${effective.needsReview.length} 个需要人工确认，${effective.excluded.length} 个建议排除。`,
+          warnings: [
+            ...boundary.violations,
+            ...(effective.blocked.length > 0
+              ? [`${effective.blocked.length} 个阻止项未进入选择。`]
+              : []),
+          ],
           fallbackReason,
+          binding: {
+            repositoryUuid: session.repositoryUuid,
+            scopeHash: session.scopeHash,
+            candidateHash: hashCandidateState(candidates, "", []),
+            generatedAt: new Date().toISOString(),
+            model: session.aiModels.commitSelection || undefined,
+          },
         };
         await this.sendCommitSnapshot(session, message.requestId, candidates);
         return;
@@ -598,10 +706,7 @@ export class WorkbenchController implements vscode.Disposable {
         state.message = asStringAllowEmpty(data.message) ?? state.message;
         state.selectedPaths =
           asStringArray(data.selectedPaths) ?? state.selectedPaths;
-        const candidates = await collectCommitCandidates(
-          session.svnPath,
-          session.scope,
-        );
+        const candidates = await this.collectScopeCandidates(session);
         const selectedAbsolutePaths = this.resolveSelectedAbsolutePaths(
           session,
           candidates,
@@ -1249,6 +1354,117 @@ export class WorkbenchController implements vscode.Disposable {
         await this.sendSettingsSnapshot(session, message.requestId);
         return;
       }
+      case "settings/save-selection": {
+        const resolved =
+          await this.commitSelectionRuleService.getEffectiveRules(
+            session.scope.repositoryRoot,
+          );
+        const verdict = validateCommitSelectionSaveInput(data, {
+          user: resolved.layers.user.config,
+          workspace: resolved.layers.workspace.config,
+        });
+        const state = this.ensureSettingsState(session);
+        if (!verdict.ok || !verdict.config) {
+          state.selectionFeedback = {
+            tone: "error",
+            message:
+              "保存被拒绝：提交选择规则校验失败，未写入任何内容。请修正下列错误后重试。",
+          };
+          state.selectionSaveErrors = verdict.errors;
+          await this.sendSettingsSnapshot(session, message.requestId);
+          return;
+        }
+        this.suppressSelectionInvalidationReload = true;
+        let result;
+        try {
+          result = await this.commitSelectionRuleService.saveRepositoryRules(
+            session.scope.repositoryRoot,
+            verdict.config,
+          );
+        } finally {
+          this.suppressSelectionInvalidationReload = false;
+        }
+        if (!result.ok) {
+          state.selectionFeedback = {
+            tone: "error",
+            message: result.error ?? "保存提交选择规则失败。",
+          };
+          state.selectionSaveErrors = result.error ? [result.error] : undefined;
+          await this.sendSettingsSnapshot(session, message.requestId);
+          return;
+        }
+        const warnings = [...verdict.warnings, ...result.warnings];
+        state.selectionSaveErrors = undefined;
+        state.selectionFeedback =
+          warnings.length > 0
+            ? {
+                tone: "warning",
+                message: `提交选择规则已保存到 ${SVN_WORKBENCH_CONFIG_FILE}；存在 ${warnings.length} 条警告（含遮蔽规则），请检查规则列表。`,
+              }
+            : {
+                tone: "success",
+                message: `提交选择规则已保存到 ${SVN_WORKBENCH_CONFIG_FILE}，文件其他配置与未知字段保持不变。`,
+              };
+        await this.sendSettingsSnapshot(session, message.requestId);
+        return;
+      }
+      case "settings/restore-selection-defaults": {
+        this.suppressSelectionInvalidationReload = true;
+        let result;
+        try {
+          result =
+            await this.commitSelectionRuleService.restoreRepositoryRulesToDefault(
+              session.scope.repositoryRoot,
+            );
+        } finally {
+          this.suppressSelectionInvalidationReload = false;
+        }
+        const state = this.ensureSettingsState(session);
+        state.selectionSaveErrors = undefined;
+        if (!result.ok) {
+          state.selectionFeedback = {
+            tone: "error",
+            message: result.error ?? "恢复默认提交选择规则失败。",
+          };
+        } else {
+          state.selectionFeedback = {
+            tone: "success",
+            message: result.removed
+              ? `已删除 ${SVN_WORKBENCH_CONFIG_FILE} 中的 commitSelection 配置，恢复为用户/工作区配置与内置默认；文件其他内容未改动。`
+              : "当前仓库没有提交选择规则配置，无需恢复默认。",
+          };
+        }
+        await this.sendSettingsSnapshot(session, message.requestId);
+        return;
+      }
+      case "settings/open-selection-file": {
+        // 与 open-team-file 同惯例：文件不存在时先按默认内容创建再打开。
+        const configPath = await ensureSvnWorkbenchProjectConfig(
+          session.scope.repositoryRoot,
+        );
+        const document = await vscode.workspace.openTextDocument(
+          vscode.Uri.file(configPath),
+        );
+        await vscode.window.showTextDocument(document, { preview: false });
+        return;
+      }
+      case "settings/open-selection-vscode-settings": {
+        // 用户/工作区级规则由 VS Code 原生配置承载（规划 4.1）；
+        // 按目标层打开原生设置页，筛选 commitSelection 配置键。
+        const layer = asString(data.layer);
+        await vscode.commands.executeCommand(
+          layer === "workspace"
+            ? "workbench.action.openWorkspaceSettings"
+            : "workbench.action.openSettings",
+          "svnWorkbench.commitSelection",
+        );
+        return;
+      }
+      case "settings/refresh-selection-preview": {
+        // 快照重建会重新采集候选；预览状态（就绪/空/错误）即刷新反馈。
+        await this.sendSettingsSnapshot(session, message.requestId);
+        return;
+      }
       case "diagnostics/run":
         await this.sendDiagnosticsSnapshot(session, message.requestId);
         return;
@@ -1272,10 +1488,7 @@ export class WorkbenchController implements vscode.Disposable {
           );
           return;
         }
-        const candidates = await collectCommitCandidates(
-          session.svnPath,
-          session.scope,
-        );
+        const candidates = await this.collectScopeCandidates(session);
         const currentHash = hashCandidateState(candidates, "", []);
         if (currentHash !== session.repositoryState?.candidateHash) {
           session.repositoryState!.update = undefined;
@@ -1605,10 +1818,7 @@ export class WorkbenchController implements vscode.Disposable {
         await this.sendImpactSnapshot(session, message.requestId);
         return;
       case "changelist/suggest": {
-        const candidates = await collectCommitCandidates(
-          session.svnPath,
-          session.scope,
-        );
+        const candidates = await this.collectScopeCandidates(session);
         const convention = await resolveCommitConventionConfig(
           session.scope.repositoryRoot,
         );
@@ -1659,10 +1869,7 @@ export class WorkbenchController implements vscode.Disposable {
         const name = (asStringAllowEmpty(data.name) ?? "").trim();
         const remove = data.remove === true;
         const paths = asStringArray(data.paths) ?? [];
-        const candidates = await collectCommitCandidates(
-          session.svnPath,
-          session.scope,
-        );
+        const candidates = await this.collectScopeCandidates(session);
         const candidatePaths = new Set(
           candidates.map((item) => item.relativePath),
         );
@@ -1713,10 +1920,7 @@ export class WorkbenchController implements vscode.Disposable {
           );
           return;
         }
-        const candidates = await collectCommitCandidates(
-          session.svnPath,
-          session.scope,
-        );
+        const candidates = await this.collectScopeCandidates(session);
         if (hashCandidateState(candidates, "", []) !== preview.candidateHash) {
           session.changelistState!.preview = undefined;
           await this.sendError(
@@ -1752,10 +1956,7 @@ export class WorkbenchController implements vscode.Disposable {
         return;
       }
       case "agent/create-plan": {
-        const candidates = await collectCommitCandidates(
-          session.svnPath,
-          session.scope,
-        );
+        const candidates = await this.collectScopeCandidates(session);
         const objective =
           (asStringAllowEmpty(data.objective) ?? "").trim().slice(0, 500) ||
           "检查当前 SVN 变更并形成可执行的提交前建议";
@@ -1826,10 +2027,7 @@ export class WorkbenchController implements vscode.Disposable {
           );
           return;
         }
-        const candidates = await collectCommitCandidates(
-          session.svnPath,
-          session.scope,
-        );
+        const candidates = await this.collectScopeCandidates(session);
         if (hashCandidateState(candidates, "", []) !== state.candidateHash) {
           state.snapshot.status = "failed";
           state.snapshot.message =
@@ -1902,10 +2100,7 @@ export class WorkbenchController implements vscode.Disposable {
           );
           return;
         }
-        const candidates = await collectCommitCandidates(
-          session.svnPath,
-          session.scope,
-        );
+        const candidates = await this.collectScopeCandidates(session);
         const issues = validateFileOperation(
           candidates,
           operation,
@@ -1944,10 +2139,7 @@ export class WorkbenchController implements vscode.Disposable {
           );
           return;
         }
-        const candidates = await collectCommitCandidates(
-          session.svnPath,
-          session.scope,
-        );
+        const candidates = await this.collectScopeCandidates(session);
         const currentIssues = validateFileOperation(
           candidates,
           preview.operation,
@@ -2166,10 +2358,7 @@ export class WorkbenchController implements vscode.Disposable {
     targetFile?: string,
   ): Promise<WorkbenchModuleSnapshot> {
     if (moduleId === "changes") {
-      const candidates = await collectCommitCandidates(
-        session.svnPath,
-        session.scope,
-      );
+      const candidates = await this.collectScopeCandidates(session);
       const summary = summarizeCommitCandidates(candidates);
       const preview = session.changesState?.preview;
       const files = await buildWorkbenchFileViews(
@@ -2241,18 +2430,12 @@ export class WorkbenchController implements vscode.Disposable {
     }
 
     if (moduleId === "ai-review") {
-      const candidates = await collectCommitCandidates(
-        session.svnPath,
-        session.scope,
-      );
+      const candidates = await this.collectScopeCandidates(session);
       return buildLocalChangeReview(candidates);
     }
 
     if (moduleId === "impact") {
-      const candidates = await collectCommitCandidates(
-        session.svnPath,
-        session.scope,
-      );
+      const candidates = await this.collectScopeCandidates(session);
       return buildLocalImpactAnalysis(candidates);
     }
 
@@ -2523,6 +2706,19 @@ export class WorkbenchController implements vscode.Disposable {
       this.context.workspaceState,
       session.repositoryUuid,
     );
+    // 提交选择规则段：有效规则经统一服务解析（缓存），预览候选经统一入口采集；
+    // 采集失败只降级预览区，不阻断整个设置模块（无仓库/无候选/损坏配置均有结构化状态）。
+    const resolvedSelectionRules =
+      await this.commitSelectionRuleService.getEffectiveRules(
+        session.scope.repositoryRoot,
+      );
+    let selectionCandidates: CommitCandidate[] | undefined;
+    let selectionPreviewError: string | undefined;
+    try {
+      selectionCandidates = await this.collectScopeCandidates(session);
+    } catch (error) {
+      selectionPreviewError = `无法采集当前仓库候选文件：${errorMessage(error)}`;
+    }
     return {
       kind: "settings",
       svnSecurity: {
@@ -2571,6 +2767,13 @@ export class WorkbenchController implements vscode.Disposable {
         },
         recommendation: state.recommendation,
       },
+      selection: buildCommitSelectionSettingsSection({
+        resolved: resolvedSelectionRules,
+        candidates: selectionCandidates,
+        previewError: selectionPreviewError,
+        feedback: state.selectionFeedback,
+        saveErrors: state.selectionSaveErrors,
+      }),
     };
   }
 
@@ -3010,10 +3213,7 @@ export class WorkbenchController implements vscode.Disposable {
     session: WorkbenchSession,
     requestId?: string,
   ): Promise<void> {
-    const candidates = await collectCommitCandidates(
-      session.svnPath,
-      session.scope,
-    );
+    const candidates = await this.collectScopeCandidates(session);
     const snapshot = await buildLocalChangeReview(candidates);
     await this.post({
       protocolVersion: WORKBENCH_PROTOCOL_VERSION,
@@ -3028,10 +3228,7 @@ export class WorkbenchController implements vscode.Disposable {
     session: WorkbenchSession,
     requestId?: string,
   ): Promise<void> {
-    const candidates = await collectCommitCandidates(
-      session.svnPath,
-      session.scope,
-    );
+    const candidates = await this.collectScopeCandidates(session);
     const snapshot = buildLocalImpactAnalysis(candidates);
     await this.post({
       protocolVersion: WORKBENCH_PROTOCOL_VERSION,
@@ -3048,8 +3245,7 @@ export class WorkbenchController implements vscode.Disposable {
     previewIssues?: string[],
   ) {
     const candidates =
-      providedCandidates ??
-      (await collectCommitCandidates(session.svnPath, session.scope));
+      providedCandidates ?? (await this.collectScopeCandidates(session));
     const groups = await collectSvnChangelists(session.svnPath, session.scope);
     const assigned = new Set(groups.flatMap((group) => group.paths));
     const state = session.changelistState ?? {
@@ -3139,8 +3335,7 @@ export class WorkbenchController implements vscode.Disposable {
     providedCandidates?: Awaited<ReturnType<typeof collectCommitCandidates>>,
   ): Promise<void> {
     const candidates =
-      providedCandidates ??
-      (await collectCommitCandidates(session.svnPath, session.scope));
+      providedCandidates ?? (await this.collectScopeCandidates(session));
     const summary = summarizeCommitCandidates(candidates);
     const preview = session.changesState?.preview;
     const snapshot: import("../../protocol/workbenchProtocol").ChangesSnapshot =
@@ -3193,10 +3388,7 @@ export class WorkbenchController implements vscode.Disposable {
     const initial = session.initialFileOperation;
     if (!initial) return;
     session.initialFileOperation = undefined;
-    const candidates = await collectCommitCandidates(
-      session.svnPath,
-      session.scope,
-    );
+    const candidates = await this.collectScopeCandidates(session);
     const paths = candidates.map((candidate) => candidate.relativePath);
     const issues = validateFileOperation(
       candidates,
@@ -3237,8 +3429,7 @@ export class WorkbenchController implements vscode.Disposable {
   ): Promise<CommitSnapshot> {
     const state = this.ensureCommitState(session);
     const candidates =
-      providedCandidates ??
-      (await collectCommitCandidates(session.svnPath, session.scope));
+      providedCandidates ?? (await this.collectScopeCandidates(session));
     const summary = summarizeCommitCandidates(candidates);
     if (!state.selectedPaths) {
       state.selectedPaths = candidates
@@ -3269,6 +3460,35 @@ export class WorkbenchController implements vscode.Disposable {
         .issues,
     ];
 
+    // 提交文件选择场景的 AI 配置状态（规划 4.2）：仅在配置了有效模型
+    // （Base URL + 模型 + 密钥）时提交页才提供“获取 AI 建议”。
+    const selectionModel = (
+      storedAi.scenarioModels.commitSelection ||
+      storedAi.model ||
+      ""
+    ).trim();
+    const selectionAiConfigured = validateAiProviderConfig({
+      baseUrl: normalizeAiBaseUrl(storedAi.baseUrl),
+      model: selectionModel,
+      apiKey:
+        storedAi.hasSecretApiKey || storedAi.hasLegacyApiKey ? "stored" : "",
+    }).valid;
+
+    // AI 结果过期判定（规划 6.3）：binding 与当前范围/候选哈希不匹配时
+    // 标记 stale，只能查看或重新生成，不能直接采用。
+    let ai = state.ai;
+    if (
+      ai?.binding &&
+      (ai.binding.scopeHash !== session.scopeHash ||
+        ai.binding.candidateHash !== hashCandidateState(candidates, "", []))
+    ) {
+      ai = { ...ai, stale: true };
+    }
+
+    // 一次性反馈（应用本地规则结果、规则更新提示）：随本次快照下发后清除。
+    const feedback = state.feedback;
+    state.feedback = undefined;
+
     return {
       kind: "commit",
       files: candidates.map((candidate) => ({
@@ -3278,6 +3498,7 @@ export class WorkbenchController implements vscode.Disposable {
         fileType: candidate.fileType,
         selection: candidate.selection,
         reason: candidate.reason,
+        evaluation: candidate.evaluation,
       })),
       summary: {
         total: summary.total,
@@ -3294,7 +3515,12 @@ export class WorkbenchController implements vscode.Disposable {
         : "",
       templates: defaultCommitMessageTemplates,
       preview: state.preview?.view,
-      ai: state.ai,
+      selectionAi: {
+        configured: selectionAiConfigured,
+        model: selectionModel || undefined,
+      },
+      feedback,
+      ai,
       aiPrivacy: [
         {
           scenario: "selection",
@@ -3349,10 +3575,7 @@ export class WorkbenchController implements vscode.Disposable {
     requestId?: string,
   ): Promise<void> {
     const state = this.ensureCommitState(session);
-    const candidates = await collectCommitCandidates(
-      session.svnPath,
-      session.scope,
-    );
+    const candidates = await this.collectScopeCandidates(session);
     const selectedAbsolutePaths = this.resolveSelectedAbsolutePaths(
       session,
       candidates,
@@ -3450,10 +3673,7 @@ export class WorkbenchController implements vscode.Disposable {
       return;
     }
 
-    const candidates = await collectCommitCandidates(
-      session.svnPath,
-      session.scope,
-    );
+    const candidates = await this.collectScopeCandidates(session);
     const stateHash = hashCandidateState(
       candidates,
       state.message,
