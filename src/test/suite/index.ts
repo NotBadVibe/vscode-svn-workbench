@@ -276,6 +276,10 @@ export function getExtensionTestCases(): TestCase[] {
       run: testScmResourceStateCommandArguments,
     },
     {
+      name: "opens and reuses Diff tabs and invokes native vscode.diff",
+      run: testDiffWindowAndNativeEditor,
+    },
+    {
       name: "classifies generated files for commit filtering",
       run: testGeneratedFilePolicy,
     },
@@ -920,6 +924,84 @@ async function testScmResourceStateCommandArguments(): Promise<void> {
     resourceState,
   );
   await vscode.commands.executeCommand("svnWorkbench.openDiff", resourceState);
+}
+
+async function waitForTab(
+  predicate: (tab: vscode.Tab) => boolean,
+  description: string,
+): Promise<vscode.Tab> {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    const tab = vscode.window.tabGroups.all
+      .flatMap((group) => group.tabs)
+      .find(predicate);
+    if (tab) return tab;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`等待 ${description} 超时。`);
+}
+
+async function testDiffWindowAndNativeEditor(): Promise<void> {
+  const workspace = getSvnWorkspaceOrSkip();
+  const file = vscode.Uri.joinPath(
+    workspace.uri,
+    "src",
+    "pages",
+    "order",
+    "OrderList.vue",
+  );
+  const configuration = vscode.workspace.getConfiguration("svnWorkbench");
+
+  await vscode.commands.executeCommand("workbench.action.closeAllEditors");
+  await configuration.update(
+    "diff.openMode",
+    "sameGroup",
+    vscode.ConfigurationTarget.Workspace,
+  );
+  try {
+    const source = await vscode.window.showTextDocument(file, {
+      preview: false,
+    });
+    const sourceGroup = source.viewColumn;
+    await vscode.commands.executeCommand("svnWorkbench.openDiff", file);
+    const diffTab = await waitForTab(
+      (tab) => tab.label === "SVN · 查看本地修改",
+      "同组 SVN Diff 标签",
+    );
+    const diffGroup = vscode.window.tabGroups.all.find((group) =>
+      group.tabs.includes(diffTab),
+    );
+    assert.equal(diffGroup?.viewColumn, sourceGroup);
+
+    await vscode.commands.executeCommand("svnWorkbench.openDiff", file);
+    assert.equal(
+      vscode.window.tabGroups.all
+        .flatMap((group) => group.tabs)
+        .filter((tab) => tab.label === "SVN · 查看本地修改").length,
+      1,
+      "同一目标必须复用现有 Diff 标签",
+    );
+
+    await vscode.commands.executeCommand("svnWorkbench.openDiffInEditor");
+    const nativeTab = await waitForTab(
+      (tab) => tab.input instanceof vscode.TabInputTextDiff,
+      "原生 vscode.diff 标签",
+    );
+    assert.ok(nativeTab.input instanceof vscode.TabInputTextDiff);
+    assert.equal(nativeTab.input.original.scheme, "svn-workbench-base");
+    assert.equal(
+      path.resolve(nativeTab.input.modified.fsPath),
+      path.resolve(file.fsPath),
+    );
+    assert.match(nativeTab.label, /BASE ↔ 工作副本/);
+  } finally {
+    await configuration.update(
+      "diff.openMode",
+      undefined,
+      vscode.ConfigurationTarget.Workspace,
+    );
+    await vscode.commands.executeCommand("workbench.action.closeAllEditors");
+  }
 }
 
 async function testGeneratedFilePolicy(): Promise<void> {

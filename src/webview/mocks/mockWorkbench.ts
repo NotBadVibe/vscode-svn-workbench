@@ -23,6 +23,130 @@ import { createCommitSelectionEvaluator } from "../../commit/commitSelectionRule
 import type { SvnStatus } from "../../svn/svnTypes";
 import { workbenchBridge } from "../bridge/vscodeBridge";
 
+/*
+ * Diff 模块 mock 数据：内容包含一段足够长的未变更代码，用于在
+ * @pierre/diffs 渲染下触发"折叠未变更"分隔行与折叠控件（v0.0.4 阶段 1）。
+ */
+const mockDiffOriginal = `import { SvnCommandRunner } from "../svn/runner";
+
+export interface OrderLine {
+  sku: string;
+  quantity: number;
+  price: number;
+}
+
+export class OrderService {
+  private readonly runner: SvnCommandRunner;
+
+  constructor(runner: SvnCommandRunner) {
+    this.runner = runner;
+  }
+
+  async submit(order: OrderLine[]): Promise<void> {
+    const total = order.reduce((sum, line) => sum + line.price, 0);
+    console.log("提交订单，总额", total);
+    await this.runner.run(["commit", "-m", "order"]);
+  }
+
+  // 以下为一段足够长的未变更代码，用于触发折叠分隔行
+  private pad00(): number { return 0; }
+  private pad01(): number { return 1; }
+  private pad02(): number { return 2; }
+  private pad03(): number { return 3; }
+  private pad04(): number { return 4; }
+  private pad05(): number { return 5; }
+  private pad06(): number { return 6; }
+  private pad07(): number { return 7; }
+  private pad08(): number { return 8; }
+  private pad09(): number { return 9; }
+
+  discount(order: OrderLine[]): number {
+    return order.length > 3 ? 0.9 : 1;
+  }
+}
+`;
+
+const mockDiffModified = `import { SvnCommandRunner } from "../svn/runner";
+
+export interface OrderLine {
+  sku: string;
+  quantity: number;
+  price: number;
+}
+
+export class OrderService {
+  private readonly runner: SvnCommandRunner;
+  private static readonly MAX_QUANTITY = 999;
+
+  constructor(runner: SvnCommandRunner) {
+    this.runner = runner;
+  }
+
+  async submit(order: OrderLine[]): Promise<void> {
+    const total = order.reduce(
+      (sum, line) => sum + line.price * line.quantity,
+      0,
+    );
+    console.log("提交订单，总额", total, "共", order.length, "行");
+    await this.runner.run(["commit", "-m", "order"]);
+  }
+
+  // 以下为一段足够长的未变更代码，用于触发折叠分隔行
+  private pad00(): number { return 0; }
+  private pad01(): number { return 1; }
+  private pad02(): number { return 2; }
+  private pad03(): number { return 3; }
+  private pad04(): number { return 4; }
+  private pad05(): number { return 5; }
+  private pad06(): number { return 6; }
+  private pad07(): number { return 7; }
+  private pad08(): number { return 8; }
+  private pad09(): number { return 9; }
+
+  discount(order: OrderLine[]): number {
+    if (order.some((line) => line.quantity > OrderService.MAX_QUANTITY)) {
+      throw new Error("超出单SKU最大数量");
+    }
+    return order.length > 3 ? 0.85 : 1;
+  }
+}
+`;
+
+/* 修订比较 mock：svn 风格 unified diff（Index:/---/+++ 头），供 patch 直渲。 */
+const mockRevisionPatch = `Index: src/extension.ts
+===================================================================
+--- src/extension.ts\t(revision 41)
++++ src/extension.ts\t(revision 42)
+@@ -14,9 +14,12 @@
+${" "}
+ export class OrderService {
+   private readonly runner: SvnCommandRunner;
++  private static readonly MAX_QUANTITY = 999;
+${" "}
+   async submit(order: OrderLine[]): Promise<void> {
+-    const total = order.reduce((sum, line) => sum + line.price, 0);
++    const total = order.reduce(
++      (sum, line) => sum + line.price * line.quantity,
++      0,
++    );
+     console.log("提交订单，总额", total);
+     await this.runner.run(["commit", "-m", "order"]);
+   }
+Index: src/webview/App.svelte
+===================================================================
+--- src/webview/App.svelte\t(revision 41)
++++ src/webview/App.svelte\t(revision 42)
+@@ -1,6 +1,7 @@
+ <script lang="ts">
+-  const mode = "legacy";
++  const mode = "svelte";
++  const version = 3;
+ </script>
+${" "}
+-<main class={mode}>旧工作台</main>
++<main class={mode}>统一 Svelte 工作台（v{version}）</main>
+`;
+
 const files = [
   {
     relativePath: "src/extension.ts",
@@ -78,6 +202,7 @@ export function startMockWorkbench(): void {
     type: "app/initialize",
     moduleId: "changes",
     taskId: "changes/overview",
+    sessionId: "mock-session-id",
     repositoryUuid: "mock-repository-uuid",
     scopeHash: "mock-scope-hash",
     payload: {
@@ -177,8 +302,8 @@ export function startMockWorkbench(): void {
       injectSnapshot("diff", {
         kind: "diff",
         relativePath: data.relativePath,
-        original: "export const mode = 'legacy';\n",
-        modified: "export const mode = 'svelte';\nexport const version = 3;\n",
+        original: mockDiffOriginal,
+        modified: mockDiffModified,
         language: "typescript",
         truncated: false,
         binary: false,
@@ -325,7 +450,7 @@ export function startMockWorkbench(): void {
         kind: "diff",
         relativePath: ". · r41 → r42",
         original: "",
-        modified: "@@ -1 +1 @@\n-old behavior\n+unified Svelte workbench\n",
+        modified: mockRevisionPatch,
         language: "diff",
         truncated: false,
         binary: false,
@@ -1854,6 +1979,7 @@ function injectSnapshot(
     type: "module/snapshot",
     moduleId,
     taskId: resolvedTaskId,
+    sessionId: "mock-session-id",
     repositoryUuid: "mock-repository-uuid",
     scopeHash: "mock-scope-hash",
     payload: { snapshot },
@@ -1871,6 +1997,7 @@ function injectMockError(
     type: "operation/error",
     moduleId: "changes",
     taskId: "changes/overview",
+    sessionId: "mock-session-id",
     repositoryUuid: "mock-repository-uuid",
     scopeHash: "mock-scope-hash",
     payload,

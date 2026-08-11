@@ -11,6 +11,7 @@ mkdirSync(artifactDirectory, { recursive: true });
 const themes = {
   light: {
     "--vscode-foreground": "#242424",
+    "--vscode-editor-foreground": "#3b3b3b",
     "--vscode-editor-background": "#ffffff",
     "--vscode-sideBar-background": "#f3f3f3",
     "--vscode-editorWidget-background": "#f8f8f8",
@@ -24,9 +25,15 @@ const themes = {
     "--vscode-editorWarning-foreground": "#6c4b00",
     "--vscode-testing-iconPassed": "#116329",
     "--vscode-errorForeground": "#a1260d",
+    // 差异组件映射层依赖的 VS Code 默认值（Light+ 主题）
+    "--vscode-gitDecoration-addedResourceForeground": "#587c0c",
+    "--vscode-gitDecoration-deletedResourceForeground": "#ad0707",
+    "--vscode-diffEditor-insertedTextBackground": "rgba(172, 206, 247, 0.55)",
+    "--vscode-diffEditor-removedTextBackground": "rgba(255, 0, 0, 0.3)",
   },
   dark: {
     "--vscode-foreground": "#cccccc",
+    "--vscode-editor-foreground": "#d4d4d4",
     "--vscode-editor-background": "#1e1e1e",
     "--vscode-sideBar-background": "#181818",
     "--vscode-editorWidget-background": "#252526",
@@ -35,9 +42,15 @@ const themes = {
     "--vscode-focusBorder": "#007fd4",
     "--vscode-button-background": "#0e639c",
     "--vscode-button-foreground": "#ffffff",
+    // 差异组件映射层依赖的 VS Code 默认值（Dark+ 主题）
+    "--vscode-gitDecoration-addedResourceForeground": "#81b88b",
+    "--vscode-gitDecoration-deletedResourceForeground": "#c74e39",
+    "--vscode-diffEditor-insertedTextBackground": "rgba(156, 204, 44, 0.2)",
+    "--vscode-diffEditor-removedTextBackground": "rgba(255, 0, 0, 0.3)",
   },
   highContrast: {
     "--vscode-foreground": "#ffffff",
+    "--vscode-editor-foreground": "#ffffff",
     "--vscode-editor-background": "#000000",
     "--vscode-sideBar-background": "#000000",
     "--vscode-editorWidget-background": "#000000",
@@ -46,7 +59,20 @@ const themes = {
     "--vscode-focusBorder": "#f38518",
     "--vscode-button-background": "#000000",
     "--vscode-button-foreground": "#ffffff",
+    // 差异组件映射层依赖的 VS Code 默认值（Dark High Contrast 主题）
+    "--vscode-gitDecoration-addedResourceForeground": "#9bbb55",
+    "--vscode-gitDecoration-deletedResourceForeground": "#f14c4c",
+    "--vscode-diffEditor-insertedTextBackground": "rgba(155, 185, 85, 0.55)",
+    "--vscode-diffEditor-removedTextBackground": "rgba(255, 0, 0, 0.5)",
+    "--vscode-contrastBorder": "#6fc3df",
   },
+} as const;
+
+/** 差异组件按宿主 color-scheme 切换明暗主题；模拟 VS Code Webview 的主题类。 */
+const themeBodyClasses = {
+  light: "vscode-light",
+  dark: "vscode-dark",
+  highContrast: "vscode-high-contrast",
 } as const;
 
 for (const [theme, variables] of Object.entries(themes)) {
@@ -56,10 +82,17 @@ for (const [theme, variables] of Object.entries(themes)) {
     }) => {
       await page.setViewportSize({ width, height: 900 });
       await page.goto("/");
-      await page.evaluate((values) => {
-        for (const [name, value] of Object.entries(values))
-          document.documentElement.style.setProperty(name, value);
-      }, variables);
+      await page.evaluate(
+        ({ values, bodyClass }) => {
+          for (const [name, value] of Object.entries(values))
+            document.documentElement.style.setProperty(name, value);
+          document.body.classList.add(bodyClass);
+        },
+        {
+          values: variables,
+          bodyClass: themeBodyClasses[theme as keyof typeof themeBodyClasses],
+        },
+      );
       await expect(
         page.getByRole("heading", { name: "工作副本修改" }),
       ).toBeVisible();
@@ -101,10 +134,17 @@ test("selection rules tab keeps source, warning and decision text visible in all
     await test.step(theme, async () => {
       await page.setViewportSize({ width: 1024, height: 700 });
       await page.goto("/?selection=shadowed");
-      await page.evaluate((values) => {
-        for (const [name, value] of Object.entries(values))
-          document.documentElement.style.setProperty(name, value);
-      }, variables);
+      await page.evaluate(
+        ({ values, bodyClass }) => {
+          for (const [name, value] of Object.entries(values))
+            document.documentElement.style.setProperty(name, value);
+          document.body.classList.add(bodyClass);
+        },
+        {
+          values: variables,
+          bodyClass: themeBodyClasses[theme as keyof typeof themeBodyClasses],
+        },
+      );
       await page.getByRole("button", { name: "设置", exact: true }).click();
       await page.getByRole("tab", { name: "提交选择规则" }).click();
       // 来源、决策与遮蔽警告都有文字表达，不依赖颜色

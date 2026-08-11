@@ -38,6 +38,7 @@ export class WorkbenchState {
   notification = $state<
     { tone: "success" | "warning"; title: string; message: string } | undefined
   >();
+  sessionId = $state<string | undefined>();
   repositoryUuid = $state<string | undefined>();
   scopeHash = $state<string | undefined>();
 
@@ -53,6 +54,7 @@ export class WorkbenchState {
       type: "webview/ready",
       moduleId: this.moduleId,
       taskId: this.taskId,
+      sessionId: this.sessionId,
       repositoryUuid: this.repositoryUuid,
       scopeHash: this.scopeHash,
       payload: {},
@@ -66,6 +68,7 @@ export class WorkbenchState {
       requestId: createRequestId(action),
       moduleId: this.moduleId,
       taskId: this.taskId,
+      sessionId: this.sessionId,
       repositoryUuid: this.repositoryUuid,
       scopeHash: this.scopeHash,
       payload: { action, data },
@@ -94,7 +97,18 @@ export class WorkbenchState {
       return;
     }
 
+    if (
+      message.type !== "app/initialize" &&
+      this.sessionId !== undefined &&
+      message.sessionId !== this.sessionId
+    ) {
+      return;
+    }
+
     this.connected = true;
+    if (message.type === "app/initialize") {
+      this.sessionId = message.sessionId;
+    }
     this.repositoryUuid = message.repositoryUuid ?? this.repositoryUuid;
     this.scopeHash = message.scopeHash ?? this.scopeHash;
     this.moduleId = message.moduleId;

@@ -9,7 +9,7 @@ import type {
   ResolvedCommitSelectionPathRule,
 } from "../commit/commitSelectionRules";
 
-export const WORKBENCH_PROTOCOL_VERSION = 1 as const;
+export const WORKBENCH_PROTOCOL_VERSION = 2 as const;
 
 export type WorkbenchModuleId =
   | "changes"
@@ -740,6 +740,7 @@ export interface MessageEnvelope<TType extends string, TPayload> {
   requestId?: string;
   moduleId: WorkbenchModuleId;
   taskId?: WorkbenchTaskId;
+  sessionId?: string;
   repositoryUuid?: string;
   scopeHash?: string;
   payload: TPayload;
@@ -818,6 +819,7 @@ export type WebviewAction =
   | "open-module"
   | "open-diff"
   | "open-file"
+  | "diff/open-in-editor"
   | "copy-text"
   | "security/configure-authentication"
   | "security/clear-authentication"
@@ -915,6 +917,7 @@ export const webviewActions = [
   "open-module",
   "open-diff",
   "open-file",
+  "diff/open-in-editor",
   "copy-text",
   "security/configure-authentication",
   "security/clear-authentication",
@@ -1019,6 +1022,7 @@ export function isWebviewToHostMessage(
     return false;
   }
   return (
+    typeof value.sessionId === "string" &&
     typeof value.repositoryUuid === "string" &&
     typeof value.scopeHash === "string" &&
     typeof value.payload.action === "string" &&

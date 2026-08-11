@@ -1,0 +1,140 @@
+/*
+ * VS Code 主题变量 → @pierre/diffs `--diffs-*` 变量映射层（v0.0.4 阶段 1，
+ * 映射思路经 tests/spike/src/theme-map.css 三主题实测验证）。
+ *
+ * 原理：VS Code 向 Webview 注入 --vscode-* 变量并随主题切换实时更新；
+ * 自定义属性跨 Shadow DOM 边界继承，因此在宿主样式表（CSP 允许的 link CSS）
+ * 对 diffs-container 声明 override 变量即可驱动组件配色，无需内联样式。
+ * 组件会把行背景 override 色再与编辑器背景按 80/88% color-mix，词级强调
+ * 底色则直接使用；两层都按 WCAG AA 收敛过强度（详见各段注释），
+ * 保证语法 token 文本在叠色后仍满足 4.5:1（axe 门禁）。
+ */
+
+/* color-scheme 跟随 VS Code 主题类：组件 themeType "system" 与 light-dark()
+ * 依赖 color-scheme 计算值在 pierre-dark / pierre-light 间切换。
+ * 注意必须声明在宿主元素上：组件 :host 自带 `color-scheme: light dark`
+ * （会退化为跟随 prefers-color-scheme 媒体查询），文档级规则优先于
+ * Shadow DOM 的 :host 规则，可显式钉住当前主题。 */
+body.vscode-dark diffs-container {
+  color-scheme: dark;
+}
+body.vscode-light diffs-container {
+  color-scheme: light;
+}
+body.vscode-high-contrast diffs-container {
+  color-scheme: dark;
+}
+body.vscode-high-contrast-light diffs-container {
+  color-scheme: light;
+}
+
+diffs-container {
+  --diffs-light-bg: var(--vscode-editor-background);
+  --diffs-dark-bg: var(--vscode-editor-background);
+  --diffs-light: var(--vscode-editor-foreground);
+  --diffs-dark: var(--vscode-editor-foreground);
+  /* 行背景：override 色即组件最终行背景。约束是 pierre-dark 最暗语法
+   * token（#A4A4A4）在其上须过 WCAG AA 4.5:1（axe 门禁）——40% 预混实测
+   * 得 #3a483d，仅 3.87:1；18% 预混（有效强度与 VS Code 自身 diffEditor
+   * 行背景透明度同量级）实测通过。行级增删区分由行背景、gutter +/-
+   * 指示符与行号共同表达，不只靠颜色。 */
+  --diffs-bg-addition-override: color-mix(
+    in srgb,
+    var(--vscode-gitDecoration-addedResourceForeground) 18%,
+    var(--vscode-editor-background)
+  );
+  --diffs-bg-deletion-override: color-mix(
+    in srgb,
+    var(--vscode-gitDecoration-deletedResourceForeground) 18%,
+    var(--vscode-editor-background)
+  );
+  /* 变更词级强调底色：叠在行背景之上，与行背景复合后 git 色总强度
+   * 仍须让最暗 token 过 4.5:1；12% 复合后超标，7% 实测通过。
+   * 不能直接用 VS Code 的 diffEditor.insertedTextBackground（20%~55% 不透明
+   * 色块），其亮度偏移会让语法 token 文本跌破 WCAG AA 4.5:1（axe 门禁）。 */
+  --diffs-bg-addition-emphasis-override: color-mix(
+    in srgb,
+    var(--vscode-gitDecoration-addedResourceForeground) 7%,
+    transparent
+  );
+  --diffs-bg-deletion-emphasis-override: color-mix(
+    in srgb,
+    var(--vscode-gitDecoration-deletedResourceForeground) 7%,
+    transparent
+  );
+  --diffs-light-addition-color: var(
+    --vscode-gitDecoration-addedResourceForeground
+  );
+  --diffs-dark-addition-color: var(
+    --vscode-gitDecoration-addedResourceForeground
+  );
+  --diffs-light-deletion-color: var(
+    --vscode-gitDecoration-deletedResourceForeground
+  );
+  --diffs-dark-deletion-color: var(
+    --vscode-gitDecoration-deletedResourceForeground
+  );
+  /* 折叠分隔行：High Contrast 下 contrastBorder 全不透明会让行内文本
+   * （"N unmodified lines"）对比度不达标；25% 混合保持可见区分同时
+   * 文本满足 4.5:1。普通主题 contrastBorder 为透明，分隔行保持默认。 */
+  --diffs-bg-separator-override: color-mix(
+    in srgb,
+    var(--vscode-contrastBorder, transparent) 25%,
+    transparent
+  );
+  /* 行号与"N unmodified lines"分隔文本：普通文本需过 WCAG AA（axe 门禁），
+   * 不能直接用 editorLineNumber-foreground（默认 #858585 在 #1e1e1e 上不足 4.5:1）。
+   * descriptionForeground 是 VS Code 次级说明文本色，主题负责其在编辑器背景上
+   * 的可读性；夹具环境缺失时回退 editor-foreground。 */
+  --diffs-fg-number-override: var(
+    --vscode-descriptionForeground,
+    var(--vscode-editor-foreground)
+  );
+  /* 增删行上的行号默认使用增删强调色（如 #ff2e3f），在行背景色上不满足
+   * 4.5:1；统一改用编辑器前景色。增删语义由行背景、+/- gutter 指示符
+   * （::before 伪元素，仍保留强调色）与行号共同表达，不只靠颜色。 */
+  --diffs-fg-number-addition-override: var(--vscode-editor-foreground);
+  --diffs-fg-number-deletion-override: var(--vscode-editor-foreground);
+  --diffs-font-family: var(--vscode-editor-font-family, monospace);
+  --diffs-font-size: var(--vscode-editor-font-size, 12px);
+  --diffs-line-height: calc(var(--vscode-editor-font-size, 12px) * 1.5);
+}
+
+/* 适配层容器：滚动归属明确——长行只在组件代码区横向滚动，
+   纵向由本区域承担（与原 MergeView 68vh 约束一致）。 */
+.diff-view {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+}
+.diff-view-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.diff-view-toolbar .button[aria-pressed="true"] {
+  border-color: var(--border-strong);
+  font-weight: 600;
+}
+.diff-view-toolbar-divider {
+  width: 1px;
+  height: 16px;
+  margin: 0 4px;
+  background: var(--border);
+}
+.diff-view-frame {
+  min-height: 120px;
+  max-height: min(68vh, 720px);
+  overflow: auto;
+  overscroll-behavior: contain;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--vscode-editor-background);
+}
+.diff-view-frame diffs-container + diffs-container {
+  display: block;
+  margin-top: 12px;
+  border-top: 1px solid var(--border);
+}

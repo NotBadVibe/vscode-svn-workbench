@@ -41,6 +41,10 @@ export const workspace = {
 
 export const Uri = {
   file: (fsPath: string) => ({ fsPath }),
+  from: (parts: { scheme: string; path: string }) => ({
+    ...parts,
+    toString: () => `${parts.scheme}:${parts.path}`,
+  }),
   joinPath: (base: { fsPath: string }, ...parts: string[]) => ({
     fsPath: path.join(base.fsPath, ...parts),
   }),

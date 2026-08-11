@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "version": "0.0.4",
+  "status": "draft",
+  "baseVersion": "0.0.3",
+  "releaseDate": null,
+  "gitTag": null,
+  "gitCommit": null,
+  "sourceState": "基于 v0.0.3 的开发源码已包含只读 Diff 迁移与独立窗口试点；尚未形成完成全量候选门禁的源码与 VSIX",
+  "vsix": null,
+  "tests": null,
+  "acceptedEvidenceRun": null,
+  "evidencePath": null
+}

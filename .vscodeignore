@@ -2,6 +2,7 @@ src/**
 docs/**
 scripts/**
 .workbuddy/**
+.kun-canvas/**
 .validation/**
 tests/**
 .agents/**
