@@ -209,3 +209,22 @@ Extension Host 测试至少覆盖成功、拒绝、窗口已关闭、目标重�
 
 - `v0.0.6`：Diff Webview 安全页内编辑。
 - 后续再评估：`MergeView` 移除、`open-module` 协议清理、“全部关闭”命令、逐模块状态保留优化、规则广播性能优化和三窗格冲突合并。
+
+## 10. 候选与发布记录
+
+本版本候选源码位于分支 `agent/release-v0.0.5`，候选提交 `ead84ed9c1074cd13bb7f0af03ae895ff2fe0654`（`feat(workbench): v0.0.5 per-module windows with unified routing and rail removal`）。已接受证据运行、不可变证据路径及其树指纹以 [`manifest.json`](./manifest.json) 为准。
+
+- 工具链：Node.js `26.0.0`、npm `12.0.2`、VS Code `1.132.0`、macOS `26.6` arm64；`npm ci` 干净安装。
+- `npm run verify` 通过：570 项单元/组件测试、行覆盖率 `93.55%`、Webview E2E 52 项、性能预算与 Extension Host（含真实 VS Code 多窗口冒烟）均通过。
+- 真实 VS Code 多窗口冒烟（Extension Host 自动化，非 Webview mock）：
+  - 不同模块各自独立窗口（Changes/History/Diff/Commit/Settings 并存，互不顶替）；
+  - 同模块重复打开复用单例窗口；
+  - 关闭后按需重建；
+  - 跨模块打开（Diff/Commit/Settings）不关闭其他窗口；
+  - 关闭一个窗口不影响同仓库其他窗口。
+  - History→Diff 的 webview 按钮路径、非法 module/task/scope 拒绝由路由/协议单元测试与 Webview E2E 覆盖；三主题、键盘、720×480 与 200% 缩放由 Webview E2E（真实 Chromium 渲染）覆盖。
+- VSIX `svn-workbench-0.0.5.vsix`：`8,405,271` bytes，SHA256 `DC63B635038E26C16B746B2B6C8FC9369D8A7167967A0F7CB967E0CD85965D7F`，共 3700 个文件；隔离 profile 完成安装、卸载与重装。
+- 相对 `v0.0.4`，VSIX 增加 `4,230` bytes。
+- 已接受证据 run `2026-08-11T08-16-40-665Z-0e016b6b`，不可变路径 `artifacts/2026-08-11T08-16-40-665Z-0e016b6b`。
+
+本记录随候选证据一并固化；正式发布（tag/Release/远端合并）由 Lead 复核后另行执行。
