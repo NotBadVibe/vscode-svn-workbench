@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "version": "0.0.6",
+  "status": "draft",
+  "baseVersion": "0.0.5",
+  "releaseDate": null,
+  "gitTag": null,
+  "gitCommit": null,
+  "sourceState": "未形成候选源码；以规划中的 v0.0.5 为基线，当前仅有安全页内编辑规划文档",
+  "vsix": null,
+  "tests": null,
+  "acceptedEvidenceRun": null,
+  "evidencePath": null
+}

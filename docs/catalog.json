@@ -1,0 +1,179 @@
+{
+  "schemaVersion": 1,
+  "canonicalEntry": "README.md",
+  "semantics": {
+    "versionStatus": {
+      "draft": "尚未形成可发布版本事实",
+      "candidate": "已绑定候选源码与证据，尚未正式发布",
+      "released": "已发布且 manifest 与 accepted evidence 完整"
+    },
+    "phase": {
+      "planned": "规划中，不得表述为已实现",
+      "developing": "开发中，只能按代码与测试陈述已落地部分",
+      "candidate": "候选验收中",
+      "released": "已发布版本事实"
+    },
+    "productBaseline": "规范目标清单；功能是否已实现必须由代码、测试和实现映射证明"
+  },
+  "retrievalPolicies": {
+    "currentBehavior": [
+      "code-and-tests",
+      "current/实现与代码映射.md",
+      "relevant-current-baseline",
+      "developing-version-plan"
+    ],
+    "productRequirements": [
+      "current/产品与功能基线.md",
+      "current/设计与交互基线.md",
+      "current/实现与代码映射.md"
+    ],
+    "releasedFacts": [
+      "releases/README.md",
+      "version-manifest",
+      "version-readme",
+      "accepted-evidence"
+    ],
+    "futurePlans": ["planned-or-developing-version-readme"],
+    "historicalDecisions": ["archive/README.md", "dated-archive-source"]
+  },
+  "current": [
+    {
+      "path": "current/产品与功能基线.md",
+      "documentKind": "productBaseline",
+      "authority": "current",
+      "topics": ["capabilities", "priority", "entry-points", "completion"]
+    },
+    {
+      "path": "current/设计与交互基线.md",
+      "documentKind": "designBaseline",
+      "authority": "current",
+      "topics": [
+        "chinese-ux",
+        "layout",
+        "scroll",
+        "focus",
+        "ime",
+        "accessibility"
+      ]
+    },
+    {
+      "path": "current/实现与代码映射.md",
+      "documentKind": "implementationMap",
+      "authority": "current",
+      "topics": [
+        "architecture",
+        "protocol",
+        "host",
+        "webview",
+        "source-map",
+        "test-map"
+      ]
+    },
+    {
+      "path": "current/测试与验收基线.md",
+      "documentKind": "testAcceptanceBaseline",
+      "authority": "current",
+      "topics": [
+        "testing",
+        "acceptance",
+        "candidate",
+        "release-gates",
+        "evidence"
+      ]
+    }
+  ],
+  "versions": [
+    {
+      "version": "0.0.1",
+      "status": "released",
+      "phase": "released",
+      "baseVersion": null,
+      "canonicalEntry": "releases/v0.0.1/README.md",
+      "manifest": "releases/v0.0.1/manifest.json",
+      "releasedFact": true,
+      "topics": ["initial-release"]
+    },
+    {
+      "version": "0.0.2",
+      "status": "released",
+      "phase": "released",
+      "baseVersion": "0.0.1",
+      "canonicalEntry": "releases/v0.0.2/README.md",
+      "manifest": "releases/v0.0.2/manifest.json",
+      "releasedFact": true,
+      "topics": ["release", "migration"]
+    },
+    {
+      "version": "0.0.3",
+      "status": "released",
+      "phase": "released",
+      "baseVersion": "0.0.2",
+      "canonicalEntry": "releases/v0.0.3/README.md",
+      "manifest": "releases/v0.0.3/manifest.json",
+      "releasedFact": true,
+      "topics": ["commit-selection-rules", "release"]
+    },
+    {
+      "version": "0.0.4",
+      "status": "released",
+      "phase": "released",
+      "baseVersion": "0.0.3",
+      "canonicalEntry": "releases/v0.0.4/README.md",
+      "manifest": "releases/v0.0.4/manifest.json",
+      "releasedFact": true,
+      "topics": ["diff", "webview-window", "vscode-diff"]
+    },
+    {
+      "version": "0.0.5",
+      "status": "draft",
+      "phase": "planned",
+      "baseVersion": "0.0.4",
+      "canonicalEntry": "releases/v0.0.5/README.md",
+      "manifest": "releases/v0.0.5/manifest.json",
+      "releasedFact": false,
+      "topics": ["module-windows", "routing", "rail-removal"]
+    },
+    {
+      "version": "0.0.6",
+      "status": "draft",
+      "phase": "planned",
+      "baseVersion": "0.0.5",
+      "canonicalEntry": "releases/v0.0.6/README.md",
+      "manifest": "releases/v0.0.6/manifest.json",
+      "releasedFact": false,
+      "topics": ["diff-editing", "edit-token", "draft-recovery", "atomic-write"]
+    }
+  ],
+  "archive": [
+    {
+      "path": "archive/milestones/2026-07/README.md",
+      "documentKind": "milestoneIndex",
+      "lifecycle": "historical",
+      "topics": ["timeline", "architecture-migration"]
+    },
+    {
+      "path": "archive/releases/v0.0.1-rc.1/README.md",
+      "documentKind": "candidateRecord",
+      "lifecycle": "historical",
+      "topics": ["release-candidate", "evidence"]
+    },
+    {
+      "path": "archive/prototypes/v1/项目说明.md",
+      "documentKind": "prototypeIndex",
+      "lifecycle": "historical",
+      "topics": ["prototype", "initial-design"]
+    },
+    {
+      "path": "archive/prototypes/2026-07-25/优化说明.md",
+      "documentKind": "prototypeIteration",
+      "lifecycle": "historical",
+      "topics": ["prototype", "design-iteration"]
+    },
+    {
+      "path": "archive/legacy-specs/product-spec.md",
+      "documentKind": "legacySpecification",
+      "lifecycle": "historical",
+      "topics": ["early-product-spec"]
+    }
+  ]
+}

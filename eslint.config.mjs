@@ -16,6 +16,7 @@ export default defineConfig(
       "out/**",
       "playwright-report/**",
       "test-results/**",
+      "tests/spike/dist/**",
     ],
   },
   js.configs.recommended,
@@ -31,7 +32,11 @@ export default defineConfig(
     },
   },
   {
-    files: ["scripts/**/*.js", "*.{js,mjs,mts,ts}"],
+    files: [
+      "scripts/**/*.js",
+      "tests/spike/**/*.{js,mjs}",
+      "*.{js,mjs,mts,ts}",
+    ],
     languageOptions: {
       globals: globals.node,
     },

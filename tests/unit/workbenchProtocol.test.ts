@@ -17,6 +17,7 @@ function actionMessage(action: string): unknown {
     type: "workbench/action",
     moduleId: "settings",
     taskId: "settings/selection",
+    sessionId: "session-id",
     repositoryUuid: "repo-uuid",
     scopeHash: "scope-hash",
     payload: { action },
@@ -55,6 +56,7 @@ describe("workbench protocol validation", () => {
         type: "workbench/action",
         requestId: "test-1",
         moduleId: "changes",
+        sessionId: "session-id",
         repositoryUuid: "repo-uuid",
         scopeHash: "scope-hash",
         payload: { action: "refresh" },
@@ -97,7 +99,7 @@ describe("workbench protocol validation", () => {
     ).toBe(false);
     expect(
       isWebviewToHostMessage({
-        protocolVersion: 1,
+        protocolVersion: WORKBENCH_PROTOCOL_VERSION,
         moduleId: "changes",
         type: "webview/ready",
         payload: {},
@@ -132,6 +134,7 @@ describe("workbench protocol validation", () => {
         protocolVersion: 1,
         moduleId: "changes",
         type: "workbench/action",
+        sessionId: "session-id",
         repositoryUuid: 1,
         scopeHash: "s",
         payload: { action: "refresh" },
@@ -142,6 +145,7 @@ describe("workbench protocol validation", () => {
         protocolVersion: 1,
         moduleId: "changes",
         type: "workbench/action",
+        sessionId: "session-id",
         repositoryUuid: "r",
         scopeHash: 1,
         payload: { action: "refresh" },

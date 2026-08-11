@@ -24,6 +24,7 @@ import type { WorkbenchTaskId } from "./protocol/workbenchProtocol";
 let cachedSvnPath: string | undefined;
 let extensionContext: vscode.ExtensionContext | undefined;
 let workbenchController: WorkbenchController | undefined;
+let diffWorkbenchController: WorkbenchController | undefined;
 let sourceControlManager: SvnSourceControlManager | undefined;
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -31,9 +32,32 @@ export function activate(context: vscode.ExtensionContext): void {
   // 统一的提交选择规则解析服务：工作台与 SCM 共享，保证所有候选入口
   // 在同一仓库解析出相同有效规则；监听配置与仓库文件变化并失效缓存。
   const commitSelectionRuleService = new CommitSelectionRuleService();
+  // 独立 Diff 窗口控制器：与主工作台共享规则服务，拥有自己的面板与会话；
+  // 窗口内请求其他模块（如“提交此文件”）时转发回主工作台。
+  diffWorkbenchController = new WorkbenchController(
+    context,
+    commitSelectionRuleService,
+    {
+      diffWindow: true,
+      onOpenModuleInMainWindow: async (request) => {
+        if (!workbenchController) {
+          return;
+        }
+        await workbenchController.open(request);
+      },
+    },
+  );
+  const diffController = diffWorkbenchController;
   workbenchController = new WorkbenchController(
     context,
     commitSelectionRuleService,
+    {
+      // diff 模块的打开（命令与 Webview 内部动作）改走独立窗口，
+      // 不顶替主工作台当前所在模块。
+      onOpenDiffInWindow: async (request) => {
+        await diffController.open(request);
+      },
+    },
   );
   sourceControlManager = new SvnSourceControlManager(
     getSvnPath,
@@ -43,6 +67,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     workbenchController,
+    diffWorkbenchController,
     sourceControlManager,
     commitSelectionRuleService,
     ...registerCommitSelectionRuleWatchers(commitSelectionRuleService),
@@ -111,6 +136,10 @@ export function activate(context: vscode.ExtensionContext): void {
       openConflictCenter,
     ),
     vscode.commands.registerCommand("svnWorkbench.openDiff", openDiff),
+    // 不贡献到命令面板；复用当前安全会话，供自动化和受控内部入口调用。
+    vscode.commands.registerCommand("svnWorkbench.openDiffInEditor", () =>
+      diffWorkbenchController?.openNativeDiffInEditor(),
+    ),
     vscode.commands.registerCommand("svnWorkbench.openHistory", openHistory),
     vscode.commands.registerCommand(
       "svnWorkbench.openTeamConfig",
@@ -167,6 +196,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
 export function deactivate(): void {
   workbenchController = undefined;
+  diffWorkbenchController = undefined;
   sourceControlManager = undefined;
 }
 
@@ -350,10 +380,10 @@ async function openDiff(resource?: unknown): Promise<void> {
   const target = vscode.Uri.file(filePath);
   const repositoryRoot = await getRepositoryRootForTarget(target, svnPath);
   const scope = await createScopeFromExplorer(repositoryRoot, target);
-  if (!workbenchController) {
+  if (!diffWorkbenchController) {
     return;
   }
-  await workbenchController.open({
+  await diffWorkbenchController.open({
     moduleId: "diff",
     taskId: "diff/working",
     svnPath,

@@ -147,6 +147,26 @@ export const commitSelectionAiSourceLabels = {
 } as const;
 
 /**
+ * 差异视图工具栏与区域文案（v0.0.4 @pierre/diffs 迁移）。
+ * 视图当前态通过 aria-pressed 与文字同时表达，不只靠颜色。
+ */
+export const diffViewLabels = {
+  switchGroup: "差异视图切换与折叠控制",
+  unified: "统一视图",
+  split: "分栏视图",
+  expandAll: "展开全部",
+  collapseUnchanged: "折叠未变更",
+  contentRegion: "差异内容",
+} as const;
+
+/** 差异渲染组件失败时的中文降级提示。 */
+export const diffFallbackNotices = {
+  mergeView:
+    "差异渲染组件加载失败，已切换为基础对比视图；语法高亮与视图切换暂不可用。",
+  rawPatch: "无法解析该修订比较的差异内容，已按原始文本显示。",
+} as const;
+
+/**
  * 提交页候选决策依据的完整中文描述（规划 4.3）：
  * 最终决策 · 决策原因（命中规则及来源 / 状态默认策略 / 安全规则）· 安全锁定。
  * 文案统一收口在此处，提交页与设置预览不各自拼字符串。

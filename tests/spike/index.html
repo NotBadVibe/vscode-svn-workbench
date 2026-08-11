@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>@pierre/diffs CSP Spike</title>
+  </head>
+  <body data-theme="dark">
+    <h1>@pierre/diffs 严格 CSP 可行性验证</h1>
+    <section>
+      <h2>pierre：两侧全文输入（Working ↔ BASE 形态）</h2>
+      <div id="pierre-file"></div>
+    </section>
+    <section>
+      <h2>pierre：patch 输入（修订比较形态，svn 风格）</h2>
+      <div id="pierre-patch"></div>
+    </section>
+    <section>
+      <h2>pierre：patch 输入（git 风格对照）</h2>
+      <div id="pierre-patch-git"></div>
+    </section>
+    <section>
+      <h2>对照：CodeMirror MergeView（现状实现）</h2>
+      <div id="cm-merge"></div>
+    </section>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

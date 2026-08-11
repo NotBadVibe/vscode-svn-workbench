@@ -6,6 +6,7 @@ const hostOnlyTests = new Set([
   "opens commit panel for the selected folder command",
   "refreshes status for a validation working copy",
   "normalizes native SCM resource state command arguments",
+  "opens and reuses Diff tabs and invokes native vscode.diff",
 ]);
 const needsSvnWorkspace = new Set([
   "keeps folder operation scope inside the selected folder",

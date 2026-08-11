@@ -21,6 +21,14 @@ import type {
 } from "../../security/svnSecurityContext";
 import type { SvnCertificateDetails } from "../../svn/svnErrorClassifier";
 
+/**
+ * 修订比较（history/compare）会话负载：
+ * 打开 diff 模块后直接展示 rA → rB 的 patch 差异，不走 Working/BASE 快照。
+ */
+export interface RevisionCompareRequest {
+  revisions: [string, string];
+}
+
 export interface OpenWorkbenchRequest {
   moduleId: WorkbenchModuleId;
   taskId?: WorkbenchTaskId;
@@ -28,6 +36,7 @@ export interface OpenWorkbenchRequest {
   scope: OperationScope;
   targetFile?: string;
   selectedPaths?: string[];
+  revisionCompare?: RevisionCompareRequest;
   initialFileOperation?: {
     operation: "add" | "ignore" | "revert" | "lock" | "unlock";
     ignoreMode?: "directory" | "repository";
@@ -35,6 +44,8 @@ export interface OpenWorkbenchRequest {
 }
 
 export interface WorkbenchSession extends OpenWorkbenchRequest {
+  /** 每次安全上下文或 Diff 目标变化时重新生成；旧 Webview 动作必须拒绝。 */
+  sessionId: string;
   taskId: WorkbenchTaskId;
   scopeView: WorkbenchScopeView;
   repositoryUuid: string;

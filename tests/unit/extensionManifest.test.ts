@@ -13,6 +13,12 @@ interface ExtensionManifest {
   activationEvents: string[];
   bugs: { url: string };
   contributes: {
+    configuration: {
+      properties: Record<
+        string,
+        { type: string | string[]; default: unknown; enum?: string[] }
+      >;
+    };
     menus: Record<string, MenuContribution[]>;
   };
   engines: { node: string; npm: string; vscode: string };
@@ -42,6 +48,18 @@ describe("VS Code 扩展清单", () => {
     expect(manifest.engines.node).toBe(">=26.0.0 <27");
     expect(manifest.engines.npm).toBe(">=12.0.2 <13");
     expect(manifest.engines.vscode).toBe("^1.92.0");
+  });
+
+  it("Diff 打开位置默认同组并仅允许同组或旁侧", () => {
+    expect(
+      manifest.contributes.configuration.properties[
+        "svnWorkbench.diff.openMode"
+      ],
+    ).toMatchObject({
+      type: "string",
+      default: "sameGroup",
+      enum: ["sameGroup", "beside"],
+    });
   });
 
   it("冷启动时不依赖扩展运行后才能设置的 context key 显示右键入口", () => {

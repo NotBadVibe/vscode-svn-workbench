@@ -1,0 +1,136 @@
+/*
+ * Spike：VS Code CSS 变量 → @pierre/diffs `--diffs-*` 变量映射验证。
+ *
+ * 真实 Webview 中 --vscode-* 变量由 VS Code 注入；spike 页面用三主题模拟值
+ * （取自 VS Code 默认 Dark+ / Light+ / Dark High Contrast 主题），
+ * 通过 body[data-theme] 切换，验证映射层本身是否成立。
+ */
+
+/* 1. 模拟 VS Code 注入的主题变量 */
+body[data-theme="light"] {
+  color-scheme: light;
+  --vscode-editor-background: #ffffff;
+  --vscode-editor-foreground: #3b3b3b;
+  --vscode-editor-font-family: "SF Mono", Menlo, Consolas, monospace;
+  --vscode-editor-font-size: 12px;
+  --vscode-editorLineNumber-foreground: #237893;
+  --vscode-diffEditor-insertedLineBackground: rgba(155, 185, 85, 0.2);
+  --vscode-diffEditor-removedLineBackground: rgba(255, 0, 0, 0.2);
+  --vscode-diffEditor-insertedTextBackground: rgba(172, 206, 247, 0.55);
+  --vscode-diffEditor-removedTextBackground: rgba(255, 0, 0, 0.3);
+  --vscode-gitDecoration-addedResourceForeground: #587c0c;
+  --vscode-gitDecoration-deletedResourceForeground: #ad0707;
+  --vscode-contrastBorder: transparent;
+}
+
+body[data-theme="dark"] {
+  color-scheme: dark;
+  --vscode-editor-background: #1f1f1f;
+  --vscode-editor-foreground: #cccccc;
+  --vscode-editor-font-family: "SF Mono", Menlo, Consolas, monospace;
+  --vscode-editor-font-size: 12px;
+  --vscode-editorLineNumber-foreground: #6e7681;
+  --vscode-diffEditor-insertedLineBackground: rgba(155, 185, 85, 0.2);
+  --vscode-diffEditor-removedLineBackground: rgba(255, 0, 0, 0.2);
+  --vscode-diffEditor-insertedTextBackground: rgba(156, 204, 44, 0.2);
+  --vscode-diffEditor-removedTextBackground: rgba(255, 0, 0, 0.3);
+  --vscode-gitDecoration-addedResourceForeground: #81b88b;
+  --vscode-gitDecoration-deletedResourceForeground: #c74e39;
+  --vscode-contrastBorder: transparent;
+}
+
+body[data-theme="hc"] {
+  color-scheme: dark;
+  --vscode-editor-background: #000000;
+  --vscode-editor-foreground: #ffffff;
+  --vscode-editor-font-family: "SF Mono", Menlo, Consolas, monospace;
+  --vscode-editor-font-size: 12px;
+  --vscode-editorLineNumber-foreground: #ffffff;
+  /* VS Code 高对比默认：增删行使用高不透明度绿/红 */
+  --vscode-diffEditor-insertedLineBackground: rgba(155, 185, 85, 0.35);
+  --vscode-diffEditor-removedLineBackground: rgba(255, 0, 0, 0.35);
+  --vscode-diffEditor-insertedTextBackground: rgba(155, 185, 85, 0.55);
+  --vscode-diffEditor-removedTextBackground: rgba(255, 0, 0, 0.5);
+  --vscode-gitDecoration-addedResourceForeground: #9bbb55;
+  --vscode-gitDecoration-deletedResourceForeground: #f14c4c;
+  --vscode-contrastBorder: #6fc3df;
+}
+
+/* 2. 映射层：VS Code 变量 → --diffs-* 变量。
+ * 自定义属性跨 Shadow DOM 边界继承，宿主样式表（CSP 允许的 link CSS）即可注入。
+ * 注意：组件会把 --diffs-bg-addition-override 的颜色再与编辑器背景按
+ * 80/20 比例 color-mix，因此行背景应传不透明强调色（gitDecoration），
+ * 而不是 VS Code 的半透明 insertedLineBackground（会被二次稀释）。
+ */
+diffs-container {
+  --diffs-light-bg: var(--vscode-editor-background);
+  --diffs-dark-bg: var(--vscode-editor-background);
+  --diffs-light: var(--vscode-editor-foreground);
+  --diffs-dark: var(--vscode-editor-foreground);
+  --diffs-bg-addition-override: var(
+    --vscode-gitDecoration-addedResourceForeground
+  );
+  --diffs-bg-deletion-override: var(
+    --vscode-gitDecoration-deletedResourceForeground
+  );
+  --diffs-bg-addition-emphasis-override: var(
+    --vscode-diffEditor-insertedTextBackground
+  );
+  --diffs-bg-deletion-emphasis-override: var(
+    --vscode-diffEditor-removedTextBackground
+  );
+  --diffs-light-addition-color: var(
+    --vscode-gitDecoration-addedResourceForeground
+  );
+  --diffs-dark-addition-color: var(
+    --vscode-gitDecoration-addedResourceForeground
+  );
+  --diffs-light-deletion-color: var(
+    --vscode-gitDecoration-deletedResourceForeground
+  );
+  --diffs-dark-deletion-color: var(
+    --vscode-gitDecoration-deletedResourceForeground
+  );
+  --diffs-fg-number-override: var(--vscode-editorLineNumber-foreground);
+  --diffs-font-family: var(--vscode-editor-font-family);
+  --diffs-font-size: var(--vscode-editor-font-size);
+  --diffs-line-height: calc(var(--vscode-editor-font-size) * 1.5);
+}
+
+/* 高对比：追加对比边框，保证增删区域不只靠颜色区分 */
+body[data-theme="hc"] diffs-container {
+  --diffs-bg-separator-override: var(--vscode-contrastBorder);
+}
+
+/* Spike 页面自身样式（非映射对象） */
+body {
+  margin: 0;
+  padding: 16px;
+  font-family:
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    sans-serif;
+  background: var(--vscode-editor-background);
+  color: var(--vscode-editor-foreground);
+}
+
+h1 {
+  font-size: 16px;
+}
+
+h2 {
+  font-size: 13px;
+  margin: 16px 0 8px;
+}
+
+section {
+  margin-bottom: 24px;
+}
+
+#pierre-file,
+#pierre-patch,
+#cm-merge {
+  border: 1px solid var(--vscode-contrastBorder, rgba(128, 128, 128, 0.35));
+  max-width: 960px;
+}

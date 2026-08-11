@@ -13,10 +13,25 @@ export default defineConfig({
     })
   ],
   resolve: {
-    alias: {
-      '@webview': fileURLToPath(new URL('.', import.meta.url)),
-      '@protocol': fileURLToPath(new URL('../protocol', import.meta.url))
-    }
+    alias: [
+      { find: '@webview', replacement: fileURLToPath(new URL('.', import.meta.url)) },
+      { find: '@protocol', replacement: fileURLToPath(new URL('../protocol', import.meta.url)) },
+      // @pierre/diffs 按需子集（v0.0.4 §10）：精确替换 "shiki" 根模块为语言子集
+      // shim（15 个语言 loader，chunk 懒加载）、"shiki/wasm" 裁 Oniguruma（统一
+      // JavaScript Regex 引擎）、"@pierre/theming/themes" 只注册 pierre-dark/light。
+      {
+        find: /^shiki$/,
+        replacement: fileURLToPath(new URL('./features/diff/vendor/shiki-subset-shim.ts', import.meta.url))
+      },
+      {
+        find: /^shiki\/wasm$/,
+        replacement: fileURLToPath(new URL('./features/diff/vendor/shiki-wasm-stub.ts', import.meta.url))
+      },
+      {
+        find: /^@pierre\/theming\/themes$/,
+        replacement: fileURLToPath(new URL('./features/diff/vendor/pierre-theming-subset-shim.ts', import.meta.url))
+      }
+    ]
   },
   server: {
     watch: {

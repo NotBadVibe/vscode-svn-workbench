@@ -22,6 +22,11 @@ const darkTheme = {
   "--vscode-editorLineNumber-foreground": "#858585",
   "--vscode-editorGutter-background": "#1e1e1e",
   "--vscode-editor-selectionBackground": "#264f78",
+  // 差异组件映射层依赖的 VS Code 默认值（Dark+ 主题）
+  "--vscode-gitDecoration-addedResourceForeground": "#81b88b",
+  "--vscode-gitDecoration-deletedResourceForeground": "#c74e39",
+  "--vscode-diffEditor-insertedTextBackground": "rgba(156, 204, 44, 0.2)",
+  "--vscode-diffEditor-removedTextBackground": "rgba(255, 0, 0, 0.3)",
 } as const;
 
 async function preparePage(page: Page, url = "/"): Promise<void> {
@@ -31,6 +36,8 @@ async function preparePage(page: Page, url = "/"): Promise<void> {
     for (const [name, value] of Object.entries(values)) {
       document.documentElement.style.setProperty(name, value);
     }
+    // 模拟 VS Code Webview 的主题类（差异组件按 color-scheme 切换明暗主题）。
+    document.body.classList.add("vscode-dark");
   }, darkTheme);
   await page.addStyleTag({
     content: `

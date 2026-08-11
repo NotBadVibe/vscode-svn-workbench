@@ -1,5 +1,6 @@
 @import "tailwindcss";
 @import "@vscode/codicons/dist/codicon.css";
+@import "./diff-theme.css";
 
 :root {
   color-scheme: light dark;

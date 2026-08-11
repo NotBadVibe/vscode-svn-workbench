@@ -207,6 +207,32 @@ import {
   type RepositoryWorkbenchHost,
 } from "./repositoryWorkbenchActions";
 import { applyCommitSelectionRulesInvalidation } from "./commitSelectionInvalidation";
+import {
+  assertDiffModuleRequest,
+  buildDiffWindowRequest,
+  buildMainWindowRequest,
+  buildDiffTargetKey,
+  normalizeDiffOpenMode,
+  orderRevisionPair,
+  shouldForwardToDiffWindow,
+  workbenchRevealTarget,
+} from "./diffWindowRouting";
+import { NativeDiffContentProvider } from "./nativeDiffContentProvider";
+
+/**
+ * Diff 独立窗口路由回调：
+ * - `onOpenDiffInWindow`：主工作台注入，收到 diff 打开请求时转发到独立窗口；
+ *   未注入时保持面板内切换模块的旧行为（单测兼容）。
+ * - `onOpenModuleInMainWindow`：Diff 窗口注入，收到非 diff 模块请求时
+ *   转发回主工作台（如 Diff 页“提交此文件”）；未注入时拒绝（防御）。
+ */
+export interface WorkbenchControllerRoutingOptions {
+  diffWindow?: boolean;
+  onOpenDiffInWindow?: (request: OpenWorkbenchRequest) => void | Promise<void>;
+  onOpenModuleInMainWindow?: (
+    request: OpenWorkbenchRequest,
+  ) => void | Promise<void>;
+}
 
 export class WorkbenchController implements vscode.Disposable {
   private panel: vscode.WebviewPanel | undefined;
@@ -217,6 +243,17 @@ export class WorkbenchController implements vscode.Disposable {
   private readonly repositoryActions: RepositoryWorkbenchActions;
   private readonly commitSelectionRuleService: CommitSelectionRuleService;
   private readonly ruleInvalidationSubscription: vscode.Disposable;
+  /** 独立 Diff 窗口模式：仅接受 diff 模块会话，面板在当前编辑组旁打开。 */
+  private readonly diffWindow: boolean;
+  private readonly onOpenDiffInWindow?: (
+    request: OpenWorkbenchRequest,
+  ) => void | Promise<void>;
+  private readonly onOpenModuleInMainWindow?: (
+    request: OpenWorkbenchRequest,
+  ) => void | Promise<void>;
+  /** 当前 Diff 会话目标摘要；同目标重复打开只 reveal，不重新初始化。 */
+  private diffTargetKey: string | undefined;
+  private readonly nativeDiffContentProvider?: NativeDiffContentProvider;
   /**
    * 设置页保存/恢复动作触发的规则失效由动作处理器自行发送带反馈的快照；
    * 此标志抑制失效监听的重复模块刷新（仍保留提交预览/AI 结果清除）。
@@ -226,6 +263,7 @@ export class WorkbenchController implements vscode.Disposable {
   constructor(
     private readonly context: vscode.ExtensionContext,
     commitSelectionRuleService?: CommitSelectionRuleService,
+    routingOptions?: WorkbenchControllerRoutingOptions,
   ) {
     this.repositoryActions = new RepositoryWorkbenchActions(
       this as unknown as RepositoryWorkbenchHost,
@@ -236,14 +274,40 @@ export class WorkbenchController implements vscode.Disposable {
       this.commitSelectionRuleService.onDidInvalidate((event) =>
         this.handleCommitSelectionRulesInvalidated(event),
       );
+    this.diffWindow = routingOptions?.diffWindow ?? false;
+    this.onOpenDiffInWindow = routingOptions?.onOpenDiffInWindow;
+    this.onOpenModuleInMainWindow = routingOptions?.onOpenModuleInMainWindow;
+    if (this.diffWindow) {
+      this.nativeDiffContentProvider = new NativeDiffContentProvider();
+      this.context.subscriptions.push(
+        this.nativeDiffContentProvider,
+        vscode.workspace.registerTextDocumentContentProvider(
+          "svn-workbench-base",
+          this.nativeDiffContentProvider,
+        ),
+      );
+    }
   }
 
   async open(request: OpenWorkbenchRequest): Promise<void> {
     if (this.disposed) {
       throw new Error("SVN 工作台控制器已释放。");
     }
+    // 独立 Diff 窗口只处理 diff 模块会话；其余请求转发主工作台或拒绝（防御）。
+    if (this.diffWindow && request.moduleId !== "diff") {
+      if (this.onOpenModuleInMainWindow) {
+        await this.onOpenModuleInMainWindow(request);
+        return;
+      }
+      assertDiffModuleRequest(request);
+    }
+    // 主工作台的 diff 打开请求改走独立 Diff 窗口，不顶替当前面板模块。
+    if (shouldForwardToDiffWindow(request.moduleId, this.onOpenDiffInWindow)) {
+      await this.onOpenDiffInWindow!(request);
+      return;
+    }
     if (this.session?.activeOperation) {
-      this.panel?.reveal(vscode.ViewColumn.One, false);
+      this.revealPanel();
       await vscode.window.showWarningMessage(
         "SVN 工作台正在执行可取消操作。请先等待完成或在进度条中取消，再切换仓库与范围。",
       );
@@ -254,10 +318,24 @@ export class WorkbenchController implements vscode.Disposable {
     if (!isWorkbenchTaskForModule(taskId, request.moduleId)) {
       throw new Error("请求的工作台子任务与功能模块不匹配。");
     }
+    const nextDiffTargetKey = this.diffWindow
+      ? buildDiffTargetKey({ ...request, taskId })
+      : undefined;
+    if (
+      nextDiffTargetKey &&
+      this.panel &&
+      this.session &&
+      this.diffTargetKey === nextDiffTargetKey
+    ) {
+      this.revealPanel();
+      return;
+    }
 
     this.latestModuleRequests.clear();
-    if (this.session)
+    if (this.session) {
+      this.nativeDiffContentProvider?.releaseSession(this.session.sessionId);
       clearSvnSecurityContext(this.session.scope.repositoryRoot);
+    }
     const storedAi = await readStoredAiConfiguration(this.context);
     const repositoryUuid = await resolveRepositoryUuid(
       request.svnPath,
@@ -269,6 +347,7 @@ export class WorkbenchController implements vscode.Disposable {
     );
     this.session = {
       ...request,
+      sessionId: randomUUID(),
       taskId,
       scopeView: toScopeView(request.scope),
       repositoryUuid,
@@ -279,24 +358,77 @@ export class WorkbenchController implements vscode.Disposable {
         hasStoredAuthentication: Boolean(storedAuthentication),
       },
     };
+    this.diffTargetKey = nextDiffTargetKey;
     this.syncSvnSecurityContext(this.session);
     const panel = await this.ensurePanel();
     panel.title = getModuleTitle(request.moduleId, taskId);
-    panel.reveal(vscode.ViewColumn.One, false);
+    this.revealPanel();
 
     if (this.ready) {
       await this.sendInitialize();
-      await this.loadModule(request.moduleId, request.targetFile);
-      await this.prepareInitialFileOperation(this.session);
+      await this.loadInitialModule(this.session);
     }
+  }
+
+  /**
+   * 打开会话后的首次模块加载：修订比较会话直接渲染 rA → rB patch 快照，
+   * 其余会话按模块加载并执行可能的初始文件操作。
+   */
+  private async loadInitialModule(session: WorkbenchSession): Promise<void> {
+    if (session.revisionCompare) {
+      await this.runRevisionCompare(
+        session,
+        session.revisionCompare.revisions,
+        session.moduleId,
+      );
+      return;
+    }
+    await this.loadModule(session.moduleId, session.targetFile);
+    await this.prepareInitialFileOperation(session);
+  }
+
+  /** 面板 reveal：显式打开会激活目标标签；Diff 打开组由配置决定。 */
+  private revealPanel(): void {
+    if (!this.panel) {
+      return;
+    }
+    const target = this.revealTarget();
+    const viewColumn =
+      target.viewColumn === "beside"
+        ? vscode.ViewColumn.Beside
+        : target.viewColumn === "active"
+          ? vscode.ViewColumn.Active
+          : vscode.ViewColumn.One;
+    this.panel.reveal(viewColumn, target.preserveFocus);
+  }
+
+  private revealTarget() {
+    const openMode = normalizeDiffOpenMode(
+      vscode.workspace
+        .getConfiguration("svnWorkbench")
+        .get<unknown>("diff.openMode"),
+    );
+    return workbenchRevealTarget(this.diffWindow, openMode);
+  }
+
+  async openNativeDiffInEditor(requestId?: string): Promise<void> {
+    const session = this.session;
+    if (!session) {
+      throw new Error(
+        "没有可用的 SVN Diff 会话，请先打开 Working Copy ↔ BASE。",
+      );
+    }
+    await this.openNativeDiff(session, requestId);
   }
 
   dispose(): void {
     this.disposed = true;
     this.ruleInvalidationSubscription.dispose();
     this.session?.activeOperation?.controller.abort();
-    if (this.session)
+    if (this.session) {
+      this.nativeDiffContentProvider?.releaseSession(this.session.sessionId);
       clearSvnSecurityContext(this.session.scope.repositoryRoot);
+    }
     this.panel?.dispose();
     this.panel = undefined;
     this.session = undefined;
@@ -345,13 +477,18 @@ export class WorkbenchController implements vscode.Disposable {
       "dist",
       "webview",
     );
+    const revealTarget = this.revealTarget();
     const panel = vscode.window.createWebviewPanel(
       "svnWorkbench.unified",
       "SVN 工作台",
-      vscode.ViewColumn.One,
+      revealTarget.viewColumn === "beside"
+        ? vscode.ViewColumn.Beside
+        : revealTarget.viewColumn === "active"
+          ? vscode.ViewColumn.Active
+          : vscode.ViewColumn.One,
       {
         enableScripts: true,
-        retainContextWhenHidden: false,
+        retainContextWhenHidden: this.diffWindow,
         localResourceRoots: [localResourceRoot],
       },
     );
@@ -360,6 +497,14 @@ export class WorkbenchController implements vscode.Disposable {
 
     panel.onDidDispose(
       () => {
+        if (this.session) {
+          this.nativeDiffContentProvider?.releaseSession(
+            this.session.sessionId,
+          );
+          clearSvnSecurityContext(this.session.scope.repositoryRoot);
+        }
+        this.session = undefined;
+        this.diffTargetKey = undefined;
         this.panel = undefined;
         this.ready = false;
       },
@@ -396,8 +541,7 @@ export class WorkbenchController implements vscode.Disposable {
       this.ready = true;
       await this.sendInitialize();
       if (this.session) {
-        await this.loadModule(this.session.moduleId, this.session.targetFile);
-        await this.prepareInitialFileOperation(this.session);
+        await this.loadInitialModule(this.session);
       }
       return;
     }
@@ -413,15 +557,16 @@ export class WorkbenchController implements vscode.Disposable {
       return;
     }
     if (
+      message.sessionId !== session.sessionId ||
       message.repositoryUuid !== session.repositoryUuid ||
       message.scopeHash !== session.scopeHash ||
       message.taskId !== session.taskId
     ) {
-      appendOutput("已拒绝仓库或范围标识过期的 SVN 工作台消息。");
+      appendOutput("已拒绝会话、仓库或范围标识过期的 SVN 工作台消息。");
       await this.sendError(
         session.moduleId,
         "操作上下文已过期",
-        "仓库或右键范围已变化，请重新打开当前功能模块。",
+        "会话、仓库或右键范围已变化，请重新打开当前功能模块。",
         false,
         message.requestId,
       );
@@ -455,6 +600,39 @@ export class WorkbenchController implements vscode.Disposable {
             session.moduleId,
             "无法打开任务",
             "请求的子任务不属于当前功能模块。",
+            false,
+            message.requestId,
+          );
+          return;
+        }
+        // diff 模块的打开改走独立 Diff 窗口（注入回调时），不顶替当前面板。
+        if (shouldForwardToDiffWindow(moduleId, this.onOpenDiffInWindow)) {
+          await this.onOpenDiffInWindow!(
+            buildDiffWindowRequest({
+              svnPath: session.svnPath,
+              scope: session.scope,
+            }),
+          );
+          return;
+        }
+        // Diff 窗口内请求其他模块（如“提交此文件”）：转发主工作台，未接线则拒绝。
+        if (this.diffWindow && moduleId !== "diff") {
+          if (this.onOpenModuleInMainWindow) {
+            await this.onOpenModuleInMainWindow(
+              buildMainWindowRequest({
+                moduleId,
+                taskId,
+                svnPath: session.svnPath,
+                scope: session.scope,
+                selectedPaths: asStringArray(data.selectedPaths),
+              }),
+            );
+            return;
+          }
+          await this.sendError(
+            session.moduleId,
+            "无法打开模块",
+            "独立 Diff 窗口仅处理 diff 模块会话，请从 SVN 工作台主面板打开其他模块。",
             false,
             message.requestId,
           );
@@ -495,6 +673,17 @@ export class WorkbenchController implements vscode.Disposable {
           );
           return;
         }
+        // 注入 Diff 窗口回调时转发到独立窗口，当前面板模块保持不变。
+        if (this.onOpenDiffInWindow) {
+          await this.onOpenDiffInWindow(
+            buildDiffWindowRequest({
+              svnPath: session.svnPath,
+              scope: session.scope,
+              targetFile: absolutePath,
+            }),
+          );
+          return;
+        }
         session.moduleId = "diff";
         session.taskId = defaultWorkbenchTask("diff");
         session.targetFile = absolutePath;
@@ -530,6 +719,9 @@ export class WorkbenchController implements vscode.Disposable {
         await vscode.window.showTextDocument(document, { preview: true });
         return;
       }
+      case "diff/open-in-editor":
+        await this.openNativeDiffInEditor(message.requestId);
+        return;
       case "copy-text": {
         const text = asString(data.text);
         if (text) {
@@ -794,25 +986,15 @@ export class WorkbenchController implements vscode.Disposable {
           );
           return;
         }
-        const ordered = [...revisions].sort(
-          (left, right) => Number(left) - Number(right),
-        );
-        const targetPaths = session.scope.roots.map(
-          (root) => root.absolutePath,
-        );
-        const result = await runSvnCommand(
-          session.svnPath,
-          ["diff", "-r", `${ordered[0]}:${ordered[1]}`, ...targetPaths],
-          session.scope.repositoryRoot,
-          { maxOutputBytes: MAX_DIFF_BYTES },
-        );
-        if (result.exitCode !== 0 && !result.truncated) {
-          await this.sendError(
-            "history",
-            "修订比较失败",
-            result.stderr || "SVN diff 执行失败。",
-            true,
-            message.requestId,
+        const ordered = orderRevisionPair(revisions);
+        // 注入 Diff 窗口回调时在独立窗口展示修订比较，历史面板保持不变。
+        if (this.onOpenDiffInWindow) {
+          await this.onOpenDiffInWindow(
+            buildDiffWindowRequest({
+              svnPath: session.svnPath,
+              scope: session.scope,
+              revisionCompare: { revisions: ordered },
+            }),
           );
           return;
         }
@@ -820,28 +1002,12 @@ export class WorkbenchController implements vscode.Disposable {
         session.taskId = defaultWorkbenchTask("diff");
         session.targetFile = undefined;
         this.panel!.title = getModuleTitle("diff", session.taskId);
-        const diffBuffer = Buffer.from(result.stdout, "utf8");
-        const snapshot: DiffSnapshot = {
-          kind: "diff",
-          relativePath: `${session.scope.roots.map((root) => root.relativePath).join(", ")} · r${ordered[0]} → r${ordered[1]}`,
-          original: "",
-          modified: truncateUtf8(diffBuffer),
-          language: "diff",
-          truncated:
-            Boolean(result.truncated) ||
-            diffBuffer.byteLength >= MAX_DIFF_BYTES,
-          binary: false,
-          message: result.truncated
-            ? `修订比较 r${ordered[0]} → r${ordered[1]}（超过 5 MB，已截断）`
-            : `修订比较 r${ordered[0]} → r${ordered[1]}`,
-        };
-        await this.post({
-          protocolVersion: WORKBENCH_PROTOCOL_VERSION,
-          type: "module/snapshot",
-          requestId: message.requestId,
-          moduleId: "diff",
-          payload: { snapshot },
-        });
+        await this.runRevisionCompare(
+          session,
+          ordered,
+          "history",
+          message.requestId,
+        );
         return;
       }
       case "history/blame": {
@@ -2450,6 +2616,227 @@ export class WorkbenchController implements vscode.Disposable {
     throw new Error(`未实现的工作台模块：${moduleId satisfies never}`);
   }
 
+  /**
+   * 修订比较（history/compare）：执行 `svn diff -r rA:rB` 并直接推送
+   * patch 快照到 diff 模块。`errorModuleId` 标记失败错误归属的模块
+   * （主工作台面板内切换时为 history；独立 Diff 窗口会话为 diff）。
+   */
+  private async runRevisionCompare(
+    session: WorkbenchSession,
+    revisions: readonly string[],
+    errorModuleId: WorkbenchModuleId,
+    requestId?: string,
+  ): Promise<void> {
+    const ordered = orderRevisionPair(revisions);
+    const targetPaths = session.scope.roots.map((root) => root.absolutePath);
+    const result = await runSvnCommand(
+      session.svnPath,
+      ["diff", "-r", `${ordered[0]}:${ordered[1]}`, ...targetPaths],
+      session.scope.repositoryRoot,
+      { maxOutputBytes: MAX_DIFF_BYTES },
+    );
+    if (result.exitCode !== 0 && !result.truncated) {
+      await this.sendError(
+        errorModuleId,
+        "修订比较失败",
+        result.stderr || "SVN diff 执行失败。",
+        true,
+        requestId,
+      );
+      return;
+    }
+    const diffBuffer = Buffer.from(result.stdout, "utf8");
+    const snapshot: DiffSnapshot = {
+      kind: "diff",
+      relativePath: `${session.scope.roots.map((root) => root.relativePath).join(", ")} · r${ordered[0]} → r${ordered[1]}`,
+      original: "",
+      modified: truncateUtf8(diffBuffer),
+      language: "diff",
+      truncated:
+        Boolean(result.truncated) || diffBuffer.byteLength >= MAX_DIFF_BYTES,
+      binary: false,
+      message: result.truncated
+        ? `修订比较 r${ordered[0]} → r${ordered[1]}（超过 5 MB，已截断）`
+        : `修订比较 r${ordered[0]} → r${ordered[1]}`,
+    };
+    await this.post({
+      protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+      type: "module/snapshot",
+      requestId,
+      moduleId: "diff",
+      payload: { snapshot },
+    });
+  }
+
+  private async openNativeDiff(
+    session: WorkbenchSession,
+    requestId?: string,
+  ): Promise<void> {
+    if (!this.diffWindow || !this.nativeDiffContentProvider) {
+      await this.sendError(
+        session.moduleId,
+        "无法打开编辑器对比",
+        "原生对比只能从独立 SVN Diff 窗口打开。",
+        false,
+        requestId,
+      );
+      return;
+    }
+    if (session.revisionCompare || !session.targetFile) {
+      await this.sendError(
+        "diff",
+        "无法打开编辑器对比",
+        "修订比较保持双侧只读；请选择 Working Copy ↔ BASE 文件后重试。",
+        false,
+        requestId,
+      );
+      return;
+    }
+
+    const absolutePath = path.resolve(session.targetFile);
+    if (
+      validatePathsInScope(session.scope, [absolutePath]).outOfScopeItems
+        .length > 0
+    ) {
+      await this.sendError(
+        "diff",
+        "操作范围已变化",
+        "目标文件已不在当前右键范围内，请返回修改列表后重新打开 Diff。",
+        false,
+        requestId,
+      );
+      return;
+    }
+
+    const controller = new AbortController();
+    session.activeOperation = { moduleId: "diff", controller };
+    await this.post({
+      protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+      type: "operation/progress",
+      requestId,
+      moduleId: "diff",
+      payload: {
+        title: "正在准备编辑器对比",
+        message: "正在安全读取 Working Copy 与 BASE 内容。",
+        cancellable: true,
+      },
+    });
+
+    try {
+      const working = await readFileForDiff(absolutePath);
+      if (this.session?.sessionId !== session.sessionId) return;
+      const baseResult = await runSvnCommand(
+        session.svnPath,
+        ["cat", "-r", "BASE", absolutePath],
+        path.dirname(absolutePath),
+        { signal: controller.signal, maxOutputBytes: MAX_DIFF_BYTES },
+      );
+      if (this.session?.sessionId !== session.sessionId) return;
+      if (baseResult.cancelled) {
+        await this.post({
+          protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+          type: "operation/cancelled",
+          requestId,
+          moduleId: "diff",
+          payload: {
+            title: "已取消编辑器对比",
+            message: "未打开原生 Diff；Webview 中的只读差异仍可继续使用。",
+          },
+        });
+        return;
+      }
+      if (baseResult.exitCode !== 0) {
+        await this.sendError(
+          "diff",
+          "无法读取 BASE 内容",
+          baseResult.stderr ||
+            "文件可能未纳入版本控制。请刷新状态、重新认证或返回修改列表。",
+          true,
+          requestId,
+        );
+        return;
+      }
+
+      const baseBuffer = Buffer.from(baseResult.stdout, "utf8");
+      if (working.binary || containsNull(baseBuffer)) {
+        await this.sendError(
+          "diff",
+          "二进制文件无法进行文本对比",
+          "请在编辑器中直接打开工作副本，或查看 SVN 属性与历史。",
+          false,
+          requestId,
+        );
+        return;
+      }
+      if (
+        working.truncated ||
+        baseResult.truncated ||
+        baseBuffer.byteLength >= MAX_DIFF_BYTES
+      ) {
+        await this.sendError(
+          "diff",
+          "文件超过原生对比上限",
+          "Working Copy 或 BASE 超过 5 MB。请使用外部工具或缩小目标后重试。",
+          false,
+          requestId,
+        );
+        return;
+      }
+      if (working.text === baseResult.stdout) {
+        await this.post({
+          protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+          type: "operation/result",
+          requestId,
+          moduleId: "diff",
+          payload: {
+            title: "没有文本差异",
+            message: "Working Copy 与 BASE 内容相同，未打开原生 Diff。",
+          },
+        });
+        return;
+      }
+
+      const baseUri = this.nativeDiffContentProvider.createBaseUri(
+        session.sessionId,
+        baseResult.stdout,
+      );
+      await vscode.commands.executeCommand(
+        "vscode.diff",
+        baseUri,
+        vscode.Uri.file(absolutePath),
+        `${normalizeRelative(path.relative(session.scope.repositoryRoot, absolutePath))}（BASE ↔ 工作副本）`,
+        { preview: true },
+      );
+      await this.post({
+        protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+        type: "operation/result",
+        requestId,
+        moduleId: "diff",
+        payload: {
+          title: "已打开编辑器对比",
+          message: "左侧为只读 BASE，右侧为当前工作副本。",
+        },
+      });
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      const message =
+        code === "ENOENT"
+          ? "工作副本文件已移动或删除。请返回修改列表并刷新状态。"
+          : errorMessage(error);
+      await this.sendError(
+        "diff",
+        "无法打开编辑器对比",
+        message,
+        true,
+        requestId,
+      );
+    } finally {
+      if (session.activeOperation?.controller === controller) {
+        session.activeOperation = undefined;
+      }
+    }
+  }
+
   private async buildDiffSnapshot(
     session: WorkbenchSession,
     targetFile: string,
@@ -3877,6 +4264,7 @@ export class WorkbenchController implements vscode.Disposable {
         this.session?.moduleId === message.moduleId
           ? this.session.taskId
           : defaultWorkbenchTask(message.moduleId),
+      sessionId: this.session?.sessionId,
       repositoryUuid: this.session?.repositoryUuid,
       scopeHash: this.session?.scopeHash,
     } satisfies HostToWebviewMessage);

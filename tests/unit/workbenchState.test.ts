@@ -7,6 +7,7 @@ import {
   type WebviewToHostMessage,
 } from "../../src/protocol/workbenchProtocol";
 
+const SESSION_ID = "session-a";
 const states: WorkbenchState[] = [];
 afterEach(() => states.splice(0).forEach((state) => state.dispose()));
 
@@ -35,12 +36,14 @@ describe("Workbench Webview 状态机", () => {
       state.openModule("changes");
       expect(actions).toHaveLength(1);
       inject({
-        protocolVersion: 1,
-        type: "scope/changed",
+        protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+        type: "app/initialize",
         moduleId: "changes",
+        sessionId: SESSION_ID,
         repositoryUuid: "repo",
         scopeHash: "hash",
         payload: {
+          moduleId: "changes",
           scope: { repositoryName: "r", roots: [], source: "internal" },
         },
       });
@@ -49,6 +52,7 @@ describe("Workbench Webview 状态机", () => {
       expect(actions.at(-1)).toEqual(
         expect.objectContaining({
           type: "workbench/action",
+          sessionId: SESSION_ID,
           repositoryUuid: "repo",
           scopeHash: "hash",
           payload: {
@@ -76,59 +80,67 @@ describe("Workbench Webview 状态机", () => {
       refreshedAt: "now",
     };
     inject({
-      protocolVersion: 1,
+      protocolVersion: WORKBENCH_PROTOCOL_VERSION,
       type: "app/initialize",
       moduleId: "changes",
+      sessionId: SESSION_ID,
       payload: { scope, snapshot },
     });
     expect(state.snapshot).toEqual(snapshot);
     expect(state.loading).toBe(false);
     inject({
-      protocolVersion: 1,
+      protocolVersion: WORKBENCH_PROTOCOL_VERSION,
       type: "module/loading",
       moduleId: "history",
+      sessionId: SESSION_ID,
       payload: { title: "加载" },
     });
     expect(state.loading).toBe(true);
     inject({
-      protocolVersion: 1,
+      protocolVersion: WORKBENCH_PROTOCOL_VERSION,
       type: "operation/progress",
       moduleId: "history",
+      sessionId: SESSION_ID,
       payload: { title: "运行", percent: 30 },
     });
     expect(state.progress?.percent).toBe(30);
     inject({
-      protocolVersion: 1,
+      protocolVersion: WORKBENCH_PROTOCOL_VERSION,
       type: "module/snapshot",
       moduleId: "changes",
+      sessionId: SESSION_ID,
       payload: { snapshot },
     });
     expect(state.progress).toBeUndefined();
     inject({
-      protocolVersion: 1,
+      protocolVersion: WORKBENCH_PROTOCOL_VERSION,
       type: "operation/result",
       moduleId: "changes",
+      sessionId: SESSION_ID,
       payload: { title: "完成", message: "ok" },
     });
     expect(state.notification?.tone).toBe("success");
     inject({
-      protocolVersion: 1,
+      protocolVersion: WORKBENCH_PROTOCOL_VERSION,
       type: "operation/cancelled",
       moduleId: "changes",
+      sessionId: SESSION_ID,
       payload: { title: "取消", message: "cancel" },
     });
     expect(state.notification?.tone).toBe("warning");
     inject({
-      protocolVersion: 1,
+      protocolVersion: WORKBENCH_PROTOCOL_VERSION,
       type: "operation/error",
       moduleId: "changes",
+      sessionId: SESSION_ID,
       payload: { title: "失败", message: "error", recoverable: true },
     });
     expect(state.error?.message).toBe("error");
     inject({
-      protocolVersion: 1,
+      protocolVersion: WORKBENCH_PROTOCOL_VERSION,
       type: "scope/changed",
       moduleId: "changes",
+      sessionId: SESSION_ID,
       payload: { scope },
     });
     expect(state.scope).toEqual(scope);
@@ -148,6 +160,7 @@ describe("Workbench Webview 状态机", () => {
       protocolVersion: WORKBENCH_PROTOCOL_VERSION,
       type: "app/initialize",
       moduleId: "changes",
+      sessionId: "session-empty",
       payload: {
         scope: { repositoryName: "r", roots: [], source: "commandPalette" },
       },
@@ -155,5 +168,46 @@ describe("Workbench Webview 状态机", () => {
     expect(state.connected).toBe(true);
     expect(state.loading).toBe(true);
     expect(state.error).toBeUndefined();
+  });
+
+  it("新会话接管后拒绝旧会话延迟快照", () => {
+    const state = createState();
+    const scope = {
+      repositoryName: "r",
+      roots: [],
+      source: "internal" as const,
+    };
+    const staleSnapshot = {
+      kind: "changes" as const,
+      files: [],
+      summary: {},
+      refreshedAt: "stale",
+    };
+    const currentSnapshot = { ...staleSnapshot, refreshedAt: "current" };
+
+    inject({
+      protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+      type: "app/initialize",
+      moduleId: "changes",
+      sessionId: "session-a",
+      payload: { scope, snapshot: staleSnapshot },
+    });
+    inject({
+      protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+      type: "app/initialize",
+      moduleId: "changes",
+      sessionId: "session-b",
+      payload: { scope, snapshot: currentSnapshot },
+    });
+    inject({
+      protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+      type: "module/snapshot",
+      moduleId: "changes",
+      sessionId: "session-a",
+      payload: { snapshot: staleSnapshot },
+    });
+
+    expect(state.sessionId).toBe("session-b");
+    expect(state.snapshot).toEqual(currentSnapshot);
   });
 });

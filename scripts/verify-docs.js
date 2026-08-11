@@ -82,8 +82,10 @@ if (
 }
 
 const releasesRoot = path.join(docsRoot, "releases");
+const releaseDirectoryNames = [];
 for (const entry of fs.readdirSync(releasesRoot, { withFileTypes: true })) {
   if (!entry.isDirectory() || !/^v\d+\.\d+\.\d+$/.test(entry.name)) continue;
+  releaseDirectoryNames.push(entry.name);
   const releaseDirectory = path.join(releasesRoot, entry.name);
   const manifestPath = path.join(releaseDirectory, "manifest.json");
   if (!fs.existsSync(manifestPath)) {
@@ -120,30 +122,51 @@ for (const entry of fs.readdirSync(releasesRoot, { withFileTypes: true })) {
   if (!["draft", "candidate", "released"].includes(manifest.status))
     failures.push(`${entry.name} has invalid status ${manifest.status}.`);
 
-  if (manifest.status === "released") {
-    if (
-      !manifest.gitTag ||
+  const hasVsixFingerprint =
+    typeof manifest.vsix?.fileName === "string" &&
+    manifest.vsix.fileName.length > 0 &&
+    Number.isInteger(manifest.vsix?.sizeBytes) &&
+    manifest.vsix.sizeBytes > 0 &&
+    /^[0-9a-f]{64}$/i.test(manifest.vsix?.sha256 || "");
+  const hasAcceptedEvidence =
+    manifest.tests &&
+    typeof manifest.tests === "object" &&
+    Object.keys(manifest.tests).length > 0 &&
+    typeof manifest.acceptedEvidenceRun === "string" &&
+    manifest.acceptedEvidenceRun.length > 0 &&
+    typeof manifest.evidencePath === "string" &&
+    manifest.evidencePath.length > 0 &&
+    /^[0-9a-f]{64}$/i.test(manifest.evidenceTreeSha256 || "");
+
+  if (manifest.status === "candidate" || manifest.status === "released") {
+    const candidateIncomplete =
       !/^[0-9a-f]{40}$/i.test(manifest.gitCommit || "") ||
       manifest.sourceState !== "clean" ||
-      !manifest.vsix ||
-      !manifest.evidencePath
-    ) {
-      failures.push(`${entry.name} released manifest is incomplete.`);
+      !hasVsixFingerprint ||
+      !hasAcceptedEvidence;
+    const releaseIncomplete =
+      manifest.status === "released" &&
+      (!/^\d{4}-\d{2}-\d{2}$/.test(manifest.releaseDate || "") ||
+        !manifest.gitTag);
+    if (candidateIncomplete || releaseIncomplete) {
+      failures.push(`${entry.name} ${manifest.status} manifest is incomplete.`);
     } else {
-      try {
-        const taggedCommit = execFileSync(
-          "git",
-          ["rev-parse", `${manifest.gitTag}^{}`],
-          { cwd: root, encoding: "utf8" },
-        ).trim();
-        if (taggedCommit !== manifest.gitCommit)
+      if (manifest.status === "released") {
+        try {
+          const taggedCommit = execFileSync(
+            "git",
+            ["rev-parse", `${manifest.gitTag}^{}`],
+            { cwd: root, encoding: "utf8" },
+          ).trim();
+          if (taggedCommit !== manifest.gitCommit)
+            failures.push(
+              `${entry.name} tag does not resolve to manifest commit.`,
+            );
+        } catch {
           failures.push(
-            `${entry.name} tag does not resolve to manifest commit.`,
+            `${entry.name} tag ${manifest.gitTag} cannot be resolved.`,
           );
-      } catch {
-        failures.push(
-          `${entry.name} tag ${manifest.gitTag} cannot be resolved.`,
-        );
+        }
       }
       const evidenceDirectory = path.join(
         releaseDirectory,
@@ -151,10 +174,7 @@ for (const entry of fs.readdirSync(releasesRoot, { withFileTypes: true })) {
       );
       if (!fs.existsSync(evidenceDirectory)) {
         failures.push(`${entry.name} evidence path does not exist.`);
-      } else if (
-        !manifest.evidenceTreeSha256 ||
-        hashTree(evidenceDirectory) !== manifest.evidenceTreeSha256
-      ) {
+      } else if (hashTree(evidenceDirectory) !== manifest.evidenceTreeSha256) {
         failures.push(
           `${entry.name} evidence tree fingerprint does not match.`,
         );
@@ -177,6 +197,92 @@ for (const entry of fs.readdirSync(releasesRoot, { withFileTypes: true })) {
       }
     }
   }
+}
+
+const catalogPath = path.join(docsRoot, "catalog.json");
+if (!fs.existsSync(catalogPath)) {
+  failures.push("docs/catalog.json does not exist.");
+} else {
+  const catalog = JSON.parse(fs.readFileSync(catalogPath, "utf8"));
+  const resolveCatalogPath = (relativePath) =>
+    path.resolve(docsRoot, relativePath || "");
+  const checkCatalogPath = (relativePath, label) => {
+    const resolved = resolveCatalogPath(relativePath);
+    if (
+      !relativePath ||
+      !resolved.startsWith(`${docsRoot}${path.sep}`) ||
+      !fs.existsSync(resolved)
+    ) {
+      failures.push(`docs/catalog.json has invalid ${label}: ${relativePath}.`);
+    }
+  };
+
+  if (!catalog.retrievalPolicies || !catalog.semantics)
+    failures.push(
+      "docs/catalog.json is missing retrievalPolicies or semantics.",
+    );
+  checkCatalogPath(catalog.canonicalEntry, "canonicalEntry");
+
+  const currentEntries = Array.isArray(catalog.current) ? catalog.current : [];
+  const indexedCurrentPaths = new Set();
+  for (const entry of currentEntries) {
+    checkCatalogPath(entry.path, "current path");
+    if (indexedCurrentPaths.has(entry.path))
+      failures.push(`docs/catalog.json duplicates current path ${entry.path}.`);
+    indexedCurrentPaths.add(entry.path);
+    if (entry.authority !== "current")
+      failures.push(
+        `docs/catalog.json current entry ${entry.path} is not current.`,
+      );
+  }
+  const currentRoot = path.join(docsRoot, "current");
+  for (const filePath of fs
+    .readdirSync(currentRoot)
+    .filter((name) => name.endsWith(".md") && name !== "README.md")) {
+    const relativePath = `current/${filePath}`;
+    if (!indexedCurrentPaths.has(relativePath))
+      failures.push(`docs/catalog.json does not index ${relativePath}.`);
+  }
+
+  const versionEntries = Array.isArray(catalog.versions)
+    ? catalog.versions
+    : [];
+  const indexedVersions = new Set();
+  for (const entry of versionEntries) {
+    const directoryName = `v${entry.version}`;
+    if (indexedVersions.has(directoryName))
+      failures.push(`docs/catalog.json duplicates version ${entry.version}.`);
+    indexedVersions.add(directoryName);
+    checkCatalogPath(entry.canonicalEntry, `${entry.version} canonicalEntry`);
+    checkCatalogPath(entry.manifest, `${entry.version} manifest`);
+    const manifestPath = resolveCatalogPath(entry.manifest);
+    if (fs.existsSync(manifestPath)) {
+      const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+      const phaseMatchesStatus =
+        (entry.status === "released" && entry.phase === "released") ||
+        (entry.status === "candidate" && entry.phase === "candidate") ||
+        (entry.status === "draft" &&
+          ["planned", "developing"].includes(entry.phase));
+      if (
+        manifest.version !== entry.version ||
+        manifest.status !== entry.status ||
+        manifest.baseVersion !== entry.baseVersion ||
+        entry.releasedFact !== (entry.status === "released") ||
+        !phaseMatchesStatus
+      ) {
+        failures.push(
+          `docs/catalog.json version ${entry.version} does not match its manifest.`,
+        );
+      }
+    }
+  }
+  for (const directoryName of releaseDirectoryNames) {
+    if (!indexedVersions.has(directoryName))
+      failures.push(`docs/catalog.json does not index ${directoryName}.`);
+  }
+
+  for (const entry of Array.isArray(catalog.archive) ? catalog.archive : [])
+    checkCatalogPath(entry.path, "archive path");
 }
 
 const currentManifestPath = path.join(
