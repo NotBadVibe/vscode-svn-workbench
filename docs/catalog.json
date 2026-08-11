@@ -125,12 +125,12 @@
     },
     {
       "version": "0.0.5",
-      "status": "candidate",
-      "phase": "candidate",
+      "status": "released",
+      "phase": "released",
       "baseVersion": "0.0.4",
       "canonicalEntry": "releases/v0.0.5/README.md",
       "manifest": "releases/v0.0.5/manifest.json",
-      "releasedFact": false,
+      "releasedFact": true,
       "topics": ["module-windows", "routing", "rail-removal"]
     },
     {
