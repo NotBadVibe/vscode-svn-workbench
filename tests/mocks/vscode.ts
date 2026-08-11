@@ -16,29 +16,6 @@ export const FileType = {
   SymbolicLink: 64,
 } as const;
 
-export const workspace = {
-  workspaceFolders: testWorkspacePath
-    ? [
-        {
-          uri: { fsPath: path.resolve(testWorkspacePath) },
-          name: path.basename(testWorkspacePath),
-          index: 0,
-        },
-      ]
-    : undefined,
-  getConfiguration: () => ({
-    get: <T>(_key: string, defaultValue?: T): T | undefined => defaultValue,
-    update: async () => undefined,
-    inspect: () => undefined,
-  }),
-  fs: {
-    stat: async (uri: { fsPath: string }) => {
-      const value = await fs.stat(uri.fsPath);
-      return { type: value.isDirectory() ? FileType.Directory : FileType.File };
-    },
-  },
-};
-
 export const Uri = {
   file: (fsPath: string) => ({ fsPath }),
   from: (parts: { scheme: string; path: string }) => ({
@@ -56,7 +33,46 @@ export const extensions = {
 
 export const commands = {
   getCommands: async () => [],
+  executeCommand: async () => undefined,
 };
+
+export const ViewColumn = {
+  One: 1,
+  Active: 2,
+  Beside: 3,
+} as const;
+
+export class Disposable {
+  dispose(): void {
+    /* no-op */
+  }
+}
+
+export const env = {
+  clipboard: { writeText: async () => undefined },
+};
+
+export interface MockWebviewPanel {
+  title: string;
+  webview: {
+    postMessage: (message: unknown) => Promise<void>;
+    onDidReceiveMessage: () => Disposable;
+    html: string;
+  };
+  reveal: () => void;
+  dispose: () => void;
+  onDidDispose: (callback: () => void) => Disposable;
+  /** 测试触发面板关闭时调用。 */
+  triggerDispose: () => void;
+  disposed: boolean;
+}
+
+/** 已创建的 WebviewPanel 列表（按创建顺序），供控制器生命周期测试驱动关闭事件。 */
+export const __webviewPanels: MockWebviewPanel[] = [];
+
+export function __resetWebviewPanels(): void {
+  __webviewPanels.length = 0;
+}
 
 export const window = {
   createOutputChannel: () => ({
@@ -68,4 +84,72 @@ export const window = {
     append: () => undefined,
     name: "SVN 工作台",
   }),
+  createWebviewPanel: (type: string, title: string): MockWebviewPanel => {
+    const panel: MockWebviewPanel = {
+      title,
+      webview: {
+        postMessage: async () => undefined,
+        onDidReceiveMessage: () => new Disposable(),
+        html: "",
+      },
+      reveal: () => undefined,
+      dispose: () => {
+        panel.disposed = true;
+        panel.triggerDispose();
+      },
+      onDidDispose: () => new Disposable(),
+      triggerDispose: () => {
+        /* 由 onDidDispose 覆写 */
+      },
+      disposed: false,
+    };
+    panel.onDidDispose = (callback: () => void) => {
+      panel.triggerDispose = callback;
+      return new Disposable();
+    };
+    __webviewPanels.push(panel);
+    return panel;
+  },
+  showWarningMessage: async () => undefined,
+  showInputBox: async () => undefined,
+  showQuickPick: async () => undefined,
+  showErrorMessage: async () => undefined,
+  showInformationMessage: async () => undefined,
+};
+
+/** 供控制器测试向 workspace.registerTextDocumentContentProvider 注册的内容提供者。 */
+export const __registeredContentProviders: Array<{
+  scheme: string;
+  provider: unknown;
+}> = [];
+
+export function __resetRegisteredContentProviders(): void {
+  __registeredContentProviders.length = 0;
+}
+
+export const workspace = {
+  workspaceFolders: testWorkspacePath
+    ? [
+        {
+          uri: { fsPath: path.resolve(testWorkspacePath) },
+          name: path.basename(testWorkspacePath),
+          index: 0,
+        },
+      ]
+    : undefined,
+  getConfiguration: () => ({
+    get: <T>(_key: string, defaultValue?: T): T | undefined => defaultValue,
+    update: async () => undefined,
+    inspect: () => undefined,
+  }),
+  registerTextDocumentContentProvider: (scheme: string, provider: unknown) => {
+    __registeredContentProviders.push({ scheme, provider });
+    return new Disposable();
+  },
+  fs: {
+    stat: async (uri: { fsPath: string }) => {
+      const value = await fs.stat(uri.fsPath);
+      return { type: value.isDirectory() ? FileType.Directory : FileType.File };
+    },
+  },
 };

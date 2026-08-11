@@ -133,7 +133,8 @@ test("selection rules tab keeps source, warning and decision text visible in all
   for (const [theme, variables] of Object.entries(themes)) {
     await test.step(theme, async () => {
       await page.setViewportSize({ width: 1024, height: 700 });
-      await page.goto("/?selection=shadowed");
+      // 每个模块一个独立窗口：直接以设置模块初始化，避免跨主题累积注入。
+      await page.goto("/?selection=shadowed&module=settings");
       await page.evaluate(
         ({ values, bodyClass }) => {
           for (const [name, value] of Object.entries(values))
@@ -145,7 +146,6 @@ test("selection rules tab keeps source, warning and decision text visible in all
           bodyClass: themeBodyClasses[theme as keyof typeof themeBodyClasses],
         },
       );
-      await page.getByRole("button", { name: "设置", exact: true }).click();
       await page.getByRole("tab", { name: "提交选择规则" }).click();
       // 来源、决策与遮蔽警告都有文字表达，不依赖颜色
       await expect(page.getByText("内置默认").first()).toBeVisible();

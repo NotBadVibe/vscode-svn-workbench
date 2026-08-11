@@ -132,6 +132,7 @@ import {
 } from "../../security/svnCredentialStore";
 import {
   clearSvnSecurityContext,
+  resolveSvnSecurityContext,
   setSvnSecurityContext,
 } from "../../security/svnSecurityContext";
 import {
@@ -208,30 +209,31 @@ import {
 } from "./repositoryWorkbenchActions";
 import { applyCommitSelectionRulesInvalidation } from "./commitSelectionInvalidation";
 import {
-  assertDiffModuleRequest,
+  assertServedModuleRequest,
+  buildCrossModuleWindowRequest,
   buildDiffWindowRequest,
-  buildMainWindowRequest,
   buildDiffTargetKey,
   normalizeDiffOpenMode,
   orderRevisionPair,
-  shouldForwardToDiffWindow,
+  shouldOpenInOtherWindow,
   workbenchRevealTarget,
-} from "./diffWindowRouting";
+} from "./workbenchRouting";
 import { NativeDiffContentProvider } from "./nativeDiffContentProvider";
+import { SvnSecurityContextRegistry } from "../../security/svnSecurityContextRegistry";
+import { normalizeSvnRepositoryRoot } from "../../security/svnSecurityContext";
 
 /**
- * Diff 独立窗口路由回调：
- * - `onOpenDiffInWindow`：主工作台注入，收到 diff 打开请求时转发到独立窗口；
- *   未注入时保持面板内切换模块的旧行为（单测兼容）。
- * - `onOpenModuleInMainWindow`：Diff 窗口注入，收到非 diff 模块请求时
- *   转发回主工作台（如 Diff 页“提交此文件”）；未注入时拒绝（防御）。
+ * 统一模块窗口路由回调：
+ * - `servedModule`：该控制器服务的工作台模块；收到其他模块的打开或动作请求时
+ *   经窗口管理器路由到目标模块窗口（跨模块），未注入时保持面板内切换的旧行为。
+ * - `onOpenInOtherWindow`：窗口管理器注入的跨模块路由回调。
+ * - `securityRegistry`：窗口管理器共享的 SVN 安全上下文注册表；
+ *   缺省时回退到模块级直连行为（单测与未接线环境兼容）。
  */
 export interface WorkbenchControllerRoutingOptions {
-  diffWindow?: boolean;
-  onOpenDiffInWindow?: (request: OpenWorkbenchRequest) => void | Promise<void>;
-  onOpenModuleInMainWindow?: (
-    request: OpenWorkbenchRequest,
-  ) => void | Promise<void>;
+  servedModule?: WorkbenchModuleId;
+  onOpenInOtherWindow?: (request: OpenWorkbenchRequest) => void | Promise<void>;
+  securityRegistry?: SvnSecurityContextRegistry;
 }
 
 export class WorkbenchController implements vscode.Disposable {
@@ -243,14 +245,14 @@ export class WorkbenchController implements vscode.Disposable {
   private readonly repositoryActions: RepositoryWorkbenchActions;
   private readonly commitSelectionRuleService: CommitSelectionRuleService;
   private readonly ruleInvalidationSubscription: vscode.Disposable;
-  /** 独立 Diff 窗口模式：仅接受 diff 模块会话，面板在当前编辑组旁打开。 */
-  private readonly diffWindow: boolean;
-  private readonly onOpenDiffInWindow?: (
+  /** 该控制器服务的工作台模块；其他模块请求经窗口管理器跨模块路由。 */
+  private readonly servedModule: WorkbenchModuleId;
+  private readonly onOpenInOtherWindow?: (
     request: OpenWorkbenchRequest,
   ) => void | Promise<void>;
-  private readonly onOpenModuleInMainWindow?: (
-    request: OpenWorkbenchRequest,
-  ) => void | Promise<void>;
+  private readonly securityRegistry?: SvnSecurityContextRegistry;
+  /** 本控制器当前持有的仓库安全引用（归一化键）；一控制器最多持有一个。 */
+  private securityReferenceRoot: string | undefined;
   /** 当前 Diff 会话目标摘要；同目标重复打开只 reveal，不重新初始化。 */
   private diffTargetKey: string | undefined;
   private readonly nativeDiffContentProvider?: NativeDiffContentProvider;
@@ -274,10 +276,10 @@ export class WorkbenchController implements vscode.Disposable {
       this.commitSelectionRuleService.onDidInvalidate((event) =>
         this.handleCommitSelectionRulesInvalidated(event),
       );
-    this.diffWindow = routingOptions?.diffWindow ?? false;
-    this.onOpenDiffInWindow = routingOptions?.onOpenDiffInWindow;
-    this.onOpenModuleInMainWindow = routingOptions?.onOpenModuleInMainWindow;
-    if (this.diffWindow) {
+    this.servedModule = routingOptions?.servedModule ?? "changes";
+    this.onOpenInOtherWindow = routingOptions?.onOpenInOtherWindow;
+    this.securityRegistry = routingOptions?.securityRegistry;
+    if (this.isDiffWindow()) {
       this.nativeDiffContentProvider = new NativeDiffContentProvider();
       this.context.subscriptions.push(
         this.nativeDiffContentProvider,
@@ -289,22 +291,27 @@ export class WorkbenchController implements vscode.Disposable {
     }
   }
 
+  /** 当前控制器是否服务独立 Diff 模块窗口（保留 sameGroup/beside 行为）。 */
+  private isDiffWindow(): boolean {
+    return this.servedModule === "diff";
+  }
+
+  /** 管理器据此判断是否需要重建窗口。 */
+  get isDisposed(): boolean {
+    return this.disposed;
+  }
+
   async open(request: OpenWorkbenchRequest): Promise<void> {
     if (this.disposed) {
       throw new Error("SVN 工作台控制器已释放。");
     }
-    // 独立 Diff 窗口只处理 diff 模块会话；其余请求转发主工作台或拒绝（防御）。
-    if (this.diffWindow && request.moduleId !== "diff") {
-      if (this.onOpenModuleInMainWindow) {
-        await this.onOpenModuleInMainWindow(request);
+    // 该控制器只服务自己的模块；其他模块请求经窗口管理器路由（跨模块）。
+    if (request.moduleId !== this.servedModule) {
+      if (this.onOpenInOtherWindow) {
+        await this.onOpenInOtherWindow(request);
         return;
       }
-      assertDiffModuleRequest(request);
-    }
-    // 主工作台的 diff 打开请求改走独立 Diff 窗口，不顶替当前面板模块。
-    if (shouldForwardToDiffWindow(request.moduleId, this.onOpenDiffInWindow)) {
-      await this.onOpenDiffInWindow!(request);
-      return;
+      assertServedModuleRequest(request, this.servedModule);
     }
     if (this.session?.activeOperation) {
       this.revealPanel();
@@ -318,7 +325,7 @@ export class WorkbenchController implements vscode.Disposable {
     if (!isWorkbenchTaskForModule(taskId, request.moduleId)) {
       throw new Error("请求的工作台子任务与功能模块不匹配。");
     }
-    const nextDiffTargetKey = this.diffWindow
+    const nextDiffTargetKey = this.isDiffWindow()
       ? buildDiffTargetKey({ ...request, taskId })
       : undefined;
     if (
@@ -334,7 +341,6 @@ export class WorkbenchController implements vscode.Disposable {
     this.latestModuleRequests.clear();
     if (this.session) {
       this.nativeDiffContentProvider?.releaseSession(this.session.sessionId);
-      clearSvnSecurityContext(this.session.scope.repositoryRoot);
     }
     const storedAi = await readStoredAiConfiguration(this.context);
     const repositoryUuid = await resolveRepositoryUuid(
@@ -358,6 +364,9 @@ export class WorkbenchController implements vscode.Disposable {
         hasStoredAuthentication: Boolean(storedAuthentication),
       },
     };
+    // 一控制器最多持有一个仓库安全引用：首次会话 acquire；同仓库重开保持
+    // 既有引用（不重复 acquire）；换仓库时先 release 旧引用再 acquire 新引用。
+    this.syncSecurityReference(this.session.scope.repositoryRoot);
     this.diffTargetKey = nextDiffTargetKey;
     this.syncSvnSecurityContext(this.session);
     const panel = await this.ensurePanel();
@@ -408,7 +417,7 @@ export class WorkbenchController implements vscode.Disposable {
         .getConfiguration("svnWorkbench")
         .get<unknown>("diff.openMode"),
     );
-    return workbenchRevealTarget(this.diffWindow, openMode);
+    return workbenchRevealTarget(this.isDiffWindow(), openMode);
   }
 
   async openNativeDiffInEditor(requestId?: string): Promise<void> {
@@ -425,13 +434,89 @@ export class WorkbenchController implements vscode.Disposable {
     this.disposed = true;
     this.ruleInvalidationSubscription.dispose();
     this.session?.activeOperation?.controller.abort();
-    if (this.session) {
-      this.nativeDiffContentProvider?.releaseSession(this.session.sessionId);
-      clearSvnSecurityContext(this.session.scope.repositoryRoot);
+    const session = this.session;
+    const referenceRoot = this.securityReferenceRoot;
+    // 先摘除会话与引用跟踪，再释放安全引用，避免 panel.dispose() 触发的
+    // onDidDispose 对同一仓库重复释放（引用计数下溢或重复广播）。
+    this.session = undefined;
+    this.diffTargetKey = undefined;
+    this.securityReferenceRoot = undefined;
+    if (session) {
+      this.nativeDiffContentProvider?.releaseSession(session.sessionId);
+    }
+    if (referenceRoot) {
+      this.releaseSecurityContext(referenceRoot);
     }
     this.panel?.dispose();
     this.panel = undefined;
-    this.session = undefined;
+  }
+
+  /**
+   * 安全上下文失效广播（窗口管理器共享注册表触发）：
+   * 仅处理当前会话所在仓库，重新读取 SecretStorage 并更新会话安全状态；
+   * 设置页同步刷新展示，不重载其他模块以保留未提交输入。
+   */
+  handleSecurityInvalidated(repositoryRoot: string): void {
+    const session = this.session;
+    if (
+      !session ||
+      this.disposed ||
+      normalizeSvnRepositoryRoot(session.scope.repositoryRoot) !==
+        repositoryRoot
+    ) {
+      return;
+    }
+    void this.refreshSessionSecurity(session);
+  }
+
+  private async refreshSessionSecurity(
+    session: WorkbenchSession,
+  ): Promise<void> {
+    const stored = await readStoredSvnCredential(
+      this.context.secrets,
+      session.repositoryUuid,
+    );
+    // 写回前确认控制器未释放、面板仍有效、会话仍是当前会话；读取期间若
+    // 关窗、重建或切换仓库，陈旧会话不得回写已清除/已切换的上下文。
+    if (this.disposed || this.panel === undefined || this.session !== session) {
+      return;
+    }
+    session.security.authentication = stored;
+    session.security.hasStoredAuthentication = Boolean(stored);
+    this.syncSvnSecurityContext(session);
+    if (this.session === session && session.moduleId === "settings") {
+      await this.sendSettingsSnapshot(session);
+    }
+  }
+
+  /**
+   * 同步本控制器的安全仓库引用：仅当 normalized 仓库变化时才释放旧引用并
+   * 登记新引用；同仓库重开保持既有引用，不重复 acquire。
+   */
+  private syncSecurityReference(nextRoot: string): void {
+    const next = normalizeSvnRepositoryRoot(nextRoot);
+    if (this.securityReferenceRoot === next) {
+      return;
+    }
+    if (this.securityReferenceRoot) {
+      this.releaseSecurityContext(this.securityReferenceRoot);
+    }
+    this.acquireSecurityContext(nextRoot);
+    this.securityReferenceRoot = next;
+  }
+
+  /** 会话替换/面板关闭时释放该仓库的安全上下文引用（最后一个引用消失才清除）。 */
+  private releaseSecurityContext(repositoryRoot: string): void {
+    if (this.securityRegistry) {
+      this.securityRegistry.release(repositoryRoot);
+    } else {
+      clearSvnSecurityContext(repositoryRoot);
+    }
+  }
+
+  /** 新会话登记对该仓库安全上下文的引用。 */
+  private acquireSecurityContext(repositoryRoot: string): void {
+    this.securityRegistry?.acquire(repositoryRoot);
   }
 
   /**
@@ -488,7 +573,7 @@ export class WorkbenchController implements vscode.Disposable {
           : vscode.ViewColumn.One,
       {
         enableScripts: true,
-        retainContextWhenHidden: this.diffWindow,
+        retainContextWhenHidden: this.isDiffWindow(),
         localResourceRoots: [localResourceRoot],
       },
     );
@@ -497,16 +582,21 @@ export class WorkbenchController implements vscode.Disposable {
 
     panel.onDidDispose(
       () => {
-        if (this.session) {
-          this.nativeDiffContentProvider?.releaseSession(
-            this.session.sessionId,
-          );
-          clearSvnSecurityContext(this.session.scope.repositoryRoot);
-        }
+        const session = this.session;
+        const referenceRoot = this.securityReferenceRoot;
+        // 先摘除会话与引用跟踪，再释放安全引用：release 在最后引用时会同步
+        // 广播失效事件，此时本控制器已无活动会话，不会把刚清除的上下文写回。
         this.session = undefined;
         this.diffTargetKey = undefined;
+        this.securityReferenceRoot = undefined;
         this.panel = undefined;
         this.ready = false;
+        if (session) {
+          this.nativeDiffContentProvider?.releaseSession(session.sessionId);
+        }
+        if (referenceRoot) {
+          this.releaseSecurityContext(referenceRoot);
+        }
       },
       undefined,
       this.context.subscriptions,
@@ -605,34 +695,30 @@ export class WorkbenchController implements vscode.Disposable {
           );
           return;
         }
-        // diff 模块的打开改走独立 Diff 窗口（注入回调时），不顶替当前面板。
-        if (shouldForwardToDiffWindow(moduleId, this.onOpenDiffInWindow)) {
-          await this.onOpenDiffInWindow!(
-            buildDiffWindowRequest({
+        // 同模块任务导航留在当前窗口；跨模块由窗口管理器路由到目标模块窗口。
+        if (
+          shouldOpenInOtherWindow(
+            moduleId,
+            this.servedModule,
+            this.onOpenInOtherWindow,
+          )
+        ) {
+          await this.onOpenInOtherWindow!(
+            buildCrossModuleWindowRequest({
+              moduleId,
+              taskId,
               svnPath: session.svnPath,
               scope: session.scope,
+              selectedPaths: asStringArray(data.selectedPaths),
             }),
           );
           return;
         }
-        // Diff 窗口内请求其他模块（如“提交此文件”）：转发主工作台，未接线则拒绝。
-        if (this.diffWindow && moduleId !== "diff") {
-          if (this.onOpenModuleInMainWindow) {
-            await this.onOpenModuleInMainWindow(
-              buildMainWindowRequest({
-                moduleId,
-                taskId,
-                svnPath: session.svnPath,
-                scope: session.scope,
-                selectedPaths: asStringArray(data.selectedPaths),
-              }),
-            );
-            return;
-          }
+        if (moduleId !== this.servedModule) {
           await this.sendError(
             session.moduleId,
             "无法打开模块",
-            "独立 Diff 窗口仅处理 diff 模块会话，请从 SVN 工作台主面板打开其他模块。",
+            `SVN 工作台 ${this.servedModule} 模块窗口仅处理 ${this.servedModule} 模块会话，请从对应模块入口打开其他模块。`,
             false,
             message.requestId,
           );
@@ -673,16 +759,19 @@ export class WorkbenchController implements vscode.Disposable {
           );
           return;
         }
-        // 注入 Diff 窗口回调时转发到独立窗口，当前面板模块保持不变。
-        if (this.onOpenDiffInWindow) {
-          await this.onOpenDiffInWindow(
-            buildDiffWindowRequest({
-              svnPath: session.svnPath,
-              scope: session.scope,
-              targetFile: absolutePath,
-            }),
-          );
-          return;
+        // 非 Diff 窗口统一路由到独立 Diff 窗口；Diff 窗口内保持当前会话（目标变化）。
+        if (this.servedModule !== "diff") {
+          if (this.onOpenInOtherWindow) {
+            await this.onOpenInOtherWindow(
+              buildDiffWindowRequest({
+                svnPath: session.svnPath,
+                scope: session.scope,
+                targetFile: absolutePath,
+              }),
+            );
+            return;
+          }
+          // 未接线（单测/防御）：面板内切换。
         }
         session.moduleId = "diff";
         session.taskId = defaultWorkbenchTask("diff");
@@ -987,9 +1076,9 @@ export class WorkbenchController implements vscode.Disposable {
           return;
         }
         const ordered = orderRevisionPair(revisions);
-        // 注入 Diff 窗口回调时在独立窗口展示修订比较，历史面板保持不变。
-        if (this.onOpenDiffInWindow) {
-          await this.onOpenDiffInWindow(
+        // 非 Diff 窗口经窗口管理器在独立 Diff 窗口展示修订比较，历史面板保持不变。
+        if (this.servedModule !== "diff" && this.onOpenInOtherWindow) {
+          await this.onOpenInOtherWindow(
             buildDiffWindowRequest({
               svnPath: session.svnPath,
               scope: session.scope,
@@ -1005,7 +1094,7 @@ export class WorkbenchController implements vscode.Disposable {
         await this.runRevisionCompare(
           session,
           ordered,
-          "history",
+          this.servedModule,
           message.requestId,
         );
         return;
@@ -2672,7 +2761,7 @@ export class WorkbenchController implements vscode.Disposable {
     session: WorkbenchSession,
     requestId?: string,
   ): Promise<void> {
-    if (!this.diffWindow || !this.nativeDiffContentProvider) {
+    if (!this.isDiffWindow() || !this.nativeDiffContentProvider) {
       await this.sendError(
         session.moduleId,
         "无法打开编辑器对比",
@@ -3339,7 +3428,7 @@ export class WorkbenchController implements vscode.Disposable {
     );
     session.security.authentication = undefined;
     session.security.hasStoredAuthentication = false;
-    this.syncSvnSecurityContext(session);
+    this.clearSecurityAuthentication(session.scope.repositoryRoot);
     await this.post({
       protocolVersion: WORKBENCH_PROTOCOL_VERSION,
       type: "operation/result",
@@ -3415,7 +3504,7 @@ export class WorkbenchController implements vscode.Disposable {
       await this.loadModule(session.moduleId, session.targetFile, requestId);
     } finally {
       session.security.certificateTrust = undefined;
-      this.syncSvnSecurityContext(session);
+      this.clearSecurityCertificateTrust(session.scope.repositoryRoot);
     }
     await this.post({
       protocolVersion: WORKBENCH_PROTOCOL_VERSION,
@@ -3433,9 +3522,38 @@ export class WorkbenchController implements vscode.Disposable {
   }
 
   private syncSvnSecurityContext(session: WorkbenchSession): void {
+    if (this.securityRegistry) {
+      // 合并语义：未提供的字段保留仓库既有值，不覆盖其他窗口的凭据。
+      this.securityRegistry.sync(session.scope.repositoryRoot, {
+        authentication: session.security.authentication,
+        certificateTrust: session.security.certificateTrust,
+      });
+      return;
+    }
     setSvnSecurityContext(session.scope.repositoryRoot, {
       authentication: session.security.authentication,
       certificateTrust: session.security.certificateTrust,
+    });
+  }
+
+  /** 显式清除认证：经注册表广播失效事件；未接线时回退到模块级直接清除。 */
+  private clearSecurityAuthentication(repositoryRoot: string): void {
+    if (this.securityRegistry) {
+      this.securityRegistry.clearAuthentication(repositoryRoot);
+      return;
+    }
+    clearSvnSecurityContext(repositoryRoot);
+  }
+
+  /** 临时证书信任结束：只清除证书信任，保留认证；未接线时回退到模块级。 */
+  private clearSecurityCertificateTrust(repositoryRoot: string): void {
+    if (this.securityRegistry) {
+      this.securityRegistry.clearCertificateTrust(repositoryRoot);
+      return;
+    }
+    const existing = resolveSvnSecurityContext(repositoryRoot);
+    setSvnSecurityContext(repositoryRoot, {
+      authentication: existing?.authentication,
     });
   }
 

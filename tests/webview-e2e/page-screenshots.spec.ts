@@ -2,6 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
+import { openModule } from "./navigation";
 
 const evidenceDirectory =
   process.env.SVN_WORKBENCH_EVIDENCE_DIR ??
@@ -29,18 +30,7 @@ const darkTheme = {
   "--vscode-diffEditor-removedTextBackground": "rgba(255, 0, 0, 0.3)",
 } as const;
 
-async function preparePage(page: Page, url = "/"): Promise<void> {
-  await page.setViewportSize({ width: 1440, height: 960 });
-  await page.goto(url);
-  await page.evaluate((values) => {
-    for (const [name, value] of Object.entries(values)) {
-      document.documentElement.style.setProperty(name, value);
-    }
-    // 模拟 VS Code Webview 的主题类（差异组件按 color-scheme 切换明暗主题）。
-    document.body.classList.add("vscode-dark");
-  }, darkTheme);
-  await page.addStyleTag({
-    content: `
+const acceptanceCaptureCss = `
     html[data-acceptance-capture="full"],
     html[data-acceptance-capture="full"] body,
     html[data-acceptance-capture="full"] #app {
@@ -58,14 +48,35 @@ async function preparePage(page: Page, url = "/"): Promise<void> {
     html[data-acceptance-capture="full"] .workbench-content {
       overflow: visible !important;
     }
-    html[data-acceptance-capture="full"] .rail {
-      position: sticky;
-      top: 0;
-      align-self: start;
-      height: 960px;
-    }
-  `,
-  });
+  `;
+
+async function preparePage(page: Page, url = "/"): Promise<void> {
+  await page.setViewportSize({ width: 1440, height: 960 });
+  // init script 在每次导航前注入主题与验收截图样式，模块切换（重新 goto）后仍然生效。
+  await page.addInitScript(
+    ({ values, css }) => {
+      // init script 在文档创建早期执行，此时 documentElement/body 尚不存在；
+      // 轮询等待 DOM 就绪后注入主题变量与验收样式，保证跨导航（重新 goto）生效。
+      const timer = window.setInterval(() => {
+        if (!document.documentElement || !document.body) {
+          return;
+        }
+        for (const [name, value] of Object.entries(values)) {
+          document.documentElement.style.setProperty(name, value);
+        }
+        document.body.classList.add("vscode-dark");
+        if (!document.getElementById("acceptance-capture-style")) {
+          const style = document.createElement("style");
+          style.id = "acceptance-capture-style";
+          style.textContent = css;
+          document.head.appendChild(style);
+        }
+        window.clearInterval(timer);
+      }, 20);
+    },
+    { values: darkTheme, css: acceptanceCaptureCss },
+  );
+  await page.goto(url);
   await expect(page.locator(".workbench-shell")).toBeVisible();
 }
 
@@ -118,7 +129,7 @@ test("保存每个 Svelte 功能页面的验收截图", async ({ page }) => {
   });
 
   await test.step("Commit", async () => {
-    await page.getByRole("button", { name: "提交", exact: true }).click();
+    await openModule(page, "提交");
     await page.getByRole("button", { name: "AI 生成说明" }).click();
     await page.getByRole("button", { name: "生成提交预览" }).click();
     await expect(page.getByText("范围、状态和远端检查已通过")).toBeVisible();
@@ -126,14 +137,14 @@ test("保存每个 Svelte 功能页面的验收截图", async ({ page }) => {
   });
 
   await test.step("History", async () => {
-    await page.getByRole("button", { name: "历史", exact: true }).click();
+    await openModule(page, "历史");
     await page.getByRole("button", { name: "查看逐行责任" }).click();
     await expect(page.getByLabel("文件逐行责任")).toBeVisible();
     await capture(page, "04-history");
   });
 
   await test.step("Conflicts", async () => {
-    await page.getByRole("button", { name: "冲突", exact: true }).click();
+    await openModule(page, "冲突");
     await page.getByRole("button", { name: "AI 分析" }).click();
     await expect(page.getByText("两侧都修改了同一处行为")).toBeVisible();
     await page.getByRole("button", { name: "生成解决预览" }).click();
@@ -144,10 +155,7 @@ test("保存每个 Svelte 功能页面的验收截图", async ({ page }) => {
   });
 
   await test.step("Changelists", async () => {
-    await page
-      .locator(".rail")
-      .getByRole("button", { name: "变更集", exact: true })
-      .click();
+    await openModule(page, "变更集");
     await page.getByRole("button", { name: "生成拆分建议" }).click();
     await page.getByRole("button", { name: "套用并调整" }).click();
     await page.getByRole("button", { name: "生成应用预览" }).click();
@@ -156,7 +164,7 @@ test("保存每个 Svelte 功能页面的验收截图", async ({ page }) => {
   });
 
   await test.step("AI Review", async () => {
-    await page.getByRole("button", { name: "AI 审查", exact: true }).click();
+    await openModule(page, "AI 审查");
     await expect(
       page.getByRole("heading", { name: "AI 变更审查" }).last(),
     ).toBeVisible();
@@ -164,7 +172,7 @@ test("保存每个 Svelte 功能页面的验收截图", async ({ page }) => {
   });
 
   await test.step("Impact", async () => {
-    await page.getByRole("button", { name: "影响分析", exact: true }).click();
+    await openModule(page, "影响分析");
     await expect(
       page.getByRole("heading", { name: "影响与测试建议" }),
     ).toBeVisible();
@@ -172,7 +180,7 @@ test("保存每个 Svelte 功能页面的验收截图", async ({ page }) => {
   });
 
   await test.step("Agent", async () => {
-    await page.getByRole("button", { name: "任务代理", exact: true }).click();
+    await openModule(page, "任务代理");
     await page
       .getByRole("textbox", { name: "任务目标" })
       .fill("检查当前范围并形成测试建议");
@@ -184,7 +192,7 @@ test("保存每个 Svelte 功能页面的验收截图", async ({ page }) => {
   });
 
   await test.step("Repository", async () => {
-    await page.getByRole("button", { name: "仓库操作", exact: true }).click();
+    await openModule(page, "仓库操作");
     await page.getByRole("button", { name: "生成更新预览" }).click();
     await capture(page, "10-repository-update");
     await page.getByRole("button", { name: "清理与恢复", exact: true }).click();
@@ -213,7 +221,7 @@ test("保存每个 Svelte 功能页面的验收截图", async ({ page }) => {
   });
 
   await test.step("Settings AI", async () => {
-    await page.getByRole("button", { name: "设置", exact: true }).click();
+    await openModule(page, "设置");
     await expect(
       page.getByRole("heading", { name: "设置与团队规范" }),
     ).toBeVisible();
@@ -238,7 +246,7 @@ test("保存每个 Svelte 功能页面的验收截图", async ({ page }) => {
   });
 
   await test.step("Diagnostics", async () => {
-    await page.getByRole("button", { name: "诊断", exact: true }).click();
+    await openModule(page, "诊断");
     await page.getByRole("tab", { name: "验收清单" }).click();
     await page.getByRole("button", { name: "核心流程" }).click();
     await expect(page.getByText("确认安全提交链路。")).toBeVisible();

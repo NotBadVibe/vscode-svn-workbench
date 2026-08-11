@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
+import { openModule } from "./navigation";
 
 test("opens the mock changes workspace and navigates to diff", async ({
   page,
@@ -32,7 +33,7 @@ test("has no automatically detectable accessibility violations on changes", asyn
 
 test("previews a commit before enabling execution", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "提交", exact: true }).click();
+  await openModule(page, "提交");
   await expect(
     page.getByRole("heading", { name: "提交当前范围" }),
   ).toBeVisible();
@@ -49,7 +50,7 @@ test("previews a commit before enabling execution", async ({ page }) => {
 
 test("keeps AI file selection advisory and user-editable", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "提交", exact: true }).click();
+  await openModule(page, "提交");
   await page.getByRole("button", { name: "获取 AI 建议" }).click();
   await expect(
     page.getByText("建议选择 1 个文件；1 个需要人工确认，1 个建议排除。"),
@@ -67,7 +68,7 @@ test("offers 配置 AI entry instead of an AI-labelled action when unconfigured"
   page,
 }) => {
   await page.goto("/?commitAi=none");
-  await page.getByRole("button", { name: "提交", exact: true }).click();
+  await openModule(page, "提交");
   await expect(
     page.getByRole("heading", { name: "提交当前范围" }),
   ).toBeVisible();
@@ -91,7 +92,7 @@ test("offers 配置 AI entry instead of an AI-labelled action when unconfigured"
 
 test("applies local rules with Chinese feedback", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "提交", exact: true }).click();
+  await openModule(page, "提交");
   await page.getByRole("button", { name: "应用本地规则" }).click();
   await expect(
     page.getByText(
@@ -104,7 +105,7 @@ test("keeps the current selection and offers local-rule recovery when AI fails",
   page,
 }) => {
   await page.goto("/?commitAi=fail");
-  await page.getByRole("button", { name: "提交", exact: true }).click();
+  await openModule(page, "提交");
   await page.getByRole("button", { name: "获取 AI 建议" }).click();
   await expect(
     page.getByText("AI 建议获取失败，已保留当前选择。"),
@@ -123,7 +124,7 @@ test("keeps the current selection and offers local-rule recovery when AI fails",
 
 test("marks stale AI results as view-only", async ({ page }) => {
   await page.goto("/?commitAi=stale");
-  await page.getByRole("button", { name: "提交", exact: true }).click();
+  await openModule(page, "提交");
   await page.getByRole("button", { name: "获取 AI 建议" }).click();
   await expect(page.getByText(/结果已过期/)).toBeVisible();
   await expect(
@@ -135,7 +136,7 @@ test("shows the rules-updated notice after selection rules change", async ({
   page,
 }) => {
   await page.goto("/?commitRules=updated");
-  await page.getByRole("button", { name: "提交", exact: true }).click();
+  await openModule(page, "提交");
   await expect(
     page.getByText(
       "提交选择规则已更新，候选分类已按新规则刷新；可点击“应用本地规则”重新计算推荐选择。",
@@ -147,7 +148,7 @@ test("compares two revisions inside the unified workbench", async ({
   page,
 }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "历史" }).click();
+  await openModule(page, "历史");
   await expect(page.getByRole("heading", { name: "修订历史" })).toBeVisible();
   await page.getByLabel("选择修订 42 进行比较").click();
   await page.getByLabel("选择修订 41 进行比较").click();
@@ -159,7 +160,7 @@ test("keeps conflict advice separate from explicit resolve", async ({
   page,
 }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "冲突", exact: true }).click();
+  await openModule(page, "冲突");
   await expect(page.getByRole("heading", { name: "待处理冲突" })).toBeVisible();
   await expect(page.getByText(/点击“AI 分析”后才会发送/)).toBeVisible();
   await page.getByRole("button", { name: "AI 分析" }).click();
@@ -174,7 +175,7 @@ test("opens Svelte settings without exposing the stored API key", async ({
   page,
 }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await openModule(page, "设置");
   await expect(
     page.getByRole("heading", { name: "设置与团队规范" }),
   ).toBeVisible();
@@ -194,7 +195,7 @@ test("shows environment diagnostics and expandable acceptance evidence", async (
   page,
 }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "诊断", exact: true }).click();
+  await openModule(page, "诊断");
   await expect(
     page.getByRole("heading", { name: "环境诊断", exact: true }).last(),
   ).toBeVisible();
@@ -207,7 +208,7 @@ test("requires an update preview before running svn update", async ({
   page,
 }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "仓库操作", exact: true }).click();
+  await openModule(page, "仓库操作");
   await expect(
     page.getByRole("heading", { name: "更新当前范围" }).first(),
   ).toBeVisible();
@@ -221,7 +222,7 @@ test("shows review evidence without rendering sensitive values", async ({
   page,
 }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "AI 审查", exact: true }).click();
+  await openModule(page, "AI 审查");
   await expect(
     page
       .locator(".intelligence-page")
@@ -233,7 +234,7 @@ test("shows review evidence without rendering sensitive values", async ({
 
 test("links impact areas to concrete test commands", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "影响分析", exact: true }).click();
+  await openModule(page, "影响分析");
   await expect(
     page.getByRole("heading", { name: "影响与测试建议" }),
   ).toBeVisible();
@@ -244,10 +245,7 @@ test("turns a split suggestion into a previewed SVN changelist", async ({
   page,
 }) => {
   await page.goto("/");
-  await page
-    .locator(".rail")
-    .getByRole("button", { name: "变更集", exact: true })
-    .click();
+  await openModule(page, "变更集");
   await page.getByRole("button", { name: "生成拆分建议" }).click();
   await page.getByRole("button", { name: "套用并调整" }).click();
   await page.getByRole("button", { name: "生成应用预览" }).click();
@@ -260,7 +258,7 @@ test("runs the agent plan only through explicit step approvals", async ({
   page,
 }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "任务代理", exact: true }).click();
+  await openModule(page, "任务代理");
   await page
     .getByRole("textbox", { name: "任务目标" })
     .fill("检查当前范围并形成测试建议");
@@ -313,7 +311,7 @@ test("requires explicit confirmation when restoring a file revision", async ({
   page,
 }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "历史", exact: true }).click();
+  await openModule(page, "历史");
   await page.getByRole("button", { name: "查看逐行责任" }).click();
   await expect(page.getByLabel("文件逐行责任")).toContainText("yangnan");
   await page.getByRole("button", { name: "从此修订恢复" }).click();
@@ -328,7 +326,7 @@ test("requires explicit confirmation when restoring a file revision", async ({
 
 test("previews SVN property changes before applying them", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "仓库操作" }).click();
+  await openModule(page, "仓库操作");
   await page.getByRole("button", { name: "SVN 属性", exact: true }).click();
   await page.getByRole("button", { name: /svn:ignore/ }).click();
   await page.getByRole("button", { name: "预览设置" }).click();
@@ -345,7 +343,7 @@ test("makes working-copy cleanup an explicit non-destructive confirmation", asyn
   page,
 }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "仓库操作" }).click();
+  await openModule(page, "仓库操作");
   await page.getByRole("button", { name: "清理与恢复", exact: true }).click();
   await page.getByRole("button", { name: "生成清理预览" }).click();
   await expect(page.getByText('svn cleanup "."')).toBeVisible();
@@ -359,7 +357,7 @@ test("edits commit selection rules with local preview and host save", async ({
   page,
 }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await openModule(page, "设置");
   await page.getByRole("tab", { name: "提交选择规则" }).click();
   await expect(page.getByText("规则来源与覆盖关系")).toBeVisible();
   await expect(page.getByRole("heading", { name: "用户默认" })).toBeVisible();
@@ -404,23 +402,23 @@ test("shows selection shadow, broken-config, empty and no-repo states", async ({
   page,
 }) => {
   await page.goto("/?selection=shadowed");
-  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await openModule(page, "设置");
   await page.getByRole("tab", { name: "提交选择规则" }).click();
   await expect(page.getByText(/永远不会命中/)).toBeVisible();
 
   await page.goto("/?selection=corrupt");
-  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await openModule(page, "设置");
   await page.getByRole("tab", { name: "提交选择规则" }).click();
   await expect(page.getByText("校验失败，已忽略该层配置")).toBeVisible();
   await expect(page.getByText(/仓库层配置解析失败/)).toBeVisible();
 
   await page.goto("/?selection=no-candidates");
-  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await openModule(page, "设置");
   await page.getByRole("tab", { name: "提交选择规则" }).click();
   await expect(page.getByText(/当前仓库没有可预览的候选文件/)).toBeVisible();
 
   await page.goto("/?selection=no-repo");
-  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await openModule(page, "设置");
   await page.getByRole("tab", { name: "提交选择规则" }).click();
   await expect(page.getByText(/无法生成规则预览/)).toBeVisible();
 });
@@ -429,7 +427,7 @@ test("rejects saving invalid selection rules with structured feedback", async ({
   page,
 }) => {
   await page.goto("/?selection=save-error");
-  await page.getByRole("button", { name: "设置", exact: true }).click();
+  await openModule(page, "设置");
   await page.getByRole("tab", { name: "提交选择规则" }).click();
   await page.getByRole("button", { name: "保存当前仓库规则" }).click();
   await expect(page.getByText(/模拟写入错误/)).toBeVisible();

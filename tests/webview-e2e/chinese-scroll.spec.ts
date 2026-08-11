@@ -1,12 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
-
-async function openModule(page: Page, name: string): Promise<void> {
-  await page
-    .locator(".rail")
-    .getByRole("button", { name, exact: true })
-    .click();
-  await expect(page.locator('.module-state[aria-busy="true"]')).toHaveCount(0);
-}
+import { openModule } from "./navigation";
 
 async function assertNoPageHorizontalOverflow(page: Page): Promise<void> {
   expect(
@@ -75,7 +68,7 @@ async function assertScrollable(
   ).toBe(true);
 }
 
-test("SCR-01/02/09/10/11：小视口下 Shell、导航和变更列表完整可达", async ({
+test("SCR-01/02/09/10/11：小视口下 Shell 和变更列表完整可达", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 720, height: 480 });
@@ -84,19 +77,6 @@ test("SCR-01/02/09/10/11：小视口下 Shell、导航和变更列表完整可�
     page.getByRole("heading", { name: "工作副本修改" }),
   ).toBeVisible();
   await assertNoPageHorizontalOverflow(page);
-
-  const rail = page.getByRole("complementary", { name: "SVN 工作台模块" });
-  const railMetrics = await rail.evaluate((element) => ({
-    clientHeight: element.clientHeight,
-    scrollHeight: element.scrollHeight,
-  }));
-  if (railMetrics.scrollHeight > railMetrics.clientHeight)
-    await rail.evaluate((element) => {
-      element.scrollTop = element.scrollHeight;
-    });
-  await expect(
-    page.getByRole("button", { name: "诊断", exact: true }),
-  ).toBeVisible();
 
   const list = page.getByRole("list", { name: "SVN 变更文件" });
   await assertScrollable(list, list.getByRole("listitem").last());

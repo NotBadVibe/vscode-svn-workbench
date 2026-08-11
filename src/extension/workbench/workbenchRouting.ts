@@ -12,24 +12,56 @@ import type {
 } from "./workbenchSession";
 
 /**
- * Diff 独立窗口路由纯逻辑（不依赖 vscode API，可单测）。
+ * 0.0.5 统一模块窗口路由纯逻辑（不依赖 vscode API，可单测）。
  *
  * 路由语义：
- * - 主工作台收到 diff 模块打开请求且注入了 Diff 窗口回调时，转发到独立窗口；
- *   未注入时保持面板内切换模块的旧行为（单测与未接线环境兼容）。
- * - 独立 Diff 窗口只处理 diff 模块会话；收到非 diff 模块请求时，
- *   有主工作台回调则转发回主面板，否则拒绝（防御）。
+ * - 每个 WorkbenchController 只服务一个模块（servedModule）；
+ * - 收到其他模块的打开或动作请求时，经窗口管理器路由到目标模块窗口（跨模块）；
+ * - 未注入管理器回调时保持面板内切换模块的旧行为（单测与未接线环境兼容）；
+ * - 独立 Diff 窗口只处理 diff 模块会话；同目标重复打开只 reveal。
  */
 
-/** 主工作台是否应把该模块打开请求转发到独立 Diff 窗口。 */
-export function shouldForwardToDiffWindow(
+/**
+ * 目标模块不属于当前控制器服务模块且已注入跨窗口路由回调时，转发给窗口管理器。
+ */
+export function shouldOpenInOtherWindow(
   moduleId: WorkbenchModuleId,
-  onOpenDiffInWindow: unknown,
+  servedModule: WorkbenchModuleId,
+  onOpenInOtherWindow: unknown,
 ): boolean {
-  return moduleId === "diff" && typeof onOpenDiffInWindow === "function";
+  return moduleId !== servedModule && typeof onOpenInOtherWindow === "function";
 }
 
-/** 主工作台转发给 Diff 窗口的会话请求（工作副本差异或修订比较）。 */
+/** 控制器防御：收到非本模块会话请求且无管理器回调时拒绝。 */
+export function assertServedModuleRequest(
+  request: OpenWorkbenchRequest,
+  servedModule: WorkbenchModuleId,
+): void {
+  if (request.moduleId !== servedModule) {
+    throw new Error(
+      `SVN 工作台 ${servedModule} 模块窗口仅处理 ${servedModule} 模块会话，请从对应模块入口打开其他模块。`,
+    );
+  }
+}
+
+/** 跨模块窗口会话请求：保留源窗口的模块、任务、范围与所选路径。 */
+export function buildCrossModuleWindowRequest(input: {
+  moduleId: WorkbenchModuleId;
+  taskId: WorkbenchTaskId;
+  svnPath: string;
+  scope: OperationScope;
+  selectedPaths?: string[];
+}): OpenWorkbenchRequest {
+  return {
+    moduleId: input.moduleId,
+    taskId: input.taskId,
+    svnPath: input.svnPath,
+    scope: input.scope,
+    selectedPaths: input.selectedPaths,
+  };
+}
+
+/** 转发给独立 Diff 窗口的会话请求（工作副本差异或修订比较）。 */
 export function buildDiffWindowRequest(input: {
   svnPath: string;
   scope: OperationScope;
@@ -46,32 +78,6 @@ export function buildDiffWindowRequest(input: {
   };
 }
 
-/** Diff 窗口防御：收到非 diff 模块会话请求时拒绝。 */
-export function assertDiffModuleRequest(request: OpenWorkbenchRequest): void {
-  if (request.moduleId !== "diff") {
-    throw new Error(
-      "独立 Diff 窗口仅处理 diff 模块会话，请从 SVN 工作台主面板打开其他模块。",
-    );
-  }
-}
-
-/** Diff 窗口把非 diff 模块请求转发回主工作台时构造的会话请求。 */
-export function buildMainWindowRequest(input: {
-  moduleId: WorkbenchModuleId;
-  taskId: WorkbenchTaskId;
-  svnPath: string;
-  scope: OperationScope;
-  selectedPaths?: string[];
-}): OpenWorkbenchRequest {
-  return {
-    moduleId: input.moduleId,
-    taskId: input.taskId,
-    svnPath: input.svnPath,
-    scope: input.scope,
-    selectedPaths: input.selectedPaths,
-  };
-}
-
 export type DiffOpenMode = "sameGroup" | "beside";
 
 /** 非法或缺失配置必须安全回退到默认同组模式。 */
@@ -80,17 +86,17 @@ export function normalizeDiffOpenMode(value: unknown): DiffOpenMode {
 }
 
 /**
- * 面板 reveal 目标：主工作台保持原有第一栏行为；Diff 按配置在当前组或旁组打开。
+ * 面板 reveal 目标：非 Diff 模块保持原有第一栏行为；Diff 按配置在当前组或旁组打开。
  * 这些入口均由用户显式触发，因此目标标签需要激活；后台模块刷新不会调用 reveal。
  */
 export function workbenchRevealTarget(
-  diffWindow: boolean,
+  isDiffWindow: boolean,
   diffOpenMode: DiffOpenMode = "sameGroup",
 ): {
   viewColumn: "one" | "active" | "beside";
   preserveFocus: boolean;
 } {
-  if (!diffWindow) return { viewColumn: "one", preserveFocus: false };
+  if (!isDiffWindow) return { viewColumn: "one", preserveFocus: false };
   return {
     viewColumn: diffOpenMode === "beside" ? "beside" : "active",
     preserveFocus: false,
