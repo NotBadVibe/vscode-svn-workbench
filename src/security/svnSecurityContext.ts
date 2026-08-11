@@ -28,6 +28,16 @@ export interface SvnSecurityInvocation {
 
 const contexts = new Map<string, SvnSecurityContext>();
 
+/** 仓库根路径归一化（跨平台大小写）键；供注册表与控制器比较用。 */
+export function normalizeSvnRepositoryRoot(value: string): string {
+  return normalizePath(value);
+}
+
+/** 测试辅助：清空模块级上下文，避免用例之间互相污染。 */
+export function resetSvnSecurityContextForTesting(): void {
+  contexts.clear();
+}
+
 export function setSvnSecurityContext(
   repositoryRoot: string,
   context: SvnSecurityContext | undefined,

@@ -129,6 +129,20 @@
       <div>
         <strong>暂无模块数据</strong>
         <p>重新加载工作台，或从右键菜单重新进入当前任务。</p>
+        <div class="toolbar-actions">
+          <button
+            class="button button--secondary"
+            onclick={() => state.action("refresh")}>重新加载</button
+          >
+          <button
+            class="button button--secondary"
+            onclick={() => state.openModule("diagnostics")}>打开诊断</button
+          >
+          <button
+            class="button button--secondary"
+            onclick={() => state.openModule("settings")}>打开设置</button
+          >
+        </div>
       </div>
     </section>
   {/if}

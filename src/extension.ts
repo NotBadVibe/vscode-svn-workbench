@@ -17,14 +17,13 @@ import {
   resolveWorkingCopySet,
 } from "./scope/workingCopyResolver";
 import { resolveSvnExecutable } from "./svn/svnExecutableResolver";
-import { WorkbenchController } from "./extension/workbench/WorkbenchController";
+import { WorkbenchWindowManager } from "./extension/workbench/workbenchWindowManager";
 import { SvnSourceControlManager } from "./scm/svnSourceControlManager";
 import type { WorkbenchTaskId } from "./protocol/workbenchProtocol";
 
 let cachedSvnPath: string | undefined;
 let extensionContext: vscode.ExtensionContext | undefined;
-let workbenchController: WorkbenchController | undefined;
-let diffWorkbenchController: WorkbenchController | undefined;
+let workbenchWindowManager: WorkbenchWindowManager | undefined;
 let sourceControlManager: SvnSourceControlManager | undefined;
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -32,32 +31,12 @@ export function activate(context: vscode.ExtensionContext): void {
   // 统一的提交选择规则解析服务：工作台与 SCM 共享，保证所有候选入口
   // 在同一仓库解析出相同有效规则；监听配置与仓库文件变化并失效缓存。
   const commitSelectionRuleService = new CommitSelectionRuleService();
-  // 独立 Diff 窗口控制器：与主工作台共享规则服务，拥有自己的面板与会话；
-  // 窗口内请求其他模块（如“提交此文件”）时转发回主工作台。
-  diffWorkbenchController = new WorkbenchController(
+  // 0.0.5 统一模块窗口管理器：每个模块一个独立 Webview 窗口，
+  // 同模块单例复用、关闭后重建；跨模块动作经管理器路由；
+  // 多窗口共享按仓库身份管理的 SVN 安全上下文。
+  workbenchWindowManager = new WorkbenchWindowManager(
     context,
     commitSelectionRuleService,
-    {
-      diffWindow: true,
-      onOpenModuleInMainWindow: async (request) => {
-        if (!workbenchController) {
-          return;
-        }
-        await workbenchController.open(request);
-      },
-    },
-  );
-  const diffController = diffWorkbenchController;
-  workbenchController = new WorkbenchController(
-    context,
-    commitSelectionRuleService,
-    {
-      // diff 模块的打开（命令与 Webview 内部动作）改走独立窗口，
-      // 不顶替主工作台当前所在模块。
-      onOpenDiffInWindow: async (request) => {
-        await diffController.open(request);
-      },
-    },
   );
   sourceControlManager = new SvnSourceControlManager(
     getSvnPath,
@@ -66,8 +45,7 @@ export function activate(context: vscode.ExtensionContext): void {
   appendOutput("SVN 工作台已激活。");
 
   context.subscriptions.push(
-    workbenchController,
-    diffWorkbenchController,
+    workbenchWindowManager,
     sourceControlManager,
     commitSelectionRuleService,
     ...registerCommitSelectionRuleWatchers(commitSelectionRuleService),
@@ -138,7 +116,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("svnWorkbench.openDiff", openDiff),
     // 不贡献到命令面板；复用当前安全会话，供自动化和受控内部入口调用。
     vscode.commands.registerCommand("svnWorkbench.openDiffInEditor", () =>
-      diffWorkbenchController?.openNativeDiffInEditor(),
+      workbenchWindowManager?.openNativeDiffInEditor(),
     ),
     vscode.commands.registerCommand("svnWorkbench.openHistory", openHistory),
     vscode.commands.registerCommand(
@@ -195,8 +173,7 @@ export function activate(context: vscode.ExtensionContext): void {
 }
 
 export function deactivate(): void {
-  workbenchController = undefined;
-  diffWorkbenchController = undefined;
+  workbenchWindowManager = undefined;
   sourceControlManager = undefined;
 }
 
@@ -206,8 +183,8 @@ async function openFileOperation(
 ): Promise<void> {
   const uri = resourceUri(resource);
   const prepared = await prepareWorkbenchRequest(uri);
-  if (!prepared || !workbenchController) return;
-  await workbenchController.open({
+  if (!prepared || !workbenchWindowManager) return;
+  await workbenchWindowManager.open({
     moduleId: "changes",
     initialFileOperation: { operation, ignoreMode: "directory" },
     ...prepared,
@@ -243,10 +220,10 @@ async function openWorkbench(
     resourceUri(resource),
     resourceUris(selectedResources),
   );
-  if (!prepared || !workbenchController) {
+  if (!prepared || !workbenchWindowManager) {
     return;
   }
-  await workbenchController.open({
+  await workbenchWindowManager.open({
     moduleId: "changes",
     taskId: "changes/overview",
     ...prepared,
@@ -269,10 +246,10 @@ async function updateScope(
     resourceUri(resource),
     resourceUris(selectedResources),
   );
-  if (!prepared || !workbenchController) {
+  if (!prepared || !workbenchWindowManager) {
     return;
   }
-  await workbenchController.open({
+  await workbenchWindowManager.open({
     moduleId: "repository",
     taskId: "repository/update",
     ...prepared,
@@ -287,10 +264,10 @@ async function openProperties(
     resourceUri(resource),
     resourceUris(selectedResources),
   );
-  if (!prepared || !workbenchController) {
+  if (!prepared || !workbenchWindowManager) {
     return;
   }
-  await workbenchController.open({
+  await workbenchWindowManager.open({
     moduleId: "repository",
     taskId: "repository/properties",
     ...prepared,
@@ -313,8 +290,8 @@ async function openRepositoryTask(
     resourceUri(resource),
     resourceUris(selectedResources),
   );
-  if (!prepared || !workbenchController) return;
-  await workbenchController.open({
+  if (!prepared || !workbenchWindowManager) return;
+  await workbenchWindowManager.open({
     moduleId: "repository",
     taskId,
     ...prepared,
@@ -345,10 +322,10 @@ async function commitFolder(
   }
 
   try {
-    if (!workbenchController) {
+    if (!workbenchWindowManager) {
       throw new Error("SVN 工作台控制器不可用。");
     }
-    await workbenchController.open({
+    await workbenchWindowManager.open({
       moduleId: "commit",
       taskId: "commit/compose",
       ...prepared,
@@ -380,10 +357,10 @@ async function openDiff(resource?: unknown): Promise<void> {
   const target = vscode.Uri.file(filePath);
   const repositoryRoot = await getRepositoryRootForTarget(target, svnPath);
   const scope = await createScopeFromExplorer(repositoryRoot, target);
-  if (!diffWorkbenchController) {
+  if (!workbenchWindowManager) {
     return;
   }
-  await diffWorkbenchController.open({
+  await workbenchWindowManager.open({
     moduleId: "diff",
     taskId: "diff/working",
     svnPath,
@@ -400,10 +377,10 @@ async function openHistory(
     resourceUri(resource),
     resourceUris(selectedResources),
   );
-  if (!prepared || !workbenchController) {
+  if (!prepared || !workbenchWindowManager) {
     return;
   }
-  await workbenchController.open({
+  await workbenchWindowManager.open({
     moduleId: "history",
     taskId: "history/revisions",
     ...prepared,
@@ -467,10 +444,10 @@ async function openConflictCenter(
     resourceUri(resource),
     resourceUris(selectedResources),
   );
-  if (!prepared || !workbenchController) {
+  if (!prepared || !workbenchWindowManager) {
     return;
   }
-  await workbenchController.open({
+  await workbenchWindowManager.open({
     moduleId: "conflicts",
     taskId: "conflicts/resolve",
     ...prepared,
@@ -542,7 +519,7 @@ async function openSupportModule(
   taskId: WorkbenchTaskId,
   uri?: vscode.Uri,
 ): Promise<void> {
-  if (!workbenchController) {
+  if (!workbenchWindowManager) {
     vscode.window.showErrorMessage("SVN 工作台尚未激活。");
     return;
   }
@@ -584,7 +561,7 @@ async function openSupportModule(
     includeNestedWorkingCopies: false,
     createdAt: Date.now(),
   };
-  await workbenchController.open({
+  await workbenchWindowManager.open({
     moduleId,
     taskId,
     svnPath:
@@ -609,8 +586,8 @@ async function openAiReview(
     resourceUri(resource),
     resourceUris(selectedResources),
   );
-  if (!prepared || !workbenchController) return;
-  await workbenchController.open({
+  if (!prepared || !workbenchWindowManager) return;
+  await workbenchWindowManager.open({
     moduleId: "ai-review",
     taskId: "ai-review/review",
     ...prepared,
@@ -625,8 +602,8 @@ async function openImpact(
     resourceUri(resource),
     resourceUris(selectedResources),
   );
-  if (!prepared || !workbenchController) return;
-  await workbenchController.open({
+  if (!prepared || !workbenchWindowManager) return;
+  await workbenchWindowManager.open({
     moduleId: "impact",
     taskId: "impact/analyze",
     ...prepared,
@@ -641,8 +618,8 @@ async function openChangelists(
     resourceUri(resource),
     resourceUris(selectedResources),
   );
-  if (!prepared || !workbenchController) return;
-  await workbenchController.open({
+  if (!prepared || !workbenchWindowManager) return;
+  await workbenchWindowManager.open({
     moduleId: "changelists",
     taskId: "changelists/manage",
     ...prepared,
@@ -657,8 +634,8 @@ async function openAgent(
     resourceUri(resource),
     resourceUris(selectedResources),
   );
-  if (!prepared || !workbenchController) return;
-  await workbenchController.open({
+  if (!prepared || !workbenchWindowManager) return;
+  await workbenchWindowManager.open({
     moduleId: "agent",
     taskId: "agent/plan",
     ...prepared,

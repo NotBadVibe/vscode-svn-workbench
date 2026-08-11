@@ -1,6 +1,6 @@
 # SVN Workbench v0.0.5 版本规划
 
-> 状态：规划中，尚未形成候选源码或测试证据。
+> 状态：候选（阶段 0～4 已落地；VSIX、干净安装、真实 VS Code 多窗口冒烟与不可变 release evidence 已固化，等待发布复核）。
 >
 > 基线版本：已发布的 `v0.0.4`。
 
@@ -121,6 +121,8 @@
 
 完成条件：不存在未归属入口；安全上下文清除和广播语义有可测试契约。
 
+状态：✅ 已落地（路由纯逻辑与安全注册表契约见 `src/extension/workbench/workbenchRouting.ts`、`src/security/svnSecurityContextRegistry.ts` 及对应单元测试）。
+
 ### 阶段 1：窗口管理器
 
 - 实现按模块惰性创建、单例复用和关闭重建。
@@ -129,6 +131,8 @@
 - 增加生命周期和模块 ID 防御测试。
 
 完成条件：所有模块均可独立打开，同模块复用，不同模块互不顶替。
+
+状态：✅ 已落地（`workbenchWindowManager.ts`、`workbenchWindowRegistry.ts`、`WorkbenchController` 的 `servedModule` 接线；测试 `workbenchWindowManager.test.ts`、`workbenchRouting.test.ts`）。
 
 ### 阶段 2：统一路由
 
@@ -139,6 +143,8 @@
 
 完成条件：目标窗口正确打开，源窗口状态不变，非法路由被拒绝。
 
+状态：✅ 已落地（`extension.ts` 统一入口、`open-module`/`open-diff`/`history/compare` 跨模块路由、安全上下文引用计数与失效广播）。
+
 ### 阶段 3：移除 Rail
 
 - 移除 Rail 和布局占位。
@@ -147,12 +153,16 @@
 
 完成条件：所有功能仍可达，窗口内不再显示功能列表，布局和可访问性无退化。
 
+状态：✅ 已落地（`AppShell.svelte` 移除 Rail；mock 支持 `?module=` 模拟独立模块窗口；Webview E2E 全绿）。
+
 ### 阶段 4：候选验收
 
 - 同步 `docs/current/设计与交互基线.md`、`实现与代码映射.md`、`测试与验收基线.md`。
 - 运行 `npm run docs:verify` 和 `npm run verify`。
 - 打包 VSIX、执行干净安装并在真实 VS Code 中完成多窗口冒烟。
 - 固化候选提交、依赖锁、VSIX 指纹、测试和人工验收证据。
+
+状态：⏳ 文档同步与 `npm run docs:verify`、`npm run verify` 属本仓库代码门禁（由当前开发线执行）；VSIX 打包、干净安装、真实 VS Code 多窗口人工冒烟与证据固化属发布流程，不在本开发任务内。
 
 ## 6. 测试矩阵
 

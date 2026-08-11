@@ -1,5 +1,6 @@
 import {
   defaultWorkbenchTask,
+  isWorkbenchModuleId,
   isWorkbenchTaskForModule,
   WORKBENCH_PROTOCOL_VERSION,
   type CommitSelectionPreviewItem,
@@ -193,26 +194,71 @@ const files = [
 let activeMockModuleId: WorkbenchModuleId = "changes";
 let activeMockTaskId: WorkbenchTaskId = defaultWorkbenchTask("changes");
 
+/**
+ * 读取 `?module=<moduleId>`：0.0.5 每个功能模块一个独立窗口，
+ * mock 通过该查询参数模拟 Host 打开指定模块窗口（等同右键/命令入口）。
+ * 缺省或非法值回落 changes。
+ */
+function initialMockModule(): WorkbenchModuleId {
+  const requested = new URLSearchParams(window.location.search).get("module");
+  return isWorkbenchModuleId(requested) ? requested : "changes";
+}
+
+/** 初始快照工厂：diff 需要固定目标文件与原文/修改文。 */
+function createInitialMockSnapshot(
+  moduleId: WorkbenchModuleId,
+): WorkbenchModuleSnapshot {
+  if (moduleId === "diff") {
+    return {
+      kind: "diff",
+      relativePath: "src/extension.ts",
+      original: mockDiffOriginal,
+      modified: mockDiffModified,
+      language: "typescript",
+      truncated: false,
+      binary: false,
+    };
+  }
+  const factories: Record<
+    Exclude<WorkbenchModuleId, "diff">,
+    () => WorkbenchModuleSnapshot
+  > = {
+    changes: changesSnapshot,
+    commit: commitSnapshot,
+    history: historySnapshot,
+    conflicts: conflictSnapshot,
+    repository: repositorySnapshot,
+    "ai-review": aiReviewSnapshot,
+    impact: impactSnapshot,
+    changelists: changelistsSnapshot,
+    agent: agentSnapshot,
+    settings: settingsSnapshot,
+    diagnostics: diagnosticsSnapshot,
+  };
+  return factories[moduleId]();
+}
+
 export function startMockWorkbench(): void {
-  activeMockModuleId = "changes";
-  activeMockTaskId = defaultWorkbenchTask("changes");
+  const initialModuleId = initialMockModule();
+  activeMockModuleId = initialModuleId;
+  activeMockTaskId = defaultWorkbenchTask(initialModuleId);
   let mockAgentCompleted = 0;
   const initial: HostToWebviewMessage = {
     protocolVersion: WORKBENCH_PROTOCOL_VERSION,
     type: "app/initialize",
-    moduleId: "changes",
-    taskId: "changes/overview",
+    moduleId: initialModuleId,
+    taskId: activeMockTaskId,
     sessionId: "mock-session-id",
     repositoryUuid: "mock-repository-uuid",
     scopeHash: "mock-scope-hash",
     payload: {
-      moduleId: "changes",
+      moduleId: initialModuleId,
       scope: {
         repositoryName: "vscode-svn",
         roots: [{ kind: "folder", relativePath: "." }],
         source: "internal",
       },
-      snapshot: changesSnapshot(),
+      snapshot: createInitialMockSnapshot(initialModuleId),
     },
   };
 

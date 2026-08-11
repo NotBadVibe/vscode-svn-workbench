@@ -1,10 +1,5 @@
 <script lang="ts">
   import { onMount, type Snippet } from "svelte";
-  import {
-    defaultWorkbenchTask,
-    type WorkbenchModuleId,
-    type WorkbenchTaskId,
-  } from "@protocol/workbenchProtocol";
   import type { WorkbenchState } from "../../app/workbenchState.svelte";
   import ScopeBar from "../svn/ScopeBar.svelte";
 
@@ -13,73 +8,6 @@
     children,
   }: { state: WorkbenchState; children: Snippet } = $props();
 
-  const navigation: Array<{
-    id: WorkbenchModuleId;
-    taskId: WorkbenchTaskId;
-    label: string;
-    icon: string;
-  }> = [
-    {
-      id: "changes",
-      taskId: defaultWorkbenchTask("changes"),
-      label: "本地修改",
-      icon: "source-control",
-    },
-    {
-      id: "commit",
-      taskId: defaultWorkbenchTask("commit"),
-      label: "提交",
-      icon: "checklist",
-    },
-    {
-      id: "history",
-      taskId: defaultWorkbenchTask("history"),
-      label: "历史",
-      icon: "history",
-    },
-    {
-      id: "conflicts",
-      taskId: defaultWorkbenchTask("conflicts"),
-      label: "冲突",
-      icon: "merge",
-    },
-    {
-      id: "changelists",
-      taskId: defaultWorkbenchTask("changelists"),
-      label: "变更集",
-      icon: "list-tree",
-    },
-    {
-      id: "ai-review",
-      taskId: defaultWorkbenchTask("ai-review"),
-      label: "AI 审查",
-      icon: "sparkle",
-    },
-    {
-      id: "impact",
-      taskId: defaultWorkbenchTask("impact"),
-      label: "影响分析",
-      icon: "pulse",
-    },
-    {
-      id: "agent",
-      taskId: defaultWorkbenchTask("agent"),
-      label: "任务代理",
-      icon: "hubot",
-    },
-    {
-      id: "repository",
-      taskId: defaultWorkbenchTask("repository"),
-      label: "仓库操作",
-      icon: "repo",
-    },
-    {
-      id: "settings",
-      taskId: defaultWorkbenchTask("settings"),
-      label: "设置",
-      icon: "settings-gear",
-    },
-  ];
   let now = $state(Date.now());
   const elapsedSeconds = $derived(
     workbenchState.progress
@@ -97,43 +25,6 @@
 </script>
 
 <div class="workbench-shell">
-  <aside class="rail" aria-label="SVN 工作台模块">
-    <div class="brand" title="SVN 工作台">
-      <span class="brand-mark">S</span>
-    </div>
-    <nav>
-      {#each navigation as item (item.id)}
-        <button
-          class:active={workbenchState.moduleId === item.id}
-          class="rail-button"
-          aria-label={item.label}
-          aria-current={workbenchState.moduleId === item.id
-            ? "page"
-            : undefined}
-          title={item.label}
-          onclick={() => workbenchState.openModule(item.id, item.taskId)}
-        >
-          <span class={`codicon codicon-${item.icon}`} aria-hidden="true"
-          ></span>
-        </button>
-      {/each}
-    </nav>
-    <div class="rail-spacer"></div>
-    <button
-      class:active={workbenchState.moduleId === "diagnostics"}
-      class="rail-button"
-      aria-label="诊断"
-      title="诊断"
-      onclick={() =>
-        workbenchState.openModule(
-          "diagnostics",
-          defaultWorkbenchTask("diagnostics"),
-        )}
-    >
-      <span class="codicon codicon-pulse" aria-hidden="true"></span>
-    </button>
-  </aside>
-
   <main class="workbench-main">
     <ScopeBar
       scope={workbenchState.scope}

@@ -280,6 +280,10 @@ export function getExtensionTestCases(): TestCase[] {
       run: testDiffWindowAndNativeEditor,
     },
     {
+      name: "v0.0.5 opens independent per-module windows with reuse and rebuild",
+      run: testV005ModuleWindows,
+    },
+    {
       name: "classifies generated files for commit filtering",
       run: testGeneratedFilePolicy,
     },
@@ -1002,6 +1006,130 @@ async function testDiffWindowAndNativeEditor(): Promise<void> {
     );
     await vscode.commands.executeCommand("workbench.action.closeAllEditors");
   }
+}
+
+async function countTabsWithLabel(label: string): Promise<number> {
+  return vscode.window.tabGroups.all
+    .flatMap((group) => group.tabs)
+    .filter((tab) => tab.label === label).length;
+}
+
+async function waitForTabGone(
+  label: string,
+  description: string,
+): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    if ((await countTabsWithLabel(label)) === 0) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error(`等待 ${description} 关闭超时。`);
+}
+
+/**
+ * v0.0.5 真实 VS Code 多窗口冒烟（非 Webview mock）：
+ * 每模块独立窗口、同模块单例复用、关闭后重建、跨模块路由不顶替、
+ * 关闭一个窗口不影响其他窗口。
+ */
+async function testV005ModuleWindows(): Promise<void> {
+  const workspace = getSvnWorkspaceOrSkip();
+  const file = vscode.Uri.joinPath(
+    workspace.uri,
+    "src",
+    "pages",
+    "order",
+    "OrderList.vue",
+  );
+  await vscode.commands.executeCommand("workbench.action.closeAllEditors");
+
+  // 1) 不同模块各自独立窗口（互不顶替）。
+  await vscode.commands.executeCommand("svnWorkbench.openWorkbench", file);
+  await waitForTab((tab) => tab.label === "SVN · 工作副本修改", "Changes 窗口");
+  await vscode.commands.executeCommand("svnWorkbench.openHistory", file);
+  const historyTab = await waitForTab(
+    (tab) => tab.label === "SVN · 历史记录",
+    "History 窗口",
+  );
+  assert.equal(
+    await countTabsWithLabel("SVN · 工作副本修改"),
+    1,
+    "Changes 窗口应保持独立存在",
+  );
+
+  // 2) 同模块重复打开复用单例窗口。
+  await vscode.commands.executeCommand("svnWorkbench.openHistory", file);
+  assert.equal(
+    await countTabsWithLabel("SVN · 历史记录"),
+    1,
+    "同模块重复打开必须复用窗口",
+  );
+
+  // 3) 关闭后按需重建。
+  await vscode.window.tabGroups.close(historyTab);
+  await waitForTabGone("SVN · 历史记录", "History 窗口");
+  await vscode.commands.executeCommand("svnWorkbench.openHistory", file);
+  await waitForTab(
+    (tab) => tab.label === "SVN · 历史记录",
+    "重建的 History 窗口",
+  );
+
+  // 4) Diff 打开为独立窗口，不顶替 Changes。
+  await vscode.commands.executeCommand("svnWorkbench.openDiff", file);
+  await waitForTab((tab) => tab.label === "SVN · 查看本地修改", "Diff 窗口");
+  assert.equal(
+    await countTabsWithLabel("SVN · 工作副本修改"),
+    1,
+    "打开 Diff 不得关闭 Changes 窗口",
+  );
+
+  // 5) Commit 为独立窗口，且跨模块打开不顶替其他窗口。
+  await vscode.commands.executeCommand("svnWorkbench.commitFolder", file);
+  const commitTab = await waitForTab(
+    (tab) => tab.label === "SVN · 提交当前范围",
+    "Commit 窗口",
+  );
+  assert.equal(
+    await countTabsWithLabel("SVN · 工作副本修改"),
+    1,
+    "打开 Commit 不得关闭 Changes 窗口",
+  );
+  assert.equal(
+    await countTabsWithLabel("SVN · 查看本地修改"),
+    1,
+    "打开 Commit 不得关闭 Diff 窗口",
+  );
+
+  // 5a) 设置（AI 配置）为独立窗口，Commit→Settings 式跨模块路由不顶替。
+  await vscode.commands.executeCommand("svnWorkbench.aiConfigure");
+  const settingsTab = await waitForTab(
+    (tab) => tab.label === "SVN · AI 模型设置",
+    "Settings 窗口",
+  );
+  assert.equal(
+    await countTabsWithLabel("SVN · 提交当前范围"),
+    1,
+    "打开 Settings 不得关闭 Commit 窗口",
+  );
+
+  // 6) 关闭一个窗口不影响同仓库另一窗口。
+  await vscode.window.tabGroups.close(commitTab);
+  await waitForTabGone("SVN · 提交当前范围", "Commit 窗口");
+  await vscode.window.tabGroups.close(settingsTab);
+  await waitForTabGone("SVN · AI 模型设置", "Settings 窗口");
+  assert.equal(
+    await countTabsWithLabel("SVN · 工作副本修改"),
+    1,
+    "关闭 Commit/Settings 后 Changes 窗口仍存在",
+  );
+  assert.equal(
+    await countTabsWithLabel("SVN · 历史记录"),
+    1,
+    "关闭 Commit/Settings 后 History 窗口仍存在",
+  );
+
+  // 7) 冒烟完成后清理，避免影响后续用例。
+  await vscode.commands.executeCommand("workbench.action.closeAllEditors");
+  await waitForTabGone("SVN · 工作副本修改", "Changes 窗口清理");
 }
 
 async function testGeneratedFilePolicy(): Promise<void> {
