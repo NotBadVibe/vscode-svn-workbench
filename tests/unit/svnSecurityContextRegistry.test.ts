@@ -2,6 +2,7 @@ import * as path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SvnSecurityContextRegistry } from "../../src/security/svnSecurityContextRegistry";
 import {
+  normalizeSvnRepositoryRoot,
   resetSvnSecurityContextForTesting,
   resolveSvnSecurityContext,
 } from "../../src/security/svnSecurityContext";
@@ -76,7 +77,8 @@ describe("SvnSecurityContextRegistry（0.0.5 多窗口安全语义）", () => {
     registry.clearAuthentication(rootA);
     expect(resolveSvnSecurityContext(rootA)?.authentication).toBeUndefined();
     expect(resolveSvnSecurityContext(rootA)?.certificateTrust).toBeDefined();
-    expect(listener).toHaveBeenCalledWith(rootA);
+    // 注册表按 repository identity 归一化键广播；Windows 下盘符大小写会归一化。
+    expect(listener).toHaveBeenCalledWith(normalizeSvnRepositoryRoot(rootA));
     subscription.dispose();
   });
 

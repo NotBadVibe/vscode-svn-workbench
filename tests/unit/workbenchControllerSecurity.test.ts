@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkbenchController } from "../../src/extension/workbench/WorkbenchController";
 import { SvnSecurityContextRegistry } from "../../src/security/svnSecurityContextRegistry";
 import {
+  normalizeSvnRepositoryRoot,
   resetSvnSecurityContextForTesting,
   resolveSvnSecurityContext,
 } from "../../src/security/svnSecurityContext";
@@ -175,6 +176,16 @@ function openRequest(moduleId: WorkbenchModuleId, scope: OperationScope) {
   return { moduleId, svnPath: "svn", scope };
 }
 
+/**
+ * repository identity 归一化键（与注册表/管理器广播一致）。
+ * 生产路径中窗口管理器把注册表的归一化失效事件原样转发给控制器；
+ * 测试直接调用 handleSecurityInvalidated 时必须使用同一归一化键，
+ * 否则 Windows 下盘符大小写差异会导致事件不命中（POSIX 恰好相等）。
+ */
+function repoKey(repositoryRoot: string): string {
+  return normalizeSvnRepositoryRoot(repositoryRoot);
+}
+
 describe("WorkbenchController 安全上下文生命周期（0.0.5 修复）", () => {
   beforeEach(() => {
     resetSvnSecurityContextForTesting();
@@ -316,8 +327,9 @@ describe("WorkbenchController 安全上下文生命周期（0.0.5 修复）", ()
     const syncBefore = syncCallsForRepoA();
 
     // 触发失效刷新，并在凭据读取处挂起；先确认读取已真正进入挂起状态。
+    // 使用与注册表广播一致的归一化身份键（Windows 下盘符大小写已归一化）。
     credentialGate.setIntercept(true);
-    controller.handleSecurityInvalidated("/repo/a");
+    controller.handleSecurityInvalidated(repoKey("/repo/a"));
     expect(credentialGate.hasPending()).toBe(true);
     const hungRead = credentialGate.currentPromise();
     expect(hungRead).toBeDefined();
@@ -357,9 +369,9 @@ describe("WorkbenchController 安全上下文生命周期（0.0.5 修复）", ()
       sync.mock.calls.filter(([root]) => root === "/repo/a").length;
     const syncBefore = syncCallsForRepoA();
 
-    // 挂起读取并确认进入挂起状态。
+    // 挂起读取并确认进入挂起状态（使用归一化身份键，跨平台一致）。
     credentialGate.setIntercept(true);
-    controller.handleSecurityInvalidated("/repo/a");
+    controller.handleSecurityInvalidated(repoKey("/repo/a"));
     expect(credentialGate.hasPending()).toBe(true);
     const hungRead = credentialGate.currentPromise();
     expect(hungRead).toBeDefined();
