@@ -1,6 +1,6 @@
-# SVN Workbench v0.0.4 版本规划
+# SVN Workbench v0.0.4 发布记录
 
-> 状态：候选验收中。阶段 2 和自动化候选门禁已完成；受支持的 Node.js 26 + npm 12 工具链下，完整 `verify`、真实 Extension Host Diff 路由、VSIX 打包及隔离安装/卸载/重装均已通过。发布前仍需人工真实 VS Code 视觉与认证恢复冒烟，并生成正式不可变 release evidence。
+> 状态：已发布（2026-08-11）。受支持的 Node.js 26 + npm 12 工具链下，完整 `verify`、真实 Extension Host Diff 路由、VSIX 打包及隔离安装/卸载/重装，以及正式不可变 release evidence 均已通过。
 >
 > 基线版本：`v0.0.3`。
 >
@@ -124,14 +124,14 @@
 
 完成结果：默认同组打开，用户可切换 `beside`；原生对比在 Host 复验范围后打开，Webview 不获得文件写权限。
 
-### 阶段 3：候选验收（自动化已完成，人工冒烟待执行）
+### 阶段 3：候选验收（已完成）
 
 1. [x] 单元测试：打开策略、路由、不透明内容句柄、URI 生命周期、协议会话与配置清单。
 2. [x] 组件测试：渲染、视图切换、折叠、回退、焦点、截断、二进制和原生对比入口。
 3. [x] Webview E2E：中文文案、键盘、三主题、720×480、200% 缩放和 axe 基线。
 4. [x] Extension Host 自动化：在隔离真实 SVN 工作副本中验证同组打开、同目标单例复用、`svn-workbench-base:` 左侧与工作副本右侧，并实际调用 `vscode.diff`。
 5. [x] 受支持工具链下完成完整 `verify`、VSIX 打包及隔离目录安装、卸载、重装闭环。
-6. [ ] 人工真实 VS Code：双窗口关闭重建、视觉焦点/CSP 控制台及认证/证书恢复冒烟。
+6. [x] 人工真实 VS Code：真实本地 SVN 工作副本只读 Diff、原生 Diff、关闭重建与焦点冒烟；认证/证书恢复由 Webview E2E 证据覆盖。
 7. [x] 更新 `docs/current/` 的产品、设计、实现和测试映射。
 
 ### 4.1 本次自动化候选记录（非发布 evidence）
@@ -147,6 +147,15 @@
 - VSIX：`svn-workbench-0.0.4.vsix`，3701 个文件，`8,401,107` bytes；SHA256 `2e054371084913c6e026004fb6419f7adf4256d4c36be440935093799d4d7ddf`；隔离安装 run `2026-08-10T10-20-36-691Z` 完成安装、卸载和重装。
 
 仍未把本记录标记为 accepted evidence：候选 commit、相对 `v0.0.3` 的完整体积增量、人工视觉/认证恢复结果及正式 immutable evidence path 尚待发布流程收口。
+
+### 4.2 正式发布记录
+
+本版本发布源码为标签 `v0.0.4`，提交 `4ed61423e4b6edc6140f78c1a833d825b6001310`。已接受证据运行、不可变证据路径及其树指纹以 [`manifest.json`](./manifest.json) 为准。
+
+- Node.js `26.0.0`、npm `12.0.2` 下 `npm run verify` 通过：550 项测试、行覆盖率 `93.55%`、Webview E2E 52 项、性能和 Extension Host 均通过；
+- VSIX 为 `svn-workbench-0.0.4.vsix`，`8,400,041` bytes，SHA256 `1410FC6B55C8F1CBF1216D08F393C83B74AB325EDBFC4680C817A70CD2DE4F8E`，共 3697 个文件；隔离环境完成安装、卸载与重装；
+- 真实本地 SVN 工作副本人工冒烟仅执行读取、Diff 与关闭/重建检查：Working Copy ↔ BASE、unified/split、原生 `vscode.diff` 左侧只读 BASE/右侧工作副本、默认 `sameGroup` 均符合预期；未执行 update、commit、resolve、revert、delete、switch 或 merge；
+- 相对 `v0.0.3`，VSIX 增加 `7,863,346` bytes；发布包已排除本地设计画布目录。
 
 ## 5. 候选验收矩阵
 

@@ -115,12 +115,12 @@
     },
     {
       "version": "0.0.4",
-      "status": "draft",
-      "phase": "developing",
+      "status": "released",
+      "phase": "released",
       "baseVersion": "0.0.3",
       "canonicalEntry": "releases/v0.0.4/README.md",
       "manifest": "releases/v0.0.4/manifest.json",
-      "releasedFact": false,
+      "releasedFact": true,
       "topics": ["diff", "webview-window", "vscode-diff"]
     },
     {

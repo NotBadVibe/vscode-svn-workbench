@@ -6,7 +6,7 @@
   "releaseDate": null,
   "gitTag": null,
   "gitCommit": null,
-  "sourceState": "未形成候选源码；以开发中的 v0.0.4 为基线，当前仅有版本规划文档",
+  "sourceState": "未形成候选源码；以已发布的 v0.0.4 为基线，当前仅有版本规划文档",
   "vsix": null,
   "tests": null,
   "acceptedEvidenceRun": null,
