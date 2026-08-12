@@ -1629,7 +1629,7 @@ async function testDiffEditSvnBindingIsolation(): Promise<void> {
       "被拒绝的保存不得改动磁盘",
     );
   } finally {
-    fs.rmSync(tempRoot, { recursive: true, force: true });
+    removeTestTempDirectory(tempRoot);
   }
 }
 
