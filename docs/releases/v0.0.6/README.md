@@ -236,15 +236,15 @@ Token 单次使用。成功、失败、目标切换、范围变化、外部文�
 
 ## 10. 候选记录
 
-> 状态：候选（2026-08-12 重建）。最终源码候选为本地提交 `41a3fd1a92c413b2579e20ed1b3deedea375c899`（在 Windows 修复 HEAD `ad639e4` 之上的发布状态同步提交），分支 `agent/release-v0.0.6`。Windows 修复（`db5b0a9`/`9cdbe2d` 净效果：临时文件写句柄 fsync 修复 Windows FlushFileBuffers 对只读句柄的确定性 EACCES；`ad639e4`：Extension Host fixture finally 统一走 removeTestTempDirectory）已由 pull_request Verify 三平台全绿覆盖（CodeQL 同步 success）。已接受证据运行、不可变证据路径及其树指纹以 [`manifest.json`](./manifest.json) 为准。
+> 状态：候选（2026-08-12 重建）。最终源码候选为本地提交 `f6687c70c960f57d313cc34a53c14bf496fab6b9`（在 41a3fd1 之上追加 coverage-bridge 慢用例 15s per-test 超时修复），分支 `agent/release-v0.0.6`。Windows 修复（`db5b0a9`/`9cdbe2d` 净效果：临时文件写句柄 fsync 修复 Windows FlushFileBuffers 对只读句柄的确定性 EACCES；`ad639e4`：Extension Host fixture finally 统一走 removeTestTempDirectory）已由 pull_request Verify 三平台全绿覆盖（CodeQL 同步 success）。已接受证据运行、不可变证据路径及其树指纹以 [`manifest.json`](./manifest.json) 为准。
 
 - 工具链：Node.js `26.0.0`、npm `12.0.2`、VS Code `1.132.1`、macOS `26.6` arm64；`npm ci` 干净安装。
-- `npm run verify` 通过：671 项单元/组件测试、行覆盖率 `93.44%`、Webview E2E 59 项、性能预算与 Extension Host（含真实 VS Code 页内编辑保存、外部/嵌套/BASE 边界用例与真实 SVN fixture）均通过。
-- VSIX `svn-workbench-0.0.6.vsix`：`8,487,428` bytes，SHA256 `82790254A8AA8D65994D660AA04160EE255ABD983CF28FC3AC92B63F30CDC043`，共 3710 个文件；隔离 profile 完成安装、卸载与重装。
+- `npm run verify` 通过：672 项单元/组件测试、行覆盖率 `93.44%`、Webview E2E 59 项、性能预算与 Extension Host（含真实 VS Code 页内编辑保存、外部/嵌套/BASE 边界用例与真实 SVN fixture）均通过。
+- VSIX `svn-workbench-0.0.6.vsix`：`8,487,428` bytes，SHA256 `FC783129B12352EB89630B54D03725681C3BC09DF783AF620487F6341010EE6C`，共 3710 个文件；隔离 profile 完成安装、卸载与重装。
 - 生命周期修复（第七轮，Lead /simplify 两轮审查）：保存后 Host 权威快照刷新保持编辑会话（DiffView 手动生命周期：编辑态同键同容器保持 FileDiff/Editor 实例；`diffViewLifecycle.ts` 重建决策纯函数覆盖容器身份切换与逐字段内容比较）；`diff/save-result` 按消息对象只消费一次；App 已有快照刷新保持模块挂载。回归：`AppLifecycle` + DiffModule 35/35、连续保存 e2e repeat-each=15 → 15/15（Lead 独立复验通过）。
 - Windows 平台修复（PR #29 驱动）：`diffAtomicWriter` 临时文件以写句柄 `open("w") → writeFile → sync → close` 落盘（Windows 只读句柄 fsync 确定性 EACCES），之后直接 `fs.rename(temp, target)`，任何失败保留原文件并清理临时文件；Extension Host 真实 SVN fixture 的 finally 统一走 `removeTestTempDirectory`（Windows EPERM/EBUSY/ENOTEMPTY 重试 + 延迟 + 警告 defer）。三平台 CI（ubuntu/macOS/windows 全绿）覆盖真实写入路径。
 - 真实 VS Code 自动冒烟（Extension Host，非 mock）：页内编辑首次/守卫保存与旧 token 重放拒绝；nested/external/BASE 变化目标拒绝；多窗口独立互不影响；真实 SVN fixture（含嵌套 WC/externals/BASE 变化拒绝）。页内编辑交互（真实 Webview 键入、脏草稿三选一对话框）由真实 Chromium Webview E2E（mock Host）与单元测试覆盖，CSP 零违规由 edit-mode Spike（生产等价严格 CSP）覆盖。
-- ⚠️ 真实 VS Code Webview 保存点检边界：此前 Lead 在旧候选安装件（77fffcd 对应 VSIX `E9EE...AF8F`）上的点检结论**不适用于新候选**——源码自旧候选后有 Windows 修复。新候选需 Lead 对精确新 VSIX 再做一次真实 VS Code Webview 保存点检（页内编辑保存后快速二次输入不被重建打断）；不得把旧候选点检冒充新候选。
-- 已接受证据 run `2026-08-12T14-16-14-506Z-388709ac`，不可变路径 `artifacts/2026-08-12T14-16-14-506Z-388709ac`，树指纹 `683078DD552D0BF4DC364778871A94990AF2649ADB2FE1B667A6B527A8B2E59D`。
+- ⚠️ 真实 VS Code Webview 保存点检边界：Lead 已对 41a3fd1 候选对应 VSIX（SHA `8279...C043`）完成真实 VS Code Gate 全绿；本轮为测试-only source change（coverage-bridge per-test 超时，VSIX 内容逐字节一致但 zip 时间戳致 SHA 变化为 `FC78...E6C`），**需 Lead 对精确新 VSIX（SHA `FC783129...E6C`）重验一次真实 VS Code Webview 保存点检**（页内编辑保存后快速二次输入不被重建打断）；不得以旧指纹点检冒充新指纹。
+- 已接受证据 run `2026-08-12T14-32-28-807Z-2aa2e307`，不可变路径 `artifacts/2026-08-12T14-32-28-807Z-2aa2e307`，树指纹 `7F36DC137457A18DB9657F7D84C31F6E397FEC437AE9A915B3149016F21D5C7F`。
 
 本记录随候选证据一并固化；正式发布（push/PR/merge/tag/Release/Marketplace）由 k3 审核与 Lead 放行后执行。

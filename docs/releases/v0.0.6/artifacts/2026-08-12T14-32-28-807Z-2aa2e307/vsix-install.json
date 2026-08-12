@@ -1,0 +1,19 @@
+{
+  "ok": true,
+  "runId": "2026-08-12T14-32-22-429Z",
+  "expectedExtension": "local.svn-workbench@0.0.6",
+  "vsixSha256": "FC783129B12352EB89630B54D03725681C3BC09DF783AF620487F6341010EE6C",
+  "vsixSizeBytes": 8487428,
+  "codeVersion": [
+    "1.132.1",
+    "c2d1b13fdc4a77628e5f3bb70173351c8f2fbad1",
+    "arm64"
+  ],
+  "installedExtensions": [
+    "local.svn-workbench@0.0.6"
+  ],
+  "afterUninstall": [],
+  "afterReinstall": [
+    "local.svn-workbench@0.0.6"
+  ]
+}
