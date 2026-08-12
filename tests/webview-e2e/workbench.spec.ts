@@ -502,6 +502,8 @@ test("dirty draft target switch requires an explicit three-way choice (v0.0.6)",
   await expect(editable).toBeFocused();
   await page.keyboard.type("// 未保存草稿");
   await expect(page.getByText(/有未保存的修改/)).toBeVisible();
+  // 等草稿检查点（debounce 800ms）到达 mock Host，保证暂存后草稿可恢复。
+  await page.waitForTimeout(1000);
 
   // 加载新目标：必须先三选一，不能静默暂存。
   await dispatchMockAction(page, "open-diff", {

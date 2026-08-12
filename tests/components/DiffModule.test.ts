@@ -608,10 +608,32 @@ describe("DiffModule 页内编辑（v0.0.6）", () => {
     expect(screen.queryByRole("button", { name: "页内编辑" })).toBeNull();
   });
 
-  it("目标切换遇到脏草稿时提供三选一阻断对话框", async () => {
+  it("未修改的编辑会话收到切换确认时不弹对话框（自动暂存）", async () => {
     const action = vi.fn();
     render(DiffModule, {
       snapshot: editSnapshot,
+      onAction: action,
+      editSession: { ...editSessionPayload },
+      targetSwitchRequest: {
+        currentTargetId: "mock-target",
+        nextRelativePath: "src/other.ts",
+      },
+    });
+    await screen.findByText("编辑模式");
+    // 无脏修改、无草稿：不出现三选一，自动回 stash。
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await waitFor(() =>
+      expect(action).toHaveBeenCalledWith("diff/target-switch-decision", {
+        decision: "stash",
+        targetId: "mock-target",
+      }),
+    );
+  });
+
+  it("目标切换遇到脏草稿时提供三选一阻断对话框", async () => {
+    const action = vi.fn();
+    render(DiffModule, {
+      snapshot: { ...editSnapshot, draft: { revision: 3, updatedAt: 1 } },
       onAction: action,
       editSession: { ...editSessionPayload },
       targetSwitchRequest: {
@@ -669,7 +691,7 @@ describe("DiffModule 页内编辑（v0.0.6）", () => {
   it("三选一：保存并打开发送 save 决定；留在当前文件发送 stay", async () => {
     const action = vi.fn();
     render(DiffModule, {
-      snapshot: editSnapshot,
+      snapshot: { ...editSnapshot, draft: { revision: 3, updatedAt: 1 } },
       onAction: action,
       editSession: { ...editSessionPayload },
       targetSwitchRequest: {
@@ -690,7 +712,7 @@ describe("DiffModule 页内编辑（v0.0.6）", () => {
   it("三选一：Escape 等同于留在当前文件", async () => {
     const action = vi.fn();
     render(DiffModule, {
-      snapshot: editSnapshot,
+      snapshot: { ...editSnapshot, draft: { revision: 3, updatedAt: 1 } },
       onAction: action,
       editSession: { ...editSessionPayload },
       targetSwitchRequest: {

@@ -166,6 +166,14 @@ Token 单次使用。成功、失败、目标切换、范围变化、外部文�
 - Spike 编辑路径此前未注册违规监听器（计数恒为 0，断言假阳性），已修复；edit Spike 现直接复用生产垫片代码（`@prod/csp-compat-observer` 别名），严格 CSP 下三主题零违规。
 - 新增 `tests/webview-e2e/diff-edit-csp.spec.ts`：生产构建 + 生产等价严格 CSP 下的只读/编辑/恶意文本三用例，断言零违规与样式生效。
 
+**验收更正（2026-08-12 第二轮，数据破坏 P0 修复）**：
+
+- 根因：`openEdit` 初始草稿 content 误用 BASE（应为 Working Copy 当前内容），且切换守卫只判草稿存在不判脏——未修改进入编辑再切换会弹三选一，选“保存并打开”会把 BASE 沿安全链写回 Working Copy，静默撤销全部本地改动。
+- 修复语义：草稿初始化为 Working Copy 内容并记录 `cleanContent`（编辑器文本模型：剥 BOM、统一 \n）；`content !== cleanContent` 才是脏草稿；快照只对脏草稿展示恢复入口；干净会话收到切换确认由 Webview 自动“暂存”不打扰用户；`saveDraft` 对干净草稿不写盘直接放行；保存成功后 `cleanContent` 更新为已保存内容。
+- 授权绑定：`diff/target-switch-decision` 的 save 决定 targetId 必须等于 Host 挂起确认时记录的 currentTargetId（`diffTargetSwitch.ts` 纯函数），恶意/陈旧 targetId 被拒绝且不切换。
+- 契约 §5.2 对齐：失败（含 tooLarge）后旧 token 必须失效——体量校验移到 token 消耗之后，并有失效回归测试。
+- token 现绑定真实 `TextDocument.version`（Host 注入，无打开文档为 -1）；文档内容变化经 `watchDiffEditTargets` 立即撤销 token；Extension Host 集成测试覆盖真实 TextDocument 脏拒绝与不落盘。
+
 ### 阶段 2：Host 安全底座
 
 实现领域服务、强类型协议、路径守卫、token、互斥、原子写入、双副本保护和草稿检查点。

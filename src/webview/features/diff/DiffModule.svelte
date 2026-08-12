@@ -76,11 +76,12 @@
   /** 目标切换三选一对话框引用（焦点管理）。 */
   let switchDialog = $state<HTMLDivElement>();
 
-  /** 仅当确认请求针对当前目标时展示对话框。 */
+  /** 仅当确认请求针对当前目标且确有脏内容（编辑中脏或已有脏草稿）时展示。 */
   const showTargetSwitchDialog = $derived(
     targetSwitchRequest !== undefined &&
       (targetId === undefined ||
-        targetSwitchRequest.currentTargetId === targetId),
+        targetSwitchRequest.currentTargetId === targetId) &&
+      (dirty || hasDraft),
   );
 
   const hunks = $derived(
@@ -230,14 +231,18 @@
     }
   }
 
-  // 陈旧确认请求（目标已变化）安全按“暂存”处理，解除 Host 挂起。
+  // 陈旧请求（目标已变化）或干净会话（无脏修改也无脏草稿）：不打扰用户，
+  // 自动按“暂存”回复，解除 Host 挂起。
   $effect(() => {
-    if (
-      targetSwitchRequest &&
-      targetId &&
-      targetSwitchRequest.currentTargetId !== targetId
-    ) {
-      onAction("diff/target-switch-decision", { decision: "stash" });
+    if (!targetSwitchRequest) return;
+    const matches =
+      targetId === undefined ||
+      targetSwitchRequest.currentTargetId === targetId;
+    if (!matches || (!dirty && !hasDraft)) {
+      onAction("diff/target-switch-decision", {
+        decision: "stash",
+        targetId: targetSwitchRequest.currentTargetId,
+      });
     }
   });
 

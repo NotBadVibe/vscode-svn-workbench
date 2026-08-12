@@ -220,6 +220,7 @@ import {
   workbenchRevealTarget,
 } from "./workbenchRouting";
 import { NativeDiffContentProvider } from "./nativeDiffContentProvider";
+import { resolveDiffSwitchDecision } from "./diffTargetSwitch";
 import { createDiffEditingService, watchDiffEditTargets } from "./diffEditHost";
 import { DiffEditingService } from "../../diffEdit/diffEditingService";
 import { buildDiffTargetId } from "../../diffEdit/diffEditingService";
@@ -262,8 +263,9 @@ export class WorkbenchController implements vscode.Disposable {
   private readonly diffEdit?: DiffEditingService;
   /** 当前 Diff 会话目标摘要；同目标重复打开只 reveal，不重新初始化。 */
   private diffTargetKey: string | undefined;
-  /** 等待“脏草稿三选一”决定的新目标请求（仅 Diff 窗口）。 */
-  private pendingDiffOpen: OpenWorkbenchRequest | undefined;
+  /** 等待“脏草稿三选一”决定的新目标请求与当前目标（仅 Diff 窗口）。 */
+  private pendingDiffOpen:
+    { request: OpenWorkbenchRequest; currentTargetId: string } | undefined;
   private pendingDiffOpenTimer: ReturnType<typeof setTimeout> | undefined;
   /** 三选一决定后的递归 reopen 跳过草稿守卫。 */
   private diffSwitchBypass = false;
@@ -373,7 +375,7 @@ export class WorkbenchController implements vscode.Disposable {
       );
       if (this.diffEdit.getDraft(currentTargetId) !== undefined) {
         this.clearPendingDiffOpen();
-        this.pendingDiffOpen = request;
+        this.pendingDiffOpen = { request, currentTargetId };
         this.pendingDiffOpenTimer = setTimeout(() => {
           void this.resolveDiffTargetSwitch("stash", undefined, this.session);
         }, 30_000);
@@ -3060,6 +3062,11 @@ export class WorkbenchController implements vscode.Disposable {
     }
     const targetId = edit.targetId;
     const draft = targetId ? this.diffEdit?.getDraft(targetId) : undefined;
+    // 只有脏草稿才对 Webview 可见（干净草稿无可恢复内容，不展示恢复入口）。
+    const dirtyDraft =
+      draft && targetId && this.diffEdit?.isDraftDirty(targetId)
+        ? draft
+        : undefined;
     // 恢复路径：存在草稿时以草稿内容作为可编辑侧（工作副本侧展示草稿）。
     const modified =
       draft && draft.targetPath === path.resolve(absolutePath)
@@ -3079,8 +3086,8 @@ export class WorkbenchController implements vscode.Disposable {
       truncated,
       binary,
       edit,
-      draft: draft
-        ? { revision: draft.revision, updatedAt: draft.updatedAt }
+      draft: dirtyDraft
+        ? { revision: dirtyDraft.revision, updatedAt: dirtyDraft.updatedAt }
         : undefined,
       message: binary
         ? "检测到二进制内容，未向 Webview 发送文件正文。"
@@ -3088,7 +3095,7 @@ export class WorkbenchController implements vscode.Disposable {
           ? "文件超过 5 MB，仅显示前 5 MB。"
           : baseResult.exitCode !== 0
             ? "无法读取 BASE 内容，可能是未版本化文件。"
-            : draft
+            : dirtyDraft
               ? "存在未保存草稿，编辑前请先恢复或放弃。"
               : undefined,
     };
@@ -3151,10 +3158,20 @@ export class WorkbenchController implements vscode.Disposable {
     const pending = this.pendingDiffOpen;
     this.clearPendingDiffOpen();
     if (!pending) return;
-    if (decision === "save") {
-      if (!this.diffEdit || !targetId || !session) return;
+    // 授权绑定：save 的 targetId 必须等于挂起确认时的 currentTargetId。
+    const resolution = resolveDiffSwitchDecision(
+      pending.currentTargetId,
+      decision,
+      targetId,
+    );
+    if (resolution.kind === "reject") {
+      await this.sendError("diff", "切换决定被拒绝", resolution.reason, false);
+      return;
+    }
+    if (resolution.kind === "save") {
+      if (!this.diffEdit || !session) return;
       const result = await this.diffEdit.saveDraft({
-        targetId,
+        targetId: resolution.targetId,
         scope: session.scope,
         repositoryRoot: session.scope.repositoryRoot,
       });
@@ -3167,8 +3184,8 @@ export class WorkbenchController implements vscode.Disposable {
         });
         return;
       }
-    } else if (decision !== "stash") {
-      // stay（或未知决定）：保持当前文件，草稿保留。
+    } else if (resolution.kind !== "stash") {
+      // stay：保持当前文件，草稿保留。
       await this.post({
         protocolVersion: WORKBENCH_PROTOCOL_VERSION,
         type: "operation/result",
@@ -3182,7 +3199,7 @@ export class WorkbenchController implements vscode.Disposable {
     }
     this.diffSwitchBypass = true;
     try {
-      await this.open(pending);
+      await this.open(pending.request);
     } finally {
       this.diffSwitchBypass = false;
     }
@@ -3253,7 +3270,6 @@ export class WorkbenchController implements vscode.Disposable {
       baseRevision: "BASE",
       baseHash: "",
       rawHash: "",
-      documentVersion: 0,
       scope: session.scope,
       repositoryRoot: session.scope.repositoryRoot,
     });

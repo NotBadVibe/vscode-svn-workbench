@@ -25,10 +25,10 @@ export interface DiffEditTargetContext {
   baseHash: string;
   /** 磁盘原始完整字节 hash（编辑打开与每次保存前复验）。 */
   rawHash: string;
+  /** Working Copy 当前内容（编辑器文本模型：剥离 BOM、统一 \n）。 */
+  workingContents: string;
   isRegularFile: boolean;
   sizeBytes: number;
-  /** 打开时对应的 TextDocument.version（脏文档保护）。 */
-  documentVersion: number;
 }
 
 export interface OpenDiffEditInput {
@@ -41,7 +41,6 @@ export interface OpenDiffEditInput {
   baseRevision: string;
   baseHash: string;
   rawHash: string;
-  documentVersion: number;
 }
 
 export interface DiffSaveWorkingInput {

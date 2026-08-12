@@ -33,6 +33,17 @@ export function createDiffEditingService(): DiffEditingService {
           document.isDirty,
       );
     },
+    // token 绑定真实 TextDocument.version；无打开文档时为 -1。
+    getDocumentVersion: async (targetPath: string): Promise<number> => {
+      const resolved = resolvePath(targetPath);
+      const document = vscode.workspace.textDocuments.find(
+        (candidate) =>
+          !candidate.isClosed &&
+          candidate.uri.scheme === "file" &&
+          resolvePath(candidate.uri.fsPath) === resolved,
+      );
+      return document ? document.version : -1;
+    },
     freshness: async (targetPath: string): Promise<DiffTargetFreshness> => {
       try {
         const stat = await fs.lstat(targetPath);

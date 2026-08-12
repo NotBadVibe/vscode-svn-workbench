@@ -48,6 +48,16 @@ export interface DiffByteAnalysis {
   finalNewline: boolean;
 }
 
+/**
+ * 把原始字节解码为编辑器文本模型：剥离 BOM、统一 \n（与
+ * toPreservingBytes 的归一化互逆），供草稿初始化与脏判定使用。
+ */
+export function normalizeEditText(buffer: Buffer): string {
+  let text = buffer.toString("utf8");
+  if (text.startsWith("\uFEFF")) text = text.slice(1);
+  return text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+}
+
 /** 检测字节序列是否合法 UTF-8，并给出 BOM / EOL / 末尾换行特征。 */
 export function analyzeUtf8(buffer: Buffer): DiffByteAnalysis {
   if (buffer.length === 0) {
@@ -193,9 +203,9 @@ export async function validateDiffEditTarget(input: {
       baseRevision: input.baseRevision,
       baseHash: hashBytes(Buffer.from(input.baseContents, "utf8")),
       rawHash: hashBytes(buffer),
+      workingContents: normalizeEditText(buffer),
       isRegularFile: true,
       sizeBytes: buffer.byteLength,
-      documentVersion: 0,
     },
   };
 }

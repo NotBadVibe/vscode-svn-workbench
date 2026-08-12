@@ -23,6 +23,11 @@ export interface DiffDraft {
   diskHash: string;
   targetPath: string;
   content: string;
+  /**
+   * 打开时（或上次成功保存后）的 Working Copy 内容（编辑器文本模型）。
+   * content !== cleanContent 才是“脏草稿”；绝不允许 BASE 进入该字段。
+   */
+  cleanContent: string;
   /** 递增检查点版本；保存/恢复/放弃请求必须携带以拒绝重放与乱序。 */
   revision: number;
   updatedAt: number;
@@ -41,6 +46,8 @@ export interface UpsertDraftInput {
   diskHash: string;
   targetPath: string;
   content: string;
+  /** 干净基准内容（仅首次创建需要；既有草稿保留原值）。 */
+  cleanContent?: string;
   /** 客户端已确认的最新 draftRevision（无则 -1）。 */
   baseRevisionOfClient: number;
 }
@@ -79,6 +86,8 @@ export class DiffDraftService {
       diskHash: input.diskHash,
       targetPath: input.targetPath,
       content: input.content,
+      cleanContent:
+        existing?.cleanContent ?? input.cleanContent ?? input.content,
       revision,
       updatedAt: Date.now(),
     };

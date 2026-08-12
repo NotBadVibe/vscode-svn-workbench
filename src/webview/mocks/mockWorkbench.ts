@@ -195,8 +195,8 @@ let activeMockModuleId: WorkbenchModuleId = "changes";
 let activeMockTaskId: WorkbenchTaskId = defaultWorkbenchTask("changes");
 /** 当前 mock Diff 目标（open-edit/save 的 targetId 与快照一致）。 */
 let activeMockDiffPath = "src/extension.ts";
-/** 持有草稿的 mock 路径集合（切换 diff 目标会触发三选一确认）。 */
-const mockDraftPaths = new Set<string>();
+/** 持有草稿的 mock 路径（dirty 与 Host cleanContent 语义一致）。 */
+const mockDrafts = new Map<string, { dirty: boolean }>();
 /** 等待三选一决定的 mock 切换目标。 */
 let pendingMockSwitch: string | undefined;
 /** 目标切换后的 mock 会话序号（模拟 Host 会话替换）。 */
@@ -293,11 +293,11 @@ function mockDiffSnapshot(
   };
 }
 
-/** 与 Host 行为一致：目标存在草稿时快照携带 draft 摘要。 */
+/** 与 Host 行为一致：只有脏草稿才在快照中携带 draft 摘要。 */
 function mockDiffDraft(
   relativePath: string,
 ): { revision: number; updatedAt: number } | undefined {
-  return mockDraftPaths.has(relativePath)
+  return mockDrafts.get(relativePath)?.dirty === true
     ? { revision: 1, updatedAt: Date.now() }
     : undefined;
 }
@@ -433,7 +433,7 @@ export function startMockWorkbench(): void {
     if (action === "open-diff" && typeof data.relativePath === "string") {
       // 当前目标有草稿时模拟 Host 的三选一拦截：先确认，不直接切换。
       if (
-        mockDraftPaths.has(activeMockDiffPath) &&
+        mockDrafts.has(activeMockDiffPath) &&
         data.relativePath !== activeMockDiffPath
       ) {
         pendingMockSwitch = data.relativePath;
@@ -471,13 +471,14 @@ export function startMockWorkbench(): void {
           },
           snapshotVersion: Date.now(),
         });
-        mockDraftPaths.delete(activeMockDiffPath);
+        mockDrafts.delete(activeMockDiffPath);
       }
       // stash：草稿保留在 mock“Host”；save：草稿已落盘清除。
       injectDiffTargetSwitch(pending);
     }
     if (action === "diff/open-edit") {
-      mockDraftPaths.add(activeMockDiffPath);
+      // 干净草稿：内容即 Working Copy 当前内容，不在快照展示恢复入口。
+      mockDrafts.set(activeMockDiffPath, { dirty: false });
       injectHostMessage("diff/edit-opened", {
         targetId: `mock-diff-${activeMockDiffPath}`,
         editToken: "mock-edit-token",
@@ -488,12 +489,7 @@ export function startMockWorkbench(): void {
         baseContents: mockDiffOriginal,
         message: "已进入页内编辑；保存将写入工作副本当前范围。",
       });
-      injectSnapshot(
-        "diff",
-        mockDiffSnapshot(activeMockDiffPath, {
-          draft: { revision: 1, updatedAt: Date.now() },
-        }),
-      );
+      injectSnapshot("diff", mockDiffSnapshot(activeMockDiffPath));
     }
     if (action === "diff/save-working") {
       const ok = typeof data.content === "string" && data.content.length > 0;
@@ -516,6 +512,8 @@ export function startMockWorkbench(): void {
         snapshotVersion: Date.now(),
       });
       if (ok) {
+        // 保存成功：草稿保留但回到干净状态（内容已落盘）。
+        mockDrafts.set(activeMockDiffPath, { dirty: false });
         injectSnapshot(
           "diff",
           mockDiffSnapshot(activeMockDiffPath, {
@@ -525,13 +523,14 @@ export function startMockWorkbench(): void {
       }
     }
     if (action === "diff/draft-checkpoint") {
+      mockDrafts.set(activeMockDiffPath, { dirty: true });
       injectHostMessage("diff/draft-checkpointed", {
         targetId: data.targetId,
         draftRevision: (Number(data.draftRevision) || 1) + 1,
       });
     }
     if (action === "diff/draft-abandon") {
-      mockDraftPaths.delete(activeMockDiffPath);
+      mockDrafts.delete(activeMockDiffPath);
       injectHostMessage("operation/result", {
         title: "草稿已放弃",
         message: "页内编辑草稿已清除，回到只读差异视图。",

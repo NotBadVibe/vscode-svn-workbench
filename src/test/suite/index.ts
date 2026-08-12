@@ -1171,7 +1171,6 @@ async function testDiffEditIntegration(): Promise<void> {
       baseRevision: "BASE",
       baseHash: hashBytes(Buffer.from(original, "utf8")),
       rawHash: hashBytes(Buffer.from(original, "utf8")),
-      documentVersion: 0,
       scope,
       repositoryRoot: workspace.uri.fsPath,
     });
@@ -1211,6 +1210,76 @@ async function testDiffEditIntegration(): Promise<void> {
       repositoryRoot: workspace.uri.fsPath,
     });
     assert.ok(!replay.ok, "旧 token 重放必须被拒绝");
+
+    // 真实 TextDocument 链路（v0.0.6 验收）：干净打开的文档可进入编辑；
+    // 文档变脏后 openEdit 拒绝、已签发 token 的保存被拒绝且不落盘。
+    const document = await vscode.workspace.openTextDocument(target);
+    const liveOpen = await service.openEdit({
+      sessionId: "ext-host-session",
+      repositoryUuid: "test-uuid",
+      scopeHash: "test-scope-hash",
+      targetPath: target,
+      baseContents: original,
+      baseRevision: "BASE",
+      baseHash: hashBytes(Buffer.from(original, "utf8")),
+      rawHash: hashBytes(Buffer.from(original, "utf8")),
+      scope,
+      repositoryRoot: workspace.uri.fsPath,
+    });
+    assert.ok(liveOpen.ok, "干净打开的文档应允许进入编辑");
+    if (!liveOpen.ok) return;
+    // 通过 WorkspaceEdit 使文档变脏（不落盘）。
+    const dirtyEdit = new vscode.WorkspaceEdit();
+    dirtyEdit.insert(document.uri, new vscode.Position(0, 0), "// dirty\n");
+    await vscode.workspace.applyEdit(dirtyEdit);
+    assert.ok(document.isDirty, "文档应处于脏状态");
+    try {
+      const dirtyOpen = await service.openEdit({
+        sessionId: "ext-host-session",
+        repositoryUuid: "test-uuid",
+        scopeHash: "test-scope-hash",
+        targetPath: target,
+        baseContents: original,
+        baseRevision: "BASE",
+        baseHash: hashBytes(Buffer.from(original, "utf8")),
+        rawHash: hashBytes(Buffer.from(original, "utf8")),
+        scope,
+        repositoryRoot: workspace.uri.fsPath,
+      });
+      assert.ok(!dirtyOpen.ok, "脏文档必须拒绝 openEdit");
+      if (!dirtyOpen.ok) {
+        assert.equal(dirtyOpen.reason, "documentDirty");
+      }
+      const dirtySave = await service.saveWorking({
+        sessionId: "ext-host-session",
+        moduleId: "diff",
+        taskId: "diff/working",
+        repositoryUuid: "test-uuid",
+        scopeHash: "test-scope-hash",
+        targetId: liveOpen.targetId,
+        editToken: liveOpen.editToken,
+        draftRevision: liveOpen.draftRevision,
+        expectedContentHash: liveOpen.rawHash,
+        content: "hijack\n",
+        scope,
+        repositoryRoot: workspace.uri.fsPath,
+      });
+      assert.ok(!dirtySave.ok, "脏文档或已失效 token 必须拒绝保存");
+      assert.equal(
+        await fs.promises.readFile(target, "utf8"),
+        "line1\nline1.5\nline2\n",
+        "被拒绝的保存不得改动磁盘",
+      );
+    } finally {
+      // 恢复文档为干净状态，避免污染后续用例。
+      const revertEdit = new vscode.WorkspaceEdit();
+      revertEdit.delete(
+        document.uri,
+        new vscode.Range(new vscode.Position(0, 0), new vscode.Position(1, 0)),
+      );
+      await vscode.workspace.applyEdit(revertEdit);
+      await document.save();
+    }
   } finally {
     await fs.promises.rm(target, { force: true });
   }

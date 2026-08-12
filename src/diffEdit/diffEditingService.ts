@@ -36,6 +36,8 @@ export interface DiffEditingServiceDeps {
   freshness?: (targetPath: string) => Promise<DiffTargetFreshness>;
   /** 打开编辑态前的 TextDocument 脏状态查询（真实环境注入）。 */
   isDocumentDirty?: (targetPath: string) => Promise<boolean>;
+  /** 已打开 TextDocument 的真实 version；无打开文档时返回 -1。 */
+  getDocumentVersion?: (targetPath: string) => Promise<number>;
   /** 读取目标当前磁盘字节（BOM/EOL 分析用；真实环境注入）。 */
   readBytes?: (targetPath: string) => Promise<Buffer>;
 }
@@ -70,6 +72,7 @@ export class DiffEditingService {
     targetPath: string,
   ) => Promise<DiffTargetFreshness>;
   private readonly isDocumentDirty: (targetPath: string) => Promise<boolean>;
+  private readonly getDocumentVersion: (targetPath: string) => Promise<number>;
   private readonly readBytes: (targetPath: string) => Promise<Buffer>;
 
   constructor(private readonly deps: DiffEditingServiceDeps) {
@@ -87,6 +90,7 @@ export class DiffEditingService {
         sizeBytes: 0,
       }));
     this.isDocumentDirty = deps.isDocumentDirty ?? (async () => false);
+    this.getDocumentVersion = deps.getDocumentVersion ?? (async () => -1);
     this.readBytes = deps.readBytes ?? (async () => Buffer.alloc(0));
   }
 
@@ -121,6 +125,9 @@ export class DiffEditingService {
       // 恢复既有草稿：不重置；Webview 直接编辑快照中已展示的草稿内容。
       initialRevision = existingDraft.revision;
     } else {
+      // 草稿初始内容必须是 Working Copy 当前内容（绝不是 BASE）：
+      // 未修改即干净（cleanContent === content），不会触发三选一，
+      // saveDraft 也无可写内容。
       this.drafts.upsert({
         targetId,
         repositoryUuid: input.repositoryUuid,
@@ -130,7 +137,8 @@ export class DiffEditingService {
         baseContents: guard.context.baseContents,
         diskHash: guard.context.rawHash,
         targetPath: guard.context.absolutePath,
-        content: guard.context.baseContents,
+        content: guard.context.workingContents,
+        cleanContent: guard.context.workingContents,
         baseRevisionOfClient: -1,
       });
     }
@@ -145,7 +153,9 @@ export class DiffEditingService {
       rawHash: guard.context.rawHash,
       baseHash: guard.context.baseHash,
       baseRevision: guard.context.baseRevision,
-      documentVersion: guard.context.documentVersion,
+      documentVersion: await this.getDocumentVersion(
+        guard.context.absolutePath,
+      ),
       draftRevision: initialRevision,
     });
     return {
@@ -167,7 +177,9 @@ export class DiffEditingService {
       repositoryRoot: string;
     },
   ): Promise<DiffSaveWorkingResult> {
-    // 先校验体量（廉价且不消耗 token）：内容超过 5 MB 直接拒绝。
+    // 先消耗 token（契约 §5.2：成功、失败后旧 token 均失效），再做廉价
+    // 体量校验：内容超过 5 MB 直接拒绝。
+    const consumed = this.tokens.consume(input.editToken);
     if (Buffer.byteLength(input.content, "utf8") > MAX_EDITABLE_BYTES) {
       return {
         ok: false,
@@ -177,7 +189,6 @@ export class DiffEditingService {
         draftRevision: this.drafts.get(input.targetId)?.revision,
       };
     }
-    const consumed = this.tokens.consume(input.editToken);
     if (!consumed.ok) {
       return {
         ok: false,
@@ -321,7 +332,8 @@ export class DiffEditingService {
       };
     }
 
-    // 成功：更新草稿到已保存状态（磁盘 hash=新 hash），并签发新 token。
+    // 成功：更新草稿到已保存状态（磁盘 hash=新 hash，内容即干净基准），
+    // 并签发新 token。
     this.drafts.upsert({
       targetId: input.targetId,
       repositoryUuid: binding.repositoryUuid,
@@ -332,6 +344,7 @@ export class DiffEditingService {
       diskHash: saved.newHash,
       targetPath: binding.targetPath,
       content: input.content,
+      cleanContent: input.content,
       baseRevisionOfClient: currentDraft.revision,
     });
     const nextDraft = this.drafts.get(input.targetId);
@@ -361,7 +374,9 @@ export class DiffEditingService {
   /**
    * 保存既有草稿（单例窗口“保存并打开”路径）：不经过 Webview token，但复用
    * 同一条安全链——路径守卫复验、脏 TextDocument 拒绝、磁盘 hash 复验、
-   * 临界区重算与原子写入。成功后放弃草稿并撤销该目标全部 token。
+   * 临界区重算与原子写入。干净草稿（content === cleanContent，未修改）
+   * 不写盘，直接清除并放行；脏草稿只写入用户编辑内容，绝不写 BASE。
+   * 成功后放弃草稿并撤销该目标全部 token。
    */
   async saveDraft(input: {
     targetId: string;
@@ -375,6 +390,19 @@ export class DiffEditingService {
         reason: "tokenExpired",
         message: "没有可保存的草稿；请重新进入编辑。",
         recoverable: false,
+      };
+    }
+    // 干净草稿（content === cleanContent，未做任何修改）：无可写内容，
+    // 直接清除草稿并放行切换——绝不能把草稿初始化内容写回磁盘。
+    if (draft.content === draft.cleanContent) {
+      this.drafts.abandon(input.targetId);
+      this.tokens.revokeAllForTarget(input.targetId);
+      return {
+        ok: true,
+        acceptedRevision: draft.revision,
+        newContentHash: draft.diskHash,
+        newEditToken: "",
+        snapshotVersion: Date.now(),
       };
     }
     const guard = await this.validateTarget({
@@ -453,6 +481,12 @@ export class DiffEditingService {
       newEditToken: "",
       snapshotVersion: Date.now(),
     };
+  }
+
+  /** 草稿是否为脏（content 偏离打开/上次保存时的 Working Copy 内容）。 */
+  isDraftDirty(targetId: string): boolean {
+    const draft = this.drafts.get(targetId);
+    return draft !== undefined && draft.content !== draft.cleanContent;
   }
 
   /** 会话替换/面板销毁后撤销该会话的全部 token。 */

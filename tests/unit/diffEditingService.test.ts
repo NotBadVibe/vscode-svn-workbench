@@ -694,7 +694,7 @@ describe("diffEditingService 编排", () => {
     expect(result.ok).toBe(false);
   });
 
-  it("saveWorking 拒绝超过 5 MB 的内容且不消耗 token", async () => {
+  it("saveWorking 拒绝超过 5 MB 的内容且旧 token 失效", async () => {
     const service = new DiffEditingService(deps);
     const opened = await openEdit();
     expect(opened.ok).toBe(true);
@@ -716,7 +716,7 @@ describe("diffEditingService 编排", () => {
     });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe("tooLarge");
-    // token 未消耗：合法重试仍可成功。
+    // 契约 §5.2：失败后旧 token 必须失效，不允许原样重试。
     const retry = await service.saveWorking({
       sessionId: session.sessionId,
       moduleId: "diff",
@@ -731,7 +731,8 @@ describe("diffEditingService 编排", () => {
       scope,
       repositoryRoot,
     });
-    expect(retry.ok).toBe(true);
+    expect(retry.ok).toBe(false);
+    if (!retry.ok) expect(retry.reason).toBe("tokenExpired");
   });
 
   it("revokeForPath 后保存被拒绝（外部变化立即使 token 失效）", async () => {
@@ -870,5 +871,100 @@ describe("diffEditingService 编排", () => {
       baseRevisionOfClient: draft.revision,
     });
     expect(checkpoint.ok).toBe(true);
+  });
+
+  it("openEdit 草稿初始化为 Working Copy 内容而非 BASE（防数据破坏）", async () => {
+    // Working Copy 与 BASE 不同：草稿绝不能以 BASE 为初始内容。
+    const service = new DiffEditingService(deps);
+    const opened = await service.openEdit({
+      sessionId: session.sessionId,
+      repositoryUuid: session.repositoryUuid,
+      scopeHash: session.scopeHash,
+      targetPath: target,
+      baseContents: "BASE 原始内容\n",
+      baseRevision: "10",
+      baseHash: hashBytes(Buffer.from("BASE 原始内容\n", "utf8")),
+      rawHash: hashBytes(Buffer.from("const x = 1;\n", "utf8")),
+      documentVersion: 1,
+      scope,
+      repositoryRoot,
+    });
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) return;
+    const draft = service.getDraft(opened.targetId);
+    expect(draft).toBeDefined();
+    // 草稿内容必须等于 Working Copy 当前内容，不是 BASE。
+    expect(draft?.content).toBe("const x = 1;\n");
+    expect(draft?.content).not.toBe("BASE 原始内容\n");
+    // 未修改的草稿不是脏草稿。
+    expect(service.isDraftDirty(opened.targetId)).toBe(false);
+  });
+
+  it("saveDraft 对未修改的干净草稿不写盘（不将 BASE 写回 Working Copy）", async () => {
+    const service = new DiffEditingService(deps);
+    const opened = await service.openEdit({
+      sessionId: session.sessionId,
+      repositoryUuid: session.repositoryUuid,
+      scopeHash: session.scopeHash,
+      targetPath: target,
+      baseContents: "BASE 原始内容\n",
+      baseRevision: "10",
+      baseHash: hashBytes(Buffer.from("BASE 原始内容\n", "utf8")),
+      rawHash: hashBytes(Buffer.from("const x = 1;\n", "utf8")),
+      documentVersion: 1,
+      scope,
+      repositoryRoot,
+    });
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) return;
+    const before = await fs.readFile(target, "utf8");
+    const result = await service.saveDraft({
+      targetId: opened.targetId,
+      scope,
+      repositoryRoot,
+    });
+    expect(result.ok).toBe(true);
+    // 磁盘内容未被重写（尤其不能变成 BASE）。
+    expect(await fs.readFile(target, "utf8")).toBe(before);
+    expect(await fs.readFile(target, "utf8")).not.toBe("BASE 原始内容\n");
+    expect(service.getDraft(opened.targetId)).toBeUndefined();
+  });
+
+  it("saveDraft 只写入用户真实编辑内容（checkpoint 之后）", async () => {
+    const service = new DiffEditingService(deps);
+    const opened = await openEdit();
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) return;
+    service.checkpointDraft({
+      targetId: opened.targetId,
+      sessionId: session.sessionId,
+      repositoryUuid: session.repositoryUuid,
+      scopeHash: session.scopeHash,
+      baseHash: opened.baseHash,
+      baseRevision: opened.baseRevision,
+      baseContents: opened.baseContents,
+      diskHash: opened.rawHash,
+      targetPath: target,
+      content: "用户编辑后的内容\n",
+      baseRevisionOfClient: opened.draftRevision,
+    });
+    expect(service.isDraftDirty(opened.targetId)).toBe(true);
+    const result = await service.saveDraft({
+      targetId: opened.targetId,
+      scope,
+      repositoryRoot,
+    });
+    expect(result.ok).toBe(true);
+    expect(await fs.readFile(target, "utf8")).toBe("用户编辑后的内容\n");
+  });
+
+  it("openEdit 签发的 token 绑定真实 TextDocument.version", async () => {
+    deps = baseDeps({ getDocumentVersion: async () => 42 });
+    const opened = await openEdit();
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) return;
+    const consumed = deps.tokens.consume(opened.editToken);
+    expect(consumed.ok).toBe(true);
+    if (consumed.ok) expect(consumed.binding.documentVersion).toBe(42);
   });
 });
