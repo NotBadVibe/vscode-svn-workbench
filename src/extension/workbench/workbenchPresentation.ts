@@ -107,6 +107,12 @@ export function asStringAllowEmpty(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
+export function asNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
+}
+
 export function asStringArray(value: unknown): string[] | undefined {
   if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
     return undefined;

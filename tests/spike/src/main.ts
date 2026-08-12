@@ -5,6 +5,7 @@ import {
   type SupportedLanguages,
 } from "@pierre/diffs";
 import { MergeView } from "@codemirror/merge";
+import type { EditSpikeReport } from "./edit-spike";
 import "./theme-map.css";
 
 /*
@@ -104,10 +105,38 @@ function installCspCompatibilityShim(): void {
       configurable: true,
       get: originalGetter,
       set(this: Element, value: string) {
-        const rewritten = value.includes('style="')
-          ? value.replace(/style="([^"]*)"/g, 'data-hl-style="$1"')
-          : value;
+        const rewritten =
+          value.includes('style="') || value.includes("style='")
+            ? value.replace(/style=(["'])([^"']*)\1/gi, 'data-hl-style="$2"')
+            : value;
         originalSetter.call(this, rewritten);
+        if (rewritten !== value) launderStyledNodes(this);
+      },
+    });
+  }
+
+  /*
+   * gutter 等部分 HTML 经 insertAdjacentHTML 注入（v0.0.6 edit mode Spike
+   * 定位：DiffHunksRenderer/FileRenderer 的 gutter.properties.style 走此通道），
+   * 同样在解析期被 style-src-attr 拦截。与 innerHTML 同通道改写后再落地。
+   */
+  const insertAdjacentHTMLDescriptor = Object.getOwnPropertyDescriptor(
+    Element.prototype,
+    "insertAdjacentHTML",
+  );
+  if (insertAdjacentHTMLDescriptor?.value != null) {
+    const original = insertAdjacentHTMLDescriptor.value as (
+      position: string,
+      value: string,
+    ) => void;
+    Object.defineProperty(Element.prototype, "insertAdjacentHTML", {
+      configurable: true,
+      value(this: Element, position: string, value: string) {
+        const rewritten =
+          value.includes('style="') || value.includes("style='")
+            ? value.replace(/style=(["'])([^"']*)\1/gi, 'data-hl-style="$2"')
+            : value;
+        original.call(this, position, rewritten);
         if (rewritten !== value) launderStyledNodes(this);
       },
     });
@@ -115,10 +144,12 @@ function installCspCompatibilityShim(): void {
 
   const originalAppendChild = ShadowRoot.prototype.appendChild;
   ShadowRoot.prototype.appendChild = function <T extends Node>(node: T): T {
-    if (
+    const isShimmedStyle =
       node instanceof HTMLStyleElement &&
-      node.hasAttribute("data-theme-css")
-    ) {
+      (node.hasAttribute("data-theme-css") ||
+        node.hasAttribute("data-editor-css") ||
+        node.hasAttribute("data-editor-theme-css"));
+    if (isShimmedStyle) {
       const styleNode = node;
       const sheet = new CSSStyleSheet();
       sheet.replaceSync(styleNode.textContent ?? "");
@@ -134,6 +165,35 @@ function installCspCompatibilityShim(): void {
       return node;
     }
     return originalAppendChild.call(this, node);
+  };
+
+  /*
+   * 编辑器全局样式（data-editor-global-css）经 light DOM appendChild 注入
+   * （非 ShadowRoot），严格 CSP 下同属 style-src-elem 被拦截。转接到
+   * document.adoptedStyleSheets（构造式样式表不受 style-src 限制）。
+   * 内容仅为 `[data-annotation-slot] { user-select: none }` 的轻量规则。
+   */
+  const originalElementAppendChild = Element.prototype.appendChild;
+  Element.prototype.appendChild = function <T extends Node>(node: T): T {
+    if (
+      node instanceof HTMLStyleElement &&
+      node.hasAttribute("data-editor-global-css")
+    ) {
+      const styleNode = node;
+      const sheet = new CSSStyleSheet();
+      sheet.replaceSync(styleNode.textContent ?? "");
+      const observer = new MutationObserver(() => {
+        sheet.replaceSync(styleNode.textContent ?? "");
+      });
+      observer.observe(styleNode, {
+        characterData: true,
+        childList: true,
+        subtree: true,
+      });
+      document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+      return node;
+    }
+    return originalElementAppendChild.call(this, node);
   };
 }
 
@@ -196,6 +256,8 @@ interface SpikeReport {
 declare global {
   interface Window {
     __spike: SpikeReport;
+    __spikeEdit?: EditSpikeReport | undefined;
+    __spikeViolations?: number;
   }
 }
 
@@ -497,6 +559,17 @@ function runCspSelfTest(): CspSelfTest {
 
 async function main(): Promise<void> {
   const params = new URLSearchParams(window.location.search);
+
+  // v0.0.6 edit mode Spike：独立报告，不执行只读 spike 逻辑。
+  if (params.get("edit") === "1") {
+    // 编辑态依赖 Editor 注入的 shadow 内联样式；与 v0.0.4 主题垫片同通道
+    // （Constructable Stylesheet）适配，验证严格 CSP 下可编辑可用。
+    installCspCompatibilityShim();
+    const { runEditSpike } = await import("./edit-spike");
+    await runEditSpike(params);
+    return;
+  }
+
   const theme = params.get("theme") ?? "dark";
   const view = params.get("view") === "unified" ? "unified" : "split";
   document.body.dataset.theme = theme;
@@ -522,6 +595,7 @@ async function main(): Promise<void> {
       disposition: event.disposition,
       sample: event.sample ?? "",
     });
+    window.__spikeViolations = (window.__spikeViolations ?? 0) + 1;
   });
 
   if (params.get("selftest") === "1") {

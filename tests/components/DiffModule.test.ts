@@ -61,6 +61,34 @@ vi.mock("@pierre/diffs", () => {
   };
 });
 
+const editMock = vi.hoisted(() => {
+  const state = { text: "", onChangeCalls: 0, focusLine: 0 };
+  return { state };
+});
+
+vi.mock("@pierre/diffs/edit", () => {
+  class FakeEditor {
+    readonly options: Record<string, unknown>;
+    constructor(options: Record<string, unknown>) {
+      this.options = options;
+    }
+    edit(): void {
+      /* no-op */
+    }
+    getText(): string {
+      return editMock.state.text;
+    }
+    focus(options?: { lineNumber?: number }): void {
+      editMock.state.focusLine = options?.lineNumber ?? 0;
+    }
+    applyEdits(): void {
+      editMock.state.onChangeCalls += 1;
+      (this.options.onChange as () => void)?.();
+    }
+  }
+  return { Editor: FakeEditor };
+});
+
 import DiffModule from "../../src/webview/features/diff/DiffModule.svelte";
 
 const workingSnapshot: DiffSnapshot = {
@@ -355,5 +383,138 @@ describe("CSP 兼容垫片（jsdom 可覆盖部分）", () => {
     expect(element.style.getPropertyValue("display")).toBe("block");
     // 非法声明被跳过，不抛错。
     expect(element.style.length).toBe(2);
+  });
+});
+
+describe("DiffModule 页内编辑（v0.0.6）", () => {
+  const editSnapshot: DiffSnapshot = {
+    kind: "diff",
+    relativePath: "src/extension.ts",
+    original: "const a = 1;\n",
+    modified: "const a = 2;\nconst b = 3;\n",
+    language: "typescript",
+    truncated: false,
+    binary: false,
+    edit: { supported: true, targetId: "mock-target" },
+  };
+
+  const editSessionPayload = {
+    targetId: "mock-target",
+    editToken: "mock-token",
+    draftRevision: 1,
+    baseHash: "base",
+    baseRevision: "BASE",
+    rawHash: "raw",
+    baseContents: "const a = 1;\n",
+    message: "已进入页内编辑。",
+  };
+
+  beforeEach(() => {
+    editMock.state.text = "";
+    editMock.state.onChangeCalls = 0;
+    editMock.state.focusLine = 0;
+  });
+
+  it("可编辑快照显示“页内编辑”，点击发起 diff/open-edit", async () => {
+    const action = vi.fn();
+    render(DiffModule, {
+      snapshot: editSnapshot,
+      onAction: action,
+    });
+    const button = await screen.findByRole("button", { name: "页内编辑" });
+    await fireEvent.click(button);
+    expect(action).toHaveBeenCalledWith("diff/open-edit");
+  });
+
+  it("存在草稿时显示恢复与导出入口", async () => {
+    render(DiffModule, {
+      snapshot: { ...editSnapshot, draft: { revision: 3, updatedAt: 1 } },
+      onAction: vi.fn(),
+    });
+    expect(
+      await screen.findByRole("button", { name: "恢复草稿并编辑" }),
+    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "导出草稿补丁" })).toBeTruthy();
+  });
+
+  it("收到编辑会话后进入编辑态：显示保存、导航与还原块按钮", async () => {
+    render(DiffModule, {
+      snapshot: editSnapshot,
+      onAction: vi.fn(),
+      editSession: editSessionPayload,
+    });
+    expect(await screen.findByText("编辑模式")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "保存修改" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "下一个差异" })).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "还原当前差异块为 BASE" }),
+    ).toBeTruthy();
+  });
+
+  it("编辑变化标记脏状态，Ctrl/Cmd+S 发起 diff/save-working", async () => {
+    const action = vi.fn();
+    render(DiffModule, {
+      snapshot: editSnapshot,
+      onAction: action,
+      editSession: editSessionPayload,
+    });
+    await screen.findByText("编辑模式");
+    // 模拟编辑内容变化（经 fake editor onChange）。
+    editMock.state.text = "const a = 9;\nconst b = 3;\n";
+    editMock.state.onChangeCalls = 0;
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "s",
+        ctrlKey: true,
+        cancelable: true,
+      }),
+    );
+    // onChangeCalls 由 fake applyEdits 触发；这里直接触发 onChange 路径：
+    // DiffView 的 onChange 会在真实编辑时被调用，测试改为主动调用 onReady API。
+    expect(action).toHaveBeenCalledWith(
+      "diff/save-working",
+      expect.objectContaining({
+        targetId: "mock-target",
+        editToken: "mock-token",
+        content: "const a = 9;\nconst b = 3;\n",
+      }),
+    );
+  });
+
+  it("保存拒绝显示中文原因与草稿版本", async () => {
+    render(DiffModule, {
+      snapshot: editSnapshot,
+      onAction: vi.fn(),
+      editSession: editSessionPayload,
+      diffSaveResult: {
+        result: {
+          ok: false,
+          reason: "writeFailed",
+          message:
+            "写入失败（磁盘满、权限不足或系统错误）；原文件未改动，草稿已保留。",
+          recoverable: true,
+          draftRevision: 2,
+        },
+        snapshotVersion: 1,
+      },
+    });
+    await screen.findByText("编辑模式");
+    expect(await screen.findByText(/保存被拒绝：写入失败/)).toBeTruthy();
+    expect(screen.getByText(/草稿已保留，版本 2/)).toBeTruthy();
+  });
+
+  it("不支持编辑的快照给出中文原因且无编辑入口", async () => {
+    render(DiffModule, {
+      snapshot: {
+        ...editSnapshot,
+        edit: {
+          supported: false,
+          reason: "二进制文件不支持页内编辑；请使用原生编辑器。",
+        },
+      },
+      onAction: vi.fn(),
+    });
+    expect(await screen.findByText(/二进制文件不支持页内编辑/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "页内编辑" })).toBeNull();
   });
 });

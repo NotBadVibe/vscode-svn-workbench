@@ -209,15 +209,7 @@ function createInitialMockSnapshot(
   moduleId: WorkbenchModuleId,
 ): WorkbenchModuleSnapshot {
   if (moduleId === "diff") {
-    return {
-      kind: "diff",
-      relativePath: "src/extension.ts",
-      original: mockDiffOriginal,
-      modified: mockDiffModified,
-      language: "typescript",
-      truncated: false,
-      binary: false,
-    };
+    return mockDiffSnapshot("src/extension.ts");
   }
   const factories: Record<
     Exclude<WorkbenchModuleId, "diff">,
@@ -236,6 +228,58 @@ function createInitialMockSnapshot(
     diagnostics: diagnosticsSnapshot,
   };
   return factories[moduleId]();
+}
+
+/**
+ * mock 的 diff 快照（v0.0.6 编辑能力）：默认支持页内编辑并签发 mock targetId。
+ */
+function mockDiffSnapshot(
+  relativePath: string,
+  overrides: {
+    draft?: { revision: number; updatedAt: number };
+    original?: string;
+    modified?: string;
+    supported?: boolean;
+  } = {},
+): WorkbenchModuleSnapshot {
+  const supported = overrides.supported ?? true;
+  return {
+    kind: "diff",
+    relativePath,
+    original: overrides.original ?? mockDiffOriginal,
+    modified: overrides.modified ?? mockDiffModified,
+    language: "typescript",
+    truncated: false,
+    binary: false,
+    edit: supported
+      ? { supported: true, targetId: `mock-diff-${relativePath}` }
+      : {
+          supported: false,
+          reason: "mock：该文件不支持页内编辑。",
+        },
+    draft: overrides.draft,
+  };
+}
+
+/** 向 Webview 注入一条 Host 消息（编辑会话/保存结果等）。 */
+function injectHostMessage(
+  type:
+    | "diff/edit-opened"
+    | "diff/save-result"
+    | "diff/draft-checkpointed"
+    | "operation/result",
+  payload: Record<string, unknown>,
+): void {
+  workbenchBridge.injectMock({
+    protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+    type,
+    moduleId: "diff",
+    taskId: "diff/working",
+    sessionId: "mock-session-id",
+    repositoryUuid: "mock-repository-uuid",
+    scopeHash: "mock-scope-hash",
+    payload,
+  } as never);
 }
 
 export function startMockWorkbench(): void {
@@ -345,14 +389,72 @@ export function startMockWorkbench(): void {
       if (createSnapshot) injectSnapshot(moduleId, createSnapshot(), taskId);
     }
     if (action === "open-diff" && typeof data.relativePath === "string") {
-      injectSnapshot("diff", {
-        kind: "diff",
-        relativePath: data.relativePath,
-        original: mockDiffOriginal,
-        modified: mockDiffModified,
-        language: "typescript",
-        truncated: false,
-        binary: false,
+      injectSnapshot("diff", mockDiffSnapshot(data.relativePath));
+    }
+    if (action === "diff/open-edit") {
+      injectHostMessage("diff/edit-opened", {
+        targetId: "mock-diff-src/extension.ts",
+        editToken: "mock-edit-token",
+        draftRevision: 1,
+        baseHash: "mock-base-hash",
+        baseRevision: "BASE",
+        rawHash: "mock-raw-hash",
+        baseContents: mockDiffOriginal,
+        message: "已进入页内编辑；保存将写入工作副本当前范围。",
+      });
+      injectSnapshot(
+        "diff",
+        mockDiffSnapshot("src/extension.ts", {
+          draft: { revision: 1, updatedAt: Date.now() },
+        }),
+      );
+    }
+    if (action === "diff/save-working") {
+      const ok = typeof data.content === "string" && data.content.length > 0;
+      injectHostMessage("diff/save-result", {
+        result: ok
+          ? {
+              ok: true,
+              acceptedRevision: 2,
+              newContentHash: "mock-new-hash",
+              newEditToken: "mock-edit-token-2",
+              snapshotVersion: Date.now(),
+            }
+          : {
+              ok: false,
+              reason: "writeFailed",
+              message: "模拟写入失败：无法写入目标文件。",
+              recoverable: true,
+              draftRevision: 2,
+            },
+        snapshotVersion: Date.now(),
+      });
+      if (ok) {
+        injectSnapshot(
+          "diff",
+          mockDiffSnapshot("src/extension.ts", {
+            modified: data.content as string,
+          }),
+        );
+      }
+    }
+    if (action === "diff/draft-checkpoint") {
+      injectHostMessage("diff/draft-checkpointed", {
+        targetId: data.targetId,
+        draftRevision: (Number(data.draftRevision) || 1) + 1,
+      });
+    }
+    if (action === "diff/draft-abandon") {
+      injectHostMessage("operation/result", {
+        title: "草稿已放弃",
+        message: "页内编辑草稿已清除，回到只读差异视图。",
+      });
+      injectSnapshot("diff", mockDiffSnapshot("src/extension.ts"));
+    }
+    if (action === "diff/draft-export") {
+      injectHostMessage("operation/result", {
+        title: "草稿补丁已导出",
+        message: "补丁已复制到剪贴板，可在外部审阅或人工应用。",
       });
     }
     if (action === "refresh") {
@@ -373,15 +475,7 @@ export function startMockWorkbench(): void {
         diagnostics: diagnosticsSnapshot,
       };
       if (activeMockModuleId === "diff") {
-        injectSnapshot("diff", {
-          kind: "diff",
-          relativePath: "src/extension.ts",
-          original: "",
-          modified: "",
-          language: "typescript",
-          truncated: false,
-          binary: false,
-        });
+        injectSnapshot("diff", mockDiffSnapshot("src/extension.ts"));
       } else {
         injectSnapshot(activeMockModuleId, snapshots[activeMockModuleId]());
       }

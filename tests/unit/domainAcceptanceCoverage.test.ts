@@ -8,6 +8,7 @@ const hostOnlyTests = new Set([
   "normalizes native SCM resource state command arguments",
   "opens and reuses Diff tabs and invokes native vscode.diff",
   "v0.0.5 opens independent per-module windows with reuse and rebuild",
+  "v0.0.6 edits a working copy file via the guarded save pipeline",
 ]);
 const needsSvnWorkspace = new Set([
   "keeps folder operation scope inside the selected folder",

@@ -121,6 +121,9 @@
     <FeatureRouter
       snapshot={state.snapshot}
       taskId={state.taskId}
+      editSession={state.editSession}
+      diffSaveResult={state.diffSaveResult}
+      draftAck={state.draftAck}
       onAction={(action, data) => state.action(action, data)}
     />
   {:else}

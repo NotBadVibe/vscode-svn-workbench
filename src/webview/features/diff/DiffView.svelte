@@ -1,11 +1,12 @@
 <script lang="ts">
   import { FileDiff, parsePatchFiles, preloadHighlighter } from "@pierre/diffs";
+  import { Editor } from "@pierre/diffs/edit";
   import { mapToDiffLanguage } from "./diffLanguage";
   import { observeDiffShadowRoot } from "./cspCompatObserver";
   import { diffViewLabels } from "../../i18n/terminology";
 
   /*
-   * @pierre/diffs 适配层（v0.0.4 阶段 1）。
+   * @pierre/diffs 适配层（v0.0.4 阶段 1 + v0.0.6 编辑态）。
    *
    * 职责：
    * - 封装 vanilla FileDiff 的挂载/卸载与快照切换生命周期（old/new 全文与
@@ -15,6 +16,8 @@
    * - 提供中文、键盘可达的 unified/split 视图切换与"展开全部/折叠未变更"
    *   控制（组件折叠控件本身 tabIndex=-1 键盘不可达，垫片已补齐 aria，
    *   工具栏是不依赖这些控件的等价路径）；
+   * - v0.0.6 编辑态：editMode=true 时把 @pierre/diffs/edit 的 Editor 附加到
+   *   可编辑 FileDiff，仅工作副本侧可编辑；通过 onEditChange 上报内容；
    * - 挂载/渲染抛错时通过 onFallback 通知父级降级到 MergeView / 原始文本。
    *
    * 主题跟随：themeType "system" 让组件按宿主 color-scheme 在
@@ -27,25 +30,75 @@
     oldContents,
     newContents,
     patch,
+    editMode = false,
+    onEditChange,
+    onReady,
     onFallback,
   }: {
     relativePath: string;
     language?: string;
-    /** old/new 全文模式：BASE 与工作副本内容。 */
     oldContents?: string;
     newContents?: string;
-    /** patch 直渲模式：unified diff 原文（修订比较）；提供时优先于 old/new。 */
     patch?: string;
-    /** 挂载或渲染失败回调；父级负责切换到降级 UI。 */
+    /** v0.0.6：是否处于编辑态（仅 Working Copy 侧可编辑）。 */
+    editMode?: boolean;
+    /** 编辑内容变化回调（供脏状态与草稿检查点）。 */
+    onEditChange?: (text: string) => void;
+    /** 挂载完成回调：暴露读取/导航/逐块采用 API。 */
+    onReady?: (api: {
+      getText: () => string;
+      focusLine: (lineNumber: number) => void;
+      applyRegionEdit: (
+        startLine: number,
+        endLine: number,
+        newText: string,
+      ) => void;
+    }) => void;
     onFallback: (error: unknown) => void;
   } = $props();
 
   let host = $state<HTMLDivElement>();
   let diffStyle = $state<"unified" | "split">("split");
   let expandUnchanged = $state(false);
+  /** 当前附加的编辑器实例（编辑态）。 */
+  let editorInstance: Editor<undefined> | undefined;
+  let editing = $state(false);
 
-  // 预热当前文件语言的高亮资源（语言 chunk 懒加载）；失败不阻塞基础渲染，
-  // 组件会在高亮不可用时先渲染无色文本。
+  $effect(() => {
+    if (editMode !== editing) editing = editMode;
+  });
+
+  /** 供父级调用：获取当前编辑文本。 */
+  function getText(): string {
+    return editorInstance?.getText() ?? "";
+  }
+
+  /** 供父级调用：聚焦到指定行（差异导航）。 */
+  function focusLine(lineNumber: number): void {
+    editorInstance?.focus({ lineNumber });
+  }
+
+  /** 供父级调用：把给定行区间替换为文本（逐块采用）。 */
+  function applyRegionEdit(
+    startLine: number,
+    endLine: number,
+    newText: string,
+  ): void {
+    editorInstance?.applyEdits([
+      {
+        range: {
+          start: { line: Math.max(0, startLine - 1), character: 0 },
+          end: {
+            line: Math.max(0, endLine - 1),
+            character: Number.MAX_SAFE_INTEGER,
+          },
+        },
+        newText,
+      },
+    ]);
+  }
+
+  // 预热当前文件语言的高亮资源（语言 chunk 懒加载）；失败不阻塞基础渲染。
   $effect(() => {
     if (patch != null) return;
     const lang = mapToDiffLanguage(language, relativePath);
@@ -61,9 +114,9 @@
   $effect(() => {
     const container = host;
     if (!container) return;
-    // 读取响应式状态：视图切换/折叠控制会触发本 effect 重跑并重挂载。
     const style = diffStyle;
     const expand = expandUnchanged;
+    const isEditing = editing;
     const instances: FileDiff[] = [];
     const observers: { disconnect(): void }[] = [];
     let disposed = false;
@@ -114,8 +167,7 @@
         }
       } else {
         const lang = mapToDiffLanguage(language, relativePath);
-        // 文件标题已由模块工具栏展示，避免组件头重复显示路径。
-        mountInstance({ disableFileHeader: true }, (instance) =>
+        mountInstance({ disableFileHeader: true }, (instance) => {
           instance.render({
             oldFile: {
               name: relativePath,
@@ -128,8 +180,41 @@
               lang,
             },
             containerWrapper: container,
-          }),
-        );
+          });
+          // v0.0.6 编辑态：附加编辑器，仅工作副本侧可编辑。
+          if (isEditing) {
+            const editor = new Editor<undefined>({
+              onChange: () => {
+                onEditChange?.(editor.getText());
+              },
+            });
+            editor.edit(instance);
+            editorInstance = editor;
+          }
+          onReady?.({
+            getText: () => editorInstance?.getText() ?? "",
+            focusLine: (lineNumber: number) =>
+              editorInstance?.focus({ lineNumber }),
+            applyRegionEdit: (
+              startLine: number,
+              endLine: number,
+              newText: string,
+            ) => {
+              editorInstance?.applyEdits([
+                {
+                  range: {
+                    start: { line: Math.max(0, startLine - 1), character: 0 },
+                    end: {
+                      line: Math.max(0, endLine - 1),
+                      character: Number.MAX_SAFE_INTEGER,
+                    },
+                  },
+                  newText,
+                },
+              ]);
+            },
+          });
+        });
       }
     } catch (error) {
       dispose();

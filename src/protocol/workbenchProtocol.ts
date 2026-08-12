@@ -184,7 +184,53 @@ export interface DiffSnapshot {
   truncated: boolean;
   binary: boolean;
   message?: string;
+  /**
+   * v0.0.6 页内编辑能力：supported=true 时 Webview 可切换编辑态并发起
+   * diff/save-working；targetId 为 Host 签发的不透明标识，Webview 不接触
+   * 可写绝对路径。reason 为不支持时的中文原因与恢复动作。
+   */
+  edit?: {
+    supported: boolean;
+    targetId?: string;
+    reason?: string;
+  };
+  /** 草稿检查点（仅内存）：存在时编辑态可恢复/放弃/导出。 */
+  draft?: {
+    revision: number;
+    updatedAt: number;
+  };
 }
+
+/** diff/save-working 的结构化拒绝原因（协议 §7）。 */
+export type DiffSaveRejectReason =
+  | "tokenExpired"
+  | "scopeChanged"
+  | "diskChanged"
+  | "documentDirty"
+  | "targetMoved"
+  | "tooLarge"
+  | "unsupportedEncoding"
+  | "writeFailed";
+
+/** diff/save-working 成功响应。 */
+export interface DiffSaveAccepted {
+  ok: true;
+  acceptedRevision: number;
+  newContentHash: string;
+  newEditToken: string;
+  snapshotVersion: number;
+}
+
+/** diff/save-working 拒绝响应（含中文说明与草稿恢复版本）。 */
+export interface DiffSaveRejected {
+  ok: false;
+  reason: DiffSaveRejectReason;
+  message: string;
+  recoverable: boolean;
+  draftRevision?: number;
+}
+
+export type DiffSaveWorkingResult = DiffSaveAccepted | DiffSaveRejected;
 
 export interface CommitPlanView {
   token: string;
@@ -810,6 +856,33 @@ export type HostToWebviewMessage =
         outputAvailable?: boolean;
       }
     >
+  | MessageEnvelope<
+      "diff/edit-opened",
+      {
+        targetId: string;
+        editToken: string;
+        draftRevision: number;
+        baseHash: string;
+        baseRevision: string;
+        rawHash: string;
+        baseContents: string;
+        message: string;
+      }
+    >
+  | MessageEnvelope<
+      "diff/save-result",
+      {
+        result: DiffSaveWorkingResult;
+        snapshotVersion: number;
+      }
+    >
+  | MessageEnvelope<
+      "diff/draft-checkpointed",
+      {
+        targetId: string;
+        draftRevision: number;
+      }
+    >
   | MessageEnvelope<"operation/result", { title: string; message: string }>
   | MessageEnvelope<"operation/cancelled", { title: string; message: string }>
   | MessageEnvelope<"scope/changed", { scope: WorkbenchScopeView }>;
@@ -820,6 +893,11 @@ export type WebviewAction =
   | "open-diff"
   | "open-file"
   | "diff/open-in-editor"
+  | "diff/open-edit"
+  | "diff/save-working"
+  | "diff/draft-checkpoint"
+  | "diff/draft-abandon"
+  | "diff/draft-export"
   | "copy-text"
   | "security/configure-authentication"
   | "security/clear-authentication"
@@ -918,6 +996,11 @@ export const webviewActions = [
   "open-diff",
   "open-file",
   "diff/open-in-editor",
+  "diff/open-edit",
+  "diff/save-working",
+  "diff/draft-checkpoint",
+  "diff/draft-abandon",
+  "diff/draft-export",
   "copy-text",
   "security/configure-authentication",
   "security/clear-authentication",

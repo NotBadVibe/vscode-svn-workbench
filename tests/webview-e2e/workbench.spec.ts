@@ -435,3 +435,27 @@ test("rejects saving invalid selection rules with structured feedback", async ({
     page.getByText("模拟保存失败：无法写入 .svn-workbench.json。"),
   ).toBeVisible();
 });
+
+test("edits a working copy in-page and saves with Ctrl+S (v0.0.6)", async ({
+  page,
+}) => {
+  await page.goto("/?module=diff");
+  await expect(page.getByRole("button", { name: "页内编辑" })).toBeVisible();
+  await page.getByRole("button", { name: "页内编辑" }).click();
+  await expect(page.getByText("编辑模式")).toBeVisible();
+  await expect(page.getByRole("button", { name: "保存修改" })).toBeDisabled();
+
+  // 真实点击编辑区并输入，触发脏状态。
+  const editable = page
+    .locator("diffs-container")
+    .locator('[contenteditable="true"]')
+    .first();
+  await editable.click();
+  await page.keyboard.type("// 页内编辑注释");
+  await expect(page.getByText(/有未保存的修改/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "保存修改" })).toBeEnabled();
+
+  // Ctrl+S 保存：mock 返回成功并刷新快照。
+  await page.keyboard.press("Control+s");
+  await expect(page.getByRole("button", { name: "保存修改" })).toBeDisabled();
+});

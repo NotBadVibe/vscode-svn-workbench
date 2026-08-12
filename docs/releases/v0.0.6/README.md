@@ -1,6 +1,6 @@
 # SVN Workbench v0.0.6 版本规划
 
-> 状态：规划中，尚未形成候选源码或测试证据。
+> 状态：开发中（阶段 1 edit mode Spike 已 Go；阶段 2/3 实现中）。
 >
 > 基线版本：`v0.0.5`。
 >
@@ -143,15 +143,50 @@ Token 单次使用。成功、失败、目标切换、范围变化、外部文�
 
 完成条件：形成 go/no-go 记录。不得放宽为 `'unsafe-inline'`、`'unsafe-eval'` 或通配资源策略。
 
+状态：✅ **Go**（2026-08-12）。`tests/spike` 扩展 edit-mode Spike（`tests/spike/src/edit-spike.ts`、`tests/spike/e2e/edit-spike.spec.ts`）在生产等价严格 CSP（`style-src 'self'`，无 `'unsafe-inline'`）下全部通过：
+
+- `@pierre/diffs/edit` 以独立懒加载 chunk 加载；可编辑 FileDiff 挂载成功；新增侧可编辑、删除/注释侧不可编辑；
+- 程序化输入与 onChange 事件可用；中文 IME 经真实输入管线（Playwright `keyboard.insertText` 在真实点击编辑区后）落盘验证通过；
+- 恶意文本（`<script>`/`onerror` 负载）按纯文本转义渲染，不产生可执行元素；
+- 宿主级 Cmd/Ctrl+S 捕获与编辑器共存；Light/Dark/High Contrast 三主题可用；
+- 挂载 < 2000 ms；CSP 零违规、控制台零错误。
+
+**关键适配发现（生产 `cspCompatObserver` 必须覆盖）**：编辑器注入的样式通道需经构造式样式表（adoptedStyleSheets）与 `style=` 属性改写适配，具体包括：
+
+1. `innerHTML` 与 `insertAdjacentHTML` 注入的 `style="…"` 属性（gutter `grid-row` 等）——解析期被 style-src-attr 拦截，需改写为 `data-hl-style` 后经 CSSOM `setProperty` 落地；
+2. 编辑器 shadow 根内联 `<style data-editor-css>` / `<style data-editor-theme-css>` —— 拦截为 style-src-elem，转接 adoptedStyleSheets；
+3. 编辑器 light DOM 全局 `<style data-editor-global-css>`（`[data-annotation-slot]{user-select:none}`）—— 拦截为 style-src-elem，转接 `document.adoptedStyleSheets`。
+
+上述全部在严格 CSP 下可消除为零违规；No-Go 依据均不成立。
+
 ### 阶段 2：Host 安全底座
 
 实现领域服务、强类型协议、路径守卫、token、互斥、原子写入、双副本保护和草稿检查点。
 
 完成条件：无需 Webview UI 即可通过全部安全分支单元与 Extension Host 测试。
 
+状态：✅ 已落地。新增 `src/diffEdit/` 领域模块：
+
+- `diffPathGuard.ts`：lstat/realpath、scope 内复验、拒绝 symlink/junction/目录/设备、≤5 MB、严格 UTF-8（BOM/EOL/末尾换行分析）；
+- `diffEditTokenRegistry.ts`：editToken 单次使用、TTL、绑定 session/module/task/repo/scope/目标/磁盘 hash/BASE/TextDocument.version/draftRevision；按 scope/session/target 撤销；
+- `diffAtomicWriter.ts`：按路径互斥、同目录临时文件、保留权限/BOM/EOL/末尾换行、fsync 后原子 rename、失败保留原文件并清理临时文件；
+- `diffDraftService.ts`：**仅内存**草稿（不跨重启持久化，已文档化）、递增 draftRevision 拒绝重放/乱序、容量上限、导出统一 diff；
+- `diffEditingService.ts`：openEdit（守卫→签发 token→登记草稿/恢复既有草稿）与 saveWorking（消耗 token→绑定校验→路径守卫→脏 TextDocument 拒绝→expectedContentHash 与磁盘复验→原子写入→签发新 token→更新草稿）；
+- Host 接线 `src/extension/workbench/diffEditHost.ts`（TextDocument 脏状态、磁盘现状注入）与 `WorkbenchController` 协议路由（diff/open-edit、diff/save-working、diff/draft-checkpoint、diff/draft-abandon、diff/draft-export；会话替换/面板销毁撤销 token）。
+
+单元测试 `tests/unit/diffEditingService.test.ts`（26 例，覆盖成功/拒绝/过期/移动/乱序/双副本）与 Extension Host 集成用例 `testDiffEditIntegration` 通过。
+
 ### 阶段 3：页内编辑交互
 
 仅在 Spike go 后实现编辑切换、保存、差异导航、逐块采用、脏状态和草稿恢复；所有 UI 中文化。
+
+状态：✅ 已落地。
+
+- `DiffModule.svelte`：审阅/编辑切换、保存（按钮 + Ctrl/Cmd+S，IME composition 保护）、上一个/下一个差异、逐块采用（还原当前块为 BASE）、脏状态提示、保存拒绝中文原因+草稿版本、草稿恢复/放弃/导出、不支持编辑的中文原因；
+- `DiffView.svelte`：编辑态附加 @pierre/diffs Editor（仅工作副本侧可编辑），onReady 暴露 getText/focusLine/applyRegionEdit；
+- `diffHunks.ts`：行级 LCS 计算差异块（NEW 侧行号）；
+- 草稿恢复：快照以草稿内容作为可编辑侧，openEdit 恢复既有草稿不重置；
+- Mock 支持编辑流；组件测试（`tests/components/DiffModule.test.ts` 编辑用例）与 Webview E2E（真实 Chromium 编辑+Ctrl+S 保存）通过。
 
 ### 阶段 4：候选验收
 
@@ -159,6 +194,8 @@ Token 单次使用。成功、失败、目标切换、范围变化、外部文�
 - 覆盖 Light、Dark、High Contrast、IME、无键盘陷阱和 `prefers-reduced-motion`。
 - 覆盖并发保存、外部编辑、磁盘满、权限失败、目标移动、Extension Host 重启和草稿过期。
 - 运行完整候选流水线并同步 `docs/current/`。
+
+状态：⏳ 自动化门禁（docs/verify、check、单元/组件、Webview E2E、性能、Extension Host）已通过；覆盖矩阵与候选证据固化待发布流程。
 
 ## 9. Go/No-Go
 

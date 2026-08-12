@@ -37,6 +37,8 @@ import {
   getDefaultSelectedCandidatePaths,
 } from "../../ai/commitSelectionActions";
 import { buildCommitSelectionExplanation } from "../../ai/commitSelectionExplanation";
+import { createDiffEditingService } from "../../extension/workbench/diffEditHost";
+import { hashBytes } from "../../diffEdit/diffPathGuard";
 import { parseModelListResponse } from "../../ai/openAiCompatibleProvider";
 import {
   buildTeamRulesAiRequest,
@@ -282,6 +284,10 @@ export function getExtensionTestCases(): TestCase[] {
     {
       name: "v0.0.5 opens independent per-module windows with reuse and rebuild",
       run: testV005ModuleWindows,
+    },
+    {
+      name: "v0.0.6 edits a working copy file via the guarded save pipeline",
+      run: testDiffEditIntegration,
     },
     {
       name: "classifies generated files for commit filtering",
@@ -1130,6 +1136,84 @@ async function testV005ModuleWindows(): Promise<void> {
   // 7) 冒烟完成后清理，避免影响后续用例。
   await vscode.commands.executeCommand("workbench.action.closeAllEditors");
   await waitForTabGone("SVN · 工作副本修改", "Changes 窗口清理");
+}
+
+async function testDiffEditIntegration(): Promise<void> {
+  const workspace = getSvnWorkspaceOrSkip();
+  const scope: OperationScope = {
+    id: "diff-edit-test",
+    repositoryRoot: workspace.uri.fsPath,
+    source: "editorFile",
+    roots: [
+      {
+        absolutePath: workspace.uri.fsPath,
+        relativePath: ".",
+        kind: "folder",
+      },
+    ],
+    allowExpandScope: false,
+    includeExternals: false,
+    includeNestedWorkingCopies: false,
+    createdAt: 0,
+  };
+  // 使用专用临时文件，避免污染既有夹具。
+  const target = path.join(workspace.uri.fsPath, "_diff-edit-integration.txt");
+  const original = "line1\nline2\n";
+  await fs.promises.writeFile(target, original, "utf8");
+  const service = createDiffEditingService();
+  try {
+    const opened = await service.openEdit({
+      sessionId: "ext-host-session",
+      repositoryUuid: "test-uuid",
+      scopeHash: "test-scope-hash",
+      targetPath: target,
+      baseContents: original,
+      baseRevision: "BASE",
+      baseHash: hashBytes(Buffer.from(original, "utf8")),
+      rawHash: hashBytes(Buffer.from(original, "utf8")),
+      documentVersion: 0,
+      scope,
+      repositoryRoot: workspace.uri.fsPath,
+    });
+    assert.ok(opened.ok, "openEdit 应成功");
+    if (!opened.ok) return;
+    const saved = await service.saveWorking({
+      sessionId: "ext-host-session",
+      moduleId: "diff",
+      taskId: "diff/working",
+      repositoryUuid: "test-uuid",
+      scopeHash: "test-scope-hash",
+      targetId: opened.targetId,
+      editToken: opened.editToken,
+      draftRevision: opened.draftRevision,
+      expectedContentHash: opened.rawHash,
+      content: "line1\nline1.5\nline2\n",
+      scope,
+      repositoryRoot: workspace.uri.fsPath,
+    });
+    assert.ok(saved.ok, "saveWorking 应成功写入");
+    if (!saved.ok) return;
+    const after = await fs.promises.readFile(target, "utf8");
+    assert.equal(after, "line1\nline1.5\nline2\n");
+    // 旧 token 单次使用：重放必须拒绝。
+    const replay = await service.saveWorking({
+      sessionId: "ext-host-session",
+      moduleId: "diff",
+      taskId: "diff/working",
+      repositoryUuid: "test-uuid",
+      scopeHash: "test-scope-hash",
+      targetId: opened.targetId,
+      editToken: opened.editToken,
+      draftRevision: opened.draftRevision,
+      expectedContentHash: opened.rawHash,
+      content: "hijack\n",
+      scope,
+      repositoryRoot: workspace.uri.fsPath,
+    });
+    assert.ok(!replay.ok, "旧 token 重放必须被拒绝");
+  } finally {
+    await fs.promises.rm(target, { force: true });
+  }
 }
 
 async function testGeneratedFilePolicy(): Promise<void> {

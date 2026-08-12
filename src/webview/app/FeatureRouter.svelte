@@ -1,5 +1,6 @@
 <script lang="ts">
   import type {
+    HostToWebviewMessage,
     WebviewAction,
     WorkbenchModuleSnapshot,
     WorkbenchTaskId,
@@ -7,10 +8,25 @@
   let {
     snapshot,
     taskId,
+    editSession,
+    diffSaveResult,
+    draftAck,
     onAction,
   }: {
     snapshot: WorkbenchModuleSnapshot;
     taskId: WorkbenchTaskId;
+    editSession?: Extract<
+      HostToWebviewMessage,
+      { type: "diff/edit-opened" }
+    >["payload"];
+    diffSaveResult?: Extract<
+      HostToWebviewMessage,
+      { type: "diff/save-result" }
+    >["payload"];
+    draftAck?: Extract<
+      HostToWebviewMessage,
+      { type: "diff/draft-checkpointed" }
+    >["payload"];
     onAction: (action: WebviewAction, data?: Record<string, unknown>) => void;
   } = $props();
 </script>
@@ -30,7 +46,13 @@
       module.default}<Feature {snapshot} {onAction} />{/await}
 {:else if snapshot.kind === "diff"}
   {#await import("../features/diff/DiffModule.svelte")}{@render loadingModule()}{:then module}{@const Feature =
-      module.default}<Feature {snapshot} {onAction} />{/await}
+      module.default}<Feature
+      {snapshot}
+      {onAction}
+      {editSession}
+      {diffSaveResult}
+      {draftAck}
+    />{/await}
 {:else if snapshot.kind === "commit"}
   {#await import("../features/commit/CommitModule.svelte")}{@render loadingModule()}{:then module}{@const Feature =
       module.default}<Feature {snapshot} {onAction} />{/await}

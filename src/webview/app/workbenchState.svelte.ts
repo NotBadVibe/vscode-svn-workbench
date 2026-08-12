@@ -41,6 +41,24 @@ export class WorkbenchState {
   sessionId = $state<string | undefined>();
   repositoryUuid = $state<string | undefined>();
   scopeHash = $state<string | undefined>();
+  /** v0.0.6 页内编辑会话（diff/edit-opened 下发）。 */
+  editSession = $state<
+    | Extract<HostToWebviewMessage, { type: "diff/edit-opened" }>["payload"]
+    | undefined
+  >();
+  /** diff/save-result 一次性结果（消费后清除）。 */
+  diffSaveResult = $state<
+    | Extract<HostToWebviewMessage, { type: "diff/save-result" }>["payload"]
+    | undefined
+  >();
+  /** 草稿检查点 ACK。 */
+  draftAck = $state<
+    | Extract<
+        HostToWebviewMessage,
+        { type: "diff/draft-checkpointed" }
+      >["payload"]
+    | undefined
+  >();
 
   readonly dispose: () => void;
 
@@ -157,6 +175,15 @@ export class WorkbenchState {
         break;
       case "scope/changed":
         this.scope = message.payload.scope;
+        break;
+      case "diff/edit-opened":
+        this.editSession = message.payload;
+        break;
+      case "diff/save-result":
+        this.diffSaveResult = message.payload;
+        break;
+      case "diff/draft-checkpointed":
+        this.draftAck = message.payload;
         break;
     }
   }
