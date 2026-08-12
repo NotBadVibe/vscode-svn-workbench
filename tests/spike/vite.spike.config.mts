@@ -11,31 +11,43 @@ export default defineConfig({
   root: fileURLToPath(new URL(".", import.meta.url)),
   base: "./",
   resolve: {
-    alias: subsetLangs
-      ? [
-          // 精确匹配 "shiki" 根模块 → 语言子集 shim（见 shiki-subset-shim.ts）
-          {
-            find: /^shiki$/,
-            replacement: fileURLToPath(
-              new URL("./src/shiki-subset-shim.ts", import.meta.url),
-            ),
-          },
-          // 裁剪 Oniguruma wasm（统一使用 JavaScript Regex 引擎）
-          {
-            find: /^shiki\/wasm$/,
-            replacement: fileURLToPath(
-              new URL("./src/shiki-wasm-stub.ts", import.meta.url),
-            ),
-          },
-          // 精确匹配 "@pierre/theming/themes" → 主题子集 shim（仅 pierre-dark/light）
-          {
-            find: /^@pierre\/theming\/themes$/,
-            replacement: fileURLToPath(
-              new URL("./src/pierre-theming-subset-shim.ts", import.meta.url),
-            ),
-          },
-        ]
-      : [],
+    alias: [
+      // 生产 CSP 垫片（v0.0.6）：edit spike 直接复用生产适配代码。
+      {
+        find: /^@prod\/csp-compat-observer$/,
+        replacement: fileURLToPath(
+          new URL(
+            "../../src/webview/features/diff/cspCompatObserver.ts",
+            import.meta.url,
+          ),
+        ),
+      },
+      ...(subsetLangs
+        ? [
+            // 精确匹配 "shiki" 根模块 → 语言子集 shim（见 shiki-subset-shim.ts）
+            {
+              find: /^shiki$/,
+              replacement: fileURLToPath(
+                new URL("./src/shiki-subset-shim.ts", import.meta.url),
+              ),
+            },
+            // 裁剪 Oniguruma wasm（统一使用 JavaScript Regex 引擎）
+            {
+              find: /^shiki\/wasm$/,
+              replacement: fileURLToPath(
+                new URL("./src/shiki-wasm-stub.ts", import.meta.url),
+              ),
+            },
+            // 精确匹配 "@pierre/theming/themes" → 主题子集 shim（仅 pierre-dark/light）
+            {
+              find: /^@pierre\/theming\/themes$/,
+              replacement: fileURLToPath(
+                new URL("./src/pierre-theming-subset-shim.ts", import.meta.url),
+              ),
+            },
+          ]
+        : []),
+    ],
   },
   build: {
     outDir: fileURLToPath(new URL("./dist", import.meta.url)),

@@ -560,11 +560,20 @@ function runCspSelfTest(): CspSelfTest {
 async function main(): Promise<void> {
   const params = new URLSearchParams(window.location.search);
 
+  // CSP 违规计数必须在所有分支之前注册（edit 分支早退，此前漏注册导致
+  // 编辑态“零违规”断言恒真——v0.0.6 验收发现）。
+  document.addEventListener("securitypolicyviolation", () => {
+    window.__spikeViolations = (window.__spikeViolations ?? 0) + 1;
+  });
+
   // v0.0.6 edit mode Spike：独立报告，不执行只读 spike 逻辑。
   if (params.get("edit") === "1") {
-    // 编辑态依赖 Editor 注入的 shadow 内联样式；与 v0.0.4 主题垫片同通道
-    // （Constructable Stylesheet）适配，验证严格 CSP 下可编辑可用。
-    installCspCompatibilityShim();
+    // 直接安装生产垫片（src/webview/features/diff/cspCompatObserver.ts）：
+    // Spike 与生产跑同一份适配代码，结论可回推到生产路径。
+    const { installDiffCspCompatibilityShim } = await import(
+      "@prod/csp-compat-observer"
+    );
+    installDiffCspCompatibilityShim();
     const { runEditSpike } = await import("./edit-spike");
     await runEditSpike(params);
     return;
@@ -595,7 +604,6 @@ async function main(): Promise<void> {
       disposition: event.disposition,
       sample: event.sample ?? "",
     });
-    window.__spikeViolations = (window.__spikeViolations ?? 0) + 1;
   });
 
   if (params.get("selftest") === "1") {

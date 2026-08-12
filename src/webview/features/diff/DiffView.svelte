@@ -1,8 +1,18 @@
+<script lang="ts" module>
+  import { installDiffCspCompatibilityShim } from "./cspCompatObserver";
+
+  // 生产 CSP 适配第一层（插入前拦截）：模块加载即安装，幂等。
+  installDiffCspCompatibilityShim();
+</script>
+
 <script lang="ts">
   import { FileDiff, parsePatchFiles, preloadHighlighter } from "@pierre/diffs";
   import { Editor } from "@pierre/diffs/edit";
   import { mapToDiffLanguage } from "./diffLanguage";
-  import { observeDiffShadowRoot } from "./cspCompatObserver";
+  import {
+    observeDiffContainer,
+    observeDiffShadowRoot,
+  } from "./cspCompatObserver";
   import { diffViewLabels } from "../../i18n/terminology";
 
   /*
@@ -62,41 +72,6 @@
   let expandUnchanged = $state(false);
   /** 当前附加的编辑器实例（编辑态）。 */
   let editorInstance: Editor<undefined> | undefined;
-  let editing = $state(false);
-
-  $effect(() => {
-    if (editMode !== editing) editing = editMode;
-  });
-
-  /** 供父级调用：获取当前编辑文本。 */
-  function getText(): string {
-    return editorInstance?.getText() ?? "";
-  }
-
-  /** 供父级调用：聚焦到指定行（差异导航）。 */
-  function focusLine(lineNumber: number): void {
-    editorInstance?.focus({ lineNumber });
-  }
-
-  /** 供父级调用：把给定行区间替换为文本（逐块采用）。 */
-  function applyRegionEdit(
-    startLine: number,
-    endLine: number,
-    newText: string,
-  ): void {
-    editorInstance?.applyEdits([
-      {
-        range: {
-          start: { line: Math.max(0, startLine - 1), character: 0 },
-          end: {
-            line: Math.max(0, endLine - 1),
-            character: Number.MAX_SAFE_INTEGER,
-          },
-        },
-        newText,
-      },
-    ]);
-  }
 
   // 预热当前文件语言的高亮资源（语言 chunk 懒加载）；失败不阻塞基础渲染。
   $effect(() => {
@@ -116,9 +91,9 @@
     if (!container) return;
     const style = diffStyle;
     const expand = expandUnchanged;
-    const isEditing = editing;
+    const isEditing = editMode;
     const instances: FileDiff[] = [];
-    const observers: { disconnect(): void }[] = [];
+    const observers: { disconnect(): void }[] = [observeDiffContainer(container)];
     let disposed = false;
     const dispose = (): void => {
       if (disposed) return;
