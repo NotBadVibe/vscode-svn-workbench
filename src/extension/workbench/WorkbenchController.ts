@@ -3383,8 +3383,9 @@ export class WorkbenchController implements vscode.Disposable {
     });
     if (result.ok && session.targetFile) {
       // 保存成功后重载模块（权威快照刷新：modified/draft/message 以磁盘为准）。
-      // 编辑器重建风险由 DiffView 编辑态 untrack 内容字段 + App 保持模块挂载
-      // 共同消除；save-result 在 Webview 按消息对象只消费一次。
+      // 编辑器重建风险由 DiffView 编辑态挂载键保持（手动生命周期：编辑态
+      // 同键快照刷新不重建实例）+ App 保持模块挂载共同消除；save-result
+      // 在 Webview 按消息对象只消费一次。
       await this.loadModule("diff", session.targetFile);
     }
   }

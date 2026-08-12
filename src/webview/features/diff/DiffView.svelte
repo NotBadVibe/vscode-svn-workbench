@@ -14,6 +14,10 @@
     observeDiffContainer,
     observeDiffShadowRoot,
   } from "./cspCompatObserver";
+  import {
+    shouldRebuildDiffView,
+    type DiffViewMountState,
+  } from "./diffViewLifecycle";
   import { diffViewLabels } from "../../i18n/terminology";
 
   /*
@@ -30,12 +34,15 @@
    *   可编辑 FileDiff，仅工作副本侧可编辑；通过 onEditChange 上报内容。
    *
    * 生命周期（手动管理，不依赖 $effect 依赖追踪的重跑语义）：
-   * - 渲染 effect 不返回 cleanup；每次重跑由 body 按「挂载键
-   *   （目标/语言/编辑态/视图控件）」与「渲染内容」比较决定：
-   *   - 挂载键相同且编辑态：保持现有 FileDiff/Editor 实例不重建（Host 保存后
+   * - 渲染 effect 不返回 cleanup；每次重跑由纯决策函数
+   *   shouldRebuildDiffView（diffViewLifecycle.ts）按「挂载键
+   *   （目标/语言/编辑态/视图控件）+ 实际容器身份 + 渲染内容（逐字段）」
+   *   比较决定：
+   *   - 编辑态同键同容器：保持现有 FileDiff/Editor 实例不重建（Host 保存后
    *     权威快照刷新不丢快速二次输入）；
-   *   - 挂载键相同且只读态：仅当渲染内容变化时重建（快照刷新采用权威内容）；
-   *   - 挂载键变化（目标切换/退出编辑/视图切换）：释放旧实例并重建；
+   *   - 只读态内容变化：重建以采用权威内容；
+   *   - 挂载键变化（目标切换/退出编辑/视图切换）或容器身份变化：释放旧实例
+   *     重建（销毁时清理旧容器 mounted.container，避免旧 DOM 残留）；
    *   - 组件销毁由 onDestroy 兜底释放。
    *
    * 主题跟随：themeType "system" 让组件按宿主 color-scheme 在
@@ -94,9 +101,8 @@
   /** 当前挂载的 FileDiff 实例与 CSP observer（手动生命周期持有）。 */
   const instances: FileDiff[] = [];
   const observers: { disconnect(): void }[] = [];
-  /** 当前渲染的挂载键与内容，用于决定重建/保持。 */
-  let mounted:
-    { key: string; mode: "edit" | "read"; contentKey: string } | undefined;
+  /** 当前挂载状态（含实际容器与渲染内容），用于决定重建/保持。 */
+  let mounted: DiffViewMountState | undefined;
 
   /** 释放全部实例与 observer（幂等；重建与组件销毁共用）。 */
   function disposeAll(): void {
@@ -104,7 +110,9 @@
     observers.length = 0;
     for (const instance of instances) instance.cleanUp();
     instances.length = 0;
-    const el = host;
+    // 清理实际挂载过的旧容器（mounted.container）而非当前 host：容器身份
+    // 变化时 host 已是新容器，实例仍残留在旧容器上。
+    const el = mounted?.container ?? host;
     if (el) el.replaceChildren();
     mounted = undefined;
   }
@@ -140,23 +148,23 @@
     // 挂载键：目标/语言/编辑态/视图控件。变化时必须重建（目标切换、
     // 退出编辑、unified/split、展开控制）。
     const key = `${rel}|${lang}|${isEditing}|${style}|${expand}`;
-    // 渲染内容键：仅用于只读态判断内容是否变化（编辑态内容由编辑器持有，
-    // 快照刷新不据此重建）。
-    const contentKey = `${oldC}|${newC}|${patchC ?? ""}`;
 
     if (mounted) {
-      if (mounted.key === key) {
-        if (mounted.mode === "read" && mounted.contentKey !== contentKey) {
-          // 只读态内容变化：释放旧实例，用权威内容重建。
-          disposeAll();
-        } else {
-          // 编辑态同键（含保存后权威快照刷新）：保持实例与编辑器，
-          // 不打断正在进行的输入；或只读态内容未变。
-          return;
-        }
-      } else {
-        // 挂载键变化：释放旧实例重建。
+      if (
+        shouldRebuildDiffView(mounted, {
+          key,
+          container,
+          oldContents: oldC,
+          newContents: newC,
+          patch: patchC,
+        })
+      ) {
+        // 容器身份变化 / 挂载键变化 / 只读态内容变化：释放旧实例重建。
         disposeAll();
+      } else {
+        // 编辑态同键同容器（含保存后权威快照刷新）：保持实例与编辑器，
+        // 不打断正在进行的输入；或只读态内容未变。
+        return;
       }
     }
 
@@ -253,7 +261,14 @@
           });
         });
       }
-      mounted = { key, mode: isEditing ? "edit" : "read", contentKey };
+      mounted = {
+        key,
+        mode: isEditing ? "edit" : "read",
+        container,
+        oldContents: oldC,
+        newContents: newC,
+        patch: patchC,
+      };
     } catch (error) {
       disposeAll();
       fallback(error);

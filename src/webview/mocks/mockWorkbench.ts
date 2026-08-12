@@ -537,7 +537,8 @@ export function startMockWorkbench(): void {
         mockDrafts.set(activeMockDiffPath, { dirty: false });
         // 模拟生产 loadModule：先 module/loading，快照在下一个事件循环到达
         // （真实 Host 需要重新读取 SVN）。编辑器重建由 DiffView 编辑态
-        // untrack 内容字段避免；App 保持模块挂载。
+        // 挂载键保持（手动生命周期：编辑态同键快照刷新不重建实例）避免；
+        // App 保持模块挂载。
         injectHostMessage("module/loading", { moduleId: "diff" });
         const savedContent = data.content as string;
         window.setTimeout(() => {
