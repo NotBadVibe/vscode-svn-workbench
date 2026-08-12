@@ -1,6 +1,6 @@
 # SVN Workbench v0.0.5 发布记录
 
-> 状态：已发布（2026-08-11）。受支持的 Node.js 26 + npm 12 工具链下，完整 `verify`、真实 VS Code 多窗口冒烟、VSIX 打包及隔离安装/卸载/重装，以及正式不可变 release evidence 均已通过；真实 VS Code 隔离实例人工复核已由仓库维护者在全新 profile 中补验。
+> 状态：已发布（2026-08-12）。受支持的 Node.js 26 + npm 12 工具链下，完整 `verify`、真实 VS Code 多窗口冒烟、VSIX 打包及隔离安装/卸载/重装，以及正式不可变 release evidence 均已通过；真实 VS Code 隔离实例人工复核已由仓库维护者在全新 profile 中补验。
 >
 > 基线版本：已发布的 `v0.0.4`。
 
