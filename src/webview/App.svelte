@@ -118,6 +118,14 @@
       </div>
     </section>
   {:else if state.snapshot}
+    {#if state.loading}
+      <!-- 模块刷新（如保存后重新读取）时保持模块挂载，避免编辑会话/输入被卸载打断。 -->
+      <div class="module-refresh-strip" role="status" aria-live="polite">
+        <span class="loading-ring loading-ring--small" aria-hidden="true"
+        ></span>
+        <span>正在刷新当前范围…</span>
+      </div>
+    {/if}
     <FeatureRouter
       snapshot={state.snapshot}
       taskId={state.taskId}
