@@ -6,7 +6,7 @@
   "releaseDate": null,
   "gitTag": null,
   "gitCommit": null,
-  "sourceState": "未形成候选源码；以规划中的 v0.0.5 为基线，当前仅有安全页内编辑规划文档",
+  "sourceState": "开发中源码：agent/develop-v0.0.6 分支（8b3ee10 开发提交 + 独立验收修复提交链）；尚未形成候选",
   "vsix": null,
   "tests": null,
   "acceptedEvidenceRun": null,

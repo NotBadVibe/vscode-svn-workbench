@@ -1,6 +1,7 @@
 # SVN Workbench v0.0.6 版本规划
 
-> 状态：开发中（阶段 1 edit mode Spike 已 Go；阶段 2/3 实现中）。
+> 状态：开发中（阶段 0-3 已落地；阶段 4 候选验收进行中——生产 CSP 适配、
+> 脏草稿三选一与保存链回归已按独立验收修复，见阶段 4 状态）。
 >
 > 基线版本：`v0.0.5`。
 >
@@ -159,6 +160,12 @@ Token 单次使用。成功、失败、目标切换、范围变化、外部文�
 
 上述全部在严格 CSP 下可消除为零违规；No-Go 依据均不成立。
 
+**验收更正（2026-08-12 独立验收）**：
+
+- 验收实测证明 MutationObserver 事后转接无法消除 `securitypolicyviolation` 事件（样式可恢复，但违规已上报），Go 条件“CSP 零违规”必须由插入前拦截达成。生产 `cspCompatObserver.ts` 已升级为两层结构：插入前拦截垫片（全局改写 `innerHTML`/`insertAdjacentHTML`/`setAttribute("style")`，按标记收窄拦截 `<style>` 节点；已核查第一方 Svelte 模板无静态 style 属性、无 innerHTML 调用）+ 原观察器兜底。
+- Spike 编辑路径此前未注册违规监听器（计数恒为 0，断言假阳性），已修复；edit Spike 现直接复用生产垫片代码（`@prod/csp-compat-observer` 别名），严格 CSP 下三主题零违规。
+- 新增 `tests/webview-e2e/diff-edit-csp.spec.ts`：生产构建 + 生产等价严格 CSP 下的只读/编辑/恶意文本三用例，断言零违规与样式生效。
+
 ### 阶段 2：Host 安全底座
 
 实现领域服务、强类型协议、路径守卫、token、互斥、原子写入、双副本保护和草稿检查点。
@@ -168,13 +175,13 @@ Token 单次使用。成功、失败、目标切换、范围变化、外部文�
 状态：✅ 已落地。新增 `src/diffEdit/` 领域模块：
 
 - `diffPathGuard.ts`：lstat/realpath、scope 内复验、拒绝 symlink/junction/目录/设备、≤5 MB、严格 UTF-8（BOM/EOL/末尾换行分析）；
-- `diffEditTokenRegistry.ts`：editToken 单次使用、TTL、绑定 session/module/task/repo/scope/目标/磁盘 hash/BASE/TextDocument.version/draftRevision；按 scope/session/target 撤销；
+- `diffEditTokenRegistry.ts`：editToken 单次使用、TTL、绑定 session/module/task/repo/scope/目标/磁盘 hash/BASE/TextDocument.version/draftRevision；按 scope/session/target/路径撤销；
 - `diffAtomicWriter.ts`：按路径互斥、同目录临时文件、保留权限/BOM/EOL/末尾换行、fsync 后原子 rename、失败保留原文件并清理临时文件；
 - `diffDraftService.ts`：**仅内存**草稿（不跨重启持久化，已文档化）、递增 draftRevision 拒绝重放/乱序、容量上限、导出统一 diff；
-- `diffEditingService.ts`：openEdit（守卫→签发 token→登记草稿/恢复既有草稿）与 saveWorking（消耗 token→绑定校验→路径守卫→脏 TextDocument 拒绝→expectedContentHash 与磁盘复验→原子写入→签发新 token→更新草稿）；
-- Host 接线 `src/extension/workbench/diffEditHost.ts`（TextDocument 脏状态、磁盘现状注入）与 `WorkbenchController` 协议路由（diff/open-edit、diff/save-working、diff/draft-checkpoint、diff/draft-abandon、diff/draft-export；会话替换/面板销毁撤销 token）。
+- `diffEditingService.ts`：openEdit（守卫→签发 token→登记草稿/恢复既有草稿）与 saveWorking（消耗 token→绑定校验→路径守卫→脏 TextDocument 拒绝→expectedContentHash 与磁盘复验→原子写入→签发新 token→更新草稿）；saveDraft（目标切换“保存并打开”：同一安全链落盘草稿后清除草稿并撤销目标 token）；saveWorking 拒绝超过 5 MB 的提交内容且不消耗 token；
+- Host 接线 `src/extension/workbench/diffEditHost.ts`（TextDocument 脏状态、磁盘现状注入；`watchDiffEditTargets`：文档修改/保存/重命名/删除与工作区文件 watcher 命中后按 realpath 规范路径立即撤销 token）与 `WorkbenchController` 协议路由（diff/open-edit、diff/save-working、diff/draft-checkpoint、diff/draft-abandon、diff/draft-export、diff/target-switch-decision；会话替换/面板销毁撤销 token）。
 
-单元测试 `tests/unit/diffEditingService.test.ts`（26 例，覆盖成功/拒绝/过期/移动/乱序/双副本）与 Extension Host 集成用例 `testDiffEditIntegration` 通过。
+单元测试 `tests/unit/diffEditingService.test.ts`（覆盖成功/拒绝/过期/移动/乱序/双副本/超量内容/路径撤销/saveDraft）与 Extension Host 集成用例 `testDiffEditIntegration` 通过。
 
 ### 阶段 3：页内编辑交互
 
@@ -182,7 +189,7 @@ Token 单次使用。成功、失败、目标切换、范围变化、外部文�
 
 状态：✅ 已落地。
 
-- `DiffModule.svelte`：审阅/编辑切换、保存（按钮 + Ctrl/Cmd+S，IME composition 保护）、上一个/下一个差异、逐块采用（还原当前块为 BASE）、脏状态提示、保存拒绝中文原因+草稿版本、草稿恢复/放弃/导出、不支持编辑的中文原因；
+- `DiffModule.svelte`：审阅/编辑切换、保存（按钮 + Ctrl/Cmd+S，IME composition 保护）、上一个/下一个差异、逐块采用（还原当前块为 BASE）、脏状态提示、保存拒绝中文原因+草稿版本与“重新建立编辑会话（保留草稿）”恢复动作、草稿恢复/放弃/导出、不支持编辑的中文原因、脏草稿目标切换三选一阻断对话框（保存并打开/暂存并打开/留在当前文件，Esc 等同留在当前文件）；
 - `DiffView.svelte`：编辑态附加 @pierre/diffs Editor（仅工作副本侧可编辑），onReady 暴露 getText/focusLine/applyRegionEdit；
 - `diffHunks.ts`：行级 LCS 计算差异块（NEW 侧行号）；
 - 草稿恢复：快照以草稿内容作为可编辑侧，openEdit 恢复既有草稿不重置；
@@ -195,7 +202,7 @@ Token 单次使用。成功、失败、目标切换、范围变化、外部文�
 - 覆盖并发保存、外部编辑、磁盘满、权限失败、目标移动、Extension Host 重启和草稿过期。
 - 运行完整候选流水线并同步 `docs/current/`。
 
-状态：⏳ 自动化门禁（docs/verify、check、单元/组件、Webview E2E、性能、Extension Host）已通过；覆盖矩阵与候选证据固化待发布流程。
+状态：⏳ 自动化门禁（docs/verify、check、单元/组件、Webview E2E、性能、Extension Host）已通过；独立验收修复：生产 CSP 垫片零违规（含严格 CSP e2e 证据）、脏草稿三选一、连续保存 hash 更新、外部变化立即使 token 失效、5 MB 内容上限。覆盖矩阵与候选证据固化待发布流程。
 
 ## 9. Go/No-Go
 
