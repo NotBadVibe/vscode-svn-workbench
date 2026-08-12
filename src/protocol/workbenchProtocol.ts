@@ -872,6 +872,8 @@ export type HostToWebviewMessage =
   | MessageEnvelope<
       "diff/save-result",
       {
+        /** 结果所属目标（编辑会话基准更新按此匹配）。 */
+        targetId: string;
         result: DiffSaveWorkingResult;
         snapshotVersion: number;
       }

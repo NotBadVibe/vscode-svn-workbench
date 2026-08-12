@@ -575,3 +575,32 @@ test("saved working copy becomes clean: no draft notice, no switch dialog (v0.0.
     page.getByRole("dialog", { name: "当前文件有未保存的草稿" }),
   ).toHaveCount(0);
 });
+
+test("consecutive saves carry the rotated token and hash (v0.0.6 regression)", async ({
+  page,
+}) => {
+  await page.goto("/?module=diff");
+  await page.getByRole("button", { name: "页内编辑" }).click();
+  const editable = page
+    .locator("diffs-container")
+    .locator('[contenteditable="true"]')
+    .first();
+  await editable.click();
+  await expect(editable).toBeFocused();
+
+  // 第一次编辑并保存：成功且提示消失。
+  await page.keyboard.type("// 第一次保存");
+  await expect(page.getByText(/有未保存的修改/)).toBeVisible();
+  await page.keyboard.press("Control+s");
+  await expect(page.getByRole("button", { name: "保存修改" })).toBeDisabled();
+
+  // 第二次真实编辑并保存：mock Host 校验 editToken/expectedContentHash，
+  // 携带旧基准会得到 diskChanged 拒绝——这里必须成功。
+  await editable.click();
+  await expect(editable).toBeFocused();
+  await page.keyboard.type("// 第二次保存");
+  await expect(page.getByText(/有未保存的修改/)).toBeVisible();
+  await page.keyboard.press("Control+s");
+  await expect(page.getByText(/保存被拒绝/)).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "保存修改" })).toBeDisabled();
+});

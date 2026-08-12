@@ -196,9 +196,25 @@ export class WorkbenchState {
       case "diff/edit-opened":
         this.editSession = message.payload;
         break;
-      case "diff/save-result":
+      case "diff/save-result": {
         this.diffSaveResult = message.payload;
+        // 保存成功即轮换编辑会话基准：组件因 module/loading 重挂载后只从
+        // editSession 恢复本地状态，这里必须同步新 token/hash/草稿版本。
+        const result = message.payload.result;
+        if (
+          result.ok &&
+          result.newEditToken !== "" &&
+          this.editSession?.targetId === message.payload.targetId
+        ) {
+          this.editSession = {
+            ...this.editSession,
+            editToken: result.newEditToken,
+            rawHash: result.newContentHash,
+            draftRevision: result.acceptedRevision,
+          };
+        }
         break;
+      }
       case "diff/draft-checkpointed":
         this.draftAck = message.payload;
         break;

@@ -73,6 +73,8 @@
   let saveError = $state<(DiffSaveWorkingResult & { ok: false }) | undefined>();
   let navIndex = $state(0);
   let checkpointTimer: number | undefined;
+  /** 已发出保存请求的正文（保存成功时作为新的 savedText 基准）。 */
+  let pendingSaveContent: string | undefined;
   /** 目标切换三选一对话框引用（焦点管理）。 */
   let switchDialog = $state<HTMLDivElement>();
 
@@ -116,16 +118,16 @@
     if (diffSaveResult.result.ok) {
       saveError = undefined;
       dirty = false;
-      savedText = snapshot.modified;
+      // 保存基准以实际提交的正文为准，不依赖快照刷新时序。
+      savedText = pendingSaveContent ?? snapshot.modified;
+      pendingSaveContent = undefined;
       currentDraftRevision = diffSaveResult.result.acceptedRevision;
       // 保存成功后磁盘 hash 已变化：更新基准，否则下一次保存会被
-      // expectedContentHash 复验拒绝（diskChanged）。
+      // expectedContentHash 复验拒绝（diskChanged）。token 轮换由
+      // workbenchState 统一应用（组件重挂载后以 editSession 为准）。
       currentRawHash = diffSaveResult.result.newContentHash;
-      // 更新编辑会话 token：Host 已签发新 token 供后续保存。
-      if (editSession) {
-        editSession.editToken = diffSaveResult.result.newEditToken;
-      }
     } else {
+      pendingSaveContent = undefined;
       saveError = diffSaveResult.result;
       if (diffSaveResult.result.draftRevision !== undefined) {
         currentDraftRevision = diffSaveResult.result.draftRevision;
@@ -163,6 +165,7 @@
   function saveWorkingCopy(): void {
     if (!editing || !editSession || !targetId || !dirty) return;
     const text = diffViewRef?.getText() ?? "";
+    pendingSaveContent = text;
     onAction("diff/save-working", {
       targetId,
       editToken: editSession.editToken,

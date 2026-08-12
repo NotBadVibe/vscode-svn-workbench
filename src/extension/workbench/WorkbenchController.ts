@@ -3198,7 +3198,11 @@ export class WorkbenchController implements vscode.Disposable {
           protocolVersion: WORKBENCH_PROTOCOL_VERSION,
           type: "diff/save-result",
           moduleId: "diff",
-          payload: { result, snapshotVersion: 0 },
+          payload: {
+            targetId: resolution.targetId,
+            result,
+            snapshotVersion: 0,
+          },
         });
         return;
       }
@@ -3372,6 +3376,7 @@ export class WorkbenchController implements vscode.Disposable {
       requestId,
       moduleId: "diff",
       payload: {
+        targetId,
         result,
         snapshotVersion: result.ok ? result.snapshotVersion : 0,
       },

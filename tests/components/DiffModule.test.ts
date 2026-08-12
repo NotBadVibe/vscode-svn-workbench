@@ -496,11 +496,17 @@ describe("DiffModule 页内编辑（v0.0.6）", () => {
     await fireEvent.click(
       screen.getByRole("button", { name: "还原当前差异块为 BASE" }),
     );
-    // 第一次保存成功：Host 下发新 token 与新内容 hash。
+    // 第一次保存成功：Host 下发新 token 与新内容 hash；workbenchState 会
+    // 把轮换后的基准应用回 editSession（此处以更新后的 props 模拟）。
     await rerender({
       snapshot: { ...editSnapshot, modified: "const a = 9;\nconst b = 3;\n" },
       onAction: action,
-      editSession: { ...editSessionPayload },
+      editSession: {
+        ...editSessionPayload,
+        editToken: "token2",
+        rawHash: "raw2",
+        draftRevision: 5,
+      },
       diffSaveResult: {
         result: {
           ok: true,
@@ -532,6 +538,118 @@ describe("DiffModule 页内编辑（v0.0.6）", () => {
         content: "const a = 10;\nconst b = 3;\n",
       }),
     );
+  });
+
+  it("生产消息时序：save-result 先到、snapshot 后刷新，第二次保存携带新基准", async () => {
+    const action = vi.fn();
+    const session = { ...editSessionPayload };
+    const { rerender } = render(DiffModule, {
+      snapshot: editSnapshot,
+      onAction: action,
+      editSession: session,
+    });
+    await screen.findByText("编辑模式");
+    // 第一次编辑。
+    editMock.state.text = "const a = 9;\nconst b = 3;\n";
+    await fireEvent.click(
+      screen.getByRole("button", { name: "还原当前差异块为 BASE" }),
+    );
+    // 时序第 1 步：仅 save-result 到达（snapshot 仍是旧内容）。
+    await rerender({
+      snapshot: editSnapshot,
+      onAction: action,
+      editSession: session,
+      diffSaveResult: {
+        result: {
+          ok: true,
+          acceptedRevision: 5,
+          newContentHash: "raw2",
+          newEditToken: "token2",
+          snapshotVersion: 2,
+        },
+        snapshotVersion: 2,
+      },
+    });
+    // 时序第 2 步：Host loadModule 刷新 snapshot（工作副本侧=新磁盘内容）；
+    // workbenchState 已在 save-result 时轮换 editSession 基准。
+    await rerender({
+      snapshot: { ...editSnapshot, modified: "const a = 9;\nconst b = 3;\n" },
+      onAction: action,
+      editSession: {
+        ...session,
+        editToken: "token2",
+        rawHash: "raw2",
+        draftRevision: 5,
+      },
+      diffSaveResult: {
+        result: {
+          ok: true,
+          acceptedRevision: 5,
+          newContentHash: "raw2",
+          newEditToken: "token2",
+          snapshotVersion: 2,
+        },
+        snapshotVersion: 2,
+      },
+    });
+    // 第二次真实编辑并保存：必须带 token2/raw2/acceptedRevision=5。
+    editMock.state.text = "const a = 10;\nconst b = 3;\n";
+    await fireEvent.click(
+      screen.getByRole("button", { name: "还原当前差异块为 BASE" }),
+    );
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "s",
+        ctrlKey: true,
+        cancelable: true,
+      }),
+    );
+    expect(action).toHaveBeenLastCalledWith("diff/save-working", {
+      targetId: "mock-target",
+      editToken: "token2",
+      draftRevision: 5,
+      expectedContentHash: "raw2",
+      content: "const a = 10;\nconst b = 3;\n",
+    });
+  });
+
+  it("保存成功后内容回到刚保存文本时不误标 dirty", async () => {
+    const action = vi.fn();
+    const session = { ...editSessionPayload };
+    const { rerender } = render(DiffModule, {
+      snapshot: editSnapshot,
+      onAction: action,
+      editSession: session,
+    });
+    await screen.findByText("编辑模式");
+    editMock.state.text = "const a = 9;\nconst b = 3;\n";
+    await fireEvent.click(
+      screen.getByRole("button", { name: "还原当前差异块为 BASE" }),
+    );
+    await expect(await screen.findByText(/有未保存的修改/)).toBeTruthy();
+    // 保存成功（snapshot 随后刷新为新内容）。
+    await rerender({
+      snapshot: { ...editSnapshot, modified: "const a = 9;\nconst b = 3;\n" },
+      onAction: action,
+      editSession: session,
+      diffSaveResult: {
+        result: {
+          ok: true,
+          acceptedRevision: 5,
+          newContentHash: "raw2",
+          newEditToken: "token2",
+          snapshotVersion: 2,
+        },
+        snapshotVersion: 2,
+      },
+    });
+    // 编辑器内容回到刚保存的文本（用户撤销）：不应误标 dirty。
+    editMock.state.text = "const a = 9;\nconst b = 3;\n";
+    await fireEvent.click(
+      screen.getByRole("button", { name: "还原当前差异块为 BASE" }),
+    );
+    expect(screen.queryByText(/有未保存的修改/)).toBeNull();
+    expect(screen.getByRole("button", { name: "保存修改" })).toBeDisabled();
   });
 
   it("token 失效类拒绝提供“重新建立编辑会话”恢复动作", async () => {

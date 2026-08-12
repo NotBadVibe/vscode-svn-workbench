@@ -199,6 +199,10 @@ let activeMockDiffPath = "src/extension.ts";
 const mockDrafts = new Map<string, { dirty: boolean }>();
 /** 等待三选一决定的 mock 切换目标。 */
 let pendingMockSwitch: string | undefined;
+/** mock Host 的编辑基准（保存轮换；用于校验第二次保存负载）。 */
+let mockEditRawHash = "mock-raw-hash";
+let mockEditToken = "mock-edit-token";
+let mockEditRevision = 1;
 /** 目标切换后的 mock 会话序号（模拟 Host 会话替换）。 */
 let mockSessionCounter = 0;
 
@@ -309,6 +313,7 @@ function injectHostMessage(
     | "diff/save-result"
     | "diff/draft-checkpointed"
     | "diff/target-switch-confirm"
+    | "module/loading"
     | "operation/result",
   payload: Record<string, unknown>,
 ): void {
@@ -462,6 +467,7 @@ export function startMockWorkbench(): void {
       }
       if (data.decision === "save") {
         injectHostMessage("diff/save-result", {
+          targetId: data.targetId,
           result: {
             ok: true,
             acceptedRevision: 9,
@@ -479,47 +485,68 @@ export function startMockWorkbench(): void {
     if (action === "diff/open-edit") {
       // 干净草稿：内容即 Working Copy 当前内容，不在快照展示恢复入口。
       mockDrafts.set(activeMockDiffPath, { dirty: false });
+      mockEditRawHash = "mock-raw-hash";
+      mockEditToken = "mock-edit-token";
+      mockEditRevision = 1;
       injectHostMessage("diff/edit-opened", {
         targetId: `mock-diff-${activeMockDiffPath}`,
-        editToken: "mock-edit-token",
+        editToken: mockEditToken,
         draftRevision: 1,
         baseHash: "mock-base-hash",
         baseRevision: "BASE",
-        rawHash: "mock-raw-hash",
+        rawHash: mockEditRawHash,
         baseContents: mockDiffOriginal,
         message: "已进入页内编辑；保存将写入工作副本当前范围。",
       });
       injectSnapshot("diff", mockDiffSnapshot(activeMockDiffPath));
     }
     if (action === "diff/save-working") {
-      const ok = typeof data.content === "string" && data.content.length > 0;
+      // 与生产 Host 一致：校验单次 token 与 expectedContentHash（旧基准拒绝）。
+      const ok =
+        typeof data.content === "string" &&
+        data.content.length > 0 &&
+        data.editToken === mockEditToken &&
+        data.expectedContentHash === mockEditRawHash;
+      if (ok) {
+        mockEditRevision += 1;
+        mockEditRawHash = `mock-hash-${mockEditRevision}`;
+        mockEditToken = `mock-token-${mockEditRevision}`;
+      }
       injectHostMessage("diff/save-result", {
+        targetId: data.targetId,
         result: ok
           ? {
               ok: true,
-              acceptedRevision: 2,
-              newContentHash: "mock-new-hash",
-              newEditToken: "mock-edit-token-2",
+              acceptedRevision: mockEditRevision,
+              newContentHash: mockEditRawHash,
+              newEditToken: mockEditToken,
               snapshotVersion: Date.now(),
             }
           : {
               ok: false,
-              reason: "writeFailed",
-              message: "模拟写入失败：无法写入目标文件。",
+              reason: "diskChanged",
+              message:
+                "编辑基准已变化（模拟 Host 复验失败）；草稿已保留，请刷新后重试。",
               recoverable: true,
-              draftRevision: 2,
+              draftRevision: mockEditRevision,
             },
         snapshotVersion: Date.now(),
       });
       if (ok) {
         // 保存成功：草稿保留但回到干净状态（内容已落盘）。
         mockDrafts.set(activeMockDiffPath, { dirty: false });
-        injectSnapshot(
-          "diff",
-          mockDiffSnapshot(activeMockDiffPath, {
-            modified: data.content as string,
-          }),
-        );
+        // 模拟生产 loadModule：先 module/loading，快照在下一个事件循环到达
+        // （真实 Host 需要重新读取 SVN，组件会真实重挂载）。
+        injectHostMessage("module/loading", { moduleId: "diff" });
+        const savedContent = data.content as string;
+        window.setTimeout(() => {
+          injectSnapshot(
+            "diff",
+            mockDiffSnapshot(activeMockDiffPath, {
+              modified: savedContent,
+            }),
+          );
+        }, 50);
       }
     }
     if (action === "diff/draft-checkpoint") {
