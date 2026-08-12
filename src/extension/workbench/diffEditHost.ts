@@ -18,31 +18,47 @@ function resolvePath(value: string): string {
   return path.resolve(value);
 }
 
+/**
+ * 规范化到 realpath 基准：token/绑定使用 realpath 规范路径，TextDocument
+ * 的 fsPath 可能差一层系统链接（macOS /var → /private/var），两侧必须
+ * 解析到同一基准再比较，否则脏文档保护会静默失效。
+ */
+async function canonicalPath(value: string): Promise<string> {
+  const resolved = resolvePath(value);
+  return fs.realpath(resolved).catch(() => resolved);
+}
+
 export function createDiffEditingService(): DiffEditingService {
   return new DiffEditingService({
     tokens: new DiffEditTokenRegistry(),
     drafts: new DiffDraftService(),
     writer: new DiffAtomicWriterService(),
     isDocumentDirty: async (targetPath: string): Promise<boolean> => {
-      const resolved = resolvePath(targetPath);
-      return vscode.workspace.textDocuments.some(
-        (document) =>
-          !document.isClosed &&
-          document.uri.scheme === "file" &&
-          resolvePath(document.uri.fsPath) === resolved &&
-          document.isDirty,
-      );
+      const resolved = await canonicalPath(targetPath);
+      for (const document of vscode.workspace.textDocuments) {
+        if (
+          document.isClosed ||
+          document.uri.scheme !== "file" ||
+          !document.isDirty
+        ) {
+          continue;
+        }
+        if ((await canonicalPath(document.uri.fsPath)) === resolved) {
+          return true;
+        }
+      }
+      return false;
     },
     // token 绑定真实 TextDocument.version；无打开文档时为 -1。
     getDocumentVersion: async (targetPath: string): Promise<number> => {
-      const resolved = resolvePath(targetPath);
-      const document = vscode.workspace.textDocuments.find(
-        (candidate) =>
-          !candidate.isClosed &&
-          candidate.uri.scheme === "file" &&
-          resolvePath(candidate.uri.fsPath) === resolved,
-      );
-      return document ? document.version : -1;
+      const resolved = await canonicalPath(targetPath);
+      for (const candidate of vscode.workspace.textDocuments) {
+        if (candidate.isClosed || candidate.uri.scheme !== "file") continue;
+        if ((await canonicalPath(candidate.uri.fsPath)) === resolved) {
+          return candidate.version;
+        }
+      }
+      return -1;
     },
     freshness: async (targetPath: string): Promise<DiffTargetFreshness> => {
       try {
