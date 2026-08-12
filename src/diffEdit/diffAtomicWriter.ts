@@ -9,7 +9,10 @@ import { hashBytes } from "./diffPathGuard";
  * - 按规范化路径互斥串行化写入（临界区串行）；
  * - 写入同目录临时文件，保留原文件权限；按原文件 BOM/EOL/末尾换行特征
  *   归一化内容后再落盘；
- * - fsync 后原子 rename 替换目标；任何失败保留原文件并清理临时文件；
+ * - 以写句柄 fsync 落盘（Windows 上只读句柄 fsync 会确定性 EACCES），
+ *   再原子 rename 替换目标；Windows 覆盖冲突（EPERM/EACCES/EEXIST/EBUSY）
+ *   时经同目录唯一 backup 回退，失败恢复原文件；
+ * - 任何失败保留原文件并清理临时文件；
  * - 返回新字节 hash 供结果绑定。
  */
 
@@ -28,6 +31,36 @@ export interface DiffAtomicWriteError {
 
 export type DiffAtomicWriteOutcome =
   DiffAtomicWriteResult | DiffAtomicWriteError;
+
+/**
+ * 文件操作依赖（可注入以在非 Windows 上模拟 Windows 失败语义）。
+ *
+ * Windows 语义要点：
+ * - `writeAndSync` 必须用**写句柄**落盘：`FlushFileBuffers` 需要写访问，
+ *   只读句柄（`open(path, "r")` + `sync()`）会确定性返回 EACCES；
+ * - `rename` 覆盖已存在目标在 Windows 走 MoveFileExW(REPLACE_EXISTING)，
+ *   但对被占用/只读目标仍会抛 EPERM/EBUSY/EACCES，需 backup 回退。
+ */
+export interface DiffAtomicFileOps {
+  /** 写入临时文件并以写句柄 fsync 落盘（保留目标权限 mode）。 */
+  writeAndSync: (path: string, data: Buffer, mode?: number) => Promise<void>;
+  rename: (from: string, to: string) => Promise<void>;
+  rm: (path: string, options?: { force?: boolean }) => Promise<void>;
+}
+
+export const defaultDiffAtomicFileOps: DiffAtomicFileOps = {
+  writeAndSync: async (filePath, data, mode) => {
+    const handle = await fs.open(filePath, "w", mode);
+    try {
+      await handle.writeFile(data);
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+  },
+  rename: (from, to) => fs.rename(from, to),
+  rm: (filePath, options) => fs.rm(filePath, options),
+};
 
 export interface DiffAtomicWriterDeps {
   /** 进入临界区后复验磁盘现状（由 Host 提供 lstat/realpath/hash）。 */
@@ -77,6 +110,51 @@ export function toPreservingBytes(
 }
 
 export class DiffAtomicWriter {
+  constructor(
+    private readonly fileOps: DiffAtomicFileOps = defaultDiffAtomicFileOps,
+    private readonly platform: NodeJS.Platform = process.platform,
+  ) {}
+
+  /** 仅 Windows 且命中明确的覆盖冲突错误时启用 backup 回退。 */
+  private isWindowsOverwriteConflict(error: unknown): boolean {
+    if (this.platform !== "win32") return false;
+    const code = (error as NodeJS.ErrnoException | undefined)?.code;
+    return (
+      code === "EPERM" ||
+      code === "EACCES" ||
+      code === "EEXIST" ||
+      code === "EBUSY"
+    );
+  }
+
+  /** 用临时文件替换目标；失败时保证原文件不丢失。 */
+  private async replaceTempIntoPlace(
+    tempPath: string,
+    targetPath: string,
+  ): Promise<void> {
+    try {
+      await this.fileOps.rename(tempPath, targetPath);
+      return;
+    } catch (error) {
+      // 仅 Windows 且命中明确的覆盖冲突错误（EPERM/EACCES/EEXIST/EBUSY）时
+      // 走 backup 回退；其余错误（磁盘满、目录错误等）直接上报。
+      if (!this.isWindowsOverwriteConflict(error)) throw error;
+    }
+    // Windows 覆盖冲突回退：同目录唯一 backup，target→backup、temp→target；
+    // 第二步失败必须恢复 backup→target；成功清理 backup。任何失败路径
+    // 原文件都不丢失（仍在 target 或唯一 backup）。
+    const backupPath = `${targetPath}.svn-wb-${randomBytes(6).toString("hex")}.bak`;
+    await this.fileOps.rename(targetPath, backupPath);
+    try {
+      await this.fileOps.rename(tempPath, targetPath);
+    } catch (error) {
+      // 精确恢复原文件；恢复本身失败时原字节仍保留在唯一 backup（不丢）。
+      await this.fileOps.rename(backupPath, targetPath).catch(() => undefined);
+      throw error;
+    }
+    await this.fileOps.rm(backupPath, { force: true }).catch(() => undefined);
+  }
+
   /** 写入原始字节（不归一化），供需要精确字节语义的调用方。 */
   async writeRawBytes(input: {
     targetPath: string;
@@ -175,16 +253,10 @@ export class DiffAtomicWriter {
         };
       }
       try {
-        await fs.writeFile(tempPath, input.bytes, { mode });
-        const handle = await fs.open(tempPath, "r");
-        try {
-          await handle.sync();
-        } finally {
-          await handle.close();
-        }
-        await fs.rename(tempPath, normalized);
+        await this.fileOps.writeAndSync(tempPath, input.bytes, mode);
+        await this.replaceTempIntoPlace(tempPath, normalized);
       } catch {
-        await fs.rm(tempPath, { force: true }).catch(() => undefined);
+        await this.fileOps.rm(tempPath, { force: true }).catch(() => undefined);
         return {
           ok: false,
           reason: "writeFailed",
