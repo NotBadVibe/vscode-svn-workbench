@@ -961,6 +961,192 @@ describe("diffEditingService 编排", () => {
     expect(await fs.readFile(target, "utf8")).toBe("用户编辑后的内容\n");
   });
 
+  it("saveWorking 成功后草稿回到干净状态（cleanContent 更新为已保存内容）", async () => {
+    const service = new DiffEditingService(deps);
+    const opened = await openEdit();
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) return;
+    // 真实编辑 → 脏草稿。
+    service.checkpointDraft({
+      targetId: opened.targetId,
+      sessionId: session.sessionId,
+      repositoryUuid: session.repositoryUuid,
+      scopeHash: session.scopeHash,
+      baseHash: opened.baseHash,
+      baseRevision: opened.baseRevision,
+      baseContents: opened.baseContents,
+      diskHash: opened.rawHash,
+      targetPath: target,
+      content: "const x = 2;\n",
+      baseRevisionOfClient: opened.draftRevision,
+    });
+    expect(service.isDraftDirty(opened.targetId)).toBe(true);
+    const saved = await service.saveWorking({
+      sessionId: session.sessionId,
+      moduleId: "diff",
+      taskId: "diff/working",
+      repositoryUuid: session.repositoryUuid,
+      scopeHash: session.scopeHash,
+      targetId: opened.targetId,
+      editToken: opened.editToken,
+      draftRevision: opened.draftRevision + 1,
+      expectedContentHash: opened.rawHash,
+      content: "const x = 2;\n",
+      scope,
+      repositoryRoot,
+    });
+    expect(saved.ok).toBe(true);
+    if (!saved.ok) return;
+    // 保存成功立即干净：快照不应再携带草稿、切换不应触发三选一。
+    expect(service.isDraftDirty(opened.targetId)).toBe(false);
+  });
+
+  it("保存后的新编辑以新保存内容为干净基准；普通 checkpoint 不改基准", async () => {
+    const service = new DiffEditingService(deps);
+    const opened = await openEdit();
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) return;
+    service.checkpointDraft({
+      targetId: opened.targetId,
+      sessionId: session.sessionId,
+      repositoryUuid: session.repositoryUuid,
+      scopeHash: session.scopeHash,
+      baseHash: opened.baseHash,
+      baseRevision: opened.baseRevision,
+      baseContents: opened.baseContents,
+      diskHash: opened.rawHash,
+      targetPath: target,
+      content: "const x = 2;\n",
+      baseRevisionOfClient: opened.draftRevision,
+    });
+    const saved = await service.saveWorking({
+      sessionId: session.sessionId,
+      moduleId: "diff",
+      taskId: "diff/working",
+      repositoryUuid: session.repositoryUuid,
+      scopeHash: session.scopeHash,
+      targetId: opened.targetId,
+      editToken: opened.editToken,
+      draftRevision: opened.draftRevision + 1,
+      expectedContentHash: opened.rawHash,
+      content: "const x = 2;\n",
+      scope,
+      repositoryRoot,
+    });
+    expect(saved.ok).toBe(true);
+    if (!saved.ok) return;
+    // 普通 checkpoint 回到与保存内容相同 → 干净（不是回到打开时基准）。
+    const draft = service.getDraft(opened.targetId);
+    expect(draft).toBeDefined();
+    if (!draft) return;
+    const same = service.checkpointDraft({
+      targetId: opened.targetId,
+      sessionId: session.sessionId,
+      repositoryUuid: session.repositoryUuid,
+      scopeHash: session.scopeHash,
+      baseHash: draft.baseHash,
+      baseRevision: draft.baseRevision,
+      baseContents: draft.baseContents,
+      diskHash: draft.diskHash,
+      targetPath: target,
+      content: "const x = 2;\n",
+      baseRevisionOfClient: saved.acceptedRevision,
+    });
+    expect(same.ok).toBe(true);
+    expect(service.isDraftDirty(opened.targetId)).toBe(false);
+    // checkpoint 回打开时的旧内容 → 仍是脏（基准是保存后的内容）。
+    const revert = service.checkpointDraft({
+      targetId: opened.targetId,
+      sessionId: session.sessionId,
+      repositoryUuid: session.repositoryUuid,
+      scopeHash: session.scopeHash,
+      baseHash: draft.baseHash,
+      baseRevision: draft.baseRevision,
+      baseContents: draft.baseContents,
+      diskHash: draft.diskHash,
+      targetPath: target,
+      content: "const x = 1;\n",
+      baseRevisionOfClient: service.getDraft(opened.targetId)?.revision ?? -1,
+    });
+    expect(revert.ok).toBe(true);
+    expect(service.isDraftDirty(opened.targetId)).toBe(true);
+  });
+
+  it("连续第二次编辑/保存使用新 token 与新磁盘 hash/干净基准", async () => {
+    const service = new DiffEditingService(deps);
+    const opened = await openEdit();
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) return;
+    const firstSaved = await service.saveWorking({
+      sessionId: session.sessionId,
+      moduleId: "diff",
+      taskId: "diff/working",
+      repositoryUuid: session.repositoryUuid,
+      scopeHash: session.scopeHash,
+      targetId: opened.targetId,
+      editToken: opened.editToken,
+      draftRevision: opened.draftRevision,
+      expectedContentHash: opened.rawHash,
+      content: "const x = 2;\n",
+      scope,
+      repositoryRoot,
+    });
+    expect(firstSaved.ok).toBe(true);
+    if (!firstSaved.ok) return;
+    expect(service.isDraftDirty(opened.targetId)).toBe(false);
+
+    // 第二次编辑 → 脏 → 保存必须用第一次保存返回的新 token 与新 hash。
+    service.checkpointDraft({
+      targetId: opened.targetId,
+      sessionId: session.sessionId,
+      repositoryUuid: session.repositoryUuid,
+      scopeHash: session.scopeHash,
+      baseHash: opened.baseHash,
+      baseRevision: opened.baseRevision,
+      baseContents: opened.baseContents,
+      diskHash: firstSaved.newContentHash,
+      targetPath: target,
+      content: "const x = 3;\nconst b = 1;\n",
+      baseRevisionOfClient: firstSaved.acceptedRevision,
+    });
+    expect(service.isDraftDirty(opened.targetId)).toBe(true);
+    const secondSaved = await service.saveWorking({
+      sessionId: session.sessionId,
+      moduleId: "diff",
+      taskId: "diff/working",
+      repositoryUuid: session.repositoryUuid,
+      scopeHash: session.scopeHash,
+      targetId: opened.targetId,
+      editToken: firstSaved.newEditToken,
+      draftRevision: service.getDraft(opened.targetId)?.revision ?? -1,
+      expectedContentHash: firstSaved.newContentHash,
+      content: "const x = 3;\nconst b = 1;\n",
+      scope,
+      repositoryRoot,
+    });
+    expect(secondSaved.ok).toBe(true);
+    expect(secondSaved.ok && secondSaved.newEditToken).not.toBe(
+      firstSaved.newEditToken,
+    );
+    expect(service.isDraftDirty(opened.targetId)).toBe(false);
+    // 旧 token（第一次）重放必须拒绝。
+    const replay = await service.saveWorking({
+      sessionId: session.sessionId,
+      moduleId: "diff",
+      taskId: "diff/working",
+      repositoryUuid: session.repositoryUuid,
+      scopeHash: session.scopeHash,
+      targetId: opened.targetId,
+      editToken: firstSaved.newEditToken,
+      draftRevision: service.getDraft(opened.targetId)?.revision ?? -1,
+      expectedContentHash: firstSaved.newContentHash,
+      content: "hijack\n",
+      scope,
+      repositoryRoot,
+    });
+    expect(replay.ok).toBe(false);
+  });
+
   it("多目标会话：第二个目标的 draftRevision 不被误判乱序", async () => {
     const service = new DiffEditingService(deps);
     const second = await writeTarget(

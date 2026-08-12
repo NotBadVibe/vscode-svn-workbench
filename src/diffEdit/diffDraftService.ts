@@ -100,6 +100,30 @@ export class DiffDraftService {
     return this.drafts.get(targetId);
   }
 
+  /**
+   * 保存成功：显式把草稿标记为“干净”——把 content 与 cleanContent 更新为
+   * 已保存内容、diskHash 更新为新磁盘 hash，并递增 revision。
+   * 这是更新干净基准的唯一路径；普通 checkpoint（upsert）不得覆盖 cleanContent。
+   * 目标不存在时返回 undefined。
+   */
+  markSaved(
+    targetId: string,
+    input: { content: string; diskHash: string },
+  ): DiffDraft | undefined {
+    const existing = this.drafts.get(targetId);
+    if (existing === undefined) return undefined;
+    const draft: DiffDraft = {
+      ...existing,
+      content: input.content,
+      diskHash: input.diskHash,
+      cleanContent: input.content,
+      revision: this.revisionCounter++,
+      updatedAt: Date.now(),
+    };
+    this.drafts.set(targetId, draft);
+    return draft;
+  }
+
   abandon(targetId: string): boolean {
     return this.drafts.delete(targetId);
   }

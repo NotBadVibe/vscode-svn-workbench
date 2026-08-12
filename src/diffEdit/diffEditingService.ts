@@ -445,20 +445,11 @@ export class DiffEditingService {
       };
     }
 
-    // 成功：更新草稿到已保存状态（磁盘 hash=新 hash，内容即干净基准），
-    // 并签发新 token。
-    this.drafts.upsert({
-      targetId: input.targetId,
-      repositoryUuid: binding.repositoryUuid,
-      scopeHash: binding.scopeHash,
-      baseHash: binding.baseHash,
-      baseRevision: binding.baseRevision,
-      baseContents: currentDraft?.baseContents,
-      diskHash: saved.newHash,
-      targetPath: binding.targetPath,
+    // 成功：显式把草稿标记为已保存（cleanContent 更新为已保存内容），
+    // 使 isDraftDirty 回到 false；随后签发新 token（rawHash=新磁盘 hash）。
+    this.drafts.markSaved(input.targetId, {
       content: input.content,
-      cleanContent: input.content,
-      baseRevisionOfClient: currentDraft.revision,
+      diskHash: saved.newHash,
     });
     const nextDraft = this.drafts.get(input.targetId);
     const newEditToken = this.tokens.issue({
