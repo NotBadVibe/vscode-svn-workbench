@@ -1,6 +1,6 @@
-# SVN Workbench v0.0.6 版本规划
+# SVN Workbench v0.0.6 发布记录
 
-> 状态：候选（阶段 0-4 已落地；连续保存 flake 已按 Lead /simplify 两轮审查收敛（第七轮，见阶段 1）；VSIX、干净安装、真实 VS Code 自动冒烟与不可变 release evidence 以最终源码候选 `77fffcd` 为准）。
+> 状态：已发布（2026-08-12，Asia/Shanghai；GitHub 发布将在同一 UTC 日期执行）。受支持的 Node.js 26 + npm 12 工具链下，完整 `verify`、真实 VS Code 隔离实例人工点检（连续保存）、VSIX 打包及隔离安装/卸载/重装，以及正式不可变 release evidence 均已通过；`v0.0.6` tag 指向源码提交 `77fffcd`。
 >
 > 基线版本：`v0.0.5`。
 >
@@ -234,18 +234,16 @@ Token 单次使用。成功、失败、目标切换、范围变化、外部文�
 
 任一 P0 无法满足时，页内编辑不发布；继续使用 `v0.0.4` 的只读 Diff 与原生编辑器对比入口。No-go 不阻塞核心 SVN 能力。
 
-## 10. 候选与发布记录
+## 10. 发布记录
 
-> 状态：候选（2026-08-12 重建）。连续保存 flake 已收敛（第七轮），候选源码、门禁、VSIX、干净安装、真实 VS Code 自动冒烟与不可变 release evidence 均以最终源码候选为准，等待 k3 独立发布审核与 Lead 放行远端发布。
-
-本版本候选源码位于分支 `agent/release-v0.0.6`，最终候选提交 `77fffcdd9369a780309f2eddf8bc6727faa8e2f7`（`docs(current/release)` 源码候选同步，位于生命周期修复 HEAD `cd66af2` 之上）。已接受证据运行、不可变证据路径及其树指纹以 [`manifest.json`](./manifest.json) 为准。
+本版本发布源码为本地提交 `77fffcdd9369a780309f2eddf8bc6727faa8e2f7`（`docs(current/release)` 源码候选同步，位于生命周期修复 HEAD `cd66af2` 之上），分支 `agent/release-v0.0.6`；`v0.0.6` tag 指向该提交。已接受证据运行、不可变证据路径及其树指纹以 [`manifest.json`](./manifest.json) 为准。
 
 - 工具链：Node.js `26.0.0`、npm `12.0.2`、VS Code `1.132.1`、macOS `26.6` arm64；`npm ci` 干净安装。
 - `npm run verify` 通过：669 项单元/组件测试、行覆盖率 `93.44%`、Webview E2E 59 项、性能预算与 Extension Host（含真实 VS Code 页内编辑保存与外部/嵌套/BASE 边界用例）均通过。
 - VSIX `svn-workbench-0.0.6.vsix`：`8,487,260` bytes，SHA256 `E9EECCBFEA5F5AD61C873D636727528CE4D6D50C09B353328904DB5EF18BAF8F`，共 3710 个文件；隔离 profile 完成安装、卸载与重装。
 - 生命周期修复（第七轮，Lead /simplify 两轮审查）：保存后 Host 权威快照刷新保持编辑会话（DiffView 手动生命周期：编辑态同键同容器保持 FileDiff/Editor 实例；`diffViewLifecycle.ts` 重建决策纯函数覆盖容器身份切换与逐字段内容比较）；`diff/save-result` 按消息对象只消费一次；App 已有快照刷新保持模块挂载。回归：`AppLifecycle` + DiffModule 35/35、连续保存 e2e repeat-each=15 → 15/15（Lead 独立复验通过）。
-- 真实 VS Code 自动冒烟（Extension Host，非 mock）：页内编辑首次/守卫保存与旧 token 重放拒绝；nested/external/BASE 变化目标拒绝；多窗口独立互不影响。页内编辑交互（真实 Webview 键入、脏草稿三选一对话框）由真实 Chromium Webview E2E（mock Host）与单元测试覆盖，CSP 零违规由 edit-mode Spike（生产等价严格 CSP）覆盖；真实 VS Code Webview 内的人工键入/对话框点检列为 k3/Lead 补验项。
-- ⚠️ 真实 VS Code Webview 人工点检边界：此前 k3/Lead 在旧候选安装件（2369a1f）上的点检结论不适用于新候选——源码自旧候选后有生命周期修复。新候选已完成真实 Extension Host + VSIX 干净安装验证（validate:vsix-install：安装/卸载/重装，真实 VS Code 1.132.1 arm64）；Lead 需对新安装件再点检连续保存（页内编辑保存后快速二次输入不被重建打断），不得把旧候选点检冒充新候选。
+- 真实 VS Code 自动冒烟（Extension Host，非 mock）：页内编辑首次/守卫保存与旧 token 重放拒绝；nested/external/BASE 变化目标拒绝；多窗口独立互不影响。页内编辑交互（真实 Webview 键入、脏草稿三选一对话框）由真实 Chromium Webview E2E（mock Host）与单元测试覆盖，CSP 零违规由 edit-mode Spike（生产等价严格 CSP）覆盖。
+- 真实 VS Code 人工点检（Lead，全新隔离实例 + 本版精确 VSIX，SHA `E9EE...AF8F`）：页内编辑后**两次连续保存均成功**；保存后权威快照刷新保持编辑 DOM identity/connected（编辑器未被重建打断）；第二次输入脏状态正常；最终无保存拒绝、`CSP violations=[]`；磁盘同时包含首次保存的变化与 `// candidate-second-save` 输入。真实 VS Code 隔离点检通过。
 - 已接受证据 run `2026-08-12T13-15-40-882Z-593ddebe`，不可变路径 `artifacts/2026-08-12T13-15-40-882Z-593ddebe`。
 
-本记录随候选证据一并固化；正式发布（push/PR/merge/tag/Release/Marketplace）由 k3 审核与 Lead 放行后执行。
+本记录随发布证据一并固化；远端发布（push、GitHub PR、Release、Marketplace 发布）不属于本文档范围，由仓库维护流程在授权后执行。
