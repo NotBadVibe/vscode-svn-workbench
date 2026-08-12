@@ -221,6 +221,8 @@ import {
 } from "./workbenchRouting";
 import { NativeDiffContentProvider } from "./nativeDiffContentProvider";
 import { resolveDiffSwitchDecision } from "./diffTargetSwitch";
+import { shouldConfirmTargetSwitch } from "./diffTargetSwitch";
+import { createSvnBindingProbe } from "./diffSvnBinding";
 import { createDiffEditingService, watchDiffEditTargets } from "./diffEditHost";
 import { DiffEditingService } from "../../diffEdit/diffEditingService";
 import { buildDiffTargetId } from "../../diffEdit/diffEditingService";
@@ -373,7 +375,16 @@ export class WorkbenchController implements vscode.Disposable {
       const currentTargetId = buildDiffTargetId(
         path.resolve(this.session.targetFile),
       );
-      if (this.diffEdit.getDraft(currentTargetId) !== undefined) {
+      if (
+        shouldConfirmTargetSwitch({
+          hasDraft: this.diffEdit.getDraft(currentTargetId) !== undefined,
+          draftDirty: this.diffEdit.isDraftDirty(currentTargetId),
+          hasActiveSession: this.diffEdit.hasActiveSession(
+            currentTargetId,
+            this.session.sessionId,
+          ),
+        })
+      ) {
         this.clearPendingDiffOpen();
         this.pendingDiffOpen = { request, currentTargetId };
         this.pendingDiffOpenTimer = setTimeout(() => {
@@ -3115,6 +3126,12 @@ export class WorkbenchController implements vscode.Disposable {
         };
       }
       const bytes = await fs.readFile(absolutePath);
+      if (bytes.indexOf(0) !== -1) {
+        return {
+          supported: false,
+          reason: "二进制文件不支持页内编辑；请使用原生编辑器。",
+        };
+      }
       if (bytes.byteLength > MAX_EDITABLE_BYTES) {
         return {
           supported: false,
@@ -3174,6 +3191,7 @@ export class WorkbenchController implements vscode.Disposable {
         targetId: resolution.targetId,
         scope: session.scope,
         repositoryRoot: session.scope.repositoryRoot,
+        probeSvnBinding: createSvnBindingProbe(session.svnPath),
       });
       if (!result.ok) {
         await this.post({
@@ -3272,6 +3290,7 @@ export class WorkbenchController implements vscode.Disposable {
       rawHash: "",
       scope: session.scope,
       repositoryRoot: session.scope.repositoryRoot,
+      probeSvnBinding: createSvnBindingProbe(session.svnPath),
     });
     if (!result.ok) {
       await this.sendError(
@@ -3345,6 +3364,7 @@ export class WorkbenchController implements vscode.Disposable {
       content,
       scope: session.scope,
       repositoryRoot: session.scope.repositoryRoot,
+      probeSvnBinding: createSvnBindingProbe(session.svnPath),
     });
     await this.post({
       protocolVersion: WORKBENCH_PROTOCOL_VERSION,

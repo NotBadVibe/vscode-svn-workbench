@@ -1,5 +1,6 @@
 import type { OperationScope } from "../scope/operationScope";
 import * as fs from "node:fs/promises";
+import * as path from "node:path";
 import {
   analyzeUtf8,
   hashBytes,
@@ -12,6 +13,7 @@ import { MAX_EDITABLE_BYTES } from "./diffPathGuard";
 import type {
   DiffSaveWorkingInput,
   DiffSaveWorkingResult,
+  DiffSvnBindingProbeResult,
   DiffTargetFreshness,
   OpenDiffEditInput,
 } from "./diffEditTypes";
@@ -75,6 +77,70 @@ export class DiffEditingService {
   private readonly getDocumentVersion: (targetPath: string) => Promise<number>;
   private readonly readBytes: (targetPath: string) => Promise<Buffer>;
 
+  /**
+   * SVN 绑定复验（打开与每次保存）：目标当前所属工作副本根、仓库 UUID 与
+   * BASE hash 必须与签发时一致。wcroot 不一致 = 目标落入 svn:externals 或
+   * 嵌套工作副本。未注入 probe 时跳过（纯领域单测）；生产路径总是注入。
+   */
+  private async verifySvnBinding(input: {
+    probe?: (targetPath: string) => Promise<DiffSvnBindingProbeResult>;
+    targetPath: string;
+    repositoryRoot: string;
+    expectedUuid: string;
+    expectedBaseHash: string;
+  }): Promise<
+    | { ok: true }
+    | {
+        ok: false;
+        code:
+          "nestedOrExternal" | "scopeChanged" | "diskChanged" | "targetMoved";
+        message: string;
+      }
+  > {
+    if (!input.probe) return { ok: true };
+    const probe = await input.probe(input.targetPath);
+    if (!probe.ok) {
+      return {
+        ok: false,
+        code: "targetMoved",
+        message:
+          probe.code === "noBase"
+            ? "无法读取当前 BASE（目标可能已脱离版本控制），拒绝继续。"
+            : "无法读取目标 SVN 信息（目标可能已脱离工作副本），拒绝继续。",
+      };
+    }
+    const canonical = async (value: string): Promise<string> =>
+      path.resolve(await fs.realpath(value).catch(() => value));
+    const [actualRoot, expectedRoot] = await Promise.all([
+      canonical(probe.workingCopyRoot),
+      canonical(input.repositoryRoot),
+    ]);
+    if (actualRoot !== expectedRoot) {
+      return {
+        ok: false,
+        code: "nestedOrExternal",
+        message:
+          "目标位于 svn:externals 或嵌套工作副本，不属于当前工作副本边界，拒绝页内编辑；请使用原生编辑器。",
+      };
+    }
+    if (probe.repositoryUuid !== input.expectedUuid) {
+      return {
+        ok: false,
+        code: "scopeChanged",
+        message: "仓库标识（UUID）已变化，拒绝保存；请重新打开差异。",
+      };
+    }
+    if (probe.baseHash !== input.expectedBaseHash) {
+      return {
+        ok: false,
+        code: "diskChanged",
+        message:
+          "BASE 已变化（可能执行了 SVN Update/Switch）；草稿已保留，可恢复为对比后导出补丁或人工复制。",
+      };
+    }
+    return { ok: true };
+  }
+
   constructor(private readonly deps: DiffEditingServiceDeps) {
     this.tokens = deps.tokens;
     this.drafts = deps.drafts;
@@ -109,6 +175,21 @@ export class DiffEditingService {
     });
     if (!guard.ok) {
       return { ok: false, reason: guard.code, message: guard.message };
+    }
+    // SVN 绑定复验：仓库 UUID、工作副本归属（拒绝 external/嵌套 WC）与 BASE。
+    const openBinding = await this.verifySvnBinding({
+      probe: input.probeSvnBinding,
+      targetPath: input.targetPath,
+      repositoryRoot: input.repositoryRoot,
+      expectedUuid: input.repositoryUuid,
+      expectedBaseHash: guard.context.baseHash,
+    });
+    if (!openBinding.ok) {
+      return {
+        ok: false,
+        reason: openBinding.code,
+        message: openBinding.message,
+      };
     }
     if (await this.isDocumentDirty(input.targetPath)) {
       return {
@@ -228,7 +309,7 @@ export class DiffEditingService {
       const reason =
         guard.code === "tooLarge"
           ? "tooLarge"
-          : guard.code === "unsupportedEncoding"
+          : guard.code === "unsupportedEncoding" || guard.code === "binary"
             ? "unsupportedEncoding"
             : guard.code === "notFound" ||
                 guard.code === "notRegularFile" ||
@@ -239,6 +320,28 @@ export class DiffEditingService {
         ok: false,
         reason,
         message: guard.message,
+        recoverable: true,
+        draftRevision: this.drafts.get(input.targetId)?.revision,
+      };
+    }
+
+    // 保存前 SVN 绑定复验：UUID/归属/BASE 任一变化都拒绝（token 已消耗、
+    // 草稿保留）。
+    const saveBinding = await this.verifySvnBinding({
+      probe: input.probeSvnBinding,
+      targetPath: binding.targetPath,
+      repositoryRoot: input.repositoryRoot,
+      expectedUuid: binding.repositoryUuid,
+      expectedBaseHash: binding.baseHash,
+    });
+    if (!saveBinding.ok) {
+      return {
+        ok: false,
+        reason:
+          saveBinding.code === "nestedOrExternal"
+            ? "scopeChanged"
+            : saveBinding.code,
+        message: saveBinding.message,
         recoverable: true,
         draftRevision: this.drafts.get(input.targetId)?.revision,
       };
@@ -382,6 +485,10 @@ export class DiffEditingService {
     targetId: string;
     scope: OperationScope;
     repositoryRoot: string;
+    /** 保存前复验 UUID/归属/BASE（Host 注入；与 saveWorking 同一语义）。 */
+    probeSvnBinding?: (
+      targetPath: string,
+    ) => Promise<DiffSvnBindingProbeResult>;
   }): Promise<DiffSaveWorkingResult> {
     const draft = this.drafts.get(input.targetId);
     if (!draft) {
@@ -416,7 +523,7 @@ export class DiffEditingService {
       const reason =
         guard.code === "tooLarge"
           ? "tooLarge"
-          : guard.code === "unsupportedEncoding"
+          : guard.code === "unsupportedEncoding" || guard.code === "binary"
             ? "unsupportedEncoding"
             : guard.code === "notFound" ||
                 guard.code === "notRegularFile" ||
@@ -427,6 +534,26 @@ export class DiffEditingService {
         ok: false,
         reason,
         message: guard.message,
+        recoverable: true,
+        draftRevision: draft.revision,
+      };
+    }
+    // 与 saveWorking 同一复验：UUID/归属/BASE 变化拒绝，草稿保留。
+    const draftBinding = await this.verifySvnBinding({
+      probe: input.probeSvnBinding,
+      targetPath: draft.targetPath,
+      repositoryRoot: input.repositoryRoot,
+      expectedUuid: draft.repositoryUuid,
+      expectedBaseHash: draft.baseHash,
+    });
+    if (!draftBinding.ok) {
+      return {
+        ok: false,
+        reason:
+          draftBinding.code === "nestedOrExternal"
+            ? "scopeChanged"
+            : draftBinding.code,
+        message: draftBinding.message,
         recoverable: true,
         draftRevision: draft.revision,
       };

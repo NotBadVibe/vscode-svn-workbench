@@ -32,3 +32,18 @@ export function resolveDiffSwitchDecision(
   // stay 与未知决定都按“留在当前文件”安全处理。
   return { kind: "stay" };
 }
+
+/**
+ * 是否需要在加载新目标前发起“脏草稿三选一”确认：
+ * - 脏草稿必须确认（有真实未落盘内容）；
+ * - 干净草稿但编辑会话仍活动也必须确认——用户可能刚输入而 debounce 检查点
+ *   尚未到达 Host，Webview 侧知道真实脏状态（干净时自动暂存，不弹对话框）；
+ * - 干净草稿且无活动会话（已保存/从未编辑）不确认，避免无谓往返。
+ */
+export function shouldConfirmTargetSwitch(state: {
+  hasDraft: boolean;
+  draftDirty: boolean;
+  hasActiveSession: boolean;
+}): boolean {
+  return state.hasDraft && (state.draftDirty || state.hasActiveSession);
+}

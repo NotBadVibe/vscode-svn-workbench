@@ -688,7 +688,7 @@ describe("DiffModule 页内编辑（v0.0.6）", () => {
     });
   });
 
-  it("三选一：保存并打开发送 save 决定；留在当前文件发送 stay", async () => {
+  it("三选一：保存并打开先刷新检查点再发送 save 决定（顺序保证最新内容）", async () => {
     const action = vi.fn();
     render(DiffModule, {
       snapshot: { ...editSnapshot, draft: { revision: 3, updatedAt: 1 } },
@@ -699,9 +699,31 @@ describe("DiffModule 页内编辑（v0.0.6）", () => {
         nextRelativePath: "src/other.ts",
       },
     });
-    await screen.findByRole("dialog", { name: "当前文件有未保存的草稿" });
+    await screen.findByText("编辑模式");
+    // 制造最新编辑（debounce 检查点尚未发出）立刻选择保存并打开。
+    editMock.state.text = "const a = 9;\nconst b = 3;\n";
     await fireEvent.click(
-      screen.getByRole("button", { name: "保存并打开新文件" }),
+      screen.getByRole("button", { name: "还原当前差异块为 BASE" }),
+    );
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "保存并打开新文件" }),
+    );
+    const checkpointIndex = action.mock.calls.findIndex(
+      (call) => call[0] === "diff/draft-checkpoint",
+    );
+    const decisionIndex = action.mock.calls.findIndex(
+      (call) =>
+        call[0] === "diff/target-switch-decision" &&
+        (call[1] as { decision?: string }).decision === "save",
+    );
+    // 检查点必须先于 save 决定发出，且内容是最新编辑文本。
+    expect(checkpointIndex).toBeGreaterThanOrEqual(0);
+    expect(decisionIndex).toBeGreaterThanOrEqual(0);
+    expect(action.mock.invocationCallOrder[checkpointIndex]).toBeLessThan(
+      action.mock.invocationCallOrder[decisionIndex],
+    );
+    expect(action.mock.calls[checkpointIndex][1]).toEqual(
+      expect.objectContaining({ content: "const a = 9;\nconst b = 3;\n" }),
     );
     expect(action).toHaveBeenCalledWith("diff/target-switch-decision", {
       decision: "save",

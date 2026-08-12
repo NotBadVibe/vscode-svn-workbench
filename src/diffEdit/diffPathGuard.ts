@@ -23,6 +23,7 @@ export type DiffPathGuardErrorCode =
   | "symlink"
   | "outOfScope"
   | "tooLarge"
+  | "binary"
   | "unsupportedEncoding"
   | "ioError";
 
@@ -184,6 +185,14 @@ export async function validateDiffEditTarget(input: {
       ok: false,
       code: "tooLarge",
       message: "超过 5 MB 的文件不支持页内编辑，请使用原生编辑器。",
+    };
+  }
+  // 含 NUL 即视为二进制：NUL 是合法 UTF-8，编码检测无法拦截，必须独立拒绝。
+  if (buffer.indexOf(0) !== -1) {
+    return {
+      ok: false,
+      code: "binary",
+      message: "二进制文件不支持页内编辑；请使用原生编辑器。",
     };
   }
   if (!analyzeUtf8(buffer).ok) {

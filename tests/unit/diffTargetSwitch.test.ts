@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { resolveDiffSwitchDecision } from "../../src/extension/workbench/diffTargetSwitch";
+import {
+  resolveDiffSwitchDecision,
+  shouldConfirmTargetSwitch,
+} from "../../src/extension/workbench/diffTargetSwitch";
 
 /*
  * v0.0.6 验收回归：目标切换三选一决定的授权绑定。
@@ -32,5 +35,47 @@ describe("diffTargetSwitch 决定授权绑定", () => {
     expect(resolveDiffSwitchDecision("t-current", "bogus", undefined)).toEqual({
       kind: "stay",
     });
+  });
+});
+
+describe("目标切换确认守卫（仅真正可能丢内容时才拦截）", () => {
+  it("脏草稿必须确认", () => {
+    expect(
+      shouldConfirmTargetSwitch({
+        hasDraft: true,
+        draftDirty: true,
+        hasActiveSession: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("干净草稿但编辑会话仍活动必须确认（debounce 检查点可能未达）", () => {
+    expect(
+      shouldConfirmTargetSwitch({
+        hasDraft: true,
+        draftDirty: false,
+        hasActiveSession: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("干净草稿且无活动会话不确认（不产生无谓确认往返）", () => {
+    expect(
+      shouldConfirmTargetSwitch({
+        hasDraft: true,
+        draftDirty: false,
+        hasActiveSession: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("无草稿不确认", () => {
+    expect(
+      shouldConfirmTargetSwitch({
+        hasDraft: false,
+        draftDirty: false,
+        hasActiveSession: false,
+      }),
+    ).toBe(false);
   });
 });

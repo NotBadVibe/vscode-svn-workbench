@@ -38,6 +38,7 @@ import {
 } from "../../ai/commitSelectionActions";
 import { buildCommitSelectionExplanation } from "../../ai/commitSelectionExplanation";
 import { createDiffEditingService } from "../../extension/workbench/diffEditHost";
+import { createSvnBindingProbe } from "../../extension/workbench/diffSvnBinding";
 import { hashBytes } from "../../diffEdit/diffPathGuard";
 import { parseModelListResponse } from "../../ai/openAiCompatibleProvider";
 import {
@@ -288,6 +289,10 @@ export function getExtensionTestCases(): TestCase[] {
     {
       name: "v0.0.6 edits a working copy file via the guarded save pipeline",
       run: testDiffEditIntegration,
+    },
+    {
+      name: "v0.0.6 rejects nested/external/BASE-changed targets in isolated SVN fixture",
+      run: testDiffEditSvnBindingIsolation,
     },
     {
       name: "classifies generated files for commit filtering",
@@ -1282,6 +1287,192 @@ async function testDiffEditIntegration(): Promise<void> {
     }
   } finally {
     await fs.promises.rm(target, { force: true });
+  }
+}
+
+/*
+ * v0.0.6 验收：真实 SVN fixture 下的绑定复验。
+ * 覆盖嵌套工作副本、svn:externals 与 BASE 变化（working hash 未变）三条
+ * Host 拒绝链；UUID 变化在单元层覆盖（svnadmin setuuid 后既有 WC 的
+ * svn info 仍读本地元数据，真实 fixture 无法触发）。
+ */
+async function testDiffEditSvnBindingIsolation(): Promise<void> {
+  const svnPath = await getSvnPathOrSkip();
+  const tempRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), "svn-workbench-diff-bind-"),
+  );
+  const repository = path.join(tempRoot, "repository");
+  const seed = path.join(tempRoot, "seed");
+  const workingCopy = path.join(tempRoot, "wc");
+  const secondCopy = path.join(tempRoot, "wc2");
+  try {
+    const admin = spawnSync("svnadmin", ["create", repository], {
+      encoding: "utf8",
+      shell: false,
+    });
+    if (admin.error || admin.status !== 0) {
+      throw new SkippedTest("svnadmin is not available for binding fixture.");
+    }
+    fs.mkdirSync(path.join(seed, "ext-src"), { recursive: true });
+    fs.writeFileSync(path.join(seed, "file.txt"), "base\n", "utf8");
+    fs.writeFileSync(path.join(seed, "ext-src", "ext.txt"), "ext\n", "utf8");
+    const repositoryUrl = `${pathToFileURL(repository).href}/trunk`;
+    const imported = await runSvnCommand(
+      svnPath,
+      ["import", seed, repositoryUrl, "-m", "initial", "--encoding", "utf-8"],
+      tempRoot,
+    );
+    assert.equal(imported.exitCode, 0, imported.stderr);
+    const checkout = await runSvnCommand(
+      svnPath,
+      ["checkout", repositoryUrl, workingCopy],
+      tempRoot,
+    );
+    assert.equal(checkout.exitCode, 0, checkout.stderr);
+
+    const scope: OperationScope = {
+      id: "diff-bind-test",
+      repositoryRoot: workingCopy,
+      source: "editorFile" as const,
+      roots: [
+        {
+          absolutePath: workingCopy,
+          relativePath: ".",
+          kind: "folder" as const,
+        },
+      ],
+      allowExpandScope: false,
+      includeExternals: false,
+      includeNestedWorkingCopies: false,
+      createdAt: 0,
+    };
+    const probe = createSvnBindingProbe(svnPath);
+    const service = createDiffEditingService();
+    const target = path.join(workingCopy, "file.txt");
+    // 本地修改（working 与 BASE 不同）。
+    fs.writeFileSync(target, "base\nlocal\n", "utf8");
+    const openInput = {
+      sessionId: "bind-session",
+      repositoryUuid: "",
+      scopeHash: "bind-scope",
+      baseContents: "base\n",
+      baseRevision: "BASE",
+      baseHash: "",
+      rawHash: "",
+      scope,
+      repositoryRoot: workingCopy,
+      probeSvnBinding: probe,
+    };
+    // UUID 从 probe 实测（openEdit 要求 session UUID 与 probe 一致）。
+    const uuidProbe = await probe(target);
+    assert.ok(uuidProbe.ok, "probe 应读取真实 SVN 信息");
+    if (!uuidProbe.ok) return;
+    const boundInput = {
+      ...openInput,
+      repositoryUuid: uuidProbe.repositoryUuid,
+    };
+
+    const opened = await service.openEdit({
+      ...boundInput,
+      targetPath: target,
+    });
+    assert.ok(opened.ok, "主工作副本目标应允许 openEdit");
+    if (!opened.ok) return;
+
+    // 嵌套工作副本：独立 checkout 形成自己的 wcroot。
+    const nested = path.join(workingCopy, "nested");
+    const nestedCheckout = await runSvnCommand(
+      svnPath,
+      ["checkout", repositoryUrl, nested],
+      workingCopy,
+    );
+    assert.equal(nestedCheckout.exitCode, 0, nestedCheckout.stderr);
+    const nestedOpen = await service.openEdit({
+      ...boundInput,
+      targetPath: path.join(nested, "file.txt"),
+    });
+    assert.ok(!nestedOpen.ok, "嵌套工作副本目标必须拒绝");
+    if (!nestedOpen.ok) {
+      assert.equal(nestedOpen.reason, "nestedOrExternal");
+    }
+
+    // svn:externals：外部引用目录形成独立 wcroot。
+    const propset = await runSvnCommand(
+      svnPath,
+      ["propset", "svn:externals", "^/trunk/ext-src ext", workingCopy],
+      workingCopy,
+    );
+    assert.equal(propset.exitCode, 0, propset.stderr);
+    const updateForExternal = await runSvnCommand(
+      svnPath,
+      ["update", "--ignore-externals", workingCopy],
+      workingCopy,
+    );
+    assert.equal(updateForExternal.exitCode, 0, updateForExternal.stderr);
+    const fetchExternal = await runSvnCommand(
+      svnPath,
+      ["update", workingCopy],
+      workingCopy,
+    );
+    assert.equal(fetchExternal.exitCode, 0, fetchExternal.stderr);
+    const externalOpen = await service.openEdit({
+      ...boundInput,
+      targetPath: path.join(workingCopy, "ext", "ext.txt"),
+    });
+    assert.ok(!externalOpen.ok, "svn:externals 目标必须拒绝");
+    if (!externalOpen.ok) {
+      assert.equal(externalOpen.reason, "nestedOrExternal");
+    }
+
+    // BASE 变化但 working hash 未变：第二工作副本提交新内容后，本 WC
+    // update（合并本地修改）再手动还原 working 内容为打开时字节。
+    const checkout2 = await runSvnCommand(
+      svnPath,
+      ["checkout", repositoryUrl, secondCopy],
+      tempRoot,
+    );
+    assert.equal(checkout2.exitCode, 0, checkout2.stderr);
+    fs.writeFileSync(path.join(secondCopy, "file.txt"), "base-v2\n", "utf8");
+    const commit2 = await runSvnCommand(
+      svnPath,
+      ["commit", secondCopy, "-m", "advance base", "--encoding", "utf-8"],
+      secondCopy,
+    );
+    assert.equal(commit2.exitCode, 0, commit2.stderr);
+    const updateTarget = await runSvnCommand(
+      svnPath,
+      ["update", target],
+      workingCopy,
+    );
+    assert.equal(updateTarget.exitCode, 0, updateTarget.stderr);
+    // 还原 working 为打开时内容（hash 与绑定一致，BASE 已前进）。
+    fs.writeFileSync(target, "base\nlocal\n", "utf8");
+    const staleBaseSave = await service.saveWorking({
+      sessionId: "bind-session",
+      moduleId: "diff",
+      taskId: "diff/working",
+      repositoryUuid: uuidProbe.repositoryUuid,
+      scopeHash: "bind-scope",
+      targetId: opened.targetId,
+      editToken: opened.editToken,
+      draftRevision: opened.draftRevision,
+      expectedContentHash: opened.rawHash,
+      content: "base\nlocal\nhijack\n",
+      scope,
+      repositoryRoot: workingCopy,
+      probeSvnBinding: probe,
+    });
+    assert.ok(!staleBaseSave.ok, "BASE 变化后必须拒绝保存");
+    if (!staleBaseSave.ok) {
+      assert.equal(staleBaseSave.reason, "diskChanged");
+    }
+    assert.equal(
+      fs.readFileSync(target, "utf8"),
+      "base\nlocal\n",
+      "被拒绝的保存不得改动磁盘",
+    );
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
   }
 }
 

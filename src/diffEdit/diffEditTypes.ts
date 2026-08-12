@@ -41,7 +41,26 @@ export interface OpenDiffEditInput {
   baseRevision: string;
   baseHash: string;
   rawHash: string;
+  /**
+   * Host 注入的 SVN 绑定探测（svn info/cat）：打开与每次保存复验仓库
+   * UUID、工作副本归属（拒绝 external/嵌套 WC）与当前 BASE hash。
+   */
+  probeSvnBinding?: (targetPath: string) => Promise<DiffSvnBindingProbeResult>;
 }
+
+/** Host 侧 SVN 绑定探测结果（svn info --show-item + svn cat -r BASE）。 */
+export interface DiffSvnBindingProbe {
+  ok: true;
+  /** 目标当前所属仓库 UUID。 */
+  repositoryUuid: string;
+  /** 目标所属工作副本根（嵌套 WC / external 与原主 WC 不同）。 */
+  workingCopyRoot: string;
+  /** 当前 BASE 完整字节 hash。 */
+  baseHash: string;
+}
+
+export type DiffSvnBindingProbeResult =
+  DiffSvnBindingProbe | { ok: false; code: "noSvnInfo" | "noBase" };
 
 export interface DiffSaveWorkingInput {
   sessionId: string;
@@ -54,6 +73,8 @@ export interface DiffSaveWorkingInput {
   draftRevision: number;
   expectedContentHash: string;
   content: string;
+  /** 保存前复验 UUID/归属/BASE（Host 注入；见 OpenDiffEditInput）。 */
+  probeSvnBinding?: (targetPath: string) => Promise<DiffSvnBindingProbeResult>;
 }
 
 export interface DiffSaveAcceptedResult {

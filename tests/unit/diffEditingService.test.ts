@@ -20,7 +20,10 @@ import {
   type DiffEditingServiceDeps,
 } from "../../src/diffEdit/diffEditingService";
 import { diffLines } from "../../src/diffEdit/diffPatch";
-import type { DiffTargetFreshness } from "../../src/diffEdit/diffEditTypes";
+import type {
+  DiffSvnBindingProbeResult,
+  DiffTargetFreshness,
+} from "../../src/diffEdit/diffEditTypes";
 
 let workRoot: string;
 let repositoryRoot: string;
@@ -966,5 +969,223 @@ describe("diffEditingService 编排", () => {
     const consumed = deps.tokens.consume(opened.editToken);
     expect(consumed.ok).toBe(true);
     if (consumed.ok) expect(consumed.binding.documentVersion).toBe(42);
+  });
+});
+
+describe("diffEdit SVN 绑定复验（验收 P0：UUID/BASE/external/嵌套 WC）", () => {
+  let scope: OperationScope;
+  let target: string;
+  let deps: DiffEditingServiceDeps;
+  const baseText = "const x = 1;\n";
+
+  beforeEach(async () => {
+    workRoot = await fs.mkdtemp(path.join(os.tmpdir(), "svn-edit-bind-"));
+    repositoryRoot = workRoot;
+    target = await writeTarget(workRoot, "src/app.ts", baseText);
+    scope = makeScope(repositoryRoot, [path.join(repositoryRoot, "src")]);
+    deps = baseDeps();
+  });
+
+  afterEach(async () => {
+    await fs.rm(workRoot, { recursive: true, force: true });
+  });
+
+  function bindingProbe(overrides: {
+    repositoryUuid?: string;
+    workingCopyRoot?: string;
+    baseHash?: string;
+    fail?: "noSvnInfo" | "noBase";
+  }) {
+    return async (): Promise<DiffSvnBindingProbeResult> => {
+      if (overrides.fail !== undefined) {
+        return { ok: false, code: overrides.fail };
+      }
+      return {
+        ok: true,
+        repositoryUuid: overrides.repositoryUuid ?? session.repositoryUuid,
+        workingCopyRoot: overrides.workingCopyRoot ?? repositoryRoot,
+        baseHash:
+          overrides.baseHash ?? hashBytes(Buffer.from(baseText, "utf8")),
+      };
+    };
+  }
+
+  async function openEditWithProbe(
+    probe: ReturnType<typeof bindingProbe>,
+    service = new DiffEditingService(deps),
+  ) {
+    return service.openEdit({
+      sessionId: session.sessionId,
+      repositoryUuid: session.repositoryUuid,
+      scopeHash: session.scopeHash,
+      targetPath: target,
+      baseContents: baseText,
+      baseRevision: "10",
+      baseHash: hashBytes(Buffer.from(baseText, "utf8")),
+      rawHash: hashBytes(Buffer.from(baseText, "utf8")),
+      scope,
+      repositoryRoot,
+      probeSvnBinding: probe,
+    });
+  }
+
+  function saveInput(
+    opened: {
+      targetId: string;
+      editToken: string;
+      draftRevision: number;
+      rawHash: string;
+    },
+    probe: ReturnType<typeof bindingProbe>,
+  ) {
+    return {
+      sessionId: session.sessionId,
+      moduleId: "diff" as const,
+      taskId: "diff/working" as const,
+      repositoryUuid: session.repositoryUuid,
+      scopeHash: session.scopeHash,
+      targetId: opened.targetId,
+      editToken: opened.editToken,
+      draftRevision: opened.draftRevision,
+      expectedContentHash: opened.rawHash,
+      content: "const x = 2;\n",
+      scope,
+      repositoryRoot,
+      probeSvnBinding: probe,
+    };
+  }
+
+  it("openEdit 拒绝含 NUL 的二进制目标（合法 UTF-8 也不得通过）", async () => {
+    const binaryTarget = path.join(path.dirname(target), "bin.dat");
+    await fs.writeFile(
+      binaryTarget,
+      Buffer.concat([Buffer.from("abc", "utf8"), Buffer.from([0, 1, 2])]),
+    );
+    const service = new DiffEditingService(deps);
+    const result = await service.openEdit({
+      sessionId: session.sessionId,
+      repositoryUuid: session.repositoryUuid,
+      scopeHash: session.scopeHash,
+      targetPath: binaryTarget,
+      baseContents: "abc",
+      baseRevision: "10",
+      baseHash: "",
+      rawHash: "",
+      scope,
+      repositoryRoot,
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  it("openEdit 拒绝嵌套工作副本 / svn:externals 目标（wcroot 不一致）", async () => {
+    const result = await openEditWithProbe(
+      bindingProbe({ workingCopyRoot: path.join(repositoryRoot, "ext") }),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe("nestedOrExternal");
+  });
+
+  it("openEdit 拒绝 repositoryUuid 不一致", async () => {
+    const result = await openEditWithProbe(
+      bindingProbe({ repositoryUuid: "another-uuid" }),
+    );
+    expect(result.ok).toBe(false);
+  });
+
+  it("openEdit 拒绝 BASE hash 不一致", async () => {
+    const result = await openEditWithProbe(
+      bindingProbe({ baseHash: hashBytes(Buffer.from("其他 BASE", "utf8")) }),
+    );
+    expect(result.ok).toBe(false);
+  });
+
+  it("saveWorking 拒绝 UUID 变化（working hash 未变）且不落盘", async () => {
+    const service = new DiffEditingService(deps);
+    const opened = await openEditWithProbe(bindingProbe({}), service);
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) return;
+    const before = await fs.readFile(target, "utf8");
+    const result = await service.saveWorking(
+      saveInput(opened, bindingProbe({ repositoryUuid: "changed-uuid" })),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe("scopeChanged");
+    expect(await fs.readFile(target, "utf8")).toBe(before);
+  });
+
+  it("saveWorking 拒绝 BASE 变化（working hash 未变）且不落盘", async () => {
+    const service = new DiffEditingService(deps);
+    const opened = await openEditWithProbe(bindingProbe({}), service);
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) return;
+    const before = await fs.readFile(target, "utf8");
+    const result = await service.saveWorking(
+      saveInput(
+        opened,
+        bindingProbe({ baseHash: hashBytes(Buffer.from("new base", "utf8")) }),
+      ),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe("diskChanged");
+    expect(await fs.readFile(target, "utf8")).toBe(before);
+  });
+
+  it("saveWorking 拒绝目标退入 external/嵌套 WC（wcroot 变化）", async () => {
+    const service = new DiffEditingService(deps);
+    const opened = await openEditWithProbe(bindingProbe({}), service);
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) return;
+    const result = await service.saveWorking(
+      saveInput(
+        opened,
+        bindingProbe({ workingCopyRoot: path.join(repositoryRoot, "ext") }),
+      ),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe("scopeChanged");
+  });
+
+  it("saveDraft 拒绝 UUID/BASE 变化且不落盘（三选一保存链同样复验）", async () => {
+    const service = new DiffEditingService(deps);
+    const opened = await openEditWithProbe(bindingProbe({}), service);
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) return;
+    service.checkpointDraft({
+      targetId: opened.targetId,
+      sessionId: session.sessionId,
+      repositoryUuid: session.repositoryUuid,
+      scopeHash: session.scopeHash,
+      baseHash: opened.baseHash,
+      baseRevision: opened.baseRevision,
+      baseContents: opened.baseContents,
+      diskHash: opened.rawHash,
+      targetPath: target,
+      content: "用户编辑内容\n",
+      baseRevisionOfClient: opened.draftRevision,
+    });
+    const before = await fs.readFile(target, "utf8");
+    // UUID 变化
+    const uuidChanged = await service.saveDraft({
+      targetId: opened.targetId,
+      scope,
+      repositoryRoot,
+      probeSvnBinding: bindingProbe({ repositoryUuid: "changed-uuid" }),
+    });
+    expect(uuidChanged.ok).toBe(false);
+    if (!uuidChanged.ok) expect(uuidChanged.reason).toBe("scopeChanged");
+    // BASE 变化
+    const baseChanged = await service.saveDraft({
+      targetId: opened.targetId,
+      scope,
+      repositoryRoot,
+      probeSvnBinding: bindingProbe({
+        baseHash: hashBytes(Buffer.from("new base", "utf8")),
+      }),
+    });
+    expect(baseChanged.ok).toBe(false);
+    if (!baseChanged.ok) expect(baseChanged.reason).toBe("diskChanged");
+    // 均未落盘、草稿保留。
+    expect(await fs.readFile(target, "utf8")).toBe(before);
+    expect(service.getDraft(opened.targetId)?.content).toBe("用户编辑内容\n");
   });
 });

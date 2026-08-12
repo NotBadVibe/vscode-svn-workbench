@@ -174,6 +174,12 @@ Token 单次使用。成功、失败、目标切换、范围变化、外部文�
 - 契约 §5.2 对齐：失败（含 tooLarge）后旧 token 必须失效——体量校验移到 token 消耗之后，并有失效回归测试。
 - token 现绑定真实 `TextDocument.version`（Host 注入，无打开文档为 -1）；文档内容变化经 `watchDiffEditTargets` 立即撤销 token；Extension Host 集成测试覆盖真实 TextDocument 脏拒绝与不落盘。
 
+**验收更正（2026-08-12 第三轮，Host 保存前 SVN 绑定复验）**：
+
+- 根因：`openEdit`/`saveWorking`/`saveDraft` 只比较 token 绑定值，保存前从不重新解析目标当前的 repository UUID、工作副本归属与 BASE；`analyzeUtf8` 对含 NUL 的合法 UTF-8 返回 ok，恶意 Webview 可对二进制目标直接 `diff/open-edit` 签发 token。
+- 修复：新增 Host adapter `diffSvnBinding.ts`（`svn info --show-item wc-root/repos-uuid` + `svn cat -r BASE`），作为可注入依赖在打开与每次保存（含三选一 `saveDraft`）前复验：wcroot 与主工作副本根不一致即拒绝（nestedOrExternal→scopeChanged，覆盖嵌套 WC 与 svn:externals 目录）、UUID 变化拒绝（scopeChanged）、BASE hash 变化拒绝（diskChanged，草稿保留不落盘）；`diffPathGuard` 新增 NUL 二进制拒绝（code=binary，保存路径映射 unsupportedEncoding）。真实隔离 SVN fixture 的 Extension Host 测试覆盖嵌套 WC、externals 与 BASE 前进（working hash 未变）拒绝；UUID 变化在单元层覆盖（`svnadmin setuuid` 后既有 WC 的 `svn info` 仍读本地元数据，真实 fixture 无法触发）。
+- 目标切换守卫收紧为 `shouldConfirmTargetSwitch`（脏草稿必确认；干净草稿但编辑会话活动仍确认——防 debounce 检查点竞态，由 Webview 自动暂存不弹窗；干净且无活动会话不确认）；“保存并打开”顺序保证（先刷新检查点再发 save 决定）有组件级 invocationCallOrder 回归。
+
 ### 阶段 2：Host 安全底座
 
 实现领域服务、强类型协议、路径守卫、token、互斥、原子写入、双副本保护和草稿检查点。
