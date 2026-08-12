@@ -6,6 +6,7 @@
 </script>
 
 <script lang="ts">
+  import { onDestroy, onMount } from "svelte";
   import { FileDiff, parsePatchFiles, preloadHighlighter } from "@pierre/diffs";
   import { Editor } from "@pierre/diffs/edit";
   import { mapToDiffLanguage } from "./diffLanguage";
@@ -24,11 +25,18 @@
    * - 挂载收窄版 CSP 兼容垫片（见 cspCompatObserver.ts 的安全论证），
    *   保持 renderWebviewShell.ts 的严格 CSP 不放松；
    * - 提供中文、键盘可达的 unified/split 视图切换与"展开全部/折叠未变更"
-   *   控制（组件折叠控件本身 tabIndex=-1 键盘不可达，垫片已补齐 aria，
-   *   工具栏是不依赖这些控件的等价路径）；
+   *   控制；
    * - v0.0.6 编辑态：editMode=true 时把 @pierre/diffs/edit 的 Editor 附加到
-   *   可编辑 FileDiff，仅工作副本侧可编辑；通过 onEditChange 上报内容；
-   * - 挂载/渲染抛错时通过 onFallback 通知父级降级到 MergeView / 原始文本。
+   *   可编辑 FileDiff，仅工作副本侧可编辑；通过 onEditChange 上报内容。
+   *
+   * 生命周期（手动管理，不依赖 $effect 依赖追踪的重跑语义）：
+   * - 渲染 effect 不返回 cleanup；每次重跑由 body 按「挂载键
+   *   （目标/语言/编辑态/视图控件）」与「渲染内容」比较决定：
+   *   - 挂载键相同且编辑态：保持现有 FileDiff/Editor 实例不重建（Host 保存后
+   *     权威快照刷新不丢快速二次输入）；
+   *   - 挂载键相同且只读态：仅当渲染内容变化时重建（快照刷新采用权威内容）；
+   *   - 挂载键变化（目标切换/退出编辑/视图切换）：释放旧实例并重建；
+   *   - 组件销毁由 onDestroy 兜底释放。
    *
    * 主题跟随：themeType "system" 让组件按宿主 color-scheme 在
    * pierre-dark/pierre-light 间切换；VS Code 变量到 --diffs-* 的映射在
@@ -72,6 +80,36 @@
   let expandUnchanged = $state(false);
   /** 当前附加的编辑器实例（编辑态）。 */
   let editorInstance: Editor<undefined> | undefined;
+  /**
+   * 挂载就绪信号：bind:this 的 host 在父级重渲染时可能被重赋值（新身份）。
+   * onMount 只执行一次（绝不重复赋值），渲染 effect 以该布尔信号为首个依赖
+   * 门槛；即便 host 身份变化触发了 effect 重跑，重建与否仍由下方挂载键与
+   * 内容键的语义比较决定（编辑态保持实例）。
+   */
+  let hostReady = $state(false);
+  onMount(() => {
+    hostReady = true;
+  });
+
+  /** 当前挂载的 FileDiff 实例与 CSP observer（手动生命周期持有）。 */
+  const instances: FileDiff[] = [];
+  const observers: { disconnect(): void }[] = [];
+  /** 当前渲染的挂载键与内容，用于决定重建/保持。 */
+  let mounted:
+    { key: string; mode: "edit" | "read"; contentKey: string } | undefined;
+
+  /** 释放全部实例与 observer（幂等；重建与组件销毁共用）。 */
+  function disposeAll(): void {
+    for (const observer of observers) observer.disconnect();
+    observers.length = 0;
+    for (const instance of instances) instance.cleanUp();
+    instances.length = 0;
+    const el = host;
+    if (el) el.replaceChildren();
+    mounted = undefined;
+  }
+
+  onDestroy(disposeAll);
 
   // 预热当前文件语言的高亮资源（语言 chunk 懒加载）；失败不阻塞基础渲染。
   $effect(() => {
@@ -87,24 +125,46 @@
   });
 
   $effect(() => {
+    void hostReady;
     const container = host;
     if (!container) return;
     const style = diffStyle;
     const expand = expandUnchanged;
     const isEditing = editMode;
-    const instances: FileDiff[] = [];
-    const observers: { disconnect(): void }[] = [
-      observeDiffContainer(container),
-    ];
-    let disposed = false;
-    const dispose = (): void => {
-      if (disposed) return;
-      disposed = true;
-      for (const observer of observers) observer.disconnect();
-      for (const instance of instances) instance.cleanUp();
-      container.replaceChildren();
-    };
+    const rel = relativePath;
+    const lang = language;
+    const oldC = oldContents ?? "";
+    const newC = newContents ?? "";
+    const patchC = patch;
+
+    // 挂载键：目标/语言/编辑态/视图控件。变化时必须重建（目标切换、
+    // 退出编辑、unified/split、展开控制）。
+    const key = `${rel}|${lang}|${isEditing}|${style}|${expand}`;
+    // 渲染内容键：仅用于只读态判断内容是否变化（编辑态内容由编辑器持有，
+    // 快照刷新不据此重建）。
+    const contentKey = `${oldC}|${newC}|${patchC ?? ""}`;
+
+    if (mounted) {
+      if (mounted.key === key) {
+        if (mounted.mode === "read" && mounted.contentKey !== contentKey) {
+          // 只读态内容变化：释放旧实例，用权威内容重建。
+          disposeAll();
+        } else {
+          // 编辑态同键（含保存后权威快照刷新）：保持实例与编辑器，
+          // 不打断正在进行的输入；或只读态内容未变。
+          return;
+        }
+      } else {
+        // 挂载键变化：释放旧实例重建。
+        disposeAll();
+      }
+    }
+
+    const ready = onReady;
+    const fallback = onFallback;
     try {
+      // 容器级 CSP 兼容垫片（随实例生命周期一起释放）。
+      observers.push(observeDiffContainer(container));
       const options = {
         theme: { dark: "pierre-dark", light: "pierre-light" },
         themeType: "system",
@@ -132,8 +192,8 @@
           }
         }
       };
-      if (patch != null) {
-        const files = parsePatchFiles(patch).flatMap((parsed) => parsed.files);
+      if (patchC != null) {
+        const files = parsePatchFiles(patchC).flatMap((parsed) => parsed.files);
         if (files.length === 0) {
           throw new Error("patch 中没有可解析的文件差异");
         }
@@ -143,18 +203,18 @@
           );
         }
       } else {
-        const lang = mapToDiffLanguage(language, relativePath);
+        const diffLang = mapToDiffLanguage(lang, rel);
         mountInstance({ disableFileHeader: true }, (instance) => {
           instance.render({
             oldFile: {
-              name: relativePath,
-              contents: oldContents ?? "",
-              lang,
+              name: rel,
+              contents: oldC,
+              lang: diffLang,
             },
             newFile: {
-              name: relativePath,
-              contents: newContents ?? "",
-              lang,
+              name: rel,
+              contents: newC,
+              lang: diffLang,
             },
             containerWrapper: container,
           });
@@ -168,7 +228,7 @@
             editor.edit(instance);
             editorInstance = editor;
           }
-          onReady?.({
+          ready?.({
             getText: () => editorInstance?.getText() ?? "",
             focusLine: (lineNumber: number) =>
               editorInstance?.focus({ lineNumber }),
@@ -193,12 +253,12 @@
           });
         });
       }
+      mounted = { key, mode: isEditing ? "edit" : "read", contentKey };
     } catch (error) {
-      dispose();
-      onFallback(error);
+      disposeAll();
+      fallback(error);
       return;
     }
-    return dispose;
   });
 </script>
 

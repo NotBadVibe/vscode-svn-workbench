@@ -535,9 +535,19 @@ export function startMockWorkbench(): void {
       if (ok) {
         // 保存成功：草稿保留但回到干净状态（内容已落盘）。
         mockDrafts.set(activeMockDiffPath, { dirty: false });
-        // 与生产一致：保存成功后 Host 不重载模块（避免销毁编辑器/丢失输入），
-        // 干净状态由 diff/save-result（acceptedRevision/newContentHash）承载，
-        // 编辑器继续持有已保存内容。快照中的陈旧 draft/message 由模块本地抑制。
+        // 模拟生产 loadModule：先 module/loading，快照在下一个事件循环到达
+        // （真实 Host 需要重新读取 SVN）。编辑器重建由 DiffView 编辑态
+        // untrack 内容字段避免；App 保持模块挂载。
+        injectHostMessage("module/loading", { moduleId: "diff" });
+        const savedContent = data.content as string;
+        window.setTimeout(() => {
+          injectSnapshot(
+            "diff",
+            mockDiffSnapshot(activeMockDiffPath, {
+              modified: savedContent,
+            }),
+          );
+        }, 50);
       }
     }
     if (action === "diff/draft-checkpoint") {

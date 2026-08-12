@@ -25,7 +25,11 @@ interface FakeRenderRecord {
 
 const pierreMocks = vi.hoisted(() => {
   const records: FakeRenderRecord[] = [];
-  const state = { failRender: null as Error | null };
+  const state = {
+    failRender: null as Error | null,
+    instanceCount: 0,
+    cleanupCount: 0,
+  };
   return { records, state };
 });
 
@@ -34,6 +38,7 @@ vi.mock("@pierre/diffs", () => {
     readonly options: Record<string, unknown>;
     cleanedUp = false;
     constructor(options: Record<string, unknown>) {
+      pierreMocks.state.instanceCount += 1;
       this.options = options;
     }
     render(props: Record<string, unknown>): boolean {
@@ -49,6 +54,7 @@ vi.mock("@pierre/diffs", () => {
     }
     cleanUp(): void {
       this.cleanedUp = true;
+      pierreMocks.state.cleanupCount += 1;
     }
   }
   return {
@@ -62,8 +68,12 @@ vi.mock("@pierre/diffs", () => {
 });
 
 const editMock = vi.hoisted(() => {
+  const instances: Array<{
+    applyEdits: () => void;
+    options: Record<string, unknown>;
+  }> = [];
   const state = { text: "", onChangeCalls: 0, focusLine: 0 };
-  return { state };
+  return { state, instances };
 });
 
 vi.mock("@pierre/diffs/edit", () => {
@@ -71,6 +81,7 @@ vi.mock("@pierre/diffs/edit", () => {
     readonly options: Record<string, unknown>;
     constructor(options: Record<string, unknown>) {
       this.options = options;
+      editMock.instances.push(this);
     }
     edit(): void {
       /* no-op */
@@ -90,6 +101,9 @@ vi.mock("@pierre/diffs/edit", () => {
 });
 
 import DiffModule from "../../src/webview/features/diff/DiffModule.svelte";
+import DiffModuleHarness, {
+  type DiffModuleHarnessController,
+} from "./harness/DiffModuleHarness.svelte";
 
 const workingSnapshot: DiffSnapshot = {
   kind: "diff",
@@ -124,6 +138,9 @@ const patchSnapshot: DiffSnapshot = {
 beforeEach(() => {
   pierreMocks.records.length = 0;
   pierreMocks.state.failRender = null;
+  pierreMocks.state.instanceCount = 0;
+  pierreMocks.state.cleanupCount = 0;
+  editMock.instances.length = 0;
 });
 
 describe("DiffModule（@pierre/diffs 适配层）", () => {
@@ -868,5 +885,159 @@ describe("DiffModule 页内编辑（v0.0.6）", () => {
       decision: "stay",
       targetId: "mock-target",
     });
+  });
+});
+
+describe("DiffModule 编辑态快照刷新与 save-result 消费（v0.0.6 回归）", () => {
+  const editSnapshot: DiffSnapshot = {
+    kind: "diff",
+    relativePath: "src/extension.ts",
+    original: "const a = 1;\n",
+    modified: "const a = 2;\nconst b = 3;\n",
+    language: "typescript",
+    truncated: false,
+    binary: false,
+    edit: { supported: true, targetId: "mock-target" },
+  };
+  const editSessionPayload = {
+    targetId: "mock-target",
+    editToken: "mock-token-1",
+    draftRevision: 1,
+    baseHash: "base",
+    baseRevision: "BASE",
+    rawHash: "mock-raw-hash",
+    baseContents: "const a = 1;\n",
+    message: "已进入页内编辑。",
+  };
+  const refreshed = {
+    ...editSnapshot,
+    modified: "const a = 2;\nconst b = 3;\n// 已保存\n",
+  };
+
+  function makeController(): DiffModuleHarnessController {
+    return {
+      setSnapshot: () => undefined,
+      setEditSession: () => undefined,
+      setDiffSaveResult: () => undefined,
+    };
+  }
+
+  it("编辑态下权威快照内容刷新不重建编辑器/组件实例（挂载键保持）", async () => {
+    const action = vi.fn();
+    const controller = makeController();
+    render(DiffModuleHarness, {
+      initialSnapshot: editSnapshot,
+      initialAction: action,
+      initialEditSession: editSessionPayload,
+      controller,
+    });
+    await screen.findByText("编辑模式");
+    const mounts = pierreMocks.state.instanceCount;
+    const cleans = pierreMocks.state.cleanupCount;
+    expect(mounts).toBeGreaterThan(0);
+
+    // Host 权威快照到达：同目标、内容变化（保存后正文）——原地更新 props。
+    controller.setSnapshot(refreshed);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    // 编辑态：不应重建（instance/cleanup 计数不变，编辑器保持）。
+    expect(pierreMocks.state.instanceCount).toBe(mounts);
+    expect(pierreMocks.state.cleanupCount).toBe(cleans);
+    // 编辑器实例仍保持（未重新创建）。
+    expect(editMock.instances).toHaveLength(1);
+  });
+
+  it("只读态下权威快照刷新重建视图并采用新内容", async () => {
+    const action = vi.fn();
+    const controller = makeController();
+    render(DiffModuleHarness, {
+      initialSnapshot: editSnapshot,
+      initialAction: action,
+      controller,
+    });
+    await waitFor(() => expect(pierreMocks.records.length).toBeGreaterThan(0));
+    controller.setSnapshot(refreshed);
+    await waitFor(() =>
+      expect(pierreMocks.state.instanceCount).toBeGreaterThan(1),
+    );
+    const last = pierreMocks.records[pierreMocks.records.length - 1];
+    expect((last.props.newFile as { contents: string }).contents).toBe(
+      refreshed.modified,
+    );
+  });
+
+  it("旧 save-result 不因快照重渲染清除第二轮脏状态，保存用新 token/hash/revision", async () => {
+    const action = vi.fn();
+    const firstResult = {
+      result: {
+        ok: true,
+        acceptedRevision: 2,
+        newContentHash: "mock-hash-2",
+        newEditToken: "mock-token-2",
+        snapshotVersion: 1,
+      },
+      snapshotVersion: 1,
+    };
+    const controller = makeController();
+    render(DiffModuleHarness, {
+      initialSnapshot: editSnapshot,
+      initialAction: action,
+      initialEditSession: {
+        ...editSessionPayload,
+        editToken: "mock-token-2",
+        draftRevision: 2,
+        rawHash: "mock-hash-2",
+      },
+      initialDiffSaveResult: firstResult,
+      controller,
+    });
+    await screen.findByText("编辑模式");
+    expect(screen.queryByText(/有未保存的修改/)).toBeNull();
+    // 第二轮编辑 → 脏。
+    editMock.state.text = "const a = 9;\n";
+    editMock.instances[0]?.applyEdits();
+    // 等待 Svelte flush 后脏状态落屏。
+    await waitFor(() =>
+      expect(screen.queryByText(/有未保存的修改/)).toBeTruthy(),
+    );
+
+    // 同一旧 save-result 伴随权威快照重渲染：不得清除第二轮脏。
+    controller.setSnapshot(refreshed);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(screen.getByText(/有未保存的修改/)).toBeTruthy();
+
+    // 第二次保存使用轮换后的 token/hash/revision。
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "s",
+        ctrlKey: true,
+        cancelable: true,
+      }),
+    );
+    expect(action).toHaveBeenCalledWith(
+      "diff/save-working",
+      expect.objectContaining({
+        editToken: "mock-token-2",
+        expectedContentHash: "mock-hash-2",
+        draftRevision: 2,
+      }),
+    );
+  });
+
+  it("权威快照刷新清除 draft 与恢复入口", async () => {
+    const action = vi.fn();
+    const controller = makeController();
+    const withDraft = { ...editSnapshot, draft: { revision: 1, updatedAt: 1 } };
+    render(DiffModuleHarness, {
+      initialSnapshot: withDraft,
+      initialAction: action,
+      controller,
+    });
+    expect(screen.getByRole("button", { name: "恢复草稿并编辑" })).toBeTruthy();
+    controller.setSnapshot(refreshed);
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "恢复草稿并编辑" }),
+      ).toBeNull(),
+    );
   });
 });
