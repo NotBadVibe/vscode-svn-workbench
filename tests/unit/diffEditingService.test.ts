@@ -281,6 +281,30 @@ describe("diffEdit token 注册表", () => {
     expect(registry.consume(t1).ok).toBe(false);
     expect(registry.consume(t2).ok).toBe(false);
   });
+
+  it("按规范路径撤销（外部文档/磁盘变化监听）", () => {
+    const registry = new DiffEditTokenRegistry();
+    const make = (targetPath: string, targetId: string) =>
+      registry.issue({
+        sessionId: "s1",
+        moduleId: "diff",
+        taskId: "diff/working",
+        repositoryUuid: "r",
+        scopeHash: "sc1",
+        targetId,
+        targetPath,
+        rawHash: "H",
+        baseHash: "B",
+        baseRevision: "1",
+        documentVersion: 0,
+        draftRevision: 1,
+      });
+    const hit = make("/repo/a.ts", "t1");
+    const miss = make("/repo/b.ts", "t2");
+    registry.revokeAllForPath("/repo/a.ts");
+    expect(registry.consume(hit).ok).toBe(false);
+    expect(registry.consume(miss).ok).toBe(true);
+  });
 });
 
 describe("diffEdit 原子写入器", () => {
@@ -668,5 +692,108 @@ describe("diffEditingService 编排", () => {
       repositoryRoot,
     });
     expect(result.ok).toBe(false);
+  });
+
+  it("saveWorking 拒绝超过 5 MB 的内容且不消耗 token", async () => {
+    const service = new DiffEditingService(deps);
+    const opened = await openEdit();
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) return;
+    const oversized = "x".repeat(5 * 1024 * 1024 + 1);
+    const result = await service.saveWorking({
+      sessionId: session.sessionId,
+      moduleId: "diff",
+      taskId: "diff/working",
+      repositoryUuid: session.repositoryUuid,
+      scopeHash: session.scopeHash,
+      targetId: opened.targetId,
+      editToken: opened.editToken,
+      draftRevision: opened.draftRevision,
+      expectedContentHash: opened.rawHash,
+      content: oversized,
+      scope,
+      repositoryRoot,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe("tooLarge");
+    // token 未消耗：合法重试仍可成功。
+    const retry = await service.saveWorking({
+      sessionId: session.sessionId,
+      moduleId: "diff",
+      taskId: "diff/working",
+      repositoryUuid: session.repositoryUuid,
+      scopeHash: session.scopeHash,
+      targetId: opened.targetId,
+      editToken: opened.editToken,
+      draftRevision: opened.draftRevision,
+      expectedContentHash: opened.rawHash,
+      content: "合法内容\n",
+      scope,
+      repositoryRoot,
+    });
+    expect(retry.ok).toBe(true);
+  });
+
+  it("revokeForPath 后保存被拒绝（外部变化立即使 token 失效）", async () => {
+    const service = new DiffEditingService(deps);
+    const opened = await openEdit();
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) return;
+    await service.revokeForPath(target);
+    const result = await service.saveWorking({
+      sessionId: session.sessionId,
+      moduleId: "diff",
+      taskId: "diff/working",
+      repositoryUuid: session.repositoryUuid,
+      scopeHash: session.scopeHash,
+      targetId: opened.targetId,
+      editToken: opened.editToken,
+      draftRevision: opened.draftRevision,
+      expectedContentHash: opened.rawHash,
+      content: "x\n",
+      scope,
+      repositoryRoot,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe("tokenExpired");
+  });
+
+  it("token 消耗后仍接受同仓库同范围的恢复检查点", async () => {
+    const service = new DiffEditingService(deps);
+    const opened = await openEdit();
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) return;
+    // 消耗 token（模拟一次保存/失败）。
+    await service.saveWorking({
+      sessionId: session.sessionId,
+      moduleId: "diff",
+      taskId: "diff/working",
+      repositoryUuid: session.repositoryUuid,
+      scopeHash: session.scopeHash,
+      targetId: opened.targetId,
+      editToken: opened.editToken,
+      draftRevision: opened.draftRevision,
+      expectedContentHash: opened.rawHash,
+      content: "first\n",
+      scope,
+      repositoryRoot,
+    });
+    const draft = service.getDraft(opened.targetId);
+    expect(draft).toBeDefined();
+    if (!draft) return;
+    const checkpoint = service.checkpointDraft({
+      targetId: opened.targetId,
+      sessionId: session.sessionId,
+      repositoryUuid: session.repositoryUuid,
+      scopeHash: session.scopeHash,
+      baseHash: draft.baseHash,
+      baseRevision: draft.baseRevision,
+      baseContents: draft.baseContents,
+      diskHash: draft.diskHash,
+      targetPath: draft.targetPath,
+      content: "first\nsecond\n",
+      baseRevisionOfClient: draft.revision,
+    });
+    expect(checkpoint.ok).toBe(true);
   });
 });

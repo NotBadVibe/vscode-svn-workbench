@@ -220,7 +220,7 @@ import {
   workbenchRevealTarget,
 } from "./workbenchRouting";
 import { NativeDiffContentProvider } from "./nativeDiffContentProvider";
-import { createDiffEditingService } from "./diffEditHost";
+import { createDiffEditingService, watchDiffEditTargets } from "./diffEditHost";
 import { DiffEditingService } from "../../diffEdit/diffEditingService";
 import { buildDiffTargetId } from "../../diffEdit/diffEditingService";
 import { analyzeUtf8, MAX_EDITABLE_BYTES } from "../../diffEdit/diffPathGuard";
@@ -296,6 +296,7 @@ export class WorkbenchController implements vscode.Disposable {
         ),
       );
       this.diffEdit = createDiffEditingService();
+      this.context.subscriptions.push(watchDiffEditTargets(this.diffEdit));
     }
   }
 

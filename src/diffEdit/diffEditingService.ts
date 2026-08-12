@@ -1,4 +1,5 @@
 import type { OperationScope } from "../scope/operationScope";
+import * as fs from "node:fs/promises";
 import {
   analyzeUtf8,
   hashBytes,
@@ -7,6 +8,7 @@ import {
 import { DiffEditTokenRegistry } from "./diffEditTokenRegistry";
 import { DiffDraftService } from "./diffDraftService";
 import { DiffAtomicWriterService } from "./diffAtomicWriter";
+import { MAX_EDITABLE_BYTES } from "./diffPathGuard";
 import type {
   DiffSaveWorkingInput,
   DiffSaveWorkingResult,
@@ -165,6 +167,16 @@ export class DiffEditingService {
       repositoryRoot: string;
     },
   ): Promise<DiffSaveWorkingResult> {
+    // 先校验体量（廉价且不消耗 token）：内容超过 5 MB 直接拒绝。
+    if (Buffer.byteLength(input.content, "utf8") > MAX_EDITABLE_BYTES) {
+      return {
+        ok: false,
+        reason: "tooLarge",
+        message: "保存内容超过 5 MB，拒绝写入；请使用原生编辑器。",
+        recoverable: true,
+        draftRevision: this.drafts.get(input.targetId)?.revision,
+      };
+    }
     const consumed = this.tokens.consume(input.editToken);
     if (!consumed.ok) {
       return {
@@ -351,6 +363,15 @@ export class DiffEditingService {
     this.tokens.revokeAllForSession(sessionId);
   }
 
+  /** 文档/磁盘变化监听命中后按路径撤销 token（下一次保存必失效）。 */
+  async revokeForPath(targetPath: string): Promise<void> {
+    // token 绑定的是 realpath 规范路径；监听给出的路径可能差一层系统链接
+    // （如 macOS /var → /private/var），两侧都撤销。
+    const canonical = await fs.realpath(targetPath).catch(() => targetPath);
+    this.tokens.revokeAllForPath(canonical);
+    if (canonical !== targetPath) this.tokens.revokeAllForPath(targetPath);
+  }
+
   revokeForScope(scopeHash: string): void {
     this.tokens.revokeAllForScope(scopeHash);
   }
@@ -393,8 +414,15 @@ export class DiffEditingService {
     content: string;
     baseRevisionOfClient: number;
   }): { ok: true; draftRevision: number } | { ok: false; reason: string } {
+    // 活动会话存在时直接接受；token 已消耗（保存失败/过期）但草稿仍在且
+    // 仓库与范围一致时也接受——这是“重新建立编辑会话”恢复链的前置检查点。
     if (!this.hasActiveSession(input.targetId, input.sessionId)) {
-      return { ok: false, reason: "noActiveSession" };
+      const draft = this.drafts.get(input.targetId);
+      const resumable =
+        draft !== undefined &&
+        draft.repositoryUuid === input.repositoryUuid &&
+        draft.scopeHash === input.scopeHash;
+      if (!resumable) return { ok: false, reason: "noActiveSession" };
     }
     const result = this.drafts.upsert({
       targetId: input.targetId,

@@ -99,6 +99,19 @@ export class DiffEditTokenRegistry {
     }
   }
 
+  /** 目标文件外部/文档变化后按规范路径撤销（大小写敏感性与平台一致）。 */
+  revokeAllForPath(targetPath: string): void {
+    const normalize = (value: string): string =>
+      process.platform === "win32" ? value.toLowerCase() : value;
+    const wanted = normalize(targetPath);
+    for (const binding of [...this.tokens.values()]) {
+      if (normalize(binding.targetPath) === wanted) {
+        this.revokeAllForTarget(binding.targetId);
+        return;
+      }
+    }
+  }
+
   size(): number {
     return this.tokens.size;
   }

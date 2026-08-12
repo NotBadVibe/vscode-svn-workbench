@@ -570,9 +570,8 @@ async function main(): Promise<void> {
   if (params.get("edit") === "1") {
     // 直接安装生产垫片（src/webview/features/diff/cspCompatObserver.ts）：
     // Spike 与生产跑同一份适配代码，结论可回推到生产路径。
-    const { installDiffCspCompatibilityShim } = await import(
-      "@prod/csp-compat-observer"
-    );
+    const { installDiffCspCompatibilityShim } =
+      await import("@prod/csp-compat-observer");
     installDiffCspCompatibilityShim();
     const { runEditSpike } = await import("./edit-spike");
     await runEditSpike(params);

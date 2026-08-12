@@ -459,9 +459,13 @@ describe("DiffModule 页内编辑（v0.0.6）", () => {
       editSession: editSessionPayload,
     });
     await screen.findByText("编辑模式");
-    // 模拟编辑内容变化（经 fake editor onChange）。
+    // 真实编辑路径：DiffView onChange → 脏状态。fake editor 经
+    // applyEdits（“还原此块”）触发 onChange，getText 返回编辑后文本。
     editMock.state.text = "const a = 9;\nconst b = 3;\n";
-    editMock.state.onChangeCalls = 0;
+    await fireEvent.click(
+      screen.getByRole("button", { name: "还原当前差异块为 BASE" }),
+    );
+    // 无脏状态时不允许保存（避免无谓消耗单次 token）。
     window.dispatchEvent(
       new KeyboardEvent("keydown", {
         key: "s",
@@ -469,16 +473,102 @@ describe("DiffModule 页内编辑（v0.0.6）", () => {
         cancelable: true,
       }),
     );
-    // onChangeCalls 由 fake applyEdits 触发；这里直接触发 onChange 路径：
-    // DiffView 的 onChange 会在真实编辑时被调用，测试改为主动调用 onReady API。
     expect(action).toHaveBeenCalledWith(
       "diff/save-working",
       expect.objectContaining({
         targetId: "mock-target",
         editToken: "mock-token",
+        expectedContentHash: "raw",
         content: "const a = 9;\nconst b = 3;\n",
       }),
     );
+  });
+
+  it("保存成功后用新 token 与新 hash 继续保存（连续保存不回退 diskChanged）", async () => {
+    const action = vi.fn();
+    const { rerender } = render(DiffModule, {
+      snapshot: editSnapshot,
+      onAction: action,
+      editSession: { ...editSessionPayload },
+    });
+    await screen.findByText("编辑模式");
+    editMock.state.text = "const a = 9;\nconst b = 3;\n";
+    await fireEvent.click(
+      screen.getByRole("button", { name: "还原当前差异块为 BASE" }),
+    );
+    // 第一次保存成功：Host 下发新 token 与新内容 hash。
+    await rerender({
+      snapshot: { ...editSnapshot, modified: "const a = 9;\nconst b = 3;\n" },
+      onAction: action,
+      editSession: { ...editSessionPayload },
+      diffSaveResult: {
+        result: {
+          ok: true,
+          acceptedRevision: 5,
+          newContentHash: "raw2",
+          newEditToken: "token2",
+          snapshotVersion: 2,
+        },
+        snapshotVersion: 2,
+      },
+    });
+    // 第二次编辑并保存：必须携带 token2 与 raw2，否则 Host 复验必拒绝。
+    editMock.state.text = "const a = 10;\nconst b = 3;\n";
+    await fireEvent.click(
+      screen.getByRole("button", { name: "还原当前差异块为 BASE" }),
+    );
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "s",
+        ctrlKey: true,
+        cancelable: true,
+      }),
+    );
+    expect(action).toHaveBeenLastCalledWith(
+      "diff/save-working",
+      expect.objectContaining({
+        editToken: "token2",
+        expectedContentHash: "raw2",
+        content: "const a = 10;\nconst b = 3;\n",
+      }),
+    );
+  });
+
+  it("token 失效类拒绝提供“重新建立编辑会话”恢复动作", async () => {
+    const action = vi.fn();
+    render(DiffModule, {
+      snapshot: editSnapshot,
+      onAction: action,
+      editSession: { ...editSessionPayload },
+      diffSaveResult: {
+        result: {
+          ok: false,
+          reason: "tokenExpired",
+          message: "编辑令牌已失效。请刷新差异后重新编辑，草稿已保留。",
+          recoverable: true,
+          draftRevision: 2,
+        },
+        snapshotVersion: 1,
+      },
+    });
+    await screen.findByText("编辑模式");
+    // 编辑内容（脏）后点击恢复：先刷新检查点保留草稿，再重新 open-edit。
+    editMock.state.text = "const a = 9;\nconst b = 3;\n";
+    await fireEvent.click(
+      screen.getByRole("button", { name: "还原当前差异块为 BASE" }),
+    );
+    const recover = await screen.findByRole("button", {
+      name: "重新建立编辑会话（保留草稿）",
+    });
+    await fireEvent.click(recover);
+    expect(action).toHaveBeenCalledWith(
+      "diff/draft-checkpoint",
+      expect.objectContaining({
+        targetId: "mock-target",
+        content: "const a = 9;\nconst b = 3;\n",
+      }),
+    );
+    expect(action).toHaveBeenCalledWith("diff/open-edit");
   });
 
   it("保存拒绝显示中文原因与草稿版本", async () => {

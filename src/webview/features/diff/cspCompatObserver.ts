@@ -72,16 +72,6 @@ const SHADOW_STYLE_MARKERS = [
 /** 编辑器 light DOM 全局样式标记。 */
 const GLOBAL_STYLE_MARKER = "data-editor-global-css";
 
-/** 元素是否位于 @pierre/diffs 挂载的 Shadow Root 内。 */
-function isInsideDiffsShadow(element: Element): boolean {
-  const root = element.getRootNode();
-  return (
-    root instanceof ShadowRoot &&
-    root.host instanceof Element &&
-    root.host.localName === "diffs-container"
-  );
-}
-
 function rewriteStyleAttributes(value: string): string {
   return value.includes('style="') || value.includes("style='")
     ? value.replace(
@@ -194,7 +184,7 @@ export function installDiffCspCompatibilityShim(): void {
   ): void {
     if (String(name).toLowerCase() === "style") {
       // CSSOM 通道：CSP 放行，且同样回填 style 属性。
-      this.style.cssText = value;
+      (this as HTMLElement).style.cssText = value;
       return;
     }
     originalSetAttribute.call(this, name, value);
@@ -214,7 +204,7 @@ export function installDiffCspCompatibilityShim(): void {
         });
         return node;
       }
-      return originalShadowAppendChild.call(this, node);
+      return originalShadowAppendChild.call(this, node) as T;
     };
 
     const originalElementAppendChild = Element.prototype.appendChild;
@@ -228,7 +218,7 @@ export function installDiffCspCompatibilityShim(): void {
         });
         return node;
       }
-      return originalElementAppendChild.call(this, node);
+      return originalElementAppendChild.call(this, node) as T;
     };
   }
 }
@@ -391,10 +381,7 @@ export function observeDiffContainer(container: HTMLElement): ObserverHandle {
       converted.add(styleNode);
       const syncObserver = adoptStyleNode(styleNode, (sheet) => {
         adopted.add(sheet);
-        document.adoptedStyleSheets = [
-          ...document.adoptedStyleSheets,
-          sheet,
-        ];
+        document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
       });
       syncObservers.push(syncObserver);
       styleNode.remove();

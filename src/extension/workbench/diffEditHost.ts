@@ -58,3 +58,44 @@ export function createDiffEditingService(): DiffEditingService {
     readBytes: async (targetPath: string) => fs.readFile(targetPath),
   });
 }
+
+/**
+ * 文档与磁盘变化监听：任何相关变化立即使对应目标的 editToken 失效
+ * （v0.0.6 写入安全契约 §5.4）。保存路径仍有磁盘 hash 复验作为最终防线，
+ * 监听负责“立即失效”一侧。返回的 Disposable 随控制器释放。
+ */
+export function watchDiffEditTargets(
+  service: DiffEditingService,
+): vscode.Disposable {
+  const revokeUri = (uri: vscode.Uri): void => {
+    if (uri.scheme !== "file") return;
+    service.revokeForPath(resolvePath(uri.fsPath));
+  };
+  const disposables: vscode.Disposable[] = [
+    // TextDocument 内容变化（含变脏）、保存、重命名、删除。
+    vscode.workspace.onDidChangeTextDocument((event) => {
+      if (event.contentChanges.length > 0) revokeUri(event.document.uri);
+    }),
+    vscode.workspace.onDidSaveTextDocument((document) => {
+      revokeUri(document.uri);
+    }),
+    vscode.workspace.onDidRenameFiles((event) => {
+      for (const file of event.files) {
+        revokeUri(file.oldUri);
+        revokeUri(file.newUri);
+      }
+    }),
+    vscode.workspace.onDidDeleteFiles((event) => {
+      for (const uri of event.files) revokeUri(uri);
+    }),
+  ];
+  // 外部（非 VS Code）磁盘变化：工作区内文件 watcher。
+  const watcher = vscode.workspace.createFileSystemWatcher("**/*");
+  disposables.push(
+    watcher,
+    watcher.onDidChange(revokeUri),
+    watcher.onDidCreate(revokeUri),
+    watcher.onDidDelete(revokeUri),
+  );
+  return vscode.Disposable.from(...disposables);
+}

@@ -93,7 +93,9 @@
     const expand = expandUnchanged;
     const isEditing = editMode;
     const instances: FileDiff[] = [];
-    const observers: { disconnect(): void }[] = [observeDiffContainer(container)];
+    const observers: { disconnect(): void }[] = [
+      observeDiffContainer(container),
+    ];
     let disposed = false;
     const dispose = (): void => {
       if (disposed) return;

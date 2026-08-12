@@ -76,9 +76,7 @@ test("严格 CSP：只读审阅态零违规且语法着色经垫片生效", asyn
     const spans = Array.from(root.querySelectorAll("[data-code] span"));
     return (
       root.adoptedStyleSheets.length > 0 &&
-      spans.some(
-        (span) => span instanceof HTMLElement && span.style.length > 0,
-      )
+      spans.some((span) => span instanceof HTMLElement && span.style.length > 0)
     );
   });
 
@@ -90,7 +88,10 @@ test("严格 CSP：只读审阅态零违规且语法着色经垫片生效", asyn
     const styled = spans.some(
       (span) => span instanceof HTMLElement && span.style.length > 0,
     );
-    return { tokenStyled: styled, adoptedSheets: root.adoptedStyleSheets.length };
+    return {
+      tokenStyled: styled,
+      adoptedSheets: root.adoptedStyleSheets.length,
+    };
   });
   expect(styling.tokenStyled, "token 颜色应经生产垫片落地").toBe(true);
   expect(
@@ -157,6 +158,7 @@ test("严格 CSP：页内编辑零违规、编辑器样式生效、可输入并�
 
   // 真实输入 → 脏状态 → Ctrl+S 保存（mock Host 成功路径）。
   await editable.click();
+  await expect(editable).toBeFocused();
   await page.keyboard.type("// 严格 CSP 编辑");
   await expect(page.getByText(/有未保存的修改/)).toBeVisible();
   await page.keyboard.press("Control+s");
@@ -175,6 +177,7 @@ test("严格 CSP：恶意文本按纯文本渲染且不产生违规", async ({ p
     .locator('[contenteditable="true"]')
     .first();
   await editable.click();
+  await expect(editable).toBeFocused();
   // 输入 HTML 注入负载：必须作为文本处理，不生成可执行元素。
   await page.keyboard.insertText('<img src=x onerror="alert(1)">');
   const maliciousElements = await page.evaluate(() => {

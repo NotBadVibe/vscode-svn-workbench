@@ -138,6 +138,10 @@ export class WorkbenchState {
         this.snapshot = message.payload.snapshot;
         this.loading = !message.payload.snapshot;
         this.error = undefined;
+        // 会话替换：旧会话的编辑态一次性消息不得带入新会话。
+        this.editSession = undefined;
+        this.diffSaveResult = undefined;
+        this.draftAck = undefined;
         break;
       case "module/loading":
         this.loading = true;

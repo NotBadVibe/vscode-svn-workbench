@@ -193,6 +193,8 @@ const files = [
 
 let activeMockModuleId: WorkbenchModuleId = "changes";
 let activeMockTaskId: WorkbenchTaskId = defaultWorkbenchTask("changes");
+/** 当前 mock Diff 目标（open-edit/save 的 targetId 与快照一致）。 */
+let activeMockDiffPath = "src/extension.ts";
 
 /**
  * 读取 `?module=<moduleId>`：0.0.5 每个功能模块一个独立窗口，
@@ -389,11 +391,12 @@ export function startMockWorkbench(): void {
       if (createSnapshot) injectSnapshot(moduleId, createSnapshot(), taskId);
     }
     if (action === "open-diff" && typeof data.relativePath === "string") {
+      activeMockDiffPath = data.relativePath;
       injectSnapshot("diff", mockDiffSnapshot(data.relativePath));
     }
     if (action === "diff/open-edit") {
       injectHostMessage("diff/edit-opened", {
-        targetId: "mock-diff-src/extension.ts",
+        targetId: `mock-diff-${activeMockDiffPath}`,
         editToken: "mock-edit-token",
         draftRevision: 1,
         baseHash: "mock-base-hash",
@@ -404,7 +407,7 @@ export function startMockWorkbench(): void {
       });
       injectSnapshot(
         "diff",
-        mockDiffSnapshot("src/extension.ts", {
+        mockDiffSnapshot(activeMockDiffPath, {
           draft: { revision: 1, updatedAt: Date.now() },
         }),
       );
@@ -432,7 +435,7 @@ export function startMockWorkbench(): void {
       if (ok) {
         injectSnapshot(
           "diff",
-          mockDiffSnapshot("src/extension.ts", {
+          mockDiffSnapshot(activeMockDiffPath, {
             modified: data.content as string,
           }),
         );
@@ -449,7 +452,7 @@ export function startMockWorkbench(): void {
         title: "草稿已放弃",
         message: "页内编辑草稿已清除，回到只读差异视图。",
       });
-      injectSnapshot("diff", mockDiffSnapshot("src/extension.ts"));
+      injectSnapshot("diff", mockDiffSnapshot(activeMockDiffPath));
     }
     if (action === "diff/draft-export") {
       injectHostMessage("operation/result", {
@@ -475,7 +478,7 @@ export function startMockWorkbench(): void {
         diagnostics: diagnosticsSnapshot,
       };
       if (activeMockModuleId === "diff") {
-        injectSnapshot("diff", mockDiffSnapshot("src/extension.ts"));
+        injectSnapshot("diff", mockDiffSnapshot(activeMockDiffPath));
       } else {
         injectSnapshot(activeMockModuleId, snapshots[activeMockModuleId]());
       }

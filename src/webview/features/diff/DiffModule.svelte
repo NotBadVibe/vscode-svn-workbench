@@ -63,6 +63,8 @@
   let dirty = $state(false);
   let savedText = $state("");
   let currentDraftRevision = $state(1);
+  /** 当前编辑基准的磁盘 hash（保存成功后随 newContentHash 更新）。 */
+  let currentRawHash = $state("");
   let saveError = $state<(DiffSaveWorkingResult & { ok: false }) | undefined>();
   let navIndex = $state(0);
   let checkpointTimer: number | undefined;
@@ -71,17 +73,15 @@
     canEdit ? computeDiffHunks(snapshot.original, snapshot.modified) : [],
   );
 
-  // 进入编辑：编辑会话就绪且目标一致时开启编辑态。
+  // 进入编辑：编辑会话就绪且目标一致时开启编辑态；重新建立会话（token
+  // 失效恢复）只刷新令牌/哈希/草稿版本，不打断当前编辑内容与脏状态。
   $effect(() => {
-    if (
-      editSession &&
-      targetId &&
-      editSession.targetId === targetId &&
-      !editing
-    ) {
+    if (!editSession || !targetId || editSession.targetId !== targetId) return;
+    currentRawHash = editSession.rawHash;
+    currentDraftRevision = editSession.draftRevision;
+    if (!editing) {
       editing = true;
       savedText = snapshot.modified;
-      currentDraftRevision = editSession.draftRevision;
       saveError = undefined;
     }
   });
@@ -103,6 +103,9 @@
       dirty = false;
       savedText = snapshot.modified;
       currentDraftRevision = diffSaveResult.result.acceptedRevision;
+      // 保存成功后磁盘 hash 已变化：更新基准，否则下一次保存会被
+      // expectedContentHash 复验拒绝（diskChanged）。
+      currentRawHash = diffSaveResult.result.newContentHash;
       // 更新编辑会话 token：Host 已签发新 token 供后续保存。
       if (editSession) {
         editSession.editToken = diffSaveResult.result.newEditToken;
@@ -143,25 +146,34 @@
   }
 
   function saveWorkingCopy(): void {
-    if (!editing || !editSession) return;
+    if (!editing || !editSession || !targetId || !dirty) return;
     const text = diffViewRef?.getText() ?? "";
-    if (!dirty) {
-      onAction("diff/save-working", {
-        targetId,
-        editToken: editSession.editToken,
-        draftRevision: currentDraftRevision,
-        expectedContentHash: editSession.rawHash,
-        content: text,
-      });
-      return;
-    }
     onAction("diff/save-working", {
       targetId,
       editToken: editSession.editToken,
       draftRevision: currentDraftRevision,
-      expectedContentHash: editSession.rawHash,
+      expectedContentHash: currentRawHash,
       content: text,
     });
+  }
+
+  /** token 失效后的恢复：刷新检查点保留草稿，再向 Host 申请新编辑会话。 */
+  function reestablishEditSession(): void {
+    if (!targetId) return;
+    if (checkpointTimer !== undefined) {
+      window.clearTimeout(checkpointTimer);
+      checkpointTimer = undefined;
+    }
+    const text = diffViewRef?.getText();
+    if (dirty && text !== undefined) {
+      onAction("diff/draft-checkpoint", {
+        targetId,
+        content: text,
+        draftRevision: currentDraftRevision,
+      });
+    }
+    saveError = undefined;
+    onAction("diff/open-edit");
   }
 
   function onKeydown(event: KeyboardEvent): void {
@@ -424,6 +436,14 @@
           （草稿已保留，版本 {saveError.draftRevision}）
         {/if}
       </span>
+      {#if saveError.reason === "tokenExpired" || saveError.reason === "scopeChanged"}
+        <button
+          class="button button--secondary"
+          onclick={reestablishEditSession}
+          title="保留当前编辑内容，重新向 Host 申请编辑令牌"
+          >重新建立编辑会话（保留草稿）</button
+        >
+      {/if}
     </div>
   {/if}
 

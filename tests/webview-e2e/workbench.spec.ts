@@ -451,6 +451,8 @@ test("edits a working copy in-page and saves with Ctrl+S (v0.0.6)", async ({
     .locator('[contenteditable="true"]')
     .first();
   await editable.click();
+  // 编辑器焦点接管是异步的：确认焦点已进入编辑区再输入，避免竞态丢键。
+  await expect(editable).toBeFocused();
   await page.keyboard.type("// 页内编辑注释");
   await expect(page.getByText(/有未保存的修改/)).toBeVisible();
   await expect(page.getByRole("button", { name: "保存修改" })).toBeEnabled();
