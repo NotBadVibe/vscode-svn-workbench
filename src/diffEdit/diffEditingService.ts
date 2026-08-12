@@ -622,11 +622,28 @@ export class DiffEditingService {
     this.tokens.revokeAllForSession(sessionId);
   }
 
-  /** 文档/磁盘变化监听命中后按路径撤销 token（下一次保存必失效）。 */
+  /**
+   * 文档/磁盘变化监听命中后按路径撤销 token（下一次保存必失效）。
+   * hash 感知：草稿登记的磁盘 hash 与当前磁盘一致时跳过——我们自己的
+   * 原子写入（saveWorking/saveDraft）也会触发文件 watcher，不能因此撤销
+   * 刚签发的新 token；只有内容真实偏离记录状态的外部变化才撤销。
+   */
   async revokeForPath(targetPath: string): Promise<void> {
     // token 绑定的是 realpath 规范路径；监听给出的路径可能差一层系统链接
     // （如 macOS /var → /private/var），两侧都撤销。
     const canonical = await fs.realpath(targetPath).catch(() => targetPath);
+    const tracked = this.drafts
+      .list()
+      .find(
+        (draft) =>
+          draft.targetPath === canonical || draft.targetPath === targetPath,
+      );
+    if (tracked !== undefined) {
+      const current = await this.freshness(tracked.targetPath);
+      if (current.exists && current.rawHash === tracked.diskHash) {
+        return;
+      }
+    }
     this.tokens.revokeAllForPath(canonical);
     if (canonical !== targetPath) this.tokens.revokeAllForPath(targetPath);
   }

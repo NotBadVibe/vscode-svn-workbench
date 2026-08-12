@@ -1216,6 +1216,73 @@ async function testDiffEditIntegration(): Promise<void> {
     });
     assert.ok(!replay.ok, "旧 token 重放必须被拒绝");
 
+    // 生产接线（v0.0.6 最终验收）：保存成功后的自写 watcher 事件不得撤销
+    // 新 token（hash 感知），连续第二次保存必须成功；真实外部变化仍撤销。
+    await service.revokeForPath(target);
+    const draft = service.getDraft(opened.targetId);
+    assert.ok(draft, "保存后草稿应保留");
+    if (!draft) return;
+    const checkpoint2 = service.checkpointDraft({
+      targetId: opened.targetId,
+      sessionId: "ext-host-session",
+      repositoryUuid: "test-uuid",
+      scopeHash: "test-scope-hash",
+      baseHash: draft.baseHash,
+      baseRevision: draft.baseRevision,
+      baseContents: draft.baseContents,
+      diskHash: saved.newContentHash,
+      targetPath: target,
+      content: "line1\nline1.5\nline2\nline3\n",
+      baseRevisionOfClient: saved.acceptedRevision,
+    });
+    assert.ok(checkpoint2.ok, "保存后检查点应接受");
+    const secondSave = await service.saveWorking({
+      sessionId: "ext-host-session",
+      moduleId: "diff",
+      taskId: "diff/working",
+      repositoryUuid: "test-uuid",
+      scopeHash: "test-scope-hash",
+      targetId: opened.targetId,
+      editToken: saved.newEditToken,
+      draftRevision: checkpoint2.ok ? checkpoint2.draftRevision : 0,
+      expectedContentHash: saved.newContentHash,
+      content: "line1\nline1.5\nline2\nline3\n",
+      scope,
+      repositoryRoot: workspace.uri.fsPath,
+    });
+    assert.ok(secondSave.ok, "自写事件后第二次保存必须成功");
+    assert.equal(
+      await fs.promises.readFile(target, "utf8"),
+      "line1\nline1.5\nline2\nline3\n",
+    );
+    // 真实外部变化：撤销后旧 token 拒绝、不落盘。
+    await fs.promises.writeFile(target, "external\n", "utf8");
+    await service.revokeForPath(target);
+    if (secondSave.ok) {
+      const externalSave = await service.saveWorking({
+        sessionId: "ext-host-session",
+        moduleId: "diff",
+        taskId: "diff/working",
+        repositoryUuid: "test-uuid",
+        scopeHash: "test-scope-hash",
+        targetId: opened.targetId,
+        editToken: secondSave.newEditToken,
+        draftRevision: secondSave.acceptedRevision,
+        expectedContentHash: secondSave.newContentHash,
+        content: "hijack\n",
+        scope,
+        repositoryRoot: workspace.uri.fsPath,
+      });
+      assert.ok(!externalSave.ok, "外部变化后必须拒绝保存");
+      assert.equal(
+        await fs.promises.readFile(target, "utf8"),
+        "external\n",
+        "被拒绝的保存不得改动磁盘",
+      );
+    }
+    // 还原供后续 TextDocument 链路断言使用。
+    await fs.promises.writeFile(target, "line1\nline1.5\nline2\n", "utf8");
+
     // 真实 TextDocument 链路（v0.0.6 验收）：干净打开的文档可进入编辑；
     // 文档变脏后 openEdit 拒绝、已签发 token 的保存被拒绝且不落盘。
     const document = await vscode.workspace.openTextDocument(target);

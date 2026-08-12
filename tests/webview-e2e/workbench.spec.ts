@@ -546,3 +546,32 @@ test("dirty draft target switch requires an explicit three-way choice (v0.0.6)",
     page.getByRole("button", { name: "恢复草稿并编辑" }),
   ).toBeVisible();
 });
+
+test("saved working copy becomes clean: no draft notice, no switch dialog (v0.0.6)", async ({
+  page,
+}) => {
+  await page.goto("/?module=diff");
+  await page.getByRole("button", { name: "页内编辑" }).click();
+  const editable = page
+    .locator("diffs-container")
+    .locator('[contenteditable="true"]')
+    .first();
+  await editable.click();
+  await expect(editable).toBeFocused();
+  await page.keyboard.type("// 保存后应变干净");
+  await expect(page.getByText(/有未保存的修改/)).toBeVisible();
+  await page.keyboard.press("Control+s");
+  await expect(page.getByRole("button", { name: "保存修改" })).toBeDisabled();
+  // 保存成功：不再提示未保存草稿。
+  await expect(page.getByText(/存在未保存草稿/)).toHaveCount(0);
+  await expect(page.getByText(/有未保存的修改/)).toHaveCount(0);
+
+  // 切换目标：干净状态不弹三选一，直接加载新文件。
+  await dispatchMockAction(page, "open-diff", {
+    relativePath: "src/webview/App.svelte",
+  });
+  await expect(page.getByText("src/webview/App.svelte").first()).toBeVisible();
+  await expect(
+    page.getByRole("dialog", { name: "当前文件有未保存的草稿" }),
+  ).toHaveCount(0);
+});

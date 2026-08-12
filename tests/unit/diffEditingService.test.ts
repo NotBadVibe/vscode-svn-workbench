@@ -738,11 +738,13 @@ describe("diffEditingService 编排", () => {
     if (!retry.ok) expect(retry.reason).toBe("tokenExpired");
   });
 
-  it("revokeForPath 后保存被拒绝（外部变化立即使 token 失效）", async () => {
+  it("外部真实改盘后经 revokeForPath 保存被拒绝（watcher 失效链）", async () => {
     const service = new DiffEditingService(deps);
     const opened = await openEdit();
     expect(opened.ok).toBe(true);
     if (!opened.ok) return;
+    // 外部修改磁盘内容后 watcher 命中：token 必须失效。
+    await fs.writeFile(target, "const x = 777;\n", "utf8");
     await service.revokeForPath(target);
     const result = await service.saveWorking({
       sessionId: session.sessionId,
@@ -1145,6 +1147,74 @@ describe("diffEditingService 编排", () => {
       repositoryRoot,
     });
     expect(replay.ok).toBe(false);
+  });
+
+  it("保存成功后的自写文件事件不撤销新 token（watcher hash 感知）", async () => {
+    const service = new DiffEditingService(deps);
+    const opened = await openEdit();
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) return;
+    service.checkpointDraft({
+      targetId: opened.targetId,
+      sessionId: session.sessionId,
+      repositoryUuid: session.repositoryUuid,
+      scopeHash: session.scopeHash,
+      baseHash: opened.baseHash,
+      baseRevision: opened.baseRevision,
+      baseContents: opened.baseContents,
+      diskHash: opened.rawHash,
+      targetPath: target,
+      content: "const x = 2;\n",
+      baseRevisionOfClient: opened.draftRevision,
+    });
+    const saved = await service.saveWorking({
+      sessionId: session.sessionId,
+      moduleId: "diff",
+      taskId: "diff/working",
+      repositoryUuid: session.repositoryUuid,
+      scopeHash: session.scopeHash,
+      targetId: opened.targetId,
+      editToken: opened.editToken,
+      draftRevision: service.getDraft(opened.targetId)?.revision ?? 1,
+      expectedContentHash: opened.rawHash,
+      content: "const x = 2;\n",
+      scope,
+      repositoryRoot,
+    });
+    expect(saved.ok).toBe(true);
+    if (!saved.ok) return;
+    // 生产链路上，我们自己的原子写入会触发文件 watcher（onDidChange），
+    // 模拟该事件命中：磁盘内容与草稿记录一致时不得撤销刚签发的新 token。
+    await service.revokeForPath(target);
+    service.checkpointDraft({
+      targetId: opened.targetId,
+      sessionId: session.sessionId,
+      repositoryUuid: session.repositoryUuid,
+      scopeHash: session.scopeHash,
+      baseHash: opened.baseHash,
+      baseRevision: opened.baseRevision,
+      baseContents: opened.baseContents,
+      diskHash: saved.newContentHash,
+      targetPath: target,
+      content: "const x = 3;\n",
+      baseRevisionOfClient: saved.acceptedRevision,
+    });
+    const second = await service.saveWorking({
+      sessionId: session.sessionId,
+      moduleId: "diff",
+      taskId: "diff/working",
+      repositoryUuid: session.repositoryUuid,
+      scopeHash: session.scopeHash,
+      targetId: opened.targetId,
+      editToken: saved.newEditToken,
+      draftRevision: service.getDraft(opened.targetId)?.revision ?? 2,
+      expectedContentHash: saved.newContentHash,
+      content: "const x = 3;\n",
+      scope,
+      repositoryRoot,
+    });
+    expect(second.ok).toBe(true);
+    expect(await fs.readFile(target, "utf8")).toBe("const x = 3;\n");
   });
 
   it("多目标会话：第二个目标的 draftRevision 不被误判乱序", async () => {
