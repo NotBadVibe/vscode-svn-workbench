@@ -607,4 +607,104 @@ describe("DiffModule 页内编辑（v0.0.6）", () => {
     expect(await screen.findByText(/二进制文件不支持页内编辑/)).toBeTruthy();
     expect(screen.queryByRole("button", { name: "页内编辑" })).toBeNull();
   });
+
+  it("目标切换遇到脏草稿时提供三选一阻断对话框", async () => {
+    const action = vi.fn();
+    render(DiffModule, {
+      snapshot: editSnapshot,
+      onAction: action,
+      editSession: { ...editSessionPayload },
+      targetSwitchRequest: {
+        currentTargetId: "mock-target",
+        nextRelativePath: "src/other.ts",
+      },
+    });
+    await screen.findByText("编辑模式");
+    const dialog = await screen.findByRole("dialog", {
+      name: "当前文件有未保存的草稿",
+    });
+    expect(dialog).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "保存并打开新文件" }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "暂存并打开新文件" }),
+    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "留在当前文件" })).toBeTruthy();
+  });
+
+  it("三选一：暂存并打开先刷新检查点再发送 stash 决定", async () => {
+    const action = vi.fn();
+    render(DiffModule, {
+      snapshot: editSnapshot,
+      onAction: action,
+      editSession: { ...editSessionPayload },
+      targetSwitchRequest: {
+        currentTargetId: "mock-target",
+        nextRelativePath: "src/other.ts",
+      },
+    });
+    await screen.findByText("编辑模式");
+    // 制造脏状态。
+    editMock.state.text = "const a = 9;\nconst b = 3;\n";
+    await fireEvent.click(
+      screen.getByRole("button", { name: "还原当前差异块为 BASE" }),
+    );
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "暂存并打开新文件" }),
+    );
+    expect(action).toHaveBeenCalledWith(
+      "diff/draft-checkpoint",
+      expect.objectContaining({
+        targetId: "mock-target",
+        content: "const a = 9;\nconst b = 3;\n",
+      }),
+    );
+    expect(action).toHaveBeenCalledWith("diff/target-switch-decision", {
+      decision: "stash",
+      targetId: "mock-target",
+    });
+  });
+
+  it("三选一：保存并打开发送 save 决定；留在当前文件发送 stay", async () => {
+    const action = vi.fn();
+    render(DiffModule, {
+      snapshot: editSnapshot,
+      onAction: action,
+      editSession: { ...editSessionPayload },
+      targetSwitchRequest: {
+        currentTargetId: "mock-target",
+        nextRelativePath: "src/other.ts",
+      },
+    });
+    await screen.findByRole("dialog", { name: "当前文件有未保存的草稿" });
+    await fireEvent.click(
+      screen.getByRole("button", { name: "保存并打开新文件" }),
+    );
+    expect(action).toHaveBeenCalledWith("diff/target-switch-decision", {
+      decision: "save",
+      targetId: "mock-target",
+    });
+  });
+
+  it("三选一：Escape 等同于留在当前文件", async () => {
+    const action = vi.fn();
+    render(DiffModule, {
+      snapshot: editSnapshot,
+      onAction: action,
+      editSession: { ...editSessionPayload },
+      targetSwitchRequest: {
+        currentTargetId: "mock-target",
+        nextRelativePath: "src/other.ts",
+      },
+    });
+    const dialog = await screen.findByRole("dialog", {
+      name: "当前文件有未保存的草稿",
+    });
+    await fireEvent.keyDown(dialog, { key: "Escape" });
+    expect(action).toHaveBeenCalledWith("diff/target-switch-decision", {
+      decision: "stay",
+      targetId: "mock-target",
+    });
+  });
 });

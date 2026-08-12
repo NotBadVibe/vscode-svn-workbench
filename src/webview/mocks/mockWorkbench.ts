@@ -195,6 +195,36 @@ let activeMockModuleId: WorkbenchModuleId = "changes";
 let activeMockTaskId: WorkbenchTaskId = defaultWorkbenchTask("changes");
 /** 当前 mock Diff 目标（open-edit/save 的 targetId 与快照一致）。 */
 let activeMockDiffPath = "src/extension.ts";
+/** 持有草稿的 mock 路径集合（切换 diff 目标会触发三选一确认）。 */
+const mockDraftPaths = new Set<string>();
+/** 等待三选一决定的 mock 切换目标。 */
+let pendingMockSwitch: string | undefined;
+/** 目标切换后的 mock 会话序号（模拟 Host 会话替换）。 */
+let mockSessionCounter = 0;
+
+/** 模拟 Host 的目标切换：新会话 app/initialize + 新快照。 */
+function injectDiffTargetSwitch(relativePath: string): void {
+  activeMockDiffPath = relativePath;
+  mockSessionCounter += 1;
+  workbenchBridge.injectMock({
+    protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+    type: "app/initialize",
+    moduleId: "diff",
+    taskId: "diff/working",
+    sessionId: `mock-session-${mockSessionCounter}`,
+    repositoryUuid: "mock-repository-uuid",
+    scopeHash: "mock-scope-hash",
+    payload: {
+      moduleId: "diff",
+      scope: {
+        repositoryName: "vscode-svn",
+        roots: [{ kind: "folder", relativePath: "." }],
+        source: "internal",
+      },
+      snapshot: mockDiffSnapshot(relativePath),
+    },
+  } as never);
+}
 
 /**
  * 读取 `?module=<moduleId>`：0.0.5 每个功能模块一个独立窗口，
@@ -259,8 +289,17 @@ function mockDiffSnapshot(
           supported: false,
           reason: "mock：该文件不支持页内编辑。",
         },
-    draft: overrides.draft,
+    draft: overrides.draft ?? mockDiffDraft(relativePath),
   };
+}
+
+/** 与 Host 行为一致：目标存在草稿时快照携带 draft 摘要。 */
+function mockDiffDraft(
+  relativePath: string,
+): { revision: number; updatedAt: number } | undefined {
+  return mockDraftPaths.has(relativePath)
+    ? { revision: 1, updatedAt: Date.now() }
+    : undefined;
 }
 
 /** 向 Webview 注入一条 Host 消息（编辑会话/保存结果等）。 */
@@ -269,6 +308,7 @@ function injectHostMessage(
     | "diff/edit-opened"
     | "diff/save-result"
     | "diff/draft-checkpointed"
+    | "diff/target-switch-confirm"
     | "operation/result",
   payload: Record<string, unknown>,
 ): void {
@@ -391,10 +431,53 @@ export function startMockWorkbench(): void {
       if (createSnapshot) injectSnapshot(moduleId, createSnapshot(), taskId);
     }
     if (action === "open-diff" && typeof data.relativePath === "string") {
-      activeMockDiffPath = data.relativePath;
-      injectSnapshot("diff", mockDiffSnapshot(data.relativePath));
+      // 当前目标有草稿时模拟 Host 的三选一拦截：先确认，不直接切换。
+      if (
+        mockDraftPaths.has(activeMockDiffPath) &&
+        data.relativePath !== activeMockDiffPath
+      ) {
+        pendingMockSwitch = data.relativePath;
+        injectHostMessage("diff/target-switch-confirm", {
+          currentTargetId: `mock-diff-${activeMockDiffPath}`,
+          nextRelativePath: data.relativePath,
+        });
+        return;
+      }
+      if (data.relativePath !== activeMockDiffPath) {
+        injectDiffTargetSwitch(data.relativePath);
+      } else {
+        injectSnapshot("diff", mockDiffSnapshot(data.relativePath));
+      }
+    }
+    if (action === "diff/target-switch-decision") {
+      const pending = pendingMockSwitch;
+      pendingMockSwitch = undefined;
+      if (!pending) return;
+      if (data.decision === "stay") {
+        injectHostMessage("operation/result", {
+          title: "已留在当前文件",
+          message: "已取消打开新目标；当前草稿保留，可继续编辑或放弃。",
+        });
+        return;
+      }
+      if (data.decision === "save") {
+        injectHostMessage("diff/save-result", {
+          result: {
+            ok: true,
+            acceptedRevision: 9,
+            newContentHash: "mock-saved-hash",
+            newEditToken: "",
+            snapshotVersion: Date.now(),
+          },
+          snapshotVersion: Date.now(),
+        });
+        mockDraftPaths.delete(activeMockDiffPath);
+      }
+      // stash：草稿保留在 mock“Host”；save：草稿已落盘清除。
+      injectDiffTargetSwitch(pending);
     }
     if (action === "diff/open-edit") {
+      mockDraftPaths.add(activeMockDiffPath);
       injectHostMessage("diff/edit-opened", {
         targetId: `mock-diff-${activeMockDiffPath}`,
         editToken: "mock-edit-token",
@@ -448,6 +531,7 @@ export function startMockWorkbench(): void {
       });
     }
     if (action === "diff/draft-abandon") {
+      mockDraftPaths.delete(activeMockDiffPath);
       injectHostMessage("operation/result", {
         title: "草稿已放弃",
         message: "页内编辑草稿已清除，回到只读差异视图。",

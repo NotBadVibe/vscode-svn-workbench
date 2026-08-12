@@ -262,6 +262,11 @@ export class WorkbenchController implements vscode.Disposable {
   private readonly diffEdit?: DiffEditingService;
   /** 当前 Diff 会话目标摘要；同目标重复打开只 reveal，不重新初始化。 */
   private diffTargetKey: string | undefined;
+  /** 等待“脏草稿三选一”决定的新目标请求（仅 Diff 窗口）。 */
+  private pendingDiffOpen: OpenWorkbenchRequest | undefined;
+  private pendingDiffOpenTimer: ReturnType<typeof setTimeout> | undefined;
+  /** 三选一决定后的递归 reopen 跳过草稿守卫。 */
+  private diffSwitchBypass = false;
   private readonly nativeDiffContentProvider?: NativeDiffContentProvider;
   /**
    * 设置页保存/恢复动作触发的规则失效由动作处理器自行发送带反馈的快照；
@@ -345,6 +350,50 @@ export class WorkbenchController implements vscode.Disposable {
     ) {
       this.revealPanel();
       return;
+    }
+
+    /*
+     * v0.0.6 写入安全契约 §6：单例窗口加载新目标前，当前目标存在草稿时必须
+     * 由用户三选一（保存并打开 / 暂存并打开 / 留在当前文件）。这里只负责
+     * 拦截与挂起请求，选择 UI 在 Webview（Svelte Dialog），决定经
+     * diff/target-switch-decision 回传；超时按“暂存并打开”安全处理（草稿
+     * 保留在 Host 内存）。
+     */
+    if (
+      !this.diffSwitchBypass &&
+      this.isDiffWindow() &&
+      this.diffEdit &&
+      this.panel &&
+      this.session?.targetFile &&
+      nextDiffTargetKey !== undefined &&
+      nextDiffTargetKey !== this.diffTargetKey
+    ) {
+      const currentTargetId = buildDiffTargetId(
+        path.resolve(this.session.targetFile),
+      );
+      if (this.diffEdit.getDraft(currentTargetId) !== undefined) {
+        this.clearPendingDiffOpen();
+        this.pendingDiffOpen = request;
+        this.pendingDiffOpenTimer = setTimeout(() => {
+          void this.resolveDiffTargetSwitch("stash", undefined, this.session);
+        }, 30_000);
+        this.revealPanel();
+        await this.post({
+          protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+          type: "diff/target-switch-confirm",
+          moduleId: "diff",
+          payload: {
+            currentTargetId,
+            nextRelativePath: request.targetFile
+              ? path.relative(
+                  request.scope.repositoryRoot,
+                  path.resolve(request.targetFile),
+                ) || path.basename(request.targetFile)
+              : "新目标",
+          },
+        });
+        return;
+      }
     }
 
     this.latestModuleRequests.clear();
@@ -449,6 +498,7 @@ export class WorkbenchController implements vscode.Disposable {
     // onDidDispose 对同一仓库重复释放（引用计数下溢或重复广播）。
     this.session = undefined;
     this.diffTargetKey = undefined;
+    this.clearPendingDiffOpen();
     this.securityReferenceRoot = undefined;
     if (session) {
       this.nativeDiffContentProvider?.releaseSession(session.sessionId);
@@ -598,6 +648,7 @@ export class WorkbenchController implements vscode.Disposable {
         // 广播失效事件，此时本控制器已无活动会话，不会把刚清除的上下文写回。
         this.session = undefined;
         this.diffTargetKey = undefined;
+        this.clearPendingDiffOpen();
         this.securityReferenceRoot = undefined;
         this.panel = undefined;
         this.ready = false;
@@ -836,6 +887,13 @@ export class WorkbenchController implements vscode.Disposable {
         return;
       case "diff/draft-export":
         await this.exportDiffDraft(session, message.requestId, data);
+        return;
+      case "diff/target-switch-decision":
+        await this.resolveDiffTargetSwitch(
+          asString(data.decision),
+          asString(data.targetId),
+          session,
+        );
         return;
       case "copy-text": {
         const text = asString(data.text);
@@ -3068,6 +3126,65 @@ export class WorkbenchController implements vscode.Disposable {
         supported: false,
         reason: "无法读取目标文件；请使用原生编辑器。",
       };
+    }
+  }
+
+  /** 清除挂起的目标切换请求（新会话、dispose 或决定后）。 */
+  private clearPendingDiffOpen(): void {
+    this.pendingDiffOpen = undefined;
+    if (this.pendingDiffOpenTimer !== undefined) {
+      clearTimeout(this.pendingDiffOpenTimer);
+      this.pendingDiffOpenTimer = undefined;
+    }
+  }
+
+  /**
+   * 处理“脏草稿三选一”决定：save 先经 Host 安全链保存草稿，成功后打开新
+   * 目标；stash 直接打开（草稿保留）；stay 取消切换。保存失败不切换，
+   * diff/save-result 回发 Webview 展示拒绝原因。
+   */
+  private async resolveDiffTargetSwitch(
+    decision: string | undefined,
+    targetId: string | undefined,
+    session: WorkbenchSession | undefined,
+  ): Promise<void> {
+    const pending = this.pendingDiffOpen;
+    this.clearPendingDiffOpen();
+    if (!pending) return;
+    if (decision === "save") {
+      if (!this.diffEdit || !targetId || !session) return;
+      const result = await this.diffEdit.saveDraft({
+        targetId,
+        scope: session.scope,
+        repositoryRoot: session.scope.repositoryRoot,
+      });
+      if (!result.ok) {
+        await this.post({
+          protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+          type: "diff/save-result",
+          moduleId: "diff",
+          payload: { result, snapshotVersion: 0 },
+        });
+        return;
+      }
+    } else if (decision !== "stash") {
+      // stay（或未知决定）：保持当前文件，草稿保留。
+      await this.post({
+        protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+        type: "operation/result",
+        moduleId: "diff",
+        payload: {
+          title: "已留在当前文件",
+          message: "已取消打开新目标；当前草稿保留，可继续编辑或放弃。",
+        },
+      });
+      return;
+    }
+    this.diffSwitchBypass = true;
+    try {
+      await this.open(pending);
+    } finally {
+      this.diffSwitchBypass = false;
     }
   }
 

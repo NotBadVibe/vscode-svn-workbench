@@ -124,6 +124,7 @@
       editSession={state.editSession}
       diffSaveResult={state.diffSaveResult}
       draftAck={state.draftAck}
+      targetSwitchRequest={state.targetSwitchRequest}
       onAction={(action, data) => state.action(action, data)}
     />
   {:else}

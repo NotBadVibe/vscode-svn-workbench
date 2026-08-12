@@ -461,3 +461,86 @@ test("edits a working copy in-page and saves with Ctrl+S (v0.0.6)", async ({
   await page.keyboard.press("Control+s");
   await expect(page.getByRole("button", { name: "保存修改" })).toBeDisabled();
 });
+
+/** 在 mock 模式直接派发一条 Webview 动作（等同界面触发 open-diff）。 */
+async function dispatchMockAction(
+  page: import("@playwright/test").Page,
+  action: string,
+  data: Record<string, unknown>,
+): Promise<void> {
+  await page.evaluate(
+    ({ action: name, data: payload }) => {
+      window.dispatchEvent(
+        new CustomEvent("svn-workbench:mock-action", {
+          detail: {
+            protocolVersion: 2,
+            type: "workbench/action",
+            moduleId: "diff",
+            taskId: "diff/working",
+            sessionId: "mock-session-id",
+            repositoryUuid: "mock-repository-uuid",
+            scopeHash: "mock-scope-hash",
+            payload: { action: name, data: payload },
+          },
+        }),
+      );
+    },
+    { action, data },
+  );
+}
+
+test("dirty draft target switch requires an explicit three-way choice (v0.0.6)", async ({
+  page,
+}) => {
+  await page.goto("/?module=diff");
+  await page.getByRole("button", { name: "页内编辑" }).click();
+  const editable = page
+    .locator("diffs-container")
+    .locator('[contenteditable="true"]')
+    .first();
+  await editable.click();
+  await expect(editable).toBeFocused();
+  await page.keyboard.type("// 未保存草稿");
+  await expect(page.getByText(/有未保存的修改/)).toBeVisible();
+
+  // 加载新目标：必须先三选一，不能静默暂存。
+  await dispatchMockAction(page, "open-diff", {
+    relativePath: "src/webview/App.svelte",
+  });
+  const dialog = page.getByRole("dialog", { name: "当前文件有未保存的草稿" });
+  await expect(dialog).toBeVisible();
+  await expect(
+    dialog.getByRole("button", { name: "保存并打开新文件" }),
+  ).toBeVisible();
+  await expect(
+    dialog.getByRole("button", { name: "暂存并打开新文件" }),
+  ).toBeVisible();
+  await expect(
+    dialog.getByRole("button", { name: "留在当前文件" }),
+  ).toBeVisible();
+  // 对话框打开期间仍停留在原文件。
+  await expect(page.getByText("src/extension.ts").first()).toBeVisible();
+
+  // 留在当前文件：不切换。
+  await dialog.getByRole("button", { name: "留在当前文件" }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByText("编辑模式")).toBeVisible();
+
+  // 再次触发并选择暂存并打开：切换到新文件，草稿保留。
+  await dispatchMockAction(page, "open-diff", {
+    relativePath: "src/webview/App.svelte",
+  });
+  await page
+    .getByRole("dialog", { name: "当前文件有未保存的草稿" })
+    .getByRole("button", { name: "暂存并打开新文件" })
+    .click();
+  await expect(page.getByText("src/webview/App.svelte").first()).toBeVisible();
+
+  // 回到原文件：草稿仍在，提供恢复入口（暂存不丢草稿）。
+  await dispatchMockAction(page, "open-diff", {
+    relativePath: "src/extension.ts",
+  });
+  await expect(
+    page.getByRole("button", { name: "恢复草稿并编辑" }),
+  ).toBeVisible();
+});

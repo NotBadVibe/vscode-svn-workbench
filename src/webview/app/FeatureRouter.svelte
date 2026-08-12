@@ -11,6 +11,7 @@
     editSession,
     diffSaveResult,
     draftAck,
+    targetSwitchRequest,
     onAction,
   }: {
     snapshot: WorkbenchModuleSnapshot;
@@ -26,6 +27,10 @@
     draftAck?: Extract<
       HostToWebviewMessage,
       { type: "diff/draft-checkpointed" }
+    >["payload"];
+    targetSwitchRequest?: Extract<
+      HostToWebviewMessage,
+      { type: "diff/target-switch-confirm" }
     >["payload"];
     onAction: (action: WebviewAction, data?: Record<string, unknown>) => void;
   } = $props();
@@ -52,6 +57,7 @@
       {editSession}
       {diffSaveResult}
       {draftAck}
+      {targetSwitchRequest}
     />{/await}
 {:else if snapshot.kind === "commit"}
   {#await import("../features/commit/CommitModule.svelte")}{@render loadingModule()}{:then module}{@const Feature =

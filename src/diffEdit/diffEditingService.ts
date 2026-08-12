@@ -358,6 +358,103 @@ export class DiffEditingService {
     };
   }
 
+  /**
+   * 保存既有草稿（单例窗口“保存并打开”路径）：不经过 Webview token，但复用
+   * 同一条安全链——路径守卫复验、脏 TextDocument 拒绝、磁盘 hash 复验、
+   * 临界区重算与原子写入。成功后放弃草稿并撤销该目标全部 token。
+   */
+  async saveDraft(input: {
+    targetId: string;
+    scope: OperationScope;
+    repositoryRoot: string;
+  }): Promise<DiffSaveWorkingResult> {
+    const draft = this.drafts.get(input.targetId);
+    if (!draft) {
+      return {
+        ok: false,
+        reason: "tokenExpired",
+        message: "没有可保存的草稿；请重新进入编辑。",
+        recoverable: false,
+      };
+    }
+    const guard = await this.validateTarget({
+      scope: input.scope,
+      repositoryRoot: input.repositoryRoot,
+      targetPath: draft.targetPath,
+      baseContents: "",
+      baseRevision: draft.baseRevision,
+    });
+    if (!guard.ok) {
+      const reason =
+        guard.code === "tooLarge"
+          ? "tooLarge"
+          : guard.code === "unsupportedEncoding"
+            ? "unsupportedEncoding"
+            : guard.code === "notFound" ||
+                guard.code === "notRegularFile" ||
+                guard.code === "symlink"
+              ? "targetMoved"
+              : "scopeChanged";
+      return {
+        ok: false,
+        reason,
+        message: guard.message,
+        recoverable: true,
+        draftRevision: draft.revision,
+      };
+    }
+    if (await this.isDocumentDirty(draft.targetPath)) {
+      return {
+        ok: false,
+        reason: "documentDirty",
+        message:
+          "VS Code 编辑器中该文件存在未保存内容，拒绝覆盖；请先在编辑器中保存或使用原生对比。",
+        recoverable: true,
+        draftRevision: draft.revision,
+      };
+    }
+    const currentBytes = await this.readBytes(draft.targetPath);
+    const analysis = analyzeUtf8(currentBytes);
+    const saved = await this.writer.save({
+      targetPath: draft.targetPath,
+      content: draft.content,
+      analysis: {
+        bom: analysis.bom,
+        eol: analysis.eol,
+        finalNewline: analysis.finalNewline,
+      },
+      expectedRawHash: draft.diskHash,
+      freshness: async (targetPath: string) => {
+        const fresh = await this.freshness(targetPath);
+        return {
+          exists: fresh.exists,
+          isRegularFile: fresh.isRegularFile,
+          realPath: fresh.realPath,
+          rawHash: fresh.rawHash,
+        };
+      },
+    });
+    if (!saved.ok) {
+      return {
+        ok: false,
+        reason: saved.reason,
+        message: saved.message,
+        recoverable: true,
+        draftRevision: draft.revision,
+      };
+    }
+    // 草稿使命完成：清除草稿；旧编辑会话 token 全部失效（基准已变化）。
+    this.drafts.abandon(input.targetId);
+    this.tokens.revokeAllForTarget(input.targetId);
+    return {
+      ok: true,
+      acceptedRevision: draft.revision,
+      newContentHash: saved.newHash,
+      newEditToken: "",
+      snapshotVersion: Date.now(),
+    };
+  }
+
   /** 会话替换/面板销毁后撤销该会话的全部 token。 */
   revokeForSession(sessionId: string): void {
     this.tokens.revokeAllForSession(sessionId);

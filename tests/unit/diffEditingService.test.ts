@@ -758,6 +758,81 @@ describe("diffEditingService 编排", () => {
     if (!result.ok) expect(result.reason).toBe("tokenExpired");
   });
 
+  it("saveDraft 将草稿经同一安全链落盘并清除草稿", async () => {
+    const service = new DiffEditingService(deps);
+    const opened = await openEdit();
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) return;
+    // 编辑内容进入草稿（检查点）。
+    const checkpoint = service.checkpointDraft({
+      targetId: opened.targetId,
+      sessionId: session.sessionId,
+      repositoryUuid: session.repositoryUuid,
+      scopeHash: session.scopeHash,
+      baseHash: opened.baseHash,
+      baseRevision: opened.baseRevision,
+      baseContents: opened.baseContents,
+      diskHash: opened.rawHash,
+      targetPath: target,
+      content: "const x = 42;\n",
+      baseRevisionOfClient: opened.draftRevision,
+    });
+    expect(checkpoint.ok).toBe(true);
+    const result = await service.saveDraft({
+      targetId: opened.targetId,
+      scope,
+      repositoryRoot,
+    });
+    expect(result.ok).toBe(true);
+    expect(await fs.readFile(target, "utf8")).toBe("const x = 42;\n");
+    // 草稿清除、token 撤销。
+    expect(service.getDraft(opened.targetId)).toBeUndefined();
+    expect(deps.tokens.size()).toBe(0);
+  });
+
+  it("saveDraft 在磁盘变化后拒绝并保留草稿", async () => {
+    const service = new DiffEditingService(deps);
+    const opened = await openEdit();
+    expect(opened.ok).toBe(true);
+    if (!opened.ok) return;
+    service.checkpointDraft({
+      targetId: opened.targetId,
+      sessionId: session.sessionId,
+      repositoryUuid: session.repositoryUuid,
+      scopeHash: session.scopeHash,
+      baseHash: opened.baseHash,
+      baseRevision: opened.baseRevision,
+      baseContents: opened.baseContents,
+      diskHash: opened.rawHash,
+      targetPath: target,
+      content: "const x = 42;\n",
+      baseRevisionOfClient: opened.draftRevision,
+    });
+    // 外部修改磁盘。
+    await fs.writeFile(target, "const x = 999;\n", "utf8");
+    const result = await service.saveDraft({
+      targetId: opened.targetId,
+      scope,
+      repositoryRoot,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toBe("diskChanged");
+    // 草稿保留、磁盘未被覆盖。
+    expect(service.getDraft(opened.targetId)?.content).toBe("const x = 42;\n");
+    expect(await fs.readFile(target, "utf8")).toBe("const x = 999;\n");
+  });
+
+  it("saveDraft 拒绝缺失草稿", async () => {
+    const service = new DiffEditingService(deps);
+    const missing = await service.saveDraft({
+      targetId: "unknown",
+      scope,
+      repositoryRoot,
+    });
+    expect(missing.ok).toBe(false);
+    if (!missing.ok) expect(missing.reason).toBe("tokenExpired");
+  });
+
   it("token 消耗后仍接受同仓库同范围的恢复检查点", async () => {
     const service = new DiffEditingService(deps);
     const opened = await openEdit();

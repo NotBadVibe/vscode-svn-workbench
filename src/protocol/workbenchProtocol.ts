@@ -883,6 +883,15 @@ export type HostToWebviewMessage =
         draftRevision: number;
       }
     >
+  | MessageEnvelope<
+      "diff/target-switch-confirm",
+      {
+        /** 当前仍持有脏草稿的目标。 */
+        currentTargetId: string;
+        /** 即将打开的新目标（展示用相对路径）。 */
+        nextRelativePath: string;
+      }
+    >
   | MessageEnvelope<"operation/result", { title: string; message: string }>
   | MessageEnvelope<"operation/cancelled", { title: string; message: string }>
   | MessageEnvelope<"scope/changed", { scope: WorkbenchScopeView }>;
@@ -898,6 +907,7 @@ export type WebviewAction =
   | "diff/draft-checkpoint"
   | "diff/draft-abandon"
   | "diff/draft-export"
+  | "diff/target-switch-decision"
   | "copy-text"
   | "security/configure-authentication"
   | "security/clear-authentication"
@@ -1001,6 +1011,7 @@ export const webviewActions = [
   "diff/draft-checkpoint",
   "diff/draft-abandon",
   "diff/draft-export",
+  "diff/target-switch-decision",
   "copy-text",
   "security/configure-authentication",
   "security/clear-authentication",

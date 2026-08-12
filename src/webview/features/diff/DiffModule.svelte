@@ -19,6 +19,7 @@
     editSession,
     diffSaveResult,
     draftAck,
+    targetSwitchRequest,
   }: {
     snapshot: DiffSnapshot;
     onAction: (action: WebviewAction, data?: Record<string, unknown>) => void;
@@ -33,6 +34,10 @@
     draftAck?: Extract<
       HostToWebviewMessage,
       { type: "diff/draft-checkpointed" }
+    >["payload"];
+    targetSwitchRequest?: Extract<
+      HostToWebviewMessage,
+      { type: "diff/target-switch-confirm" }
     >["payload"];
   } = $props();
 
@@ -68,6 +73,15 @@
   let saveError = $state<(DiffSaveWorkingResult & { ok: false }) | undefined>();
   let navIndex = $state(0);
   let checkpointTimer: number | undefined;
+  /** 目标切换三选一对话框引用（焦点管理）。 */
+  let switchDialog = $state<HTMLDivElement>();
+
+  /** 仅当确认请求针对当前目标时展示对话框。 */
+  const showTargetSwitchDialog = $derived(
+    targetSwitchRequest !== undefined &&
+      (targetId === undefined ||
+        targetSwitchRequest.currentTargetId === targetId),
+  );
 
   const hunks = $derived(
     canEdit ? computeDiffHunks(snapshot.original, snapshot.modified) : [],
@@ -160,21 +174,82 @@
   /** token 失效后的恢复：刷新检查点保留草稿，再向 Host 申请新编辑会话。 */
   function reestablishEditSession(): void {
     if (!targetId) return;
+    flushCheckpoint();
+    saveError = undefined;
+    onAction("diff/open-edit");
+  }
+
+  /** 立即把当前编辑内容作为检查点提交（取代 debounce 定时器）。 */
+  function flushCheckpoint(): void {
     if (checkpointTimer !== undefined) {
       window.clearTimeout(checkpointTimer);
       checkpointTimer = undefined;
     }
     const text = diffViewRef?.getText();
-    if (dirty && text !== undefined) {
+    if (editing && dirty && text !== undefined && targetId) {
       onAction("diff/draft-checkpoint", {
         targetId,
         content: text,
         draftRevision: currentDraftRevision,
       });
     }
-    saveError = undefined;
-    onAction("diff/open-edit");
   }
+
+  /** 脏草稿三选一：保存并打开 / 暂存并打开 / 留在当前文件。 */
+  function decideTargetSwitch(decision: "save" | "stash" | "stay"): void {
+    // 保存与暂存都先刷新检查点，确保 Host 草稿与编辑器内容一致。
+    if (decision !== "stay") flushCheckpoint();
+    onAction("diff/target-switch-decision", {
+      decision,
+      targetId: targetSwitchRequest?.currentTargetId ?? targetId,
+    });
+  }
+
+  /** 对话框键盘：Escape = 留在当前文件；Tab 在按钮间循环（无键盘陷阱）。 */
+  function onSwitchDialogKeydown(event: KeyboardEvent): void {
+    if (isImeComposing(event)) return;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      decideTargetSwitch("stay");
+      return;
+    }
+    if (event.key === "Tab" && switchDialog) {
+      const buttons = Array.from(
+        switchDialog.querySelectorAll<HTMLButtonElement>("button"),
+      );
+      if (buttons.length === 0) return;
+      const first = buttons[0];
+      const last = buttons[buttons.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+  }
+
+  // 陈旧确认请求（目标已变化）安全按“暂存”处理，解除 Host 挂起。
+  $effect(() => {
+    if (
+      targetSwitchRequest &&
+      targetId &&
+      targetSwitchRequest.currentTargetId !== targetId
+    ) {
+      onAction("diff/target-switch-decision", { decision: "stash" });
+    }
+  });
+
+  // 对话框打开时焦点进入主操作（读屏与键盘可达）。
+  $effect(() => {
+    if (showTargetSwitchDialog && switchDialog) {
+      const primary = switchDialog.querySelector<HTMLButtonElement>(
+        "button[data-primary]",
+      );
+      queueMicrotask(() => primary?.focus());
+    }
+  });
 
   function onKeydown(event: KeyboardEvent): void {
     // 中文 IME composition 保护：候选阶段 Enter 不触发；Ctrl/Cmd+S 保存。
@@ -516,5 +591,47 @@
       }}
       onFallback={handlePierreFallback}
     />
+  {/if}
+
+  {#if showTargetSwitchDialog && targetSwitchRequest}
+    <div class="diff-switch-backdrop">
+      <div
+        class="diff-switch-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="diff-switch-dialog-title"
+        tabindex="-1"
+        bind:this={switchDialog}
+        onkeydown={onSwitchDialogKeydown}
+      >
+        <h3 id="diff-switch-dialog-title">当前文件有未保存的草稿</h3>
+        <p>
+          “{snapshot.relativePath}”存在未保存的页内编辑草稿。打开“{targetSwitchRequest.nextRelativePath}”之前，请选择草稿的处理方式。
+        </p>
+        <div class="diff-switch-actions">
+          <button
+            class="button button--primary"
+            data-primary
+            onclick={() => decideTargetSwitch("save")}
+            title="先把草稿写入工作副本，再打开新文件">保存并打开新文件</button
+          >
+          <button
+            class="button button--secondary"
+            onclick={() => decideTargetSwitch("stash")}
+            title="草稿保留在本窗口内，回到该文件时可恢复"
+            >暂存并打开新文件</button
+          >
+          <button
+            class="button button--secondary"
+            onclick={() => decideTargetSwitch("stay")}
+            title="不打开新文件，继续处理当前草稿">留在当前文件</button
+          >
+        </div>
+        <p class="diff-switch-hint">
+          “暂存”不会丢失草稿：回到该文件后可恢复、导出补丁或放弃；按 Esc
+          等同于“留在当前文件”。
+        </p>
+      </div>
+    </div>
   {/if}
 </section>

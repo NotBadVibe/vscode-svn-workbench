@@ -59,6 +59,14 @@ export class WorkbenchState {
       >["payload"]
     | undefined
   >();
+  /** 单例窗口目标切换的脏草稿确认请求（三选一）。 */
+  targetSwitchRequest = $state<
+    | Extract<
+        HostToWebviewMessage,
+        { type: "diff/target-switch-confirm" }
+      >["payload"]
+    | undefined
+  >();
 
   readonly dispose: () => void;
 
@@ -80,6 +88,10 @@ export class WorkbenchState {
   }
 
   action(action: WebviewAction, data?: Record<string, unknown>): void {
+    // 三选一决定已发出：本地确认请求立即关闭（Host 会按决定推进或回发错误）。
+    if (action === "diff/target-switch-decision") {
+      this.targetSwitchRequest = undefined;
+    }
     workbenchBridge.post({
       protocolVersion: WORKBENCH_PROTOCOL_VERSION,
       type: "workbench/action",
@@ -142,6 +154,7 @@ export class WorkbenchState {
         this.editSession = undefined;
         this.diffSaveResult = undefined;
         this.draftAck = undefined;
+        this.targetSwitchRequest = undefined;
         break;
       case "module/loading":
         this.loading = true;
@@ -188,6 +201,9 @@ export class WorkbenchState {
         break;
       case "diff/draft-checkpointed":
         this.draftAck = message.payload;
+        break;
+      case "diff/target-switch-confirm":
+        this.targetSwitchRequest = message.payload;
         break;
     }
   }
