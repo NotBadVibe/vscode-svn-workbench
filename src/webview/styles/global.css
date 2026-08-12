@@ -580,6 +580,18 @@ summary:focus-visible {
   color: var(--muted);
   text-align: left;
 }
+.module-refresh-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  margin-bottom: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 12px;
+}
 .module-state > .codicon,
 .empty-state > .codicon {
   font-size: 28px;
@@ -706,6 +718,61 @@ summary:focus-visible {
 }
 .notice--error {
   color: var(--danger);
+}
+.edit-mode-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 6px;
+  padding: 1px 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  border-radius: 999px;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+}
+/* 脏草稿目标切换三选一对话框（v0.0.6）：阻断式，焦点在按钮间循环。 */
+.diff-switch-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(
+    in srgb,
+    var(--vscode-widget-shadow, #000) 35%,
+    transparent
+  );
+}
+.diff-switch-dialog {
+  max-width: min(520px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  padding: 16px 20px;
+  border: 1px solid var(--vscode-focusBorder, var(--accent));
+  border-radius: 6px;
+  background: var(--vscode-editorWidget-background, var(--panel));
+  color: var(--vscode-editorWidget-foreground, var(--fg));
+  box-shadow: 0 8px 24px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.35));
+}
+.diff-switch-dialog h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+.diff-switch-dialog p {
+  margin: 0 0 12px;
+  line-height: 1.6;
+}
+.diff-switch-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.diff-switch-hint {
+  font-size: 12px;
+  opacity: 0.85;
 }
 .ai-source,
 .ai-summary small {

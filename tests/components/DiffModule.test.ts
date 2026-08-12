@@ -25,7 +25,11 @@ interface FakeRenderRecord {
 
 const pierreMocks = vi.hoisted(() => {
   const records: FakeRenderRecord[] = [];
-  const state = { failRender: null as Error | null };
+  const state = {
+    failRender: null as Error | null,
+    instanceCount: 0,
+    cleanupCount: 0,
+  };
   return { records, state };
 });
 
@@ -34,6 +38,7 @@ vi.mock("@pierre/diffs", () => {
     readonly options: Record<string, unknown>;
     cleanedUp = false;
     constructor(options: Record<string, unknown>) {
+      pierreMocks.state.instanceCount += 1;
       this.options = options;
     }
     render(props: Record<string, unknown>): boolean {
@@ -49,6 +54,7 @@ vi.mock("@pierre/diffs", () => {
     }
     cleanUp(): void {
       this.cleanedUp = true;
+      pierreMocks.state.cleanupCount += 1;
     }
   }
   return {
@@ -61,7 +67,43 @@ vi.mock("@pierre/diffs", () => {
   };
 });
 
+const editMock = vi.hoisted(() => {
+  const instances: Array<{
+    applyEdits: () => void;
+    options: Record<string, unknown>;
+  }> = [];
+  const state = { text: "", onChangeCalls: 0, focusLine: 0 };
+  return { state, instances };
+});
+
+vi.mock("@pierre/diffs/edit", () => {
+  class FakeEditor {
+    readonly options: Record<string, unknown>;
+    constructor(options: Record<string, unknown>) {
+      this.options = options;
+      editMock.instances.push(this);
+    }
+    edit(): void {
+      /* no-op */
+    }
+    getText(): string {
+      return editMock.state.text;
+    }
+    focus(options?: { lineNumber?: number }): void {
+      editMock.state.focusLine = options?.lineNumber ?? 0;
+    }
+    applyEdits(): void {
+      editMock.state.onChangeCalls += 1;
+      (this.options.onChange as () => void)?.();
+    }
+  }
+  return { Editor: FakeEditor };
+});
+
 import DiffModule from "../../src/webview/features/diff/DiffModule.svelte";
+import DiffModuleHarness, {
+  type DiffModuleHarnessController,
+} from "./harness/DiffModuleHarness.svelte";
 
 const workingSnapshot: DiffSnapshot = {
   kind: "diff",
@@ -96,6 +138,9 @@ const patchSnapshot: DiffSnapshot = {
 beforeEach(() => {
   pierreMocks.records.length = 0;
   pierreMocks.state.failRender = null;
+  pierreMocks.state.instanceCount = 0;
+  pierreMocks.state.cleanupCount = 0;
+  editMock.instances.length = 0;
 });
 
 describe("DiffModule（@pierre/diffs 适配层）", () => {
@@ -355,5 +400,644 @@ describe("CSP 兼容垫片（jsdom 可覆盖部分）", () => {
     expect(element.style.getPropertyValue("display")).toBe("block");
     // 非法声明被跳过，不抛错。
     expect(element.style.length).toBe(2);
+  });
+});
+
+describe("DiffModule 页内编辑（v0.0.6）", () => {
+  const editSnapshot: DiffSnapshot = {
+    kind: "diff",
+    relativePath: "src/extension.ts",
+    original: "const a = 1;\n",
+    modified: "const a = 2;\nconst b = 3;\n",
+    language: "typescript",
+    truncated: false,
+    binary: false,
+    edit: { supported: true, targetId: "mock-target" },
+  };
+
+  const editSessionPayload = {
+    targetId: "mock-target",
+    editToken: "mock-token",
+    draftRevision: 1,
+    baseHash: "base",
+    baseRevision: "BASE",
+    rawHash: "raw",
+    baseContents: "const a = 1;\n",
+    message: "已进入页内编辑。",
+  };
+
+  beforeEach(() => {
+    editMock.state.text = "";
+    editMock.state.onChangeCalls = 0;
+    editMock.state.focusLine = 0;
+  });
+
+  it("可编辑快照显示“页内编辑”，点击发起 diff/open-edit", async () => {
+    const action = vi.fn();
+    render(DiffModule, {
+      snapshot: editSnapshot,
+      onAction: action,
+    });
+    const button = await screen.findByRole("button", { name: "页内编辑" });
+    await fireEvent.click(button);
+    expect(action).toHaveBeenCalledWith("diff/open-edit");
+  });
+
+  it("存在草稿时显示恢复与导出入口", async () => {
+    render(DiffModule, {
+      snapshot: { ...editSnapshot, draft: { revision: 3, updatedAt: 1 } },
+      onAction: vi.fn(),
+    });
+    expect(
+      await screen.findByRole("button", { name: "恢复草稿并编辑" }),
+    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "导出草稿补丁" })).toBeTruthy();
+  });
+
+  it("收到编辑会话后进入编辑态：显示保存、导航与还原块按钮", async () => {
+    render(DiffModule, {
+      snapshot: editSnapshot,
+      onAction: vi.fn(),
+      editSession: editSessionPayload,
+    });
+    expect(await screen.findByText("编辑模式")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "保存修改" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "下一个差异" })).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "还原当前差异块为 BASE" }),
+    ).toBeTruthy();
+  });
+
+  it("编辑变化标记脏状态，Ctrl/Cmd+S 发起 diff/save-working", async () => {
+    const action = vi.fn();
+    render(DiffModule, {
+      snapshot: editSnapshot,
+      onAction: action,
+      editSession: editSessionPayload,
+    });
+    await screen.findByText("编辑模式");
+    // 真实编辑路径：DiffView onChange → 脏状态。fake editor 经
+    // applyEdits（“还原此块”）触发 onChange，getText 返回编辑后文本。
+    editMock.state.text = "const a = 9;\nconst b = 3;\n";
+    await fireEvent.click(
+      screen.getByRole("button", { name: "还原当前差异块为 BASE" }),
+    );
+    // 无脏状态时不允许保存（避免无谓消耗单次 token）。
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "s",
+        ctrlKey: true,
+        cancelable: true,
+      }),
+    );
+    expect(action).toHaveBeenCalledWith(
+      "diff/save-working",
+      expect.objectContaining({
+        targetId: "mock-target",
+        editToken: "mock-token",
+        expectedContentHash: "raw",
+        content: "const a = 9;\nconst b = 3;\n",
+      }),
+    );
+  });
+
+  it("保存成功后用新 token 与新 hash 继续保存（连续保存不回退 diskChanged）", async () => {
+    const action = vi.fn();
+    const { rerender } = render(DiffModule, {
+      snapshot: editSnapshot,
+      onAction: action,
+      editSession: { ...editSessionPayload },
+    });
+    await screen.findByText("编辑模式");
+    editMock.state.text = "const a = 9;\nconst b = 3;\n";
+    await fireEvent.click(
+      screen.getByRole("button", { name: "还原当前差异块为 BASE" }),
+    );
+    // 第一次保存成功：Host 下发新 token 与新内容 hash；workbenchState 会
+    // 把轮换后的基准应用回 editSession（此处以更新后的 props 模拟）。
+    await rerender({
+      snapshot: { ...editSnapshot, modified: "const a = 9;\nconst b = 3;\n" },
+      onAction: action,
+      editSession: {
+        ...editSessionPayload,
+        editToken: "token2",
+        rawHash: "raw2",
+        draftRevision: 5,
+      },
+      diffSaveResult: {
+        result: {
+          ok: true,
+          acceptedRevision: 5,
+          newContentHash: "raw2",
+          newEditToken: "token2",
+          snapshotVersion: 2,
+        },
+        snapshotVersion: 2,
+      },
+    });
+    // 第二次编辑并保存：必须携带 token2 与 raw2，否则 Host 复验必拒绝。
+    editMock.state.text = "const a = 10;\nconst b = 3;\n";
+    await fireEvent.click(
+      screen.getByRole("button", { name: "还原当前差异块为 BASE" }),
+    );
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "s",
+        ctrlKey: true,
+        cancelable: true,
+      }),
+    );
+    expect(action).toHaveBeenLastCalledWith(
+      "diff/save-working",
+      expect.objectContaining({
+        editToken: "token2",
+        expectedContentHash: "raw2",
+        content: "const a = 10;\nconst b = 3;\n",
+      }),
+    );
+  });
+
+  it("生产消息时序：save-result 先到、snapshot 后刷新，第二次保存携带新基准", async () => {
+    const action = vi.fn();
+    const session = { ...editSessionPayload };
+    const { rerender } = render(DiffModule, {
+      snapshot: editSnapshot,
+      onAction: action,
+      editSession: session,
+    });
+    await screen.findByText("编辑模式");
+    // 第一次编辑。
+    editMock.state.text = "const a = 9;\nconst b = 3;\n";
+    await fireEvent.click(
+      screen.getByRole("button", { name: "还原当前差异块为 BASE" }),
+    );
+    // 时序第 1 步：仅 save-result 到达（snapshot 仍是旧内容）。
+    await rerender({
+      snapshot: editSnapshot,
+      onAction: action,
+      editSession: session,
+      diffSaveResult: {
+        result: {
+          ok: true,
+          acceptedRevision: 5,
+          newContentHash: "raw2",
+          newEditToken: "token2",
+          snapshotVersion: 2,
+        },
+        snapshotVersion: 2,
+      },
+    });
+    // 时序第 2 步：Host loadModule 刷新 snapshot（工作副本侧=新磁盘内容）；
+    // workbenchState 已在 save-result 时轮换 editSession 基准。
+    await rerender({
+      snapshot: { ...editSnapshot, modified: "const a = 9;\nconst b = 3;\n" },
+      onAction: action,
+      editSession: {
+        ...session,
+        editToken: "token2",
+        rawHash: "raw2",
+        draftRevision: 5,
+      },
+      diffSaveResult: {
+        result: {
+          ok: true,
+          acceptedRevision: 5,
+          newContentHash: "raw2",
+          newEditToken: "token2",
+          snapshotVersion: 2,
+        },
+        snapshotVersion: 2,
+      },
+    });
+    // 第二次真实编辑并保存：必须带 token2/raw2/acceptedRevision=5。
+    editMock.state.text = "const a = 10;\nconst b = 3;\n";
+    await fireEvent.click(
+      screen.getByRole("button", { name: "还原当前差异块为 BASE" }),
+    );
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "s",
+        ctrlKey: true,
+        cancelable: true,
+      }),
+    );
+    expect(action).toHaveBeenLastCalledWith("diff/save-working", {
+      targetId: "mock-target",
+      editToken: "token2",
+      draftRevision: 5,
+      expectedContentHash: "raw2",
+      content: "const a = 10;\nconst b = 3;\n",
+    });
+  });
+
+  it("保存成功后内容回到刚保存文本时不误标 dirty", async () => {
+    const action = vi.fn();
+    const session = { ...editSessionPayload };
+    const { rerender } = render(DiffModule, {
+      snapshot: editSnapshot,
+      onAction: action,
+      editSession: session,
+    });
+    await screen.findByText("编辑模式");
+    editMock.state.text = "const a = 9;\nconst b = 3;\n";
+    await fireEvent.click(
+      screen.getByRole("button", { name: "还原当前差异块为 BASE" }),
+    );
+    await expect(await screen.findByText(/有未保存的修改/)).toBeTruthy();
+    // 保存成功（snapshot 随后刷新为新内容）。
+    await rerender({
+      snapshot: { ...editSnapshot, modified: "const a = 9;\nconst b = 3;\n" },
+      onAction: action,
+      editSession: session,
+      diffSaveResult: {
+        result: {
+          ok: true,
+          acceptedRevision: 5,
+          newContentHash: "raw2",
+          newEditToken: "token2",
+          snapshotVersion: 2,
+        },
+        snapshotVersion: 2,
+      },
+    });
+    // 编辑器内容回到刚保存的文本（用户撤销）：不应误标 dirty。
+    editMock.state.text = "const a = 9;\nconst b = 3;\n";
+    await fireEvent.click(
+      screen.getByRole("button", { name: "还原当前差异块为 BASE" }),
+    );
+    expect(screen.queryByText(/有未保存的修改/)).toBeNull();
+    expect(screen.getByRole("button", { name: "保存修改" })).toBeDisabled();
+  });
+
+  it("token 失效类拒绝提供“重新建立编辑会话”恢复动作", async () => {
+    const action = vi.fn();
+    render(DiffModule, {
+      snapshot: editSnapshot,
+      onAction: action,
+      editSession: { ...editSessionPayload },
+      diffSaveResult: {
+        result: {
+          ok: false,
+          reason: "tokenExpired",
+          message: "编辑令牌已失效。请刷新差异后重新编辑，草稿已保留。",
+          recoverable: true,
+          draftRevision: 2,
+        },
+        snapshotVersion: 1,
+      },
+    });
+    await screen.findByText("编辑模式");
+    // 编辑内容（脏）后点击恢复：先刷新检查点保留草稿，再重新 open-edit。
+    editMock.state.text = "const a = 9;\nconst b = 3;\n";
+    await fireEvent.click(
+      screen.getByRole("button", { name: "还原当前差异块为 BASE" }),
+    );
+    const recover = await screen.findByRole("button", {
+      name: "重新建立编辑会话（保留草稿）",
+    });
+    await fireEvent.click(recover);
+    expect(action).toHaveBeenCalledWith(
+      "diff/draft-checkpoint",
+      expect.objectContaining({
+        targetId: "mock-target",
+        content: "const a = 9;\nconst b = 3;\n",
+      }),
+    );
+    expect(action).toHaveBeenCalledWith("diff/open-edit");
+  });
+
+  it("保存拒绝显示中文原因与草稿版本", async () => {
+    render(DiffModule, {
+      snapshot: editSnapshot,
+      onAction: vi.fn(),
+      editSession: editSessionPayload,
+      diffSaveResult: {
+        result: {
+          ok: false,
+          reason: "writeFailed",
+          message:
+            "写入失败（磁盘满、权限不足或系统错误）；原文件未改动，草稿已保留。",
+          recoverable: true,
+          draftRevision: 2,
+        },
+        snapshotVersion: 1,
+      },
+    });
+    await screen.findByText("编辑模式");
+    expect(await screen.findByText(/保存被拒绝：写入失败/)).toBeTruthy();
+    expect(screen.getByText(/草稿已保留，版本 2/)).toBeTruthy();
+  });
+
+  it("不支持编辑的快照给出中文原因且无编辑入口", async () => {
+    render(DiffModule, {
+      snapshot: {
+        ...editSnapshot,
+        edit: {
+          supported: false,
+          reason: "二进制文件不支持页内编辑；请使用原生编辑器。",
+        },
+      },
+      onAction: vi.fn(),
+    });
+    expect(await screen.findByText(/二进制文件不支持页内编辑/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "页内编辑" })).toBeNull();
+  });
+
+  it("未修改的编辑会话收到切换确认时不弹对话框（自动暂存）", async () => {
+    const action = vi.fn();
+    render(DiffModule, {
+      snapshot: editSnapshot,
+      onAction: action,
+      editSession: { ...editSessionPayload },
+      targetSwitchRequest: {
+        currentTargetId: "mock-target",
+        nextRelativePath: "src/other.ts",
+      },
+    });
+    await screen.findByText("编辑模式");
+    // 无脏修改、无草稿：不出现三选一，自动回 stash。
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await waitFor(() =>
+      expect(action).toHaveBeenCalledWith("diff/target-switch-decision", {
+        decision: "stash",
+        targetId: "mock-target",
+      }),
+    );
+  });
+
+  it("目标切换遇到脏草稿时提供三选一阻断对话框", async () => {
+    const action = vi.fn();
+    render(DiffModule, {
+      snapshot: { ...editSnapshot, draft: { revision: 3, updatedAt: 1 } },
+      onAction: action,
+      editSession: { ...editSessionPayload },
+      targetSwitchRequest: {
+        currentTargetId: "mock-target",
+        nextRelativePath: "src/other.ts",
+      },
+    });
+    await screen.findByText("编辑模式");
+    const dialog = await screen.findByRole("dialog", {
+      name: "当前文件有未保存的草稿",
+    });
+    expect(dialog).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "保存并打开新文件" }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "暂存并打开新文件" }),
+    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "留在当前文件" })).toBeTruthy();
+  });
+
+  it("三选一：暂存并打开先刷新检查点再发送 stash 决定", async () => {
+    const action = vi.fn();
+    render(DiffModule, {
+      snapshot: editSnapshot,
+      onAction: action,
+      editSession: { ...editSessionPayload },
+      targetSwitchRequest: {
+        currentTargetId: "mock-target",
+        nextRelativePath: "src/other.ts",
+      },
+    });
+    await screen.findByText("编辑模式");
+    // 制造脏状态。
+    editMock.state.text = "const a = 9;\nconst b = 3;\n";
+    await fireEvent.click(
+      screen.getByRole("button", { name: "还原当前差异块为 BASE" }),
+    );
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "暂存并打开新文件" }),
+    );
+    expect(action).toHaveBeenCalledWith(
+      "diff/draft-checkpoint",
+      expect.objectContaining({
+        targetId: "mock-target",
+        content: "const a = 9;\nconst b = 3;\n",
+      }),
+    );
+    expect(action).toHaveBeenCalledWith("diff/target-switch-decision", {
+      decision: "stash",
+      targetId: "mock-target",
+    });
+  });
+
+  it("三选一：保存并打开先刷新检查点再发送 save 决定（顺序保证最新内容）", async () => {
+    const action = vi.fn();
+    render(DiffModule, {
+      snapshot: { ...editSnapshot, draft: { revision: 3, updatedAt: 1 } },
+      onAction: action,
+      editSession: { ...editSessionPayload },
+      targetSwitchRequest: {
+        currentTargetId: "mock-target",
+        nextRelativePath: "src/other.ts",
+      },
+    });
+    await screen.findByText("编辑模式");
+    // 制造最新编辑（debounce 检查点尚未发出）立刻选择保存并打开。
+    editMock.state.text = "const a = 9;\nconst b = 3;\n";
+    await fireEvent.click(
+      screen.getByRole("button", { name: "还原当前差异块为 BASE" }),
+    );
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "保存并打开新文件" }),
+    );
+    const checkpointIndex = action.mock.calls.findIndex(
+      (call) => call[0] === "diff/draft-checkpoint",
+    );
+    const decisionIndex = action.mock.calls.findIndex(
+      (call) =>
+        call[0] === "diff/target-switch-decision" &&
+        (call[1] as { decision?: string }).decision === "save",
+    );
+    // 检查点必须先于 save 决定发出，且内容是最新编辑文本。
+    expect(checkpointIndex).toBeGreaterThanOrEqual(0);
+    expect(decisionIndex).toBeGreaterThanOrEqual(0);
+    expect(action.mock.invocationCallOrder[checkpointIndex]).toBeLessThan(
+      action.mock.invocationCallOrder[decisionIndex],
+    );
+    expect(action.mock.calls[checkpointIndex][1]).toEqual(
+      expect.objectContaining({ content: "const a = 9;\nconst b = 3;\n" }),
+    );
+    expect(action).toHaveBeenCalledWith("diff/target-switch-decision", {
+      decision: "save",
+      targetId: "mock-target",
+    });
+  });
+
+  it("三选一：Escape 等同于留在当前文件", async () => {
+    const action = vi.fn();
+    render(DiffModule, {
+      snapshot: { ...editSnapshot, draft: { revision: 3, updatedAt: 1 } },
+      onAction: action,
+      editSession: { ...editSessionPayload },
+      targetSwitchRequest: {
+        currentTargetId: "mock-target",
+        nextRelativePath: "src/other.ts",
+      },
+    });
+    const dialog = await screen.findByRole("dialog", {
+      name: "当前文件有未保存的草稿",
+    });
+    await fireEvent.keyDown(dialog, { key: "Escape" });
+    expect(action).toHaveBeenCalledWith("diff/target-switch-decision", {
+      decision: "stay",
+      targetId: "mock-target",
+    });
+  });
+});
+
+describe("DiffModule 编辑态快照刷新与 save-result 消费（v0.0.6 回归）", () => {
+  const editSnapshot: DiffSnapshot = {
+    kind: "diff",
+    relativePath: "src/extension.ts",
+    original: "const a = 1;\n",
+    modified: "const a = 2;\nconst b = 3;\n",
+    language: "typescript",
+    truncated: false,
+    binary: false,
+    edit: { supported: true, targetId: "mock-target" },
+  };
+  const editSessionPayload = {
+    targetId: "mock-target",
+    editToken: "mock-token-1",
+    draftRevision: 1,
+    baseHash: "base",
+    baseRevision: "BASE",
+    rawHash: "mock-raw-hash",
+    baseContents: "const a = 1;\n",
+    message: "已进入页内编辑。",
+  };
+  const refreshed = {
+    ...editSnapshot,
+    modified: "const a = 2;\nconst b = 3;\n// 已保存\n",
+  };
+
+  function makeController(): DiffModuleHarnessController {
+    return {
+      setSnapshot: () => undefined,
+      setEditSession: () => undefined,
+      setDiffSaveResult: () => undefined,
+    };
+  }
+
+  it("编辑态下权威快照内容刷新不重建编辑器/组件实例（挂载键保持）", async () => {
+    const action = vi.fn();
+    const controller = makeController();
+    render(DiffModuleHarness, {
+      initialSnapshot: editSnapshot,
+      initialAction: action,
+      initialEditSession: editSessionPayload,
+      controller,
+    });
+    await screen.findByText("编辑模式");
+    const mounts = pierreMocks.state.instanceCount;
+    const cleans = pierreMocks.state.cleanupCount;
+    expect(mounts).toBeGreaterThan(0);
+
+    // Host 权威快照到达：同目标、内容变化（保存后正文）——原地更新 props。
+    controller.setSnapshot(refreshed);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    // 编辑态：不应重建（instance/cleanup 计数不变，编辑器保持）。
+    expect(pierreMocks.state.instanceCount).toBe(mounts);
+    expect(pierreMocks.state.cleanupCount).toBe(cleans);
+    // 编辑器实例仍保持（未重新创建）。
+    expect(editMock.instances).toHaveLength(1);
+  });
+
+  it("只读态下权威快照刷新重建视图并采用新内容", async () => {
+    const action = vi.fn();
+    const controller = makeController();
+    render(DiffModuleHarness, {
+      initialSnapshot: editSnapshot,
+      initialAction: action,
+      controller,
+    });
+    await waitFor(() => expect(pierreMocks.records.length).toBeGreaterThan(0));
+    controller.setSnapshot(refreshed);
+    await waitFor(() =>
+      expect(pierreMocks.state.instanceCount).toBeGreaterThan(1),
+    );
+    const last = pierreMocks.records[pierreMocks.records.length - 1];
+    expect((last.props.newFile as { contents: string }).contents).toBe(
+      refreshed.modified,
+    );
+  });
+
+  it("旧 save-result 不因快照重渲染清除第二轮脏状态，保存用新 token/hash/revision", async () => {
+    const action = vi.fn();
+    const firstResult = {
+      result: {
+        ok: true,
+        acceptedRevision: 2,
+        newContentHash: "mock-hash-2",
+        newEditToken: "mock-token-2",
+        snapshotVersion: 1,
+      },
+      snapshotVersion: 1,
+    };
+    const controller = makeController();
+    render(DiffModuleHarness, {
+      initialSnapshot: editSnapshot,
+      initialAction: action,
+      initialEditSession: {
+        ...editSessionPayload,
+        editToken: "mock-token-2",
+        draftRevision: 2,
+        rawHash: "mock-hash-2",
+      },
+      initialDiffSaveResult: firstResult,
+      controller,
+    });
+    await screen.findByText("编辑模式");
+    expect(screen.queryByText(/有未保存的修改/)).toBeNull();
+    // 第二轮编辑 → 脏。
+    editMock.state.text = "const a = 9;\n";
+    editMock.instances[0]?.applyEdits();
+    // 等待 Svelte flush 后脏状态落屏。
+    await waitFor(() =>
+      expect(screen.queryByText(/有未保存的修改/)).toBeTruthy(),
+    );
+
+    // 同一旧 save-result 伴随权威快照重渲染：不得清除第二轮脏。
+    controller.setSnapshot(refreshed);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(screen.getByText(/有未保存的修改/)).toBeTruthy();
+
+    // 第二次保存使用轮换后的 token/hash/revision。
+    window.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "s",
+        ctrlKey: true,
+        cancelable: true,
+      }),
+    );
+    expect(action).toHaveBeenCalledWith(
+      "diff/save-working",
+      expect.objectContaining({
+        editToken: "mock-token-2",
+        expectedContentHash: "mock-hash-2",
+        draftRevision: 2,
+      }),
+    );
+  });
+
+  it("权威快照刷新清除 draft 与恢复入口", async () => {
+    const action = vi.fn();
+    const controller = makeController();
+    const withDraft = { ...editSnapshot, draft: { revision: 1, updatedAt: 1 } };
+    render(DiffModuleHarness, {
+      initialSnapshot: withDraft,
+      initialAction: action,
+      controller,
+    });
+    expect(screen.getByRole("button", { name: "恢复草稿并编辑" })).toBeTruthy();
+    controller.setSnapshot(refreshed);
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "恢复草稿并编辑" }),
+      ).toBeNull(),
+    );
   });
 });

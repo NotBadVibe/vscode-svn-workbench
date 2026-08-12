@@ -169,6 +169,7 @@ import {
 } from "./workbenchFileOperations";
 import {
   aiConventionToTeamConfig,
+  asNumber,
   asRevision,
   asRevisionArray,
   asString,
@@ -219,6 +220,13 @@ import {
   workbenchRevealTarget,
 } from "./workbenchRouting";
 import { NativeDiffContentProvider } from "./nativeDiffContentProvider";
+import { resolveDiffSwitchDecision } from "./diffTargetSwitch";
+import { shouldConfirmTargetSwitch } from "./diffTargetSwitch";
+import { createSvnBindingProbe } from "./diffSvnBinding";
+import { createDiffEditingService, watchDiffEditTargets } from "./diffEditHost";
+import { DiffEditingService } from "../../diffEdit/diffEditingService";
+import { buildDiffTargetId } from "../../diffEdit/diffEditingService";
+import { analyzeUtf8, MAX_EDITABLE_BYTES } from "../../diffEdit/diffPathGuard";
 import { SvnSecurityContextRegistry } from "../../security/svnSecurityContextRegistry";
 import { normalizeSvnRepositoryRoot } from "../../security/svnSecurityContext";
 
@@ -253,8 +261,16 @@ export class WorkbenchController implements vscode.Disposable {
   private readonly securityRegistry?: SvnSecurityContextRegistry;
   /** 本控制器当前持有的仓库安全引用（归一化键）；一控制器最多持有一个。 */
   private securityReferenceRoot: string | undefined;
+  /** v0.0.6 页内编辑服务（仅 Diff 窗口创建）。 */
+  private readonly diffEdit?: DiffEditingService;
   /** 当前 Diff 会话目标摘要；同目标重复打开只 reveal，不重新初始化。 */
   private diffTargetKey: string | undefined;
+  /** 等待“脏草稿三选一”决定的新目标请求与当前目标（仅 Diff 窗口）。 */
+  private pendingDiffOpen:
+    { request: OpenWorkbenchRequest; currentTargetId: string } | undefined;
+  private pendingDiffOpenTimer: ReturnType<typeof setTimeout> | undefined;
+  /** 三选一决定后的递归 reopen 跳过草稿守卫。 */
+  private diffSwitchBypass = false;
   private readonly nativeDiffContentProvider?: NativeDiffContentProvider;
   /**
    * 设置页保存/恢复动作触发的规则失效由动作处理器自行发送带反馈的快照；
@@ -288,6 +304,8 @@ export class WorkbenchController implements vscode.Disposable {
           this.nativeDiffContentProvider,
         ),
       );
+      this.diffEdit = createDiffEditingService();
+      this.context.subscriptions.push(watchDiffEditTargets(this.diffEdit));
     }
   }
 
@@ -336,6 +354,59 @@ export class WorkbenchController implements vscode.Disposable {
     ) {
       this.revealPanel();
       return;
+    }
+
+    /*
+     * v0.0.6 写入安全契约 §6：单例窗口加载新目标前，当前目标存在草稿时必须
+     * 由用户三选一（保存并打开 / 暂存并打开 / 留在当前文件）。这里只负责
+     * 拦截与挂起请求，选择 UI 在 Webview（Svelte Dialog），决定经
+     * diff/target-switch-decision 回传；超时按“暂存并打开”安全处理（草稿
+     * 保留在 Host 内存）。
+     */
+    if (
+      !this.diffSwitchBypass &&
+      this.isDiffWindow() &&
+      this.diffEdit &&
+      this.panel &&
+      this.session?.targetFile &&
+      nextDiffTargetKey !== undefined &&
+      nextDiffTargetKey !== this.diffTargetKey
+    ) {
+      const currentTargetId = buildDiffTargetId(
+        path.resolve(this.session.targetFile),
+      );
+      if (
+        shouldConfirmTargetSwitch({
+          hasDraft: this.diffEdit.getDraft(currentTargetId) !== undefined,
+          draftDirty: this.diffEdit.isDraftDirty(currentTargetId),
+          hasActiveSession: this.diffEdit.hasActiveSession(
+            currentTargetId,
+            this.session.sessionId,
+          ),
+        })
+      ) {
+        this.clearPendingDiffOpen();
+        this.pendingDiffOpen = { request, currentTargetId };
+        this.pendingDiffOpenTimer = setTimeout(() => {
+          void this.resolveDiffTargetSwitch("stash", undefined, this.session);
+        }, 30_000);
+        this.revealPanel();
+        await this.post({
+          protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+          type: "diff/target-switch-confirm",
+          moduleId: "diff",
+          payload: {
+            currentTargetId,
+            nextRelativePath: request.targetFile
+              ? path.relative(
+                  request.scope.repositoryRoot,
+                  path.resolve(request.targetFile),
+                ) || path.basename(request.targetFile)
+              : "新目标",
+          },
+        });
+        return;
+      }
     }
 
     this.latestModuleRequests.clear();
@@ -440,9 +511,11 @@ export class WorkbenchController implements vscode.Disposable {
     // onDidDispose 对同一仓库重复释放（引用计数下溢或重复广播）。
     this.session = undefined;
     this.diffTargetKey = undefined;
+    this.clearPendingDiffOpen();
     this.securityReferenceRoot = undefined;
     if (session) {
       this.nativeDiffContentProvider?.releaseSession(session.sessionId);
+      this.diffEdit?.revokeForSession(session.sessionId);
     }
     if (referenceRoot) {
       this.releaseSecurityContext(referenceRoot);
@@ -588,11 +661,13 @@ export class WorkbenchController implements vscode.Disposable {
         // 广播失效事件，此时本控制器已无活动会话，不会把刚清除的上下文写回。
         this.session = undefined;
         this.diffTargetKey = undefined;
+        this.clearPendingDiffOpen();
         this.securityReferenceRoot = undefined;
         this.panel = undefined;
         this.ready = false;
         if (session) {
           this.nativeDiffContentProvider?.releaseSession(session.sessionId);
+          this.diffEdit?.revokeForSession(session.sessionId);
         }
         if (referenceRoot) {
           this.releaseSecurityContext(referenceRoot);
@@ -810,6 +885,28 @@ export class WorkbenchController implements vscode.Disposable {
       }
       case "diff/open-in-editor":
         await this.openNativeDiffInEditor(message.requestId);
+        return;
+      case "diff/open-edit":
+        await this.openDiffEdit(session, message.requestId);
+        return;
+      case "diff/save-working":
+        await this.saveWorkingDiff(session, message.requestId, data);
+        return;
+      case "diff/draft-checkpoint":
+        await this.checkpointDiffDraft(session, message.requestId, data);
+        return;
+      case "diff/draft-abandon":
+        await this.abandonDiffDraft(session, message.requestId, data);
+        return;
+      case "diff/draft-export":
+        await this.exportDiffDraft(session, message.requestId, data);
+        return;
+      case "diff/target-switch-decision":
+        await this.resolveDiffTargetSwitch(
+          asString(data.decision),
+          asString(data.targetId),
+          session,
+        );
         return;
       case "copy-text": {
         const text = asString(data.text);
@@ -2952,7 +3049,42 @@ export class WorkbenchController implements vscode.Disposable {
       Boolean(baseResult.truncated) ||
       baseBuffer.byteLength >= MAX_DIFF_BYTES;
     const original = binary ? "" : truncateUtf8(baseBuffer);
-    const modified = binary ? "" : working.text;
+
+    // v0.0.6 页内编辑能力标记（轻量校验；严格复验在 diff/open-edit 与保存时）。
+    let edit: NonNullable<DiffSnapshot["edit"]>;
+    if (binary) {
+      edit = {
+        supported: false,
+        reason: "二进制文件不支持页内编辑；请使用原生编辑器。",
+      };
+    } else if (truncated) {
+      edit = {
+        supported: false,
+        reason: "超过 5 MB 的文件不支持页内编辑；请使用原生编辑器。",
+      };
+    } else if (baseResult.exitCode !== 0) {
+      edit = {
+        supported: false,
+        reason: "无法读取 BASE 内容（可能未纳入版本控制），不支持页内编辑。",
+      };
+    } else {
+      const capability = await this.computeDiffEditCapability(absolutePath);
+      edit = capability;
+    }
+    const targetId = edit.targetId;
+    const draft = targetId ? this.diffEdit?.getDraft(targetId) : undefined;
+    // 只有脏草稿才对 Webview 可见（干净草稿无可恢复内容，不展示恢复入口）。
+    const dirtyDraft =
+      draft && targetId && this.diffEdit?.isDraftDirty(targetId)
+        ? draft
+        : undefined;
+    // 恢复路径：存在草稿时以草稿内容作为可编辑侧（工作副本侧展示草稿）。
+    const modified =
+      draft && draft.targetPath === path.resolve(absolutePath)
+        ? draft.content
+        : binary
+          ? ""
+          : working.text;
 
     return {
       kind: "diff",
@@ -2964,14 +3096,382 @@ export class WorkbenchController implements vscode.Disposable {
       language: inferLanguage(absolutePath),
       truncated,
       binary,
+      edit,
+      draft: dirtyDraft
+        ? { revision: dirtyDraft.revision, updatedAt: dirtyDraft.updatedAt }
+        : undefined,
       message: binary
         ? "检测到二进制内容，未向 Webview 发送文件正文。"
         : truncated
           ? "文件超过 5 MB，仅显示前 5 MB。"
           : baseResult.exitCode !== 0
             ? "无法读取 BASE 内容，可能是未版本化文件。"
-            : undefined,
+            : dirtyDraft
+              ? "存在未保存草稿，编辑前请先恢复或放弃。"
+              : undefined,
     };
+  }
+
+  /** 轻量能力校验：普通文件、UTF-8、≤5 MB 且在工作副本内。 */
+  private async computeDiffEditCapability(
+    absolutePath: string,
+  ): Promise<NonNullable<DiffSnapshot["edit"]>> {
+    try {
+      const stat = await fs.lstat(absolutePath);
+      if (stat.isSymbolicLink() || !stat.isFile()) {
+        return {
+          supported: false,
+          reason:
+            "非普通文件（符号链接/目录）不支持页内编辑；请使用原生编辑器。",
+        };
+      }
+      const bytes = await fs.readFile(absolutePath);
+      if (bytes.indexOf(0) !== -1) {
+        return {
+          supported: false,
+          reason: "二进制文件不支持页内编辑；请使用原生编辑器。",
+        };
+      }
+      if (bytes.byteLength > MAX_EDITABLE_BYTES) {
+        return {
+          supported: false,
+          reason: "超过 5 MB 的文件不支持页内编辑；请使用原生编辑器。",
+        };
+      }
+      if (!analyzeUtf8(bytes).ok) {
+        return {
+          supported: false,
+          reason: "非可靠 UTF-8 文本不支持页内编辑；请使用原生编辑器。",
+        };
+      }
+      return { supported: true, targetId: buildDiffTargetId(absolutePath) };
+    } catch {
+      return {
+        supported: false,
+        reason: "无法读取目标文件；请使用原生编辑器。",
+      };
+    }
+  }
+
+  /** 清除挂起的目标切换请求（新会话、dispose 或决定后）。 */
+  private clearPendingDiffOpen(): void {
+    this.pendingDiffOpen = undefined;
+    if (this.pendingDiffOpenTimer !== undefined) {
+      clearTimeout(this.pendingDiffOpenTimer);
+      this.pendingDiffOpenTimer = undefined;
+    }
+  }
+
+  /**
+   * 处理“脏草稿三选一”决定：save 先经 Host 安全链保存草稿，成功后打开新
+   * 目标；stash 直接打开（草稿保留）；stay 取消切换。保存失败不切换，
+   * diff/save-result 回发 Webview 展示拒绝原因。
+   */
+  private async resolveDiffTargetSwitch(
+    decision: string | undefined,
+    targetId: string | undefined,
+    session: WorkbenchSession | undefined,
+  ): Promise<void> {
+    const pending = this.pendingDiffOpen;
+    this.clearPendingDiffOpen();
+    if (!pending) return;
+    // 授权绑定：save 的 targetId 必须等于挂起确认时的 currentTargetId。
+    const resolution = resolveDiffSwitchDecision(
+      pending.currentTargetId,
+      decision,
+      targetId,
+    );
+    if (resolution.kind === "reject") {
+      await this.sendError("diff", "切换决定被拒绝", resolution.reason, false);
+      return;
+    }
+    if (resolution.kind === "save") {
+      if (!this.diffEdit || !session) return;
+      const result = await this.diffEdit.saveDraft({
+        targetId: resolution.targetId,
+        scope: session.scope,
+        repositoryRoot: session.scope.repositoryRoot,
+        probeSvnBinding: createSvnBindingProbe(session.svnPath),
+      });
+      if (!result.ok) {
+        await this.post({
+          protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+          type: "diff/save-result",
+          moduleId: "diff",
+          payload: {
+            targetId: resolution.targetId,
+            result,
+            snapshotVersion: 0,
+          },
+        });
+        return;
+      }
+    } else if (resolution.kind !== "stash") {
+      // stay：保持当前文件，草稿保留。
+      await this.post({
+        protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+        type: "operation/result",
+        moduleId: "diff",
+        payload: {
+          title: "已留在当前文件",
+          message: "已取消打开新目标；当前草稿保留，可继续编辑或放弃。",
+        },
+      });
+      return;
+    }
+    this.diffSwitchBypass = true;
+    try {
+      await this.open(pending.request);
+    } finally {
+      this.diffSwitchBypass = false;
+    }
+  }
+
+  /** diff/open-edit：校验并签发编辑 token，回复 diff/edit-opened。 */
+  private async openDiffEdit(
+    session: WorkbenchSession,
+    requestId?: string,
+  ): Promise<void> {
+    if (!this.diffEdit) {
+      await this.sendError(
+        "diff",
+        "无法进入编辑",
+        "当前窗口不支持页内编辑。",
+        false,
+        requestId,
+      );
+      return;
+    }
+    if (session.revisionCompare || !session.targetFile) {
+      await this.sendError(
+        "diff",
+        "无法进入编辑",
+        "修订比较保持双侧只读；请选择 Working Copy ↔ BASE 文件。",
+        false,
+        requestId,
+      );
+      return;
+    }
+    const absolutePath = path.resolve(session.targetFile);
+    if (
+      validatePathsInScope(session.scope, [absolutePath]).outOfScopeItems
+        .length > 0
+    ) {
+      await this.sendError(
+        "diff",
+        "范围校验失败",
+        "目标不在当前操作范围内，请重新打开差异。",
+        false,
+        requestId,
+      );
+      return;
+    }
+    const baseResult = await runSvnCommand(
+      session.svnPath,
+      ["cat", "-r", "BASE", absolutePath],
+      path.dirname(absolutePath),
+      { maxOutputBytes: MAX_DIFF_BYTES },
+    );
+    if (baseResult.exitCode !== 0) {
+      await this.sendError(
+        "diff",
+        "无法进入编辑",
+        "无法读取 BASE 内容（可能未纳入版本控制）；请使用原生编辑器。",
+        true,
+        requestId,
+      );
+      return;
+    }
+    const baseContents = truncateUtf8(Buffer.from(baseResult.stdout, "utf8"));
+    const result = await this.diffEdit.openEdit({
+      sessionId: session.sessionId,
+      repositoryUuid: session.repositoryUuid,
+      scopeHash: session.scopeHash,
+      targetPath: absolutePath,
+      baseContents,
+      baseRevision: "BASE",
+      baseHash: "",
+      rawHash: "",
+      scope: session.scope,
+      repositoryRoot: session.scope.repositoryRoot,
+      probeSvnBinding: createSvnBindingProbe(session.svnPath),
+    });
+    if (!result.ok) {
+      await this.sendError(
+        "diff",
+        "无法进入编辑",
+        result.message,
+        true,
+        requestId,
+      );
+      return;
+    }
+    await this.post({
+      protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+      type: "diff/edit-opened",
+      requestId,
+      moduleId: "diff",
+      payload: {
+        targetId: result.targetId,
+        editToken: result.editToken,
+        draftRevision: result.draftRevision,
+        baseHash: result.baseHash,
+        baseRevision: result.baseRevision,
+        rawHash: result.rawHash,
+        baseContents: result.baseContents,
+        message: result.message,
+      },
+    });
+    // 重新下发快照（含 edit.supported 与草稿信息）。
+    await this.loadModule("diff", session.targetFile);
+  }
+
+  /** diff/save-working：消耗 token、复验、原子写入，回复 diff/save-result。 */
+  private async saveWorkingDiff(
+    session: WorkbenchSession,
+    requestId: string | undefined,
+    data: Record<string, unknown>,
+  ): Promise<void> {
+    if (!this.diffEdit || session.moduleId !== "diff") {
+      await this.sendError(
+        "diff",
+        "保存失败",
+        "当前窗口不支持页内保存。",
+        false,
+        requestId,
+      );
+      return;
+    }
+    const targetId = asString(data.targetId);
+    const editToken = asString(data.editToken);
+    const content = asString(data.content) ?? "";
+    if (!targetId || !editToken) {
+      await this.sendError(
+        "diff",
+        "保存失败",
+        "缺少编辑令牌或目标标识。",
+        false,
+        requestId,
+      );
+      return;
+    }
+    const result = await this.diffEdit.saveWorking({
+      sessionId: session.sessionId,
+      moduleId: "diff",
+      taskId: "diff/working",
+      repositoryUuid: session.repositoryUuid,
+      scopeHash: session.scopeHash,
+      targetId,
+      editToken,
+      draftRevision: asNumber(data.draftRevision) ?? 0,
+      expectedContentHash: asString(data.expectedContentHash) ?? "",
+      content,
+      scope: session.scope,
+      repositoryRoot: session.scope.repositoryRoot,
+      probeSvnBinding: createSvnBindingProbe(session.svnPath),
+    });
+    await this.post({
+      protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+      type: "diff/save-result",
+      requestId,
+      moduleId: "diff",
+      payload: {
+        targetId,
+        result,
+        snapshotVersion: result.ok ? result.snapshotVersion : 0,
+      },
+    });
+    if (result.ok && session.targetFile) {
+      // 保存成功后重载模块（权威快照刷新：modified/draft/message 以磁盘为准）。
+      // 编辑器重建风险由 DiffView 编辑态挂载键保持（手动生命周期：编辑态
+      // 同键快照刷新不重建实例）+ App 保持模块挂载共同消除；save-result
+      // 在 Webview 按消息对象只消费一次。
+      await this.loadModule("diff", session.targetFile);
+    }
+  }
+
+  /** diff/draft-checkpoint：活动会话内的草稿检查点。 */
+  private async checkpointDiffDraft(
+    session: WorkbenchSession,
+    requestId: string | undefined,
+    data: Record<string, unknown>,
+  ): Promise<void> {
+    if (!this.diffEdit) return;
+    const targetId = asString(data.targetId);
+    const content = asString(data.content) ?? "";
+    if (!targetId) return;
+    const draft = this.diffEdit.getDraft(targetId);
+    const result = this.diffEdit.checkpointDraft({
+      targetId,
+      sessionId: session.sessionId,
+      repositoryUuid: session.repositoryUuid,
+      scopeHash: session.scopeHash,
+      baseHash: draft?.baseHash ?? "",
+      baseRevision: draft?.baseRevision ?? "BASE",
+      baseContents: draft?.baseContents,
+      diskHash: draft?.diskHash ?? "",
+      targetPath: draft?.targetPath ?? "",
+      content,
+      baseRevisionOfClient: asNumber(data.draftRevision) ?? -1,
+    });
+    if (result.ok) {
+      await this.post({
+        protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+        type: "diff/draft-checkpointed",
+        requestId,
+        moduleId: "diff",
+        payload: { targetId, draftRevision: result.draftRevision },
+      });
+    }
+  }
+
+  /** diff/draft-abandon：放弃当前草稿。 */
+  private async abandonDiffDraft(
+    session: WorkbenchSession,
+    requestId: string | undefined,
+    data: Record<string, unknown>,
+  ): Promise<void> {
+    const targetId = asString(data.targetId);
+    if (!this.diffEdit || !targetId) return;
+    this.diffEdit.revokeForSession(session.sessionId);
+    this.diffEdit.abandonDraft(targetId);
+    await this.post({
+      protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+      type: "operation/result",
+      requestId,
+      moduleId: "diff",
+      payload: {
+        title: "草稿已放弃",
+        message: "页内编辑草稿已清除，回到只读差异视图。",
+      },
+    });
+    await this.loadModule("diff", session.targetFile);
+  }
+
+  /** diff/draft-export：导出草稿为 unified diff（剪贴板/展示）。 */
+  private async exportDiffDraft(
+    session: WorkbenchSession,
+    requestId: string | undefined,
+    data: Record<string, unknown>,
+  ): Promise<void> {
+    const targetId = asString(data.targetId);
+    if (!this.diffEdit || !targetId) return;
+    const patch = this.diffEdit.exportPatch(targetId);
+    await this.post({
+      protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+      type: "operation/result",
+      requestId,
+      moduleId: "diff",
+      payload: {
+        title: patch ? "草稿补丁已导出" : "没有可导出的草稿",
+        message: patch
+          ? "补丁已复制到剪贴板，可在外部审阅或人工应用。"
+          : "当前目标没有草稿。",
+      },
+    });
+    if (patch) {
+      await vscode.env.clipboard.writeText(patch);
+    }
   }
 
   private async buildHistorySnapshot(session: WorkbenchSession) {

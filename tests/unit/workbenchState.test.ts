@@ -146,6 +146,67 @@ describe("Workbench Webview 状态机", () => {
     expect(state.scope).toEqual(scope);
   });
 
+  it("保存成功后更新编辑会话基准（rawHash/token/draftRevision）", () => {
+    const state = createState();
+    inject({
+      protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+      type: "app/initialize",
+      moduleId: "diff",
+      sessionId: SESSION_ID,
+      repositoryUuid: "repo",
+      scopeHash: "hash",
+      payload: {
+        moduleId: "diff",
+        scope: { repositoryName: "r", roots: [], source: "internal" },
+      },
+    });
+    inject({
+      protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+      type: "diff/edit-opened",
+      moduleId: "diff",
+      sessionId: SESSION_ID,
+      repositoryUuid: "repo",
+      scopeHash: "hash",
+      payload: {
+        targetId: "t1",
+        editToken: "tok1",
+        draftRevision: 1,
+        baseHash: "b",
+        baseRevision: "BASE",
+        rawHash: "raw1",
+        baseContents: "x",
+        message: "已进入页内编辑。",
+      },
+    });
+    inject({
+      protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+      type: "diff/save-result",
+      moduleId: "diff",
+      sessionId: SESSION_ID,
+      repositoryUuid: "repo",
+      scopeHash: "hash",
+      payload: {
+        targetId: "t1",
+        result: {
+          ok: true,
+          acceptedRevision: 5,
+          newContentHash: "raw2",
+          newEditToken: "tok2",
+          snapshotVersion: 2,
+        },
+        snapshotVersion: 2,
+      },
+    });
+    // 组件因 module/loading 重挂载后只认 editSession：基准必须已更新。
+    expect(state.editSession).toEqual(
+      expect.objectContaining({
+        editToken: "tok2",
+        rawHash: "raw2",
+        draftRevision: 5,
+      }),
+    );
+  });
+
   it("拒绝不兼容协议，并正确表达没有初始快照", () => {
     const state = createState();
     inject({

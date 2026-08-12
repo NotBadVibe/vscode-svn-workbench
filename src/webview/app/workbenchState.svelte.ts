@@ -41,6 +41,32 @@ export class WorkbenchState {
   sessionId = $state<string | undefined>();
   repositoryUuid = $state<string | undefined>();
   scopeHash = $state<string | undefined>();
+  /** v0.0.6 页内编辑会话（diff/edit-opened 下发）。 */
+  editSession = $state<
+    | Extract<HostToWebviewMessage, { type: "diff/edit-opened" }>["payload"]
+    | undefined
+  >();
+  /** diff/save-result 一次性结果（消费后清除）。 */
+  diffSaveResult = $state<
+    | Extract<HostToWebviewMessage, { type: "diff/save-result" }>["payload"]
+    | undefined
+  >();
+  /** 草稿检查点 ACK。 */
+  draftAck = $state<
+    | Extract<
+        HostToWebviewMessage,
+        { type: "diff/draft-checkpointed" }
+      >["payload"]
+    | undefined
+  >();
+  /** 单例窗口目标切换的脏草稿确认请求（三选一）。 */
+  targetSwitchRequest = $state<
+    | Extract<
+        HostToWebviewMessage,
+        { type: "diff/target-switch-confirm" }
+      >["payload"]
+    | undefined
+  >();
 
   readonly dispose: () => void;
 
@@ -62,6 +88,10 @@ export class WorkbenchState {
   }
 
   action(action: WebviewAction, data?: Record<string, unknown>): void {
+    // 三选一决定已发出：本地确认请求立即关闭（Host 会按决定推进或回发错误）。
+    if (action === "diff/target-switch-decision") {
+      this.targetSwitchRequest = undefined;
+    }
     workbenchBridge.post({
       protocolVersion: WORKBENCH_PROTOCOL_VERSION,
       type: "workbench/action",
@@ -120,6 +150,11 @@ export class WorkbenchState {
         this.snapshot = message.payload.snapshot;
         this.loading = !message.payload.snapshot;
         this.error = undefined;
+        // 会话替换：旧会话的编辑态一次性消息不得带入新会话。
+        this.editSession = undefined;
+        this.diffSaveResult = undefined;
+        this.draftAck = undefined;
+        this.targetSwitchRequest = undefined;
         break;
       case "module/loading":
         this.loading = true;
@@ -157,6 +192,34 @@ export class WorkbenchState {
         break;
       case "scope/changed":
         this.scope = message.payload.scope;
+        break;
+      case "diff/edit-opened":
+        this.editSession = message.payload;
+        break;
+      case "diff/save-result": {
+        this.diffSaveResult = message.payload;
+        // 保存成功即轮换编辑会话基准：组件因 module/loading 重挂载后只从
+        // editSession 恢复本地状态，这里必须同步新 token/hash/草稿版本。
+        const result = message.payload.result;
+        if (
+          result.ok &&
+          result.newEditToken !== "" &&
+          this.editSession?.targetId === message.payload.targetId
+        ) {
+          this.editSession = {
+            ...this.editSession,
+            editToken: result.newEditToken,
+            rawHash: result.newContentHash,
+            draftRevision: result.acceptedRevision,
+          };
+        }
+        break;
+      }
+      case "diff/draft-checkpointed":
+        this.draftAck = message.payload;
+        break;
+      case "diff/target-switch-confirm":
+        this.targetSwitchRequest = message.payload;
         break;
     }
   }

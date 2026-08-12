@@ -12,6 +12,7 @@ import {
 import { collectSvnHistory } from "../../src/history/svnHistory";
 import {
   collectSvnProperties,
+  parseSvnExternalsTargetNames,
   parseSvnPropertiesXml,
   validatePropertyEdit,
 } from "../../src/properties/svnProperties";
@@ -25,7 +26,10 @@ import {
   parseSvnUnifiedDiffSummary,
 } from "../../src/commit/commitDiffSummary";
 import { parseInfoXml } from "../../src/svn/parsers/infoXmlParser";
-import { parseStatusXml } from "../../src/svn/parsers/statusXmlParser";
+import {
+  parseFileExternalFlag,
+  parseStatusXml,
+} from "../../src/svn/parsers/statusXmlParser";
 
 const root = path.resolve("/repo");
 const inRepository = (...segments: string[]) => path.join(root, ...segments);
@@ -210,6 +214,29 @@ describe("领域 SVN I/O 适配器", () => {
     expect(entries[0]).toEqual(
       expect.objectContaining({ relativePath: "p0&x", propStatus: "modified" }),
     );
+  });
+
+  it("parseSvnExternalsTargetNames 解析新旧语法并忽略注释与空行", () => {
+    expect(
+      parseSvnExternalsTargetNames(
+        "^/trunk/ext-src ext\n^/trunk/a.txt@2 a.txt\n# 注释\n\n-r 7 ^/trunk/old.txt old.txt\n",
+      ),
+    ).toEqual(["ext", "a.txt", "old.txt"]);
+    expect(parseSvnExternalsTargetNames("")).toEqual([]);
+  });
+
+  it("parseFileExternalFlag 只认目标自身 wc-status 的 file-external 属性", () => {
+    const external = `<status><target path="f"><entry path="f"><wc-status item="normal" revision="1" file-external="true" props="none"/></entry></target></status>`;
+    expect(parseFileExternalFlag(external)).toBe(true);
+    const normal = `<status><target path="f"><entry path="f"><wc-status item="modified" revision="1" props="none"/></entry></target></status>`;
+    expect(parseFileExternalFlag(normal)).toBe(false);
+    expect(parseFileExternalFlag("<status/>")).toBe(false);
+    // 属性值不同或出现在无关位置不得误判。
+    expect(
+      parseFileExternalFlag(
+        `<status><target path="f"><entry path="f"><wc-status item="normal" file-external="false"/></entry></target></status>`,
+      ),
+    ).toBe(false);
   });
 
   it("生成冲突解决预览、阻止越界并校验真实 resolve 结果", async () => {

@@ -1,11 +1,27 @@
+<script lang="ts" module>
+  import { installDiffCspCompatibilityShim } from "./cspCompatObserver";
+
+  // 生产 CSP 适配第一层（插入前拦截）：模块加载即安装，幂等。
+  installDiffCspCompatibilityShim();
+</script>
+
 <script lang="ts">
+  import { onDestroy, onMount } from "svelte";
   import { FileDiff, parsePatchFiles, preloadHighlighter } from "@pierre/diffs";
+  import { Editor } from "@pierre/diffs/edit";
   import { mapToDiffLanguage } from "./diffLanguage";
-  import { observeDiffShadowRoot } from "./cspCompatObserver";
+  import {
+    observeDiffContainer,
+    observeDiffShadowRoot,
+  } from "./cspCompatObserver";
+  import {
+    shouldRebuildDiffView,
+    type DiffViewMountState,
+  } from "./diffViewLifecycle";
   import { diffViewLabels } from "../../i18n/terminology";
 
   /*
-   * @pierre/diffs 适配层（v0.0.4 阶段 1）。
+   * @pierre/diffs 适配层（v0.0.4 阶段 1 + v0.0.6 编辑态）。
    *
    * 职责：
    * - 封装 vanilla FileDiff 的挂载/卸载与快照切换生命周期（old/new 全文与
@@ -13,9 +29,21 @@
    * - 挂载收窄版 CSP 兼容垫片（见 cspCompatObserver.ts 的安全论证），
    *   保持 renderWebviewShell.ts 的严格 CSP 不放松；
    * - 提供中文、键盘可达的 unified/split 视图切换与"展开全部/折叠未变更"
-   *   控制（组件折叠控件本身 tabIndex=-1 键盘不可达，垫片已补齐 aria，
-   *   工具栏是不依赖这些控件的等价路径）；
-   * - 挂载/渲染抛错时通过 onFallback 通知父级降级到 MergeView / 原始文本。
+   *   控制；
+   * - v0.0.6 编辑态：editMode=true 时把 @pierre/diffs/edit 的 Editor 附加到
+   *   可编辑 FileDiff，仅工作副本侧可编辑；通过 onEditChange 上报内容。
+   *
+   * 生命周期（手动管理，不依赖 $effect 依赖追踪的重跑语义）：
+   * - 渲染 effect 不返回 cleanup；每次重跑由纯决策函数
+   *   shouldRebuildDiffView（diffViewLifecycle.ts）按「挂载键
+   *   （目标/语言/编辑态/视图控件）+ 实际容器身份 + 渲染内容（逐字段）」
+   *   比较决定：
+   *   - 编辑态同键同容器：保持现有 FileDiff/Editor 实例不重建（Host 保存后
+   *     权威快照刷新不丢快速二次输入）；
+   *   - 只读态内容变化：重建以采用权威内容；
+   *   - 挂载键变化（目标切换/退出编辑/视图切换）或容器身份变化：释放旧实例
+   *     重建（销毁时清理旧容器 mounted.container，避免旧 DOM 残留）；
+   *   - 组件销毁由 onDestroy 兜底释放。
    *
    * 主题跟随：themeType "system" 让组件按宿主 color-scheme 在
    * pierre-dark/pierre-light 间切换；VS Code 变量到 --diffs-* 的映射在
@@ -27,25 +55,71 @@
     oldContents,
     newContents,
     patch,
+    editMode = false,
+    onEditChange,
+    onReady,
     onFallback,
   }: {
     relativePath: string;
     language?: string;
-    /** old/new 全文模式：BASE 与工作副本内容。 */
     oldContents?: string;
     newContents?: string;
-    /** patch 直渲模式：unified diff 原文（修订比较）；提供时优先于 old/new。 */
     patch?: string;
-    /** 挂载或渲染失败回调；父级负责切换到降级 UI。 */
+    /** v0.0.6：是否处于编辑态（仅 Working Copy 侧可编辑）。 */
+    editMode?: boolean;
+    /** 编辑内容变化回调（供脏状态与草稿检查点）。 */
+    onEditChange?: (text: string) => void;
+    /** 挂载完成回调：暴露读取/导航/逐块采用 API。 */
+    onReady?: (api: {
+      getText: () => string;
+      focusLine: (lineNumber: number) => void;
+      applyRegionEdit: (
+        startLine: number,
+        endLine: number,
+        newText: string,
+      ) => void;
+    }) => void;
     onFallback: (error: unknown) => void;
   } = $props();
 
   let host = $state<HTMLDivElement>();
   let diffStyle = $state<"unified" | "split">("split");
   let expandUnchanged = $state(false);
+  /** 当前附加的编辑器实例（编辑态）。 */
+  let editorInstance: Editor<undefined> | undefined;
+  /**
+   * 挂载就绪信号：bind:this 的 host 在父级重渲染时可能被重赋值（新身份）。
+   * onMount 只执行一次（绝不重复赋值），渲染 effect 以该布尔信号为首个依赖
+   * 门槛；即便 host 身份变化触发了 effect 重跑，重建与否仍由下方挂载键与
+   * 内容键的语义比较决定（编辑态保持实例）。
+   */
+  let hostReady = $state(false);
+  onMount(() => {
+    hostReady = true;
+  });
 
-  // 预热当前文件语言的高亮资源（语言 chunk 懒加载）；失败不阻塞基础渲染，
-  // 组件会在高亮不可用时先渲染无色文本。
+  /** 当前挂载的 FileDiff 实例与 CSP observer（手动生命周期持有）。 */
+  const instances: FileDiff[] = [];
+  const observers: { disconnect(): void }[] = [];
+  /** 当前挂载状态（含实际容器与渲染内容），用于决定重建/保持。 */
+  let mounted: DiffViewMountState | undefined;
+
+  /** 释放全部实例与 observer（幂等；重建与组件销毁共用）。 */
+  function disposeAll(): void {
+    for (const observer of observers) observer.disconnect();
+    observers.length = 0;
+    for (const instance of instances) instance.cleanUp();
+    instances.length = 0;
+    // 清理实际挂载过的旧容器（mounted.container）而非当前 host：容器身份
+    // 变化时 host 已是新容器，实例仍残留在旧容器上。
+    const el = mounted?.container ?? host;
+    if (el) el.replaceChildren();
+    mounted = undefined;
+  }
+
+  onDestroy(disposeAll);
+
+  // 预热当前文件语言的高亮资源（语言 chunk 懒加载）；失败不阻塞基础渲染。
   $effect(() => {
     if (patch != null) return;
     const lang = mapToDiffLanguage(language, relativePath);
@@ -59,22 +133,46 @@
   });
 
   $effect(() => {
+    void hostReady;
     const container = host;
     if (!container) return;
-    // 读取响应式状态：视图切换/折叠控制会触发本 effect 重跑并重挂载。
     const style = diffStyle;
     const expand = expandUnchanged;
-    const instances: FileDiff[] = [];
-    const observers: { disconnect(): void }[] = [];
-    let disposed = false;
-    const dispose = (): void => {
-      if (disposed) return;
-      disposed = true;
-      for (const observer of observers) observer.disconnect();
-      for (const instance of instances) instance.cleanUp();
-      container.replaceChildren();
-    };
+    const isEditing = editMode;
+    const rel = relativePath;
+    const lang = language;
+    const oldC = oldContents ?? "";
+    const newC = newContents ?? "";
+    const patchC = patch;
+
+    // 挂载键：目标/语言/编辑态/视图控件。变化时必须重建（目标切换、
+    // 退出编辑、unified/split、展开控制）。
+    const key = `${rel}|${lang}|${isEditing}|${style}|${expand}`;
+
+    if (mounted) {
+      if (
+        shouldRebuildDiffView(mounted, {
+          key,
+          container,
+          oldContents: oldC,
+          newContents: newC,
+          patch: patchC,
+        })
+      ) {
+        // 容器身份变化 / 挂载键变化 / 只读态内容变化：释放旧实例重建。
+        disposeAll();
+      } else {
+        // 编辑态同键同容器（含保存后权威快照刷新）：保持实例与编辑器，
+        // 不打断正在进行的输入；或只读态内容未变。
+        return;
+      }
+    }
+
+    const ready = onReady;
+    const fallback = onFallback;
     try {
+      // 容器级 CSP 兼容垫片（随实例生命周期一起释放）。
+      observers.push(observeDiffContainer(container));
       const options = {
         theme: { dark: "pierre-dark", light: "pierre-light" },
         themeType: "system",
@@ -102,8 +200,8 @@
           }
         }
       };
-      if (patch != null) {
-        const files = parsePatchFiles(patch).flatMap((parsed) => parsed.files);
+      if (patchC != null) {
+        const files = parsePatchFiles(patchC).flatMap((parsed) => parsed.files);
         if (files.length === 0) {
           throw new Error("patch 中没有可解析的文件差异");
         }
@@ -113,30 +211,69 @@
           );
         }
       } else {
-        const lang = mapToDiffLanguage(language, relativePath);
-        // 文件标题已由模块工具栏展示，避免组件头重复显示路径。
-        mountInstance({ disableFileHeader: true }, (instance) =>
+        const diffLang = mapToDiffLanguage(lang, rel);
+        mountInstance({ disableFileHeader: true }, (instance) => {
           instance.render({
             oldFile: {
-              name: relativePath,
-              contents: oldContents ?? "",
-              lang,
+              name: rel,
+              contents: oldC,
+              lang: diffLang,
             },
             newFile: {
-              name: relativePath,
-              contents: newContents ?? "",
-              lang,
+              name: rel,
+              contents: newC,
+              lang: diffLang,
             },
             containerWrapper: container,
-          }),
-        );
+          });
+          // v0.0.6 编辑态：附加编辑器，仅工作副本侧可编辑。
+          if (isEditing) {
+            const editor = new Editor<undefined>({
+              onChange: () => {
+                onEditChange?.(editor.getText());
+              },
+            });
+            editor.edit(instance);
+            editorInstance = editor;
+          }
+          ready?.({
+            getText: () => editorInstance?.getText() ?? "",
+            focusLine: (lineNumber: number) =>
+              editorInstance?.focus({ lineNumber }),
+            applyRegionEdit: (
+              startLine: number,
+              endLine: number,
+              newText: string,
+            ) => {
+              editorInstance?.applyEdits([
+                {
+                  range: {
+                    start: { line: Math.max(0, startLine - 1), character: 0 },
+                    end: {
+                      line: Math.max(0, endLine - 1),
+                      character: Number.MAX_SAFE_INTEGER,
+                    },
+                  },
+                  newText,
+                },
+              ]);
+            },
+          });
+        });
       }
+      mounted = {
+        key,
+        mode: isEditing ? "edit" : "read",
+        container,
+        oldContents: oldC,
+        newContents: newC,
+        patch: patchC,
+      };
     } catch (error) {
-      dispose();
-      onFallback(error);
+      disposeAll();
+      fallback(error);
       return;
     }
-    return dispose;
   });
 </script>
 

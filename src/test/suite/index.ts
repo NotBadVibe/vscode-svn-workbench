@@ -37,6 +37,9 @@ import {
   getDefaultSelectedCandidatePaths,
 } from "../../ai/commitSelectionActions";
 import { buildCommitSelectionExplanation } from "../../ai/commitSelectionExplanation";
+import { createDiffEditingService } from "../../extension/workbench/diffEditHost";
+import { createSvnBindingProbe } from "../../extension/workbench/diffSvnBinding";
+import { hashBytes } from "../../diffEdit/diffPathGuard";
 import { parseModelListResponse } from "../../ai/openAiCompatibleProvider";
 import {
   buildTeamRulesAiRequest,
@@ -282,6 +285,14 @@ export function getExtensionTestCases(): TestCase[] {
     {
       name: "v0.0.5 opens independent per-module windows with reuse and rebuild",
       run: testV005ModuleWindows,
+    },
+    {
+      name: "v0.0.6 edits a working copy file via the guarded save pipeline",
+      run: testDiffEditIntegration,
+    },
+    {
+      name: "v0.0.6 rejects nested/external/BASE-changed targets in isolated SVN fixture",
+      run: testDiffEditSvnBindingIsolation,
     },
     {
       name: "classifies generated files for commit filtering",
@@ -1130,6 +1141,496 @@ async function testV005ModuleWindows(): Promise<void> {
   // 7) 冒烟完成后清理，避免影响后续用例。
   await vscode.commands.executeCommand("workbench.action.closeAllEditors");
   await waitForTabGone("SVN · 工作副本修改", "Changes 窗口清理");
+}
+
+async function testDiffEditIntegration(): Promise<void> {
+  const workspace = getSvnWorkspaceOrSkip();
+  const scope: OperationScope = {
+    id: "diff-edit-test",
+    repositoryRoot: workspace.uri.fsPath,
+    source: "editorFile",
+    roots: [
+      {
+        absolutePath: workspace.uri.fsPath,
+        relativePath: ".",
+        kind: "folder",
+      },
+    ],
+    allowExpandScope: false,
+    includeExternals: false,
+    includeNestedWorkingCopies: false,
+    createdAt: 0,
+  };
+  // 使用专用临时文件，避免污染既有夹具。
+  const target = path.join(workspace.uri.fsPath, "_diff-edit-integration.txt");
+  const original = "line1\nline2\n";
+  await fs.promises.writeFile(target, original, "utf8");
+  const service = createDiffEditingService();
+  try {
+    const opened = await service.openEdit({
+      sessionId: "ext-host-session",
+      repositoryUuid: "test-uuid",
+      scopeHash: "test-scope-hash",
+      targetPath: target,
+      baseContents: original,
+      baseRevision: "BASE",
+      baseHash: hashBytes(Buffer.from(original, "utf8")),
+      rawHash: hashBytes(Buffer.from(original, "utf8")),
+      scope,
+      repositoryRoot: workspace.uri.fsPath,
+    });
+    assert.ok(opened.ok, "openEdit 应成功");
+    if (!opened.ok) return;
+    const saved = await service.saveWorking({
+      sessionId: "ext-host-session",
+      moduleId: "diff",
+      taskId: "diff/working",
+      repositoryUuid: "test-uuid",
+      scopeHash: "test-scope-hash",
+      targetId: opened.targetId,
+      editToken: opened.editToken,
+      draftRevision: opened.draftRevision,
+      expectedContentHash: opened.rawHash,
+      content: "line1\nline1.5\nline2\n",
+      scope,
+      repositoryRoot: workspace.uri.fsPath,
+    });
+    assert.ok(saved.ok, "saveWorking 应成功写入");
+    if (!saved.ok) return;
+    const after = await fs.promises.readFile(target, "utf8");
+    assert.equal(after, "line1\nline1.5\nline2\n");
+    // 旧 token 单次使用：重放必须拒绝。
+    const replay = await service.saveWorking({
+      sessionId: "ext-host-session",
+      moduleId: "diff",
+      taskId: "diff/working",
+      repositoryUuid: "test-uuid",
+      scopeHash: "test-scope-hash",
+      targetId: opened.targetId,
+      editToken: opened.editToken,
+      draftRevision: opened.draftRevision,
+      expectedContentHash: opened.rawHash,
+      content: "hijack\n",
+      scope,
+      repositoryRoot: workspace.uri.fsPath,
+    });
+    assert.ok(!replay.ok, "旧 token 重放必须被拒绝");
+
+    // 生产接线（v0.0.6 最终验收）：保存成功后的自写 watcher 事件不得撤销
+    // 新 token（hash 感知），连续第二次保存必须成功；真实外部变化仍撤销。
+    await service.revokeForPath(target);
+    const draft = service.getDraft(opened.targetId);
+    assert.ok(draft, "保存后草稿应保留");
+    if (!draft) return;
+    const checkpoint2 = service.checkpointDraft({
+      targetId: opened.targetId,
+      sessionId: "ext-host-session",
+      repositoryUuid: "test-uuid",
+      scopeHash: "test-scope-hash",
+      baseHash: draft.baseHash,
+      baseRevision: draft.baseRevision,
+      baseContents: draft.baseContents,
+      diskHash: saved.newContentHash,
+      targetPath: target,
+      content: "line1\nline1.5\nline2\nline3\n",
+      baseRevisionOfClient: saved.acceptedRevision,
+    });
+    assert.ok(checkpoint2.ok, "保存后检查点应接受");
+    const secondSave = await service.saveWorking({
+      sessionId: "ext-host-session",
+      moduleId: "diff",
+      taskId: "diff/working",
+      repositoryUuid: "test-uuid",
+      scopeHash: "test-scope-hash",
+      targetId: opened.targetId,
+      editToken: saved.newEditToken,
+      draftRevision: checkpoint2.ok ? checkpoint2.draftRevision : 0,
+      expectedContentHash: saved.newContentHash,
+      content: "line1\nline1.5\nline2\nline3\n",
+      scope,
+      repositoryRoot: workspace.uri.fsPath,
+    });
+    assert.ok(secondSave.ok, "自写事件后第二次保存必须成功");
+    assert.equal(
+      await fs.promises.readFile(target, "utf8"),
+      "line1\nline1.5\nline2\nline3\n",
+    );
+    // 真实外部变化：撤销后旧 token 拒绝、不落盘。
+    await fs.promises.writeFile(target, "external\n", "utf8");
+    await service.revokeForPath(target);
+    if (secondSave.ok) {
+      const externalSave = await service.saveWorking({
+        sessionId: "ext-host-session",
+        moduleId: "diff",
+        taskId: "diff/working",
+        repositoryUuid: "test-uuid",
+        scopeHash: "test-scope-hash",
+        targetId: opened.targetId,
+        editToken: secondSave.newEditToken,
+        draftRevision: secondSave.acceptedRevision,
+        expectedContentHash: secondSave.newContentHash,
+        content: "hijack\n",
+        scope,
+        repositoryRoot: workspace.uri.fsPath,
+      });
+      assert.ok(!externalSave.ok, "外部变化后必须拒绝保存");
+      assert.equal(
+        await fs.promises.readFile(target, "utf8"),
+        "external\n",
+        "被拒绝的保存不得改动磁盘",
+      );
+    }
+    // 还原供后续 TextDocument 链路断言使用。
+    await fs.promises.writeFile(target, "line1\nline1.5\nline2\n", "utf8");
+
+    // 真实 TextDocument 链路（v0.0.6 验收）：干净打开的文档可进入编辑；
+    // 文档变脏后 openEdit 拒绝、已签发 token 的保存被拒绝且不落盘。
+    const document = await vscode.workspace.openTextDocument(target);
+    const liveOpen = await service.openEdit({
+      sessionId: "ext-host-session",
+      repositoryUuid: "test-uuid",
+      scopeHash: "test-scope-hash",
+      targetPath: target,
+      baseContents: original,
+      baseRevision: "BASE",
+      baseHash: hashBytes(Buffer.from(original, "utf8")),
+      rawHash: hashBytes(Buffer.from(original, "utf8")),
+      scope,
+      repositoryRoot: workspace.uri.fsPath,
+    });
+    assert.ok(liveOpen.ok, "干净打开的文档应允许进入编辑");
+    if (!liveOpen.ok) return;
+    // 通过 WorkspaceEdit 使文档变脏（不落盘）。
+    const dirtyEdit = new vscode.WorkspaceEdit();
+    dirtyEdit.insert(document.uri, new vscode.Position(0, 0), "// dirty\n");
+    await vscode.workspace.applyEdit(dirtyEdit);
+    assert.ok(document.isDirty, "文档应处于脏状态");
+    try {
+      const dirtyOpen = await service.openEdit({
+        sessionId: "ext-host-session",
+        repositoryUuid: "test-uuid",
+        scopeHash: "test-scope-hash",
+        targetPath: target,
+        baseContents: original,
+        baseRevision: "BASE",
+        baseHash: hashBytes(Buffer.from(original, "utf8")),
+        rawHash: hashBytes(Buffer.from(original, "utf8")),
+        scope,
+        repositoryRoot: workspace.uri.fsPath,
+      });
+      assert.ok(!dirtyOpen.ok, "脏文档必须拒绝 openEdit");
+      if (!dirtyOpen.ok) {
+        assert.equal(dirtyOpen.reason, "documentDirty");
+      }
+      const dirtySave = await service.saveWorking({
+        sessionId: "ext-host-session",
+        moduleId: "diff",
+        taskId: "diff/working",
+        repositoryUuid: "test-uuid",
+        scopeHash: "test-scope-hash",
+        targetId: liveOpen.targetId,
+        editToken: liveOpen.editToken,
+        draftRevision: liveOpen.draftRevision,
+        expectedContentHash: liveOpen.rawHash,
+        content: "hijack\n",
+        scope,
+        repositoryRoot: workspace.uri.fsPath,
+      });
+      assert.ok(!dirtySave.ok, "脏文档或已失效 token 必须拒绝保存");
+      assert.equal(
+        await fs.promises.readFile(target, "utf8"),
+        "line1\nline1.5\nline2\n",
+        "被拒绝的保存不得改动磁盘",
+      );
+    } finally {
+      // 恢复文档为干净状态，避免污染后续用例。
+      const revertEdit = new vscode.WorkspaceEdit();
+      revertEdit.delete(
+        document.uri,
+        new vscode.Range(new vscode.Position(0, 0), new vscode.Position(1, 0)),
+      );
+      await vscode.workspace.applyEdit(revertEdit);
+      await document.save();
+    }
+  } finally {
+    await fs.promises.rm(target, { force: true });
+  }
+}
+
+/*
+ * v0.0.6 验收：真实 SVN fixture 下的绑定复验。
+ * 覆盖嵌套工作副本、svn:externals 与 BASE 变化（working hash 未变）三条
+ * Host 拒绝链；UUID 变化在单元层覆盖（svnadmin setuuid 后既有 WC 的
+ * svn info 仍读本地元数据，真实 fixture 无法触发）。
+ */
+async function testDiffEditSvnBindingIsolation(): Promise<void> {
+  const svnPath = await getSvnPathOrSkip();
+  const tempRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), "svn-workbench-diff-bind-"),
+  );
+  const repository = path.join(tempRoot, "repository");
+  const seed = path.join(tempRoot, "seed");
+  const workingCopy = path.join(tempRoot, "wc");
+  const secondCopy = path.join(tempRoot, "wc2");
+  try {
+    const admin = spawnSync("svnadmin", ["create", repository], {
+      encoding: "utf8",
+      shell: false,
+    });
+    if (admin.error || admin.status !== 0) {
+      throw new SkippedTest("svnadmin is not available for binding fixture.");
+    }
+    fs.mkdirSync(path.join(seed, "ext-src"), { recursive: true });
+    fs.writeFileSync(path.join(seed, "file.txt"), "base\n", "utf8");
+    fs.writeFileSync(path.join(seed, "ext-src", "ext.txt"), "ext\n", "utf8");
+    const repositoryUrl = `${pathToFileURL(repository).href}/trunk`;
+    const imported = await runSvnCommand(
+      svnPath,
+      ["import", seed, repositoryUrl, "-m", "initial", "--encoding", "utf-8"],
+      tempRoot,
+    );
+    assert.equal(imported.exitCode, 0, imported.stderr);
+    const checkout = await runSvnCommand(
+      svnPath,
+      ["checkout", repositoryUrl, workingCopy],
+      tempRoot,
+    );
+    assert.equal(checkout.exitCode, 0, checkout.stderr);
+
+    const scope: OperationScope = {
+      id: "diff-bind-test",
+      repositoryRoot: workingCopy,
+      source: "editorFile" as const,
+      roots: [
+        {
+          absolutePath: workingCopy,
+          relativePath: ".",
+          kind: "folder" as const,
+        },
+      ],
+      allowExpandScope: false,
+      includeExternals: false,
+      includeNestedWorkingCopies: false,
+      createdAt: 0,
+    };
+    const probe = createSvnBindingProbe(svnPath);
+    const service = createDiffEditingService();
+    const target = path.join(workingCopy, "file.txt");
+    // 本地修改（working 与 BASE 不同）。
+    fs.writeFileSync(target, "base\nlocal\n", "utf8");
+    const openInput = {
+      sessionId: "bind-session",
+      repositoryUuid: "",
+      scopeHash: "bind-scope",
+      baseContents: "base\n",
+      baseRevision: "BASE",
+      baseHash: "",
+      rawHash: "",
+      scope,
+      repositoryRoot: workingCopy,
+      probeSvnBinding: probe,
+    };
+    // UUID 从 probe 实测（openEdit 要求 session UUID 与 probe 一致）。
+    const uuidProbe = await probe(target);
+    assert.ok(uuidProbe.ok, "probe 应读取真实 SVN 信息");
+    if (!uuidProbe.ok) return;
+    const boundInput = {
+      ...openInput,
+      repositoryUuid: uuidProbe.repositoryUuid,
+    };
+
+    const opened = await service.openEdit({
+      ...boundInput,
+      targetPath: target,
+    });
+    assert.ok(opened.ok, "主工作副本目标应允许 openEdit");
+    if (!opened.ok) return;
+
+    // 嵌套工作副本：独立 checkout 形成自己的 wcroot。
+    const nested = path.join(workingCopy, "nested");
+    const nestedCheckout = await runSvnCommand(
+      svnPath,
+      ["checkout", repositoryUrl, nested],
+      workingCopy,
+    );
+    assert.equal(nestedCheckout.exitCode, 0, nestedCheckout.stderr);
+    const nestedOpen = await service.openEdit({
+      ...boundInput,
+      targetPath: path.join(nested, "file.txt"),
+    });
+    assert.ok(!nestedOpen.ok, "嵌套工作副本目标必须拒绝");
+    if (!nestedOpen.ok) {
+      assert.equal(nestedOpen.reason, "nestedOrExternal");
+    }
+
+    // svn:externals：外部引用目录形成独立 wcroot。
+    const propset = await runSvnCommand(
+      svnPath,
+      ["propset", "svn:externals", "^/trunk/ext-src ext", workingCopy],
+      workingCopy,
+    );
+    assert.equal(propset.exitCode, 0, propset.stderr);
+    const updateForExternal = await runSvnCommand(
+      svnPath,
+      ["update", "--ignore-externals", workingCopy],
+      workingCopy,
+    );
+    assert.equal(updateForExternal.exitCode, 0, updateForExternal.stderr);
+    const fetchExternal = await runSvnCommand(
+      svnPath,
+      ["update", workingCopy],
+      workingCopy,
+    );
+    assert.equal(fetchExternal.exitCode, 0, fetchExternal.stderr);
+    const externalOpen = await service.openEdit({
+      ...boundInput,
+      targetPath: path.join(workingCopy, "ext", "ext.txt"),
+    });
+    assert.ok(!externalOpen.ok, "svn:externals 目标必须拒绝");
+    if (!externalOpen.ok) {
+      assert.equal(externalOpen.reason, "nestedOrExternal");
+    }
+
+    // 同仓库 file external：wc-root/UUID 与主 WC 相同，也必须拒绝。
+    // 先建立正常版本化文件 file2.txt 并进入编辑，再把它转变为 file
+    // external（内容字节不变），保存必须被拒绝——证明保存前 external
+    // 状态变化同样被捕获。
+    const file2 = path.join(workingCopy, "file2.txt");
+    fs.writeFileSync(file2, "f2\n", "utf8");
+    const addFile2 = await runSvnCommand(
+      svnPath,
+      ["add", "file2.txt"],
+      workingCopy,
+    );
+    assert.equal(addFile2.exitCode, 0, addFile2.stderr);
+    const commitFile2 = await runSvnCommand(
+      svnPath,
+      ["commit", "file2.txt", "-m", "add file2", "--encoding", "utf-8"],
+      workingCopy,
+    );
+    assert.equal(commitFile2.exitCode, 0, commitFile2.stderr);
+    const file2Open = await service.openEdit({
+      ...boundInput,
+      targetPath: file2,
+      baseContents: "f2\n",
+    });
+    assert.ok(file2Open.ok, "正常文件应允许 openEdit");
+    if (!file2Open.ok) return;
+    const removeFile2 = await runSvnCommand(
+      svnPath,
+      ["rm", "file2.txt"],
+      workingCopy,
+    );
+    assert.equal(removeFile2.exitCode, 0, removeFile2.stderr);
+    const commitRemoval = await runSvnCommand(
+      svnPath,
+      ["commit", "file2.txt", "-m", "remove file2", "--encoding", "utf-8"],
+      workingCopy,
+    );
+    assert.equal(commitRemoval.exitCode, 0, commitRemoval.stderr);
+    const propsetFileExternals = await runSvnCommand(
+      svnPath,
+      [
+        "propset",
+        "svn:externals",
+        "^/trunk/ext-src ext\n^/trunk/ext-src/ext.txt ext-file.txt\n^/trunk/file2.txt@2 file2.txt",
+        workingCopy,
+      ],
+      workingCopy,
+    );
+    assert.equal(propsetFileExternals.exitCode, 0, propsetFileExternals.stderr);
+    const fetchFileExternals = await runSvnCommand(
+      svnPath,
+      ["update", workingCopy],
+      workingCopy,
+    );
+    assert.equal(fetchFileExternals.exitCode, 0, fetchFileExternals.stderr);
+    const fileExternalOpen = await service.openEdit({
+      ...boundInput,
+      targetPath: path.join(workingCopy, "ext-file.txt"),
+      baseContents: "ext\n",
+    });
+    assert.ok(!fileExternalOpen.ok, "同仓库 file external 必须拒绝");
+    if (!fileExternalOpen.ok) {
+      assert.equal(fileExternalOpen.reason, "nestedOrExternal");
+    }
+    // file2.txt 已变为 file external（内容字节不变）：保存必须拒绝且不落盘。
+    assert.equal(fs.readFileSync(file2, "utf8"), "f2\n");
+    const externalSave = await service.saveWorking({
+      sessionId: "bind-session",
+      moduleId: "diff",
+      taskId: "diff/working",
+      repositoryUuid: uuidProbe.repositoryUuid,
+      scopeHash: "bind-scope",
+      targetId: file2Open.targetId,
+      editToken: file2Open.editToken,
+      draftRevision: file2Open.draftRevision,
+      expectedContentHash: file2Open.rawHash,
+      content: "f2\nhijack\n",
+      scope,
+      repositoryRoot: workingCopy,
+      probeSvnBinding: probe,
+    });
+    assert.ok(!externalSave.ok, "目标变为 file external 后必须拒绝保存");
+    if (!externalSave.ok) {
+      assert.equal(externalSave.reason, "scopeChanged");
+    }
+    assert.equal(
+      fs.readFileSync(file2, "utf8"),
+      "f2\n",
+      "被拒绝的保存不得改动磁盘",
+    );
+
+    // BASE 变化但 working hash 未变：第二工作副本提交新内容后，本 WC
+    // update（合并本地修改）再手动还原 working 内容为打开时字节。
+    const checkout2 = await runSvnCommand(
+      svnPath,
+      ["checkout", repositoryUrl, secondCopy],
+      tempRoot,
+    );
+    assert.equal(checkout2.exitCode, 0, checkout2.stderr);
+    fs.writeFileSync(path.join(secondCopy, "file.txt"), "base-v2\n", "utf8");
+    const commit2 = await runSvnCommand(
+      svnPath,
+      ["commit", secondCopy, "-m", "advance base", "--encoding", "utf-8"],
+      secondCopy,
+    );
+    assert.equal(commit2.exitCode, 0, commit2.stderr);
+    const updateTarget = await runSvnCommand(
+      svnPath,
+      ["update", target],
+      workingCopy,
+    );
+    assert.equal(updateTarget.exitCode, 0, updateTarget.stderr);
+    // 还原 working 为打开时内容（hash 与绑定一致，BASE 已前进）。
+    fs.writeFileSync(target, "base\nlocal\n", "utf8");
+    const staleBaseSave = await service.saveWorking({
+      sessionId: "bind-session",
+      moduleId: "diff",
+      taskId: "diff/working",
+      repositoryUuid: uuidProbe.repositoryUuid,
+      scopeHash: "bind-scope",
+      targetId: opened.targetId,
+      editToken: opened.editToken,
+      draftRevision: opened.draftRevision,
+      expectedContentHash: opened.rawHash,
+      content: "base\nlocal\nhijack\n",
+      scope,
+      repositoryRoot: workingCopy,
+      probeSvnBinding: probe,
+    });
+    assert.ok(!staleBaseSave.ok, "BASE 变化后必须拒绝保存");
+    if (!staleBaseSave.ok) {
+      assert.equal(staleBaseSave.reason, "diskChanged");
+    }
+    assert.equal(
+      fs.readFileSync(target, "utf8"),
+      "base\nlocal\n",
+      "被拒绝的保存不得改动磁盘",
+    );
+  } finally {
+    removeTestTempDirectory(tempRoot);
+  }
 }
 
 async function testGeneratedFilePolicy(): Promise<void> {
