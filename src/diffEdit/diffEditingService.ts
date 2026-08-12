@@ -123,6 +123,14 @@ export class DiffEditingService {
           "目标位于 svn:externals 或嵌套工作副本，不属于当前工作副本边界，拒绝页内编辑；请使用原生编辑器。",
       };
     }
+    if (probe.fileExternal) {
+      return {
+        ok: false,
+        code: "nestedOrExternal",
+        message:
+          "目标是 svn:externals 文件引用，不属于当前工作副本边界，拒绝页内编辑；请使用原生编辑器。",
+      };
+    }
     if (probe.repositoryUuid !== input.expectedUuid) {
       return {
         ok: false,
@@ -208,8 +216,9 @@ export class DiffEditingService {
     } else {
       // 草稿初始内容必须是 Working Copy 当前内容（绝不是 BASE）：
       // 未修改即干净（cleanContent === content），不会触发三选一，
-      // saveDraft 也无可写内容。
-      this.drafts.upsert({
+      // saveDraft 也无可写内容。draftRevision 必须取 upsert 分配的全局
+      // 递增版本，否则多目标会话的后续保存会被误判为乱序。
+      const created = this.drafts.upsert({
         targetId,
         repositoryUuid: input.repositoryUuid,
         scopeHash: input.scopeHash,
@@ -222,6 +231,7 @@ export class DiffEditingService {
         cleanContent: guard.context.workingContents,
         baseRevisionOfClient: -1,
       });
+      if (created.ok) initialRevision = created.draft.revision;
     }
     const token = this.tokens.issue({
       sessionId: input.sessionId,

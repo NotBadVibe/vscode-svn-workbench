@@ -1,5 +1,10 @@
 import * as path from "node:path";
 import { runSvnCommand } from "../../svn/svnCommandRunner";
+import { parseFileExternalFlag } from "../../svn/parsers/statusXmlParser";
+import {
+  parseSvnExternalsTargetNames,
+  parseSvnPropertiesXml,
+} from "../../properties/svnProperties";
 import { hashBytes, MAX_EDITABLE_BYTES } from "../../diffEdit/diffPathGuard";
 import type { DiffSvnBindingProbeResult } from "../../diffEdit/diffEditTypes";
 
@@ -37,6 +42,36 @@ export function createSvnBindingProbe(
     if (uuid.exitCode !== 0 || uuid.stdout.trim() === "") {
       return { ok: false, code: "noSvnInfo" };
     }
+    // file external 标记：同仓库 file external 的 wc-root/UUID 均与主 WC
+    // 相同。双信号识别：目标自身 status 的 file-external 属性（标准场景），
+    // 以及父目录 svn:externals 定义中的本地目标名（删除后同名重新挂载等
+    // status 不报告的残留场景）。
+    const status = await runSvnCommand(
+      svnPath,
+      ["status", "--xml", targetPath],
+      cwd,
+      { maxOutputBytes: 1024 * 1024 },
+    );
+    if (status.exitCode !== 0) {
+      return { ok: false, code: "noSvnInfo" };
+    }
+    const externals = await runSvnCommand(
+      svnPath,
+      ["propget", "svn:externals", "--xml", cwd],
+      cwd,
+    );
+    // 未设置该属性时 svn 以 W200017 警告退出 1——视为空集合；其他失败安全拒绝。
+    if (externals.exitCode !== 0 && !externals.stderr.includes("W200017")) {
+      return { ok: false, code: "noSvnInfo" };
+    }
+    const externalTargetNames = new Set(
+      parseSvnPropertiesXml(externals.stdout)
+        .filter((item) => item.name === "svn:externals")
+        .flatMap((item) => parseSvnExternalsTargetNames(item.value)),
+    );
+    const fileExternal =
+      parseFileExternalFlag(status.stdout) ||
+      externalTargetNames.has(path.basename(targetPath));
     const base = await runSvnCommand(
       svnPath,
       ["cat", "-r", "BASE", targetPath],
@@ -51,6 +86,7 @@ export function createSvnBindingProbe(
       repositoryUuid: uuid.stdout.trim(),
       workingCopyRoot: wcRoot.stdout.trim(),
       baseHash: hashBytes(Buffer.from(base.stdout, "utf8")),
+      fileExternal,
     };
   };
 }

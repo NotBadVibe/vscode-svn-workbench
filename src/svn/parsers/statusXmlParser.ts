@@ -1,6 +1,17 @@
 import * as path from "node:path";
 import { SvnStatus, SvnStatusItem } from "../svnTypes";
 
+/**
+ * 目标自身 `svn status --xml <target>` 的 file-external 标记（v0.0.6 页内
+ * 编辑边界：同仓库 file external 的 wc-root/UUID 与主工作副本相同，只能
+ * 靠该标记识别）。仅解析首个 entry 的 wc-status 属性，不做字符串猜测。
+ */
+export function parseFileExternalFlag(xml: string): boolean {
+  const wcStatus = /<wc-status\s+([^>]+)>?/.exec(xml);
+  if (!wcStatus) return false;
+  return getAttribute(wcStatus[1], "file-external") === "true";
+}
+
 export function parseStatusXml(
   xml: string,
   scopeRoot: string,

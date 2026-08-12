@@ -178,6 +178,7 @@ Token 单次使用。成功、失败、目标切换、范围变化、外部文�
 
 - 根因：`openEdit`/`saveWorking`/`saveDraft` 只比较 token 绑定值，保存前从不重新解析目标当前的 repository UUID、工作副本归属与 BASE；`analyzeUtf8` 对含 NUL 的合法 UTF-8 返回 ok，恶意 Webview 可对二进制目标直接 `diff/open-edit` 签发 token。
 - 修复：新增 Host adapter `diffSvnBinding.ts`（`svn info --show-item wc-root/repos-uuid` + `svn cat -r BASE`），作为可注入依赖在打开与每次保存（含三选一 `saveDraft`）前复验：wcroot 与主工作副本根不一致即拒绝（nestedOrExternal→scopeChanged，覆盖嵌套 WC 与 svn:externals 目录）、UUID 变化拒绝（scopeChanged）、BASE hash 变化拒绝（diskChanged，草稿保留不落盘）；`diffPathGuard` 新增 NUL 二进制拒绝（code=binary，保存路径映射 unsupportedEncoding）。真实隔离 SVN fixture 的 Extension Host 测试覆盖嵌套 WC、externals 与 BASE 前进（working hash 未变）拒绝；UUID 变化在单元层覆盖（`svnadmin setuuid` 后既有 WC 的 `svn info` 仍读本地元数据，真实 fixture 无法触发）。
+- file external 闭环：同仓库 file external 的 wc-root/UUID 与主 WC 相同，probe 采用双信号识别——目标自身 `svn status --xml` 的 `file-external="true"` 属性（标准场景）+ 父目录 `svn propget svn:externals --xml` 的本地目标名（`parseSvnExternalsTargetNames`；覆盖删除后同名重新挂载等 status 不报告的残留场景，svn 1.14.5 实测确认该场景 status 无标记）。openEdit/saveWorking/saveDraft 三链路拒绝（保存映射 scopeChanged），真实 fixture 覆盖"打开后目标被转为 file external（内容字节不变）保存拒绝且不落盘"。probe 任何一步失败安全拒绝；`propget` 未设置属性时的 W200017 警告按空集合处理。
 - 目标切换守卫收紧为 `shouldConfirmTargetSwitch`（脏草稿必确认；干净草稿但编辑会话活动仍确认——防 debounce 检查点竞态，由 Webview 自动暂存不弹窗；干净且无活动会话不确认）；“保存并打开”顺序保证（先刷新检查点再发 save 决定）有组件级 invocationCallOrder 回归。
 
 ### 阶段 2：Host 安全底座

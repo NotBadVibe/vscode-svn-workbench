@@ -36,6 +36,25 @@ export function parseSvnPropertiesXml(xml: string): SvnPropertyItem[] {
   return items.sort((left, right) => left.name.localeCompare(right.name));
 }
 
+/**
+ * 解析 svn:externals 属性值中的本地目标名（v0.0.6 页内编辑边界）。
+ * 新语法 `URL[@PEG] target` 与旧语法 `-rN URL target` 的本地目标都是
+ * 最后一个空白分隔词元；空行与 # 注释忽略。file external 的 status 标记
+ * 在个别历史场景（删除后以同名重新挂载）下不可靠，必须以父目录的
+ * svn:externals 定义为准。
+ */
+export function parseSvnExternalsTargetNames(value: string): string[] {
+  const names: string[] = [];
+  for (const rawLine of value.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (line === "" || line.startsWith("#")) continue;
+    const tokens = line.split(/\s+/);
+    const target = tokens[tokens.length - 1];
+    if (target !== undefined && target !== "") names.push(target);
+  }
+  return names;
+}
+
 export function validatePropertyEdit(
   name: string,
   value: string,

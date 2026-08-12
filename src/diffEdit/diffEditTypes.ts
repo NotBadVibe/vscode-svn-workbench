@@ -57,6 +57,8 @@ export interface DiffSvnBindingProbe {
   workingCopyRoot: string;
   /** 当前 BASE 完整字节 hash。 */
   baseHash: string;
+  /** 目标是 svn:externals 文件引用（同仓库 file external 的唯一可靠标记）。 */
+  fileExternal: boolean;
 }
 
 export type DiffSvnBindingProbeResult =

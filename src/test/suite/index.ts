@@ -1424,6 +1424,96 @@ async function testDiffEditSvnBindingIsolation(): Promise<void> {
       assert.equal(externalOpen.reason, "nestedOrExternal");
     }
 
+    // 同仓库 file external：wc-root/UUID 与主 WC 相同，也必须拒绝。
+    // 先建立正常版本化文件 file2.txt 并进入编辑，再把它转变为 file
+    // external（内容字节不变），保存必须被拒绝——证明保存前 external
+    // 状态变化同样被捕获。
+    const file2 = path.join(workingCopy, "file2.txt");
+    fs.writeFileSync(file2, "f2\n", "utf8");
+    const addFile2 = await runSvnCommand(
+      svnPath,
+      ["add", "file2.txt"],
+      workingCopy,
+    );
+    assert.equal(addFile2.exitCode, 0, addFile2.stderr);
+    const commitFile2 = await runSvnCommand(
+      svnPath,
+      ["commit", "file2.txt", "-m", "add file2", "--encoding", "utf-8"],
+      workingCopy,
+    );
+    assert.equal(commitFile2.exitCode, 0, commitFile2.stderr);
+    const file2Open = await service.openEdit({
+      ...boundInput,
+      targetPath: file2,
+      baseContents: "f2\n",
+    });
+    assert.ok(file2Open.ok, "正常文件应允许 openEdit");
+    if (!file2Open.ok) return;
+    const removeFile2 = await runSvnCommand(
+      svnPath,
+      ["rm", "file2.txt"],
+      workingCopy,
+    );
+    assert.equal(removeFile2.exitCode, 0, removeFile2.stderr);
+    const commitRemoval = await runSvnCommand(
+      svnPath,
+      ["commit", "file2.txt", "-m", "remove file2", "--encoding", "utf-8"],
+      workingCopy,
+    );
+    assert.equal(commitRemoval.exitCode, 0, commitRemoval.stderr);
+    const propsetFileExternals = await runSvnCommand(
+      svnPath,
+      [
+        "propset",
+        "svn:externals",
+        "^/trunk/ext-src ext\n^/trunk/ext-src/ext.txt ext-file.txt\n^/trunk/file2.txt@2 file2.txt",
+        workingCopy,
+      ],
+      workingCopy,
+    );
+    assert.equal(propsetFileExternals.exitCode, 0, propsetFileExternals.stderr);
+    const fetchFileExternals = await runSvnCommand(
+      svnPath,
+      ["update", workingCopy],
+      workingCopy,
+    );
+    assert.equal(fetchFileExternals.exitCode, 0, fetchFileExternals.stderr);
+    const fileExternalOpen = await service.openEdit({
+      ...boundInput,
+      targetPath: path.join(workingCopy, "ext-file.txt"),
+      baseContents: "ext\n",
+    });
+    assert.ok(!fileExternalOpen.ok, "同仓库 file external 必须拒绝");
+    if (!fileExternalOpen.ok) {
+      assert.equal(fileExternalOpen.reason, "nestedOrExternal");
+    }
+    // file2.txt 已变为 file external（内容字节不变）：保存必须拒绝且不落盘。
+    assert.equal(fs.readFileSync(file2, "utf8"), "f2\n");
+    const externalSave = await service.saveWorking({
+      sessionId: "bind-session",
+      moduleId: "diff",
+      taskId: "diff/working",
+      repositoryUuid: uuidProbe.repositoryUuid,
+      scopeHash: "bind-scope",
+      targetId: file2Open.targetId,
+      editToken: file2Open.editToken,
+      draftRevision: file2Open.draftRevision,
+      expectedContentHash: file2Open.rawHash,
+      content: "f2\nhijack\n",
+      scope,
+      repositoryRoot: workingCopy,
+      probeSvnBinding: probe,
+    });
+    assert.ok(!externalSave.ok, "目标变为 file external 后必须拒绝保存");
+    if (!externalSave.ok) {
+      assert.equal(externalSave.reason, "scopeChanged");
+    }
+    assert.equal(
+      fs.readFileSync(file2, "utf8"),
+      "f2\n",
+      "被拒绝的保存不得改动磁盘",
+    );
+
     // BASE 变化但 working hash 未变：第二工作副本提交新内容后，本 WC
     // update（合并本地修改）再手动还原 working 内容为打开时字节。
     const checkout2 = await runSvnCommand(
