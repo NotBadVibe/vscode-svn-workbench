@@ -1,6 +1,6 @@
 # SVN Workbench v0.0.6 版本规划
 
-> 状态：候选（阶段 0-4 已落地；VSIX、干净安装、真实 VS Code 页内编辑冒烟与不可变 release evidence 固化中）。
+> 状态：候选（阶段 0-4 已落地；连续保存 flake 已按 Lead /simplify 两轮审查收敛（第七轮，见阶段 1），源码候选重建中；VSIX、干净安装、真实 VS Code 页内编辑冒烟与不可变 release evidence 以最终源码候选为准）。
 >
 > 基线版本：`v0.0.5`。
 >
@@ -181,6 +181,7 @@ Token 单次使用。成功、失败、目标切换、范围变化、外部文�
 - 保存后干净状态闭环（第四/五轮）：`DiffDraftService.markSaved` 是更新 `cleanContent` 的唯一路径（此前 upsert 保留旧基准导致保存后仍显示未保存草稿——真实 VS Code 复现确认）；`revokeForPath` 改为 hash 感知——watcher 捕获到自身原子写入（磁盘内容与草稿登记一致）时跳过撤销，保存后新 token 不被误撤，连续保存可用；真实外部变化照撤。
 - 连续保存基准轮换（第六轮，真实 VS Code 复现驱动）：`module/loading` 使 Diff 组件真实重挂载，本地状态只从 `editSession` 恢复，而此前仅 mutation 了 `editToken`——第二次保存携带旧 hash 被 diskChanged 拒绝。修复：`diff/save-result` 携带 `targetId`，`workbenchState` 在保存成功时统一轮换 editSession 的 token/rawHash/draftRevision（单一事实源，组件不再 mutation props）；`savedText` 以实际提交正文（pendingSaveContent）为基准，不依赖快照刷新时序。回归：workbenchState 单测 + mock 严格校验负载并模拟 loading 重挂载的连续保存 e2e（旧代码红）。
 - 目标切换守卫收紧为 `shouldConfirmTargetSwitch`（脏草稿必确认；干净草稿但编辑会话活动仍确认——防 debounce 检查点竞态，由 Webview 自动暂存不弹窗；干净且无活动会话不确认）；“保存并打开”顺序保证（先刷新检查点再发 save 决定）有组件级 invocationCallOrder 回归。
+- 保存后连续保存 flake 收敛（第七轮，Lead /simplify 两轮审查驱动）：恢复 Host 保存成功后 loadModule（权威快照 modified/draft/message 以磁盘为准，mock 对齐同样时序）；DiffView 重建决策抽为纯函数 `diffViewLifecycle.ts`（挂载键 + 实际容器身份 + old/new/patch 逐字段比较），渲染 effect 改手动生命周期——编辑态同键同容器保持 FileDiff/Editor 实例（快速二次输入不丢失），只读态内容变化、挂载键变化或容器身份变化才重建，disposeAll 清理实际挂载的旧容器避免 DOM 残留；`diff/save-result` 在 DiffModule 按消息对象身份只消费一次（lastProcessedSaveResult），快照重渲染不得重放清掉第二轮脏状态；App 已有快照刷新保持模块挂载（刷新条）。回归：`tests/unit/diffViewLifecycle.test.ts`（含容器切换与逐字段碰撞，旧实现红）、`tests/components/AppLifecycle.test.ts`、`DiffModuleHarness.svelte` + DiffModule 回归（编辑态快照刷新不重建、save-result 一次性消费）、连续保存 e2e repeat-each≥15（旧代码红）；Lead 复验 35/35 + 连续保存 15/15。
 
 ### 阶段 2：Host 安全底座
 
