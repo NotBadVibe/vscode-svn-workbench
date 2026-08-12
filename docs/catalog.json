@@ -135,12 +135,12 @@
     },
     {
       "version": "0.0.6",
-      "status": "released",
-      "phase": "released",
+      "status": "candidate",
+      "phase": "candidate",
       "baseVersion": "0.0.5",
       "canonicalEntry": "releases/v0.0.6/README.md",
       "manifest": "releases/v0.0.6/manifest.json",
-      "releasedFact": true,
+      "releasedFact": false,
       "topics": ["diff-editing", "edit-token", "draft-recovery", "atomic-write"]
     }
   ],
