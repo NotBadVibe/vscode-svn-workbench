@@ -179,9 +179,16 @@ for (const entry of fs.readdirSync(releasesRoot, { withFileTypes: true })) {
           `${entry.name} evidence tree fingerprint does not match.`,
         );
       }
-      const installEvidence = walk(releaseDirectory).find(
-        (filePath) => path.basename(filePath) === "vsix-install.json",
-      );
+      // VSIX 安装证据：优先取 accepted evidence run 目录内的 vsix-install.json；
+      // 已发布/历史 run 目录不可变保留时，walk 命中过期 run 的旧指纹会导致
+      // 误报，故不回退到任意匹配。仅当 accepted run 缺该文件时才沿用旧行为。
+      const installEvidence = fs.existsSync(
+        path.join(evidenceDirectory, "vsix-install.json"),
+      )
+        ? path.join(evidenceDirectory, "vsix-install.json")
+        : walk(releaseDirectory).find(
+            (filePath) => path.basename(filePath) === "vsix-install.json",
+          );
       if (!installEvidence) {
         failures.push(`${entry.name} is missing VSIX install evidence.`);
       } else {
