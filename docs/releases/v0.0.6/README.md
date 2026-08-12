@@ -232,3 +232,17 @@ Token 单次使用。成功、失败、目标切换、范围变化、外部文�
 ### No-Go
 
 任一 P0 无法满足时，页内编辑不发布；继续使用 `v0.0.4` 的只读 Diff 与原生编辑器对比入口。No-go 不阻塞核心 SVN 能力。
+
+## 10. 候选与发布记录
+
+> 状态：候选（2026-08-12）。源码、门禁、VSIX、干净安装、真实 VS Code 自动冒烟与不可变 release evidence 已固化，等待 k3 独立发布审核与 Lead 放行远端发布。
+
+本版本候选源码位于分支 `agent/release-v0.0.6`，候选提交 `2369a1f8dc5630b39327a0c2e2b459f76c93fdd1`（在 `agent/develop-v0.0.6` 开发 HEAD `20ec696` 之上的发布状态同步提交）。已接受证据运行、不可变证据路径及其树指纹以 [`manifest.json`](./manifest.json) 为准。
+
+- 工具链：Node.js `26.0.0`、npm `12.0.2`、VS Code `1.132.1`、macOS `26.6` arm64；`npm ci` 干净安装。
+- `npm run verify` 通过：653 项单元/组件测试、行覆盖率 `93.44%`、Webview E2E 59 项、性能预算与 Extension Host（含真实 VS Code 页内编辑保存与外部/嵌套/BASE 边界用例）均通过。
+- VSIX `svn-workbench-0.0.6.vsix`：`8,487,010` bytes，SHA256 `1D72FD04FDA4CAFD6A37601CFA1A8EF6C10575BB497C1B258A3E75A99C67C11C`，共 3710 个文件；隔离 profile 完成安装、卸载与重装。
+- 真实 VS Code 自动冒烟（Extension Host，非 mock）：页内编辑首次/守卫保存与旧 token 重放拒绝；nested/external/BASE 变化目标拒绝；多窗口独立互不影响。页内编辑交互（真实 Webview 键入、脏草稿三选一对话框）由真实 Chromium Webview E2E（mock Host）与单元测试覆盖，CSP 零违规由 edit-mode Spike（生产等价严格 CSP）覆盖；真实 VS Code Webview 内的人工键入/对话框点检列为 k3/Lead 补验项。
+- 已接受证据 run `2026-08-12T09-49-06-770Z-84c6af98`，不可变路径 `artifacts/2026-08-12T09-49-06-770Z-84c6af98`。
+
+本记录随候选证据一并固化；正式发布（push/PR/merge/tag/Release/Marketplace）由 k3 审核与 Lead 放行后执行。
