@@ -18,15 +18,7 @@
 </script>
 
 <AppShell {state}>
-  {#if state.loading}
-    <section class="module-state" aria-busy="true" aria-live="polite">
-      <span class="loading-ring" aria-hidden="true"></span>
-      <div>
-        <strong>正在读取工作副本</strong>
-        <p>正在加载当前范围与 SVN 状态…</p>
-      </div>
-    </section>
-  {:else if state.error}
+  {#if state.error}
     <section class="module-state module-state--error" role="alert">
       <span class="codicon codicon-error" aria-hidden="true"></span>
       <div>
@@ -115,6 +107,14 @@
               >进入仓库恢复</button
             >{/if}
         </div>
+      </div>
+    </section>
+  {:else if state.loading && !state.snapshot}
+    <section class="module-state" aria-busy="true" aria-live="polite">
+      <span class="loading-ring" aria-hidden="true"></span>
+      <div>
+        <strong>正在读取工作副本</strong>
+        <p>正在加载当前范围与 SVN 状态…</p>
       </div>
     </section>
   {:else if state.snapshot}

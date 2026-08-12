@@ -3381,10 +3381,10 @@ export class WorkbenchController implements vscode.Disposable {
         snapshotVersion: result.ok ? result.snapshotVersion : 0,
       },
     });
-    if (result.ok && session.targetFile) {
-      // 工作副本已变化：重建 diff 快照（编辑能力与新草稿状态随之刷新）。
-      await this.loadModule("diff", session.targetFile);
-    }
+    // 保存成功后不重载模块：Webview 编辑会话已持有刚保存的内容与轮换后的
+    // token/hash/草稿版本，重载会销毁编辑器并引入输入竞态（连续保存回归）；
+    // 草稿干净状态由 save-result（acceptedRevision/newContentHash）在 Webview
+    // 本地同步，快照中的陈旧 draft/message 由模块本地抑制。
   }
 
   /** diff/draft-checkpoint：活动会话内的草稿检查点。 */

@@ -63,7 +63,14 @@
       !snapshot.truncated,
   );
   const targetId = $derived(snapshot.edit?.targetId);
-  const hasDraft = $derived(snapshot.draft !== undefined);
+  /**
+   * 保存成功后快照中的 draft 已陈旧（Host 不再重载模块）：本地抑制恢复入口
+   * 与“存在未保存草稿”提示，避免误导；目标切换/模块重载时自动复位。
+   */
+  let draftCleanAfterSave = $state(false);
+  const hasDraft = $derived(
+    snapshot.draft !== undefined && !draftCleanAfterSave,
+  );
   let editing = $state(false);
   let dirty = $state(false);
   let savedText = $state("");
@@ -97,6 +104,8 @@
     currentRawHash = editSession.rawHash;
     currentDraftRevision = editSession.draftRevision;
     if (!editing) {
+      // 真正进入/重建编辑会话：草稿即为当前会话基准，不再抑制。
+      draftCleanAfterSave = false;
       editing = true;
       savedText = snapshot.modified;
       saveError = undefined;
@@ -118,6 +127,7 @@
     if (diffSaveResult.result.ok) {
       saveError = undefined;
       dirty = false;
+      draftCleanAfterSave = true;
       // 保存基准以实际提交的正文为准，不依赖快照刷新时序。
       savedText = pendingSaveContent ?? snapshot.modified;
       pendingSaveContent = undefined;
