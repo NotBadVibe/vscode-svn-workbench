@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "version": "0.0.9",
+  "status": "draft",
+  "baseVersion": "0.0.8",
+  "releaseDate": null,
+  "gitTag": null,
+  "gitCommit": null,
+  "sourceState": "未形成 v0.0.9 候选源码；当前仅有 AI 真实性、入口命名与用户草稿保护规划，前序依赖尚未形成候选版本",
+  "vsix": null,
+  "tests": null,
+  "acceptedEvidenceRun": null,
+  "evidencePath": null
+}

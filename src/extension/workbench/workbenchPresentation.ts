@@ -21,8 +21,17 @@ import {
 import type { OperationScope } from "../../scope/operationScope";
 
 export function toScopeView(scope: OperationScope): WorkbenchScopeView {
+  const project = scope.project;
   return {
     repositoryName: path.basename(scope.repositoryRoot) || "SVN 仓库",
+    // v0.0.7 项目上下文：项目名是日常页面主上下文，工作副本名退为次级。
+    ...(project
+      ? {
+          projectName: project.projectName,
+          projectRootIsFallback: project.rootIsFallback,
+          projectWorkingCopyRelativePath: project.workingCopyRelativePath,
+        }
+      : {}),
     roots: scope.roots.map((root) => ({
       kind: root.kind,
       relativePath: normalizeRelative(root.relativePath),
@@ -69,6 +78,7 @@ export function getModuleTitle(
     "settings/selection": "提交选择规则",
     "diagnostics/environment": "环境诊断",
     "diagnostics/acceptance": "验收清单",
+    "projects/overview": "项目总览",
   };
   const task = isWorkbenchTaskForModule(taskId, moduleId)
     ? taskId

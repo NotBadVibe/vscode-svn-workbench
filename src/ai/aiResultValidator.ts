@@ -2,6 +2,7 @@ import * as path from "node:path";
 import { CommitSelectionExplanation } from "../commit/commitSelectionRules";
 import { OperationScope } from "../scope/operationScope";
 import { isPathInScope } from "../scope/pathBoundaryGuard";
+import { normalizePathIdentity as normalizePathKey } from "../scope/pathIdentity";
 import { AiFileDecision, AiSelectionResult } from "./aiProvider";
 
 const AI_SELECTION_CATEGORIES = [
@@ -100,7 +101,7 @@ export function validateAiSelectionResult(
   allowedPaths?: string[],
 ): AiSelectionResult {
   const allowed = allowedPaths
-    ? new Set(allowedPaths.map(normalizePathKey))
+    ? new Set(allowedPaths.map((filePath) => normalizePathKey(filePath)))
     : undefined;
   return {
     recommended: validateDecisionList(scope, result.recommended, allowed),
@@ -228,9 +229,4 @@ function toAbsoluteDecisionPath(
   return path.isAbsolute(filePath)
     ? path.resolve(filePath)
     : path.resolve(scope.repositoryRoot, filePath);
-}
-
-function normalizePathKey(filePath: string): string {
-  const resolved = path.resolve(filePath);
-  return process.platform === "win32" ? resolved.toLocaleLowerCase() : resolved;
 }

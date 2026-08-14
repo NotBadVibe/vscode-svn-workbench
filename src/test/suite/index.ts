@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 import * as vscode from "vscode";
+import { removeTestTempDirectory } from "./testTempDirectory";
 import {
   buildConflictAiRequest,
   containsSvnConflictMarkers,
@@ -163,6 +164,7 @@ import {
   OperationScope,
 } from "../../scope/operationScope";
 import { validatePathsInScope } from "../../scope/pathBoundaryGuard";
+import { normalizePathIdentity as normalizeTestPath } from "../../scope/pathIdentity";
 import { resolveWorkingCopySet } from "../../scope/workingCopyResolver";
 import {
   buildReleaseNotes,
@@ -195,31 +197,6 @@ class SkippedTest extends Error {
   constructor(message: string) {
     super(message);
     this.name = "SkippedTest";
-  }
-}
-
-function removeTestTempDirectory(tempRoot: string): void {
-  try {
-    fs.rmSync(tempRoot, {
-      recursive: true,
-      force: true,
-      maxRetries: 10,
-      retryDelay: 100,
-    });
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    const isDeferredWindowsCleanup =
-      process.platform === "win32" &&
-      (code === "EPERM" || code === "EBUSY" || code === "ENOTEMPTY");
-    if (isDeferredWindowsCleanup) {
-      // GitHub Windows Runner 偶尔会在 SVN 进程退出后继续短暂占用仓库文件。
-      // 测试断言已独立完成；临时 Runner 销毁时会回收该目录。
-      console.warn(
-        `WARN deferred cleanup for Windows test directory (${code}): ${tempRoot}`,
-      );
-      return;
-    }
-    throw error;
   }
 }
 
@@ -6052,9 +6029,4 @@ function escapeXml(value: string): string {
     .replace(/"/g, "&quot;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
-}
-
-function normalizeTestPath(filePath: string): string {
-  const resolved = path.resolve(filePath);
-  return process.platform === "win32" ? resolved.toLocaleLowerCase() : resolved;
 }

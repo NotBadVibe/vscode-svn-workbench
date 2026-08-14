@@ -50,7 +50,8 @@ const server = createServer(async (request, response) => {
     }
     const body = await readFile(filePath);
     const headers = {
-      "content-type": MIME[path.extname(filePath)] ?? "application/octet-stream",
+      "content-type":
+        MIME[path.extname(filePath)] ?? "application/octet-stream",
     };
     if (filePath.endsWith("index.html")) {
       const params = new URLSearchParams(url.search);

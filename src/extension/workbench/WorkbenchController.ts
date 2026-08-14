@@ -77,7 +77,20 @@ import {
   validateCommitMessageConvention,
 } from "../../commit/commitConvention";
 import { runCommitFlow } from "../../commit/commitFlow";
-import { SVN_WORKBENCH_CONFIG_FILE } from "../../config/svnWorkbenchConfig";
+import {
+  SVN_WORKBENCH_CONFIG_FILE,
+  getSvnWorkbenchConfigPath,
+  readSvnWorkbenchConfig,
+  readSvnWorkbenchConfigContent,
+} from "../../config/svnWorkbenchConfig";
+import {
+  hashTeamConfigContent,
+  planTeamConfigMigration,
+} from "../../config/teamConfigMigration";
+import {
+  executeTeamConfigMigration,
+  nodeTeamConfigMigrationIo,
+} from "../../config/teamConfigMigrationExecutor";
 import {
   buildCommitPlanPreview,
   toCommitFlowPlan,
@@ -122,9 +135,33 @@ import {
   type SettingsSnapshot,
   type WebviewToHostMessage,
   type WorkbenchModuleId,
+  type WorkbenchTaskId,
   type WorkbenchModuleSnapshot,
+  type ProjectsSnapshot,
 } from "../../protocol/workbenchProtocol";
 import { validatePathsInScope } from "../../scope/pathBoundaryGuard";
+import { isPathInScope } from "../../scope/pathBoundaryGuard";
+import { projectRelativePath } from "../../scope/projectIdentity";
+import {
+  isSameOrDescendantPath,
+  isSamePathIdentity,
+} from "../../scope/pathIdentity";
+import {
+  classifyWorkingCopyBinding,
+  isSvnBound,
+  type WorkingCopyBinding,
+} from "../../scope/workingCopyClassification";
+import { resolveWorkingCopyRoot } from "../../scope/workingCopyResolver";
+import {
+  createScopeFromExplorer,
+  createWorkingCopyScope,
+} from "../../scope/operationScope";
+import { finalizeScopeProject } from "../../scope/projectResolver";
+import { workingCopyBindingLabels } from "../../scope/workingCopyClassification";
+import {
+  groupProjectsByWorkingCopy,
+  sliceCandidatesForProject,
+} from "../../scm/projectSlicing";
 import {
   deleteStoredSvnCredential,
   readStoredSvnCredential,
@@ -137,9 +174,12 @@ import {
 } from "../../security/svnSecurityContext";
 import {
   collectSvnProperties,
+  parseSvnExternalsTargetNames,
+  parseSvnPropertiesXml,
   validatePropertyEdit,
 } from "../../properties/svnProperties";
 import { runSvnCommand } from "../../svn/svnCommandRunner";
+import { deriveRepositoryRelativePath, joinSvnUrl } from "../../svn/svnUrl";
 import {
   classifySvnFailure,
   extractSvnCertificateDetails,
@@ -157,6 +197,19 @@ import type {
   WorkbenchSession,
 } from "./workbenchSession";
 import {
+  collectUnfinishedContent,
+  resolveProjectSwitchDecision,
+  type UnfinishedContentResult,
+} from "./projectSwitchGuard";
+import {
+  deleteProjectDraft,
+  projectDraftKey,
+  readProjectDraft,
+  writeProjectDraft,
+  type ProjectDraftMap,
+} from "./projectDraftStore";
+import type { OperationScope } from "../../scope/operationScope";
+import {
   applyIgnoreOperation,
   asFileOperation,
   buildFileOperationArgs,
@@ -166,6 +219,7 @@ import {
   fileOperationSuccess,
   formatFileOperationCommand,
   validateFileOperation,
+  withProjectFileView,
 } from "./workbenchFileOperations";
 import {
   aiConventionToTeamConfig,
@@ -201,6 +255,8 @@ import {
   parseBlameOutput,
   readFileForDiff,
   resolveRepositoryUuid,
+  resolveRepositoryRootUrl,
+  resolveWorkingCopyUrl,
   toConflictContentView,
   truncateUtf8,
 } from "./workbenchSupport";
@@ -259,6 +315,9 @@ export class WorkbenchController implements vscode.Disposable {
     request: OpenWorkbenchRequest,
   ) => void | Promise<void>;
   private readonly securityRegistry?: SvnSecurityContextRegistry;
+  /** v0.0.7 项目草稿存储键（workspaceState 本身按工作区容器隔离）。 */
+  private static readonly PROJECT_DRAFTS_STATE_KEY =
+    "svnWorkbench.projectDrafts";
   /** 本控制器当前持有的仓库安全引用（归一化键）；一控制器最多持有一个。 */
   private securityReferenceRoot: string | undefined;
   /** v0.0.6 页内编辑服务（仅 Diff 窗口创建）。 */
@@ -343,6 +402,21 @@ export class WorkbenchController implements vscode.Disposable {
     if (!isWorkbenchTaskForModule(taskId, request.moduleId)) {
       throw new Error("请求的工作台子任务与功能模块不匹配。");
     }
+
+    /*
+     * v0.0.7 §8 项目切换草稿守卫：复用模块窗口从项目 A 加载项目 B 前，
+     * 检查提交说明草稿、手动选择、AI 结果与待确认预览；存在内容时三选一
+     * （保留为项目 A 草稿并切换 / 放弃内容并切换 / 留在当前项目）。
+     * Diff 窗口的目标级三选一守卫在下方独立处理。
+     */
+    if (
+      !this.isDiffWindow() &&
+      this.session &&
+      this.isProjectSwitch(this.session, request) &&
+      !(await this.confirmProjectSwitch(this.session, request))
+    ) {
+      return;
+    }
     const nextDiffTargetKey = this.isDiffWindow()
       ? buildDiffTargetKey({ ...request, taskId })
       : undefined;
@@ -412,9 +486,19 @@ export class WorkbenchController implements vscode.Disposable {
     this.latestModuleRequests.clear();
     if (this.session) {
       this.nativeDiffContentProvider?.releaseSession(this.session.sessionId);
+      // 会话替换即撤销旧会话的编辑令牌：旧 token 永不恢复有效（v0.0.7 §8）。
+      this.diffEdit?.revokeForSession(this.session.sessionId);
     }
     const storedAi = await readStoredAiConfiguration(this.context);
     const repositoryUuid = await resolveRepositoryUuid(
+      request.svnPath,
+      request.scope,
+    );
+    const repositoryRootUrl = await resolveRepositoryRootUrl(
+      request.svnPath,
+      request.scope,
+    );
+    const workingCopyUrl = await resolveWorkingCopyUrl(
       request.svnPath,
       request.scope,
     );
@@ -428,6 +512,8 @@ export class WorkbenchController implements vscode.Disposable {
       taskId,
       scopeView: toScopeView(request.scope),
       repositoryUuid,
+      repositoryRootUrl,
+      workingCopyUrl,
       scopeHash: hashOperationScope(request.scope),
       aiModels: buildScenarioModelMap(storedAi),
       security: {
@@ -435,6 +521,9 @@ export class WorkbenchController implements vscode.Disposable {
         hasStoredAuthentication: Boolean(storedAuthentication),
       },
     };
+    // 项目切换后恢复该项目保留的草稿（仅提交说明与手动选择；旧预览、
+    // 确认令牌与 AI 结果永不恢复）。
+    await this.restoreProjectDraft(this.session);
     // 一控制器最多持有一个仓库安全引用：首次会话 acquire；同仓库重开保持
     // 既有引用（不重复 acquire）；换仓库时先 release 旧引用再 acquire 新引用。
     this.syncSecurityReference(this.session.scope.repositoryRoot);
@@ -601,6 +690,7 @@ export class WorkbenchController implements vscode.Disposable {
   ): Promise<CommitCandidate[]> {
     const rules = await this.commitSelectionRuleService.getEffectiveRules(
       session.scope.repositoryRoot,
+      session.scope.project?.projectRoot,
     );
     return collectCommitCandidates(session.svnPath, session.scope, { rules });
   }
@@ -915,6 +1005,35 @@ export class WorkbenchController implements vscode.Disposable {
         }
         return;
       }
+      case "file/path-detail": {
+        await this.respondFilePathDetail(
+          session,
+          asString(data.relativePath),
+          message.requestId,
+        );
+        return;
+      }
+      case "file/copy-path": {
+        await this.copyFileLocalPath(
+          session,
+          asString(data.relativePath),
+          message.requestId,
+        );
+        return;
+      }
+      case "projects/open-task": {
+        await this.openProjectTask(
+          session,
+          asString(data.projectRoot),
+          asString(data.task),
+          message.requestId,
+        );
+        return;
+      }
+      case "projects/switch": {
+        await this.switchActiveProject(session, message.requestId);
+        return;
+      }
       case "security/configure-authentication":
         await this.configureAuthentication(session, message.requestId);
         return;
@@ -1091,6 +1210,7 @@ export class WorkbenchController implements vscode.Disposable {
         );
         const convention = await resolveCommitConventionConfig(
           session.scope.repositoryRoot,
+          session.scope.project?.projectRoot,
         );
         const diffSummaries = await collectCommitDiffSummaries(
           session.svnPath,
@@ -1620,6 +1740,7 @@ export class WorkbenchController implements vscode.Disposable {
           await saveProjectCommitConventionConfig(
             session.scope.repositoryRoot,
             config,
+            session.scope.project?.projectRoot,
           );
           const state = this.ensureSettingsState(session);
           state.recommendedTeamConfig = undefined;
@@ -1689,11 +1810,14 @@ export class WorkbenchController implements vscode.Disposable {
         return;
       }
       case "settings/open-team-file": {
-        const state = await readCommitConventionEditState(
+        // 明确的“打开配置文件”动作：无既有配置时在写入目标（项目根优先）
+        // 创建默认配置。
+        const configPath = await ensureSvnWorkbenchProjectConfig(
           session.scope.repositoryRoot,
+          session.scope.project?.projectRoot,
         );
         const document = await vscode.workspace.openTextDocument(
-          vscode.Uri.file(state.configPath),
+          vscode.Uri.file(configPath),
         );
         await vscode.window.showTextDocument(document, { preview: false });
         return;
@@ -1732,6 +1856,7 @@ export class WorkbenchController implements vscode.Disposable {
           result = await this.commitSelectionRuleService.saveRepositoryRules(
             session.scope.repositoryRoot,
             verdict.config,
+            session.scope.project?.projectRoot,
           );
         } finally {
           this.suppressSelectionInvalidationReload = false;
@@ -1767,6 +1892,7 @@ export class WorkbenchController implements vscode.Disposable {
           result =
             await this.commitSelectionRuleService.restoreRepositoryRulesToDefault(
               session.scope.repositoryRoot,
+              session.scope.project?.projectRoot,
             );
         } finally {
           this.suppressSelectionInvalidationReload = false;
@@ -1793,11 +1919,24 @@ export class WorkbenchController implements vscode.Disposable {
         // 与 open-team-file 同惯例：文件不存在时先按默认内容创建再打开。
         const configPath = await ensureSvnWorkbenchProjectConfig(
           session.scope.repositoryRoot,
+          session.scope.project?.projectRoot,
         );
         const document = await vscode.workspace.openTextDocument(
           vscode.Uri.file(configPath),
         );
         await vscode.window.showTextDocument(document, { preview: false });
+        return;
+      }
+      case "settings/preview-team-migration": {
+        await this.previewTeamMigration(session, message.requestId);
+        return;
+      }
+      case "settings/execute-team-migration": {
+        await this.executeTeamMigration(
+          session,
+          asString(data.token),
+          message.requestId,
+        );
         return;
       }
       case "settings/open-selection-vscode-settings": {
@@ -2173,6 +2312,7 @@ export class WorkbenchController implements vscode.Disposable {
         const candidates = await this.collectScopeCandidates(session);
         const convention = await resolveCommitConventionConfig(
           session.scope.repositoryRoot,
+          session.scope.project?.projectRoot,
         );
         const selectedPaths = candidates
           .filter(
@@ -2716,6 +2856,7 @@ export class WorkbenchController implements vscode.Disposable {
       const files = await buildWorkbenchFileViews(
         candidates,
         session.scopeView.repositoryName,
+        session.scope,
       );
       return {
         kind: "changes",
@@ -2797,6 +2938,10 @@ export class WorkbenchController implements vscode.Disposable {
 
     if (moduleId === "agent") {
       return session.agentState?.snapshot ?? emptyAgentSnapshot();
+    }
+
+    if (moduleId === "projects") {
+      return this.buildProjectsSnapshot(session);
     }
 
     throw new Error(`未实现的工作台模块：${moduleId satisfies never}`);
@@ -3674,10 +3819,19 @@ export class WorkbenchController implements vscode.Disposable {
   ): Promise<SettingsSnapshot> {
     const state = this.ensureSettingsState(session);
     const stored = await readStoredAiConfiguration(this.context);
+    const projectRoot = session.scope.project?.projectRoot;
     const teamState = await readCommitConventionEditState(
       session.scope.repositoryRoot,
+      projectRoot,
+    );
+    const conventionResolution = await resolveCommitConventionConfig(
+      session.scope.repositoryRoot,
+      projectRoot,
     );
     const team = state.recommendedTeamConfig ?? teamState.config;
+    // 团队规则动作反馈为一次性：本次快照下发后清除。
+    const teamFeedback = state.teamFeedback;
+    state.teamFeedback = undefined;
     const memory = readTeamMemory(
       this.context.workspaceState,
       session.repositoryUuid,
@@ -3687,6 +3841,7 @@ export class WorkbenchController implements vscode.Disposable {
     const resolvedSelectionRules =
       await this.commitSelectionRuleService.getEffectiveRules(
         session.scope.repositoryRoot,
+        projectRoot,
       );
     let selectionCandidates: CommitCandidate[] | undefined;
     let selectionPreviewError: string | undefined;
@@ -3720,6 +3875,24 @@ export class WorkbenchController implements vscode.Disposable {
         configPath: normalizeRelative(
           path.relative(session.scope.repositoryRoot, teamState.configPath),
         ),
+        configSource:
+          conventionResolution.source === "repository"
+            ? "workingCopy"
+            : conventionResolution.source,
+        inheritedFromWorkingCopy: conventionResolution.inheritedFromWorkingCopy,
+        migrationAvailable: teamState.inherited,
+        migrationPreview: state.teamMigration
+          ? {
+              token: state.teamMigration.token,
+              sourcePath: state.teamMigration.sourcePath,
+              targetPath: state.teamMigration.targetPath,
+              keys: state.teamMigration.plan.keys,
+              targetContent: state.teamMigration.plan.targetContent,
+              sourceContentAfter: state.teamMigration.plan.sourceContentAfter,
+              issues: state.teamMigration.plan.issues,
+            }
+          : undefined,
+        feedback: teamFeedback,
         enabled: team.enabled,
         requiredIssueId: team.requiredIssueId,
         issueIdPattern: team.issueIdPattern,
@@ -4057,17 +4230,753 @@ export class WorkbenchController implements vscode.Disposable {
     });
   }
 
+  /**
+   * v0.0.7 路径详情：把 Webview 传来的工作副本内相对路径还原为范围内
+   * 绝对路径；范围外路径一律拒绝，显示路径不得成为写操作身份。
+   */
+  private resolveScopedAbsolutePath(
+    session: WorkbenchSession,
+    relativePath: string,
+  ): string | undefined {
+    const absolutePath = path.resolve(
+      session.scope.repositoryRoot,
+      relativePath,
+    );
+    return isPathInScope(session.scope, absolutePath)
+      ? absolutePath
+      : undefined;
+  }
+
+  private async respondFilePathDetail(
+    session: WorkbenchSession,
+    relativePath: string | undefined,
+    requestId: string | undefined,
+  ): Promise<void> {
+    const respond = async (
+      payload: Extract<
+        HostToWebviewMessage,
+        { type: "file/path-detail-result" }
+      >["payload"],
+    ): Promise<void> => {
+      await this.post({
+        protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+        type: "file/path-detail-result",
+        requestId,
+        moduleId: session.moduleId,
+        payload,
+      });
+    };
+    if (!relativePath) {
+      await respond({ relativePath: "", error: "缺少文件路径。" });
+      return;
+    }
+    const absolutePath = this.resolveScopedAbsolutePath(session, relativePath);
+    if (!absolutePath) {
+      await respond({
+        relativePath,
+        error: "路径不在当前操作范围内，已拒绝。",
+      });
+      return;
+    }
+    const project = session.scope.project;
+    const projectRel = project
+      ? projectRelativePath(project.projectRoot, absolutePath)
+      : undefined;
+    const normalized = normalizeRelative(relativePath);
+    // SVN URL 只能由工作副本根检出 URL 推导；repos-root 拼接会产生错误
+    // URL（工作副本可能检出自仓库子目录）。信息不可得时如实缺省。
+    const svnUrl = session.workingCopyUrl
+      ? joinSvnUrl(session.workingCopyUrl, normalized)
+      : undefined;
+    const repositoryRelativePath =
+      session.repositoryRootUrl && session.workingCopyUrl
+        ? deriveRepositoryRelativePath(
+            session.repositoryRootUrl,
+            session.workingCopyUrl,
+            normalized,
+          )
+        : undefined;
+    await respond({
+      relativePath,
+      detail: {
+        projectRelativePath:
+          projectRel === undefined || projectRel === "."
+            ? undefined
+            : projectRel,
+        workingCopyRelativePath: normalized,
+        repositoryRelativePath,
+        svnUrl,
+        absolutePath,
+      },
+    });
+  }
+
+  /** 本地完整路径的复制只由 Host 完成，不经过 Webview 可写字段。 */
+  private async copyFileLocalPath(
+    session: WorkbenchSession,
+    relativePath: string | undefined,
+    requestId: string | undefined,
+  ): Promise<void> {
+    const absolutePath = relativePath
+      ? this.resolveScopedAbsolutePath(session, relativePath)
+      : undefined;
+    if (!absolutePath) {
+      await this.post({
+        protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+        type: "operation/error",
+        requestId,
+        moduleId: session.moduleId,
+        payload: {
+          title: "无法复制完整路径",
+          message: "路径缺失或不在当前操作范围内。",
+          recoverable: true,
+          guidance: ["刷新当前范围后重试。"],
+        },
+      });
+      return;
+    }
+    await vscode.env.clipboard.writeText(absolutePath);
+    await this.post({
+      protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+      type: "operation/result",
+      requestId,
+      moduleId: session.moduleId,
+      payload: { title: "已复制完整路径", message: absolutePath },
+    });
+  }
+
+  /**
+   * v0.0.7 项目总览（§6.1）：只读优先，允许聚合数量，但不得把多个项目
+   * 自动合成一个 operationScope。同一工作副本只采集一次状态再按项目切片。
+   */
+  private async buildProjectsSnapshot(
+    session: WorkbenchSession,
+  ): Promise<ProjectsSnapshot> {
+    const folders = (vscode.workspace.workspaceFolders ?? []).map((folder) => ({
+      name: folder.name,
+      absolutePath: folder.uri.fsPath,
+    }));
+    const items = await Promise.all(
+      folders.map(async (folder) => {
+        const binding = await this.classifyFolderWorkingCopyBinding(
+          folder.absolutePath,
+          session.svnPath,
+        );
+        const workingCopyRoot =
+          binding !== "notSvn" && binding !== "missing"
+            ? await resolveWorkingCopyRoot(session.svnPath, folder.absolutePath)
+            : undefined;
+        return {
+          name: folder.name,
+          absolutePath: folder.absolutePath,
+          exists: binding !== "missing",
+          binding,
+          bindingLabel: workingCopyBindingLabels[binding],
+          workingCopyRoot,
+          current: session.scope.project
+            ? isSamePathIdentity(
+                folder.absolutePath,
+                session.scope.project.projectRoot,
+              )
+            : false,
+        };
+      }),
+    );
+    // 同一工作副本共享一次状态采集，再按项目根切片统计数量。
+    const countByProject = new Map<
+      string,
+      { changes: number; conflicts: number; unversioned: number }
+    >();
+    const svnProjects = items.filter(
+      (item) => item.workingCopyRoot !== undefined,
+    );
+    const groups = groupProjectsByWorkingCopy(
+      svnProjects.map((item) => ({
+        absolutePath: item.absolutePath,
+        workingCopyRoot: item.workingCopyRoot!,
+      })),
+    );
+    await Promise.all(
+      [...groups.values()].map(async (group) => {
+        const workingCopyRoot = group[0].workingCopyRoot;
+        try {
+          const scope = createWorkingCopyScope(workingCopyRoot);
+          const rules =
+            await this.commitSelectionRuleService.getEffectiveRules(
+              workingCopyRoot,
+            );
+          const candidates = await collectCommitCandidates(
+            session.svnPath,
+            scope,
+            { rules },
+          );
+          for (const project of group) {
+            const sliced = sliceCandidatesForProject(
+              candidates,
+              project.absolutePath,
+            );
+            countByProject.set(project.absolutePath, {
+              conflicts: sliced.filter(
+                (candidate) => candidate.status === "conflicted",
+              ).length,
+              unversioned: sliced.filter(
+                (candidate) => candidate.status === "unversioned",
+              ).length,
+              changes: sliced.filter(
+                (candidate) =>
+                  candidate.status !== "conflicted" &&
+                  candidate.status !== "unversioned",
+              ).length,
+            });
+          }
+        } catch (error) {
+          appendOutput(
+            `项目总览统计 ${workingCopyRoot} 失败：${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      }),
+    );
+    return {
+      kind: "projects",
+      projects: items.map((item) => ({
+        ...item,
+        counts: countByProject.get(item.absolutePath),
+      })),
+      generatedAt: new Date().toISOString(),
+    };
+  }
+
+  /** 为明确项目目标构建独立 scope；不得把多个项目合成一个 scope。 */
+  private async buildProjectScope(
+    svnPath: string,
+    folderPath: string,
+  ): Promise<OperationScope | undefined> {
+    const workingCopyRoot = await resolveWorkingCopyRoot(svnPath, folderPath);
+    if (!workingCopyRoot) return undefined;
+    return createScopeFromExplorer(
+      workingCopyRoot,
+      vscode.Uri.file(folderPath),
+      undefined,
+      finalizeScopeProject(folderPath, workingCopyRoot),
+    );
+  }
+
+  /** 项目总览行动作：以明确项目目标打开变更/提交/更新。 */
+  private async openProjectTask(
+    session: WorkbenchSession,
+    projectRoot: string | undefined,
+    task: string | undefined,
+    requestId: string | undefined,
+  ): Promise<void> {
+    const taskMap: Record<
+      string,
+      { moduleId: WorkbenchModuleId; taskId: WorkbenchTaskId }
+    > = {
+      changes: { moduleId: "changes", taskId: "changes/overview" },
+      commit: { moduleId: "commit", taskId: "commit/compose" },
+      update: { moduleId: "repository", taskId: "repository/update" },
+    };
+    const entry = task ? taskMap[task] : undefined;
+    const folder = (vscode.workspace.workspaceFolders ?? []).find(
+      (candidate) =>
+        projectRoot !== undefined &&
+        isSamePathIdentity(candidate.uri.fsPath, projectRoot),
+    );
+    if (!entry || !projectRoot || !folder) {
+      await this.sendError(
+        session.moduleId,
+        "无法打开项目任务",
+        "目标项目不在当前工作区，或任务类型不受支持。",
+        true,
+        requestId,
+      );
+      return;
+    }
+    const scope = await this.buildProjectScope(
+      session.svnPath,
+      folder.uri.fsPath,
+    );
+    if (!scope) {
+      await this.sendError(
+        session.moduleId,
+        "无法打开项目任务",
+        `项目 ${folder.name} 不属于 SVN 工作副本，不能执行 SVN 任务。`,
+        true,
+        requestId,
+      );
+      return;
+    }
+    const request = buildCrossModuleWindowRequest({
+      moduleId: entry.moduleId,
+      taskId: entry.taskId,
+      svnPath: session.svnPath,
+      scope,
+    });
+    if (
+      shouldOpenInOtherWindow(
+        entry.moduleId,
+        this.servedModule,
+        this.onOpenInOtherWindow,
+      )
+    ) {
+      await this.onOpenInOtherWindow!(request);
+      return;
+    }
+    // 同窗口加载新项目：open() 内的项目切换草稿守卫会检查未提交内容。
+    await this.open(request);
+  }
+
+  /** 范围栏“切换项目”：QuickPick 选择项目或进入项目总览，不静默切换。 */
+  private async switchActiveProject(
+    session: WorkbenchSession,
+    requestId: string | undefined,
+  ): Promise<void> {
+    const folders = vscode.workspace.workspaceFolders ?? [];
+    if (folders.length === 0) {
+      await this.sendError(
+        session.moduleId,
+        "无法切换项目",
+        "当前窗口没有打开的工作区项目。",
+        true,
+        requestId,
+      );
+      return;
+    }
+    const overviewItem = {
+      label: "$(project) 查看项目总览",
+      description: "查看全部项目的归属与变更统计",
+      folder: undefined as vscode.WorkspaceFolder | undefined,
+    };
+    const picked = await vscode.window.showQuickPick(
+      [
+        overviewItem,
+        ...folders.map((folder) => ({
+          label: folder.name,
+          description: folder.uri.fsPath,
+          folder: folder as vscode.WorkspaceFolder | undefined,
+        })),
+      ],
+      { placeHolder: "选择要切换到的项目", canPickMany: false },
+    );
+    if (!picked) return;
+    if (!picked.folder) {
+      const request = buildCrossModuleWindowRequest({
+        moduleId: "projects",
+        taskId: "projects/overview",
+        svnPath: session.svnPath,
+        scope: session.scope,
+      });
+      if (
+        shouldOpenInOtherWindow(
+          "projects",
+          this.servedModule,
+          this.onOpenInOtherWindow,
+        )
+      ) {
+        await this.onOpenInOtherWindow!(request);
+        return;
+      }
+      await this.open(request);
+      return;
+    }
+    const scope = await this.buildProjectScope(
+      session.svnPath,
+      picked.folder.uri.fsPath,
+    );
+    if (!scope) {
+      await this.sendError(
+        session.moduleId,
+        "无法切换项目",
+        `项目 ${picked.folder.name} 不属于 SVN 工作副本。`,
+        true,
+        requestId,
+      );
+      return;
+    }
+    // Diff 窗口没有项目级任务，切换到该项目的变更模块。
+    const targetModule = this.isDiffWindow() ? "changes" : session.moduleId;
+    const request = buildCrossModuleWindowRequest({
+      moduleId: targetModule,
+      taskId: this.isDiffWindow()
+        ? defaultWorkbenchTask("changes")
+        : session.taskId,
+      svnPath: session.svnPath,
+      scope,
+    });
+    if (
+      shouldOpenInOtherWindow(
+        targetModule,
+        this.servedModule,
+        this.onOpenInOtherWindow,
+      )
+    ) {
+      await this.onOpenInOtherWindow!(request);
+      return;
+    }
+    // 同窗口加载新项目：open() 内的项目切换草稿守卫会检查未提交内容。
+    await this.open(request);
+  }
+
+  /** 是否发生项目切换（双方都有项目上下文且项目根 identity 不同）。 */
+  private isProjectSwitch(
+    session: WorkbenchSession,
+    request: OpenWorkbenchRequest,
+  ): boolean {
+    const current = session.scope.project?.projectRoot;
+    const next = request.scope.project?.projectRoot;
+    return (
+      current !== undefined &&
+      next !== undefined &&
+      !isSamePathIdentity(current, next)
+    );
+  }
+
+  /** 收集当前会话的未完成内容（§8 检查清单）。 */
+  private collectSessionUnfinishedContent(
+    session: WorkbenchSession,
+  ): UnfinishedContentResult {
+    return collectUnfinishedContent({
+      commitMessage: session.commitState?.message,
+      hasManualSelection: (session.commitState?.selectedPaths?.length ?? 0) > 0,
+      hasCommitAiResult: session.commitState?.ai !== undefined,
+      hasCommitPreview: session.commitState?.preview !== undefined,
+      hasChangesPreview: session.changesState?.preview !== undefined,
+      hasHistoryRestorePreview:
+        session.historyState?.restorePreview !== undefined,
+      hasConflictResolvePreview:
+        session.conflictState?.resolvePreview !== undefined,
+      hasConflictAdvice: session.conflictState?.advice !== undefined,
+    });
+  }
+
+  /**
+   * 项目切换三选一确认：返回 true 表示继续切换。取消或“留在当前项目”
+   * 返回 false；“保留为当前项目草稿并切换”先暂存草稿再切换。
+   */
+  private async confirmProjectSwitch(
+    session: WorkbenchSession,
+    request: OpenWorkbenchRequest,
+  ): Promise<boolean> {
+    const check = this.collectSessionUnfinishedContent(session);
+    if (!check.hasContent) return true;
+    const currentName = session.scope.project?.projectName ?? "当前项目";
+    const nextName = request.scope.project?.projectName ?? "新项目";
+    const choice = await vscode.window.showWarningMessage(
+      `从项目 ${currentName} 切换到 ${nextName}：当前项目还有未完成内容（${check.reasons.join("、")}）。`,
+      "保留为当前项目草稿并切换",
+      "放弃内容并切换",
+      "留在当前项目",
+    );
+    const decision = resolveProjectSwitchDecision(choice);
+    if (decision === "stay") {
+      this.revealPanel();
+      return false;
+    }
+    if (decision === "stash") {
+      this.stashProjectDraft(session);
+    }
+    // discard：直接继续；会话替换会丢弃状态并撤销旧令牌。
+    return true;
+  }
+
+  /** 项目草稿只保存提交说明与手动选择，按项目 + 模块 + 范围隔离。 */
+  private stashProjectDraft(session: WorkbenchSession): void {
+    const projectRoot = session.scope.project?.projectRoot;
+    const commit = session.commitState;
+    if (!projectRoot || !commit) return;
+    const store = this.context.workspaceState.get<ProjectDraftMap>(
+      WorkbenchController.PROJECT_DRAFTS_STATE_KEY,
+      {},
+    );
+    const key = projectDraftKey(
+      projectRoot,
+      session.moduleId,
+      session.scopeHash,
+    );
+    void this.context.workspaceState.update(
+      WorkbenchController.PROJECT_DRAFTS_STATE_KEY,
+      writeProjectDraft(store, key, {
+        message: commit.message,
+        selectedPaths: commit.selectedPaths ?? [],
+        scopeHash: session.scopeHash,
+        savedAt: Date.now(),
+      }),
+    );
+  }
+
+  private async restoreProjectDraft(session: WorkbenchSession): Promise<void> {
+    const projectRoot = session.scope.project?.projectRoot;
+    if (
+      !projectRoot ||
+      (session.moduleId !== "commit" && session.moduleId !== "changes")
+    ) {
+      return;
+    }
+    // §8：只恢复当前 projectId + moduleId + operationScope 的草稿；
+    // 同项目同模块但范围不同的草稿不得串用。
+    const key = projectDraftKey(
+      projectRoot,
+      session.moduleId,
+      session.scopeHash,
+    );
+    const store = this.context.workspaceState.get<ProjectDraftMap>(
+      WorkbenchController.PROJECT_DRAFTS_STATE_KEY,
+      {},
+    );
+    const draft = readProjectDraft(store, key);
+    if (!draft || (!draft.message && draft.selectedPaths.length === 0)) {
+      return;
+    }
+    // 取出即移除：恢复一次性生效，状态重新采集由快照构建完成。
+    void this.context.workspaceState.update(
+      WorkbenchController.PROJECT_DRAFTS_STATE_KEY,
+      deleteProjectDraft(store, key),
+    );
+    // 手动选择与当前候选集合/范围复验：已不存在、越界或不再可选的路径
+    // 剔除并反馈，不得恢复成隐式扩大。
+    let selectedPaths: string[] = [];
+    let dropped = 0;
+    let collectionFailed = false;
+    if (draft.selectedPaths.length > 0) {
+      try {
+        const candidates = await this.collectScopeCandidates(session);
+        const selectable = new Set(
+          candidates
+            .filter(
+              (candidate) =>
+                candidate.selection !== "blocked" &&
+                candidate.selection !== "excluded",
+            )
+            .map((candidate) => normalizeRelative(candidate.relativePath)),
+        );
+        selectedPaths = draft.selectedPaths.filter((selectedPath) =>
+          selectable.has(normalizeRelative(selectedPath)),
+        );
+        dropped = draft.selectedPaths.length - selectedPaths.length;
+      } catch {
+        // 安全降级：采集失败时不得恢复未经复验的选择（可能已越界）。
+        collectionFailed = true;
+      }
+    }
+    const state = this.ensureCommitState(session);
+    state.message = draft.message;
+    state.selectedPaths = selectedPaths;
+    state.feedback = collectionFailed
+      ? {
+          tone: "warning",
+          message:
+            "已恢复该项目保留的提交说明草稿；状态采集失败，旧文件选择未恢复，请刷新后重新选择。",
+        }
+      : {
+          tone: dropped > 0 ? "warning" : "success",
+          message:
+            dropped > 0
+              ? `已恢复该项目保留的提交草稿；${dropped} 个已选路径已不存在、越界或不再可选，已剔除。旧预览与确认令牌不恢复，请重新检查。`
+              : "已恢复该项目保留的提交草稿；旧预览与确认令牌不恢复，请重新检查。",
+        };
+  }
+
+  /**
+   * v0.0.7 §9 团队规则迁移预览：把工作副本根的 commitConvention/
+   * commitSelection 键迁移到已确认项目根。只生成预览与确认令牌，不写文件。
+   */
+  private async previewTeamMigration(
+    session: WorkbenchSession,
+    requestId: string | undefined,
+  ): Promise<void> {
+    const state = this.ensureSettingsState(session);
+    state.teamMigration = undefined;
+    const workingCopyRoot = session.scope.repositoryRoot;
+    const projectRoot = session.scope.project?.projectRoot;
+    if (!projectRoot || isSamePathIdentity(projectRoot, workingCopyRoot)) {
+      state.teamFeedback = {
+        tone: "warning",
+        message: "当前项目根与工作副本根重合，无需迁移团队规则。",
+      };
+      await this.sendSettingsSnapshot(session, requestId);
+      return;
+    }
+    const source = await readSvnWorkbenchConfig(workingCopyRoot);
+    const targetPath = getSvnWorkbenchConfigPath(projectRoot);
+    const targetExists = await fs.access(targetPath).then(
+      () => true,
+      () => false,
+    );
+    const sourceContent = source.exists
+      ? await readSvnWorkbenchConfigContent(workingCopyRoot)
+      : "";
+    const plan = planTeamConfigMigration({
+      sourceRaw: source.raw,
+      sourceExists: source.exists && source.raw !== undefined,
+      targetExists,
+      projectRoot,
+      workingCopyRoot,
+    });
+    state.teamMigration = {
+      token: randomUUID(),
+      sourcePath: getSvnWorkbenchConfigPath(workingCopyRoot),
+      targetPath,
+      sourceHash: hashTeamConfigContent(sourceContent),
+      plan,
+    };
+    if (plan.issues.length > 0) {
+      state.teamFeedback = {
+        tone: "warning",
+        message: `迁移预览存在阻止项：${plan.issues[0]}`,
+      };
+    }
+    await this.sendSettingsSnapshot(session, requestId);
+  }
+
+  /**
+   * v0.0.7 §9 团队规则迁移执行：校验确认令牌，重新校验源哈希、目标存在性
+   * 与项目边界后才写文件；只迁移白名单键，不涉及任何凭据或私密材料。
+   */
+  private async executeTeamMigration(
+    session: WorkbenchSession,
+    token: string | undefined,
+    requestId: string | undefined,
+  ): Promise<void> {
+    const state = this.ensureSettingsState(session);
+    const fail = async (message: string): Promise<void> => {
+      state.teamFeedback = { tone: "error", message };
+      await this.sendSettingsSnapshot(session, requestId);
+    };
+    const pending = state.teamMigration;
+    if (!pending || pending.token !== token) {
+      await fail("迁移预览已过期或不存在，请重新生成迁移预览后再确认。");
+      return;
+    }
+    if (pending.plan.issues.length > 0) {
+      await fail(`迁移存在阻止项：${pending.plan.issues[0]}`);
+      return;
+    }
+    const workingCopyRoot = session.scope.repositoryRoot;
+    const projectRoot = session.scope.project?.projectRoot;
+    if (
+      !projectRoot ||
+      !isSameOrDescendantPath(projectRoot, workingCopyRoot) ||
+      isSamePathIdentity(projectRoot, workingCopyRoot)
+    ) {
+      state.teamMigration = undefined;
+      await fail("项目边界已变化，迁移已取消；请重新生成迁移预览。");
+      return;
+    }
+    try {
+      // 事务执行层：预检（源哈希/目标排他创建）→ 原子替换源 → 失败补偿
+      // 回滚 → 执行后复验；任何失败都不会显示成功。
+      const result = await executeTeamConfigMigration(
+        nodeTeamConfigMigrationIo,
+        {
+          sourcePath: pending.sourcePath,
+          targetPath: pending.targetPath,
+          targetContent: pending.plan.targetContent,
+          sourceContentAfter: pending.plan.sourceContentAfter,
+          expectedSourceHash: pending.sourceHash,
+        },
+      );
+      if (!result.ok) {
+        if (result.stage !== "precheck") {
+          state.teamMigration = undefined;
+        }
+        await fail(`${result.error}\n${result.recovery.join("\n")}`);
+        return;
+      }
+      state.teamMigration = undefined;
+      this.commitSelectionRuleService.invalidateRepository(
+        workingCopyRoot,
+        "repository-config",
+      );
+      this.commitSelectionRuleService.invalidateRepository(
+        projectRoot,
+        "repository-config",
+      );
+      state.teamFeedback = {
+        tone: "success",
+        message: `已把 ${pending.plan.keys.join("、")} 迁移到项目根配置；工作副本根配置中的这些键已移除，其他仍继承工作副本根配置的项目将不再继承这些规则。`,
+      };
+      await this.sendSettingsSnapshot(session, requestId);
+    } catch (error) {
+      await fail(
+        `迁移团队规则失败：${errorMessage(error)}。请检查两个配置文件状态后重试，或手动复制配置。`,
+      );
+    }
+  }
+
+  /**
+   * v0.0.7 工作副本归属分类（releases/v0.0.7 §6.3）：复用工作副本解析器
+   * 区分独立工作副本根、上层工作副本、嵌套工作副本、external、非 SVN
+   * 与路径不存在。仅当 folder 自身是嵌套根且 SVN 可用时才读取父目录
+   * svn:externals 以区分 external；SVN 不可用时按嵌套工作副本报告。
+   */
+  private async classifyFolderWorkingCopyBinding(
+    folderPath: string,
+    svnPath: string | undefined,
+  ): Promise<WorkingCopyBinding> {
+    const exists = await Promise.resolve(
+      vscode.workspace.fs.stat(vscode.Uri.file(folderPath)),
+    )
+      .then(() => true)
+      .catch(() => false);
+    if (!exists) {
+      return "missing";
+    }
+    const executable = svnPath ?? "svn";
+    const workingCopyRoot = await resolveWorkingCopyRoot(
+      executable,
+      folderPath,
+    );
+    let parentWorkingCopyRoot: string | undefined;
+    let isExternalsTarget: boolean | undefined;
+    if (workingCopyRoot && isSamePathIdentity(workingCopyRoot, folderPath)) {
+      const parentDir = path.dirname(folderPath);
+      parentWorkingCopyRoot = await resolveWorkingCopyRoot(
+        executable,
+        parentDir,
+      );
+      if (parentWorkingCopyRoot && svnPath) {
+        const externals = await runSvnCommand(
+          svnPath,
+          ["propget", "svn:externals", "--xml", parentDir],
+          parentDir,
+        );
+        // 未设置该属性时 svn 以 W200017 警告退出 1——视为未声明。
+        if (externals.exitCode === 0 || externals.stderr.includes("W200017")) {
+          const targetNames = new Set(
+            parseSvnPropertiesXml(externals.stdout)
+              .filter((item) => item.name === "svn:externals")
+              .flatMap((item) => parseSvnExternalsTargetNames(item.value)),
+          );
+          isExternalsTarget = targetNames.has(path.basename(folderPath));
+        }
+      }
+    }
+    return classifyWorkingCopyBinding({
+      exists,
+      folderPath,
+      workingCopyRoot,
+      parentWorkingCopyRoot,
+      isExternalsTarget,
+    });
+  }
+
   private async buildDiagnosticsSnapshot(): Promise<DiagnosticsSnapshot> {
     const executable = await resolveSvnExecutable();
     const stored = await readStoredAiConfiguration(this.context);
     const workspaces = await Promise.all(
       (vscode.workspace.workspaceFolders ?? []).map(async (folder) => {
-        const isSvnWorkingCopy = await Promise.resolve(
-          vscode.workspace.fs.stat(vscode.Uri.joinPath(folder.uri, ".svn")),
-        )
-          .then(() => true)
-          .catch(() => false);
-        return { name: folder.name, path: folder.uri.fsPath, isSvnWorkingCopy };
+        // v0.0.7：诊断复用工作副本解析器，不再只检查 folder 根是否直接
+        // 包含 .svn；位于上层工作副本的项目不再被误报为非 SVN。
+        const binding = await this.classifyFolderWorkingCopyBinding(
+          folder.uri.fsPath,
+          executable?.path,
+        );
+        return {
+          name: folder.name,
+          path: folder.uri.fsPath,
+          isSvnWorkingCopy: isSvnBound(binding),
+          binding,
+        };
       }),
     );
     const report = buildEnvironmentDiagnosticReport({
@@ -4350,6 +5259,7 @@ export class WorkbenchController implements vscode.Disposable {
         files: await buildWorkbenchFileViews(
           candidates,
           session.scopeView.repositoryName,
+          session.scope,
         ),
         summary: summary.statuses,
         refreshedAt: new Date().toISOString(),
@@ -4496,15 +5406,21 @@ export class WorkbenchController implements vscode.Disposable {
 
     return {
       kind: "commit",
-      files: candidates.map((candidate) => ({
-        relativePath: candidate.relativePath,
-        status: candidate.status,
-        propStatus: candidate.propStatus,
-        fileType: candidate.fileType,
-        selection: candidate.selection,
-        reason: candidate.reason,
-        evaluation: candidate.evaluation,
-      })),
+      files: candidates.map((candidate) =>
+        withProjectFileView(
+          {
+            relativePath: candidate.relativePath,
+            status: candidate.status,
+            propStatus: candidate.propStatus,
+            fileType: candidate.fileType,
+            selection: candidate.selection,
+            reason: candidate.reason,
+            evaluation: candidate.evaluation,
+          },
+          candidate.absolutePath,
+          session.scope,
+        ),
+      ),
       summary: {
         total: summary.total,
         selected: summary.selected,

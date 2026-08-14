@@ -1,7 +1,7 @@
-import * as path from "node:path";
 import { CommitCandidate } from "../commit/commitCandidateCollector";
 import { CommitDiffSummary } from "../commit/commitDiffSummary";
 import { OperationScope } from "../scope/operationScope";
+import { normalizePathIdentity as normalizePathKey } from "../scope/pathIdentity";
 import {
   AiCommitMessageFileContext,
   AiCommitMessageRequest,
@@ -371,9 +371,4 @@ function countBy(values: string[]): Record<string, number> {
     result[value] = (result[value] ?? 0) + 1;
   }
   return result;
-}
-
-function normalizePathKey(filePath: string): string {
-  const resolved = path.resolve(filePath);
-  return process.platform === "win32" ? resolved.toLocaleLowerCase() : resolved;
 }

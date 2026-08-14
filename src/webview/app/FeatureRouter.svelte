@@ -12,6 +12,7 @@
     diffSaveResult,
     draftAck,
     targetSwitchRequest,
+    pathDetail,
     onAction,
   }: {
     snapshot: WorkbenchModuleSnapshot;
@@ -32,6 +33,10 @@
       HostToWebviewMessage,
       { type: "diff/target-switch-confirm" }
     >["payload"];
+    pathDetail?: Extract<
+      HostToWebviewMessage,
+      { type: "file/path-detail-result" }
+    >["payload"];
     onAction: (action: WebviewAction, data?: Record<string, unknown>) => void;
   } = $props();
 </script>
@@ -48,7 +53,7 @@
 
 {#if snapshot.kind === "changes"}
   {#await import("../features/changes/ChangesModule.svelte")}{@render loadingModule()}{:then module}{@const Feature =
-      module.default}<Feature {snapshot} {onAction} />{/await}
+      module.default}<Feature {snapshot} {onAction} {pathDetail} />{/await}
 {:else if snapshot.kind === "diff"}
   {#await import("../features/diff/DiffModule.svelte")}{@render loadingModule()}{:then module}{@const Feature =
       module.default}<Feature
@@ -61,7 +66,7 @@
     />{/await}
 {:else if snapshot.kind === "commit"}
   {#await import("../features/commit/CommitModule.svelte")}{@render loadingModule()}{:then module}{@const Feature =
-      module.default}<Feature {snapshot} {onAction} />{/await}
+      module.default}<Feature {snapshot} {onAction} {pathDetail} />{/await}
 {:else if snapshot.kind === "history"}
   {#await import("../features/history/HistoryModule.svelte")}{@render loadingModule()}{:then module}{@const Feature =
       module.default}<Feature {snapshot} {onAction} />{/await}
@@ -88,5 +93,8 @@
       module.default}<Feature {snapshot} {onAction} />{/await}
 {:else if snapshot.kind === "agent"}
   {#await import("../features/agent/AgentModule.svelte")}{@render loadingModule()}{:then module}{@const Feature =
+      module.default}<Feature {snapshot} {onAction} />{/await}
+{:else if snapshot.kind === "projects"}
+  {#await import("../features/projects/ProjectsModule.svelte")}{@render loadingModule()}{:then module}{@const Feature =
       module.default}<Feature {snapshot} {onAction} />{/await}
 {/if}

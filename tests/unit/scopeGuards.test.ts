@@ -53,6 +53,9 @@ describe("右键操作范围边界", () => {
     };
     expect(isPathInScope(folderScope, "/repo/src/a")).toBe(true);
     expect(isPathInScope(folderScope, "/repo/src/a/child.ts")).toBe(true);
+    expect(isPathInScope(folderScope, "/repo/src/a/..cache/file.ts")).toBe(
+      true,
+    );
     expect(isPathInScope(folderScope, "/repo/src/ab/child.ts")).toBe(false);
     expect(isPathInScope(folderScope, "/repo/src")).toBe(false);
     expect(

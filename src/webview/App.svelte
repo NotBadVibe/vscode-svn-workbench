@@ -133,6 +133,7 @@
       diffSaveResult={state.diffSaveResult}
       draftAck={state.draftAck}
       targetSwitchRequest={state.targetSwitchRequest}
+      pathDetail={state.pathDetail}
       onAction={(action, data) => state.action(action, data)}
     />
   {:else}

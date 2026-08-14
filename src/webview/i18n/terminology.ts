@@ -79,6 +79,7 @@ export const taskLabels: Record<WorkbenchTaskId, string> = {
   "settings/selection": "提交选择规则",
   "diagnostics/environment": "环境诊断",
   "diagnostics/acceptance": "验收清单",
+  "projects/overview": "项目总览",
 };
 
 export function fileStatusLabel(status: WorkbenchFileStatus): string {

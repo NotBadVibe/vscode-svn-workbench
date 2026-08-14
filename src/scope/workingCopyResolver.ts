@@ -1,6 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { runSvnCommand } from "../svn/svnCommandRunner";
+import { normalizePathIdentity as normalizePathKey } from "./pathIdentity";
 
 export interface WorkingCopySetResolution {
   root?: string;
@@ -60,11 +61,6 @@ export async function resolveWorkingCopySet(
     invalidTargets,
     mixed: roots.length > 1,
   };
-}
-
-function normalizePathKey(value: string): string {
-  const resolved = path.resolve(value);
-  return process.platform === "win32" ? resolved.toLocaleLowerCase() : resolved;
 }
 
 async function findLocalWorkingCopyRoot(

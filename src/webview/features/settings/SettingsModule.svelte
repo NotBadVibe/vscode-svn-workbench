@@ -287,6 +287,80 @@
         <p class="path-hint" title={snapshot.team.configPath}>
           {snapshot.team.configPath}
         </p>
+        {#if snapshot.team.configSource}
+          <p class="config-source-note" role="note">
+            来源：{snapshot.team.configSource === "project"
+              ? "当前项目"
+              : snapshot.team.configSource === "workingCopy"
+                ? snapshot.team.inheritedFromWorkingCopy
+                  ? "继承自工作副本根"
+                  : "工作副本根"
+                : "VS Code 设置"}
+          </p>
+        {/if}
+        {#if snapshot.team.feedback}
+          <div
+            class={`notice notice--${snapshot.team.feedback.tone}`}
+            role="status"
+          >
+            {snapshot.team.feedback.message}
+          </div>
+        {/if}
+        {#if snapshot.team.migrationAvailable && !snapshot.team.migrationPreview}
+          <div class="notice notice--info migration-note">
+            <span>
+              当前项目正在继承工作副本根的团队规则。可以把规则迁移到项目根，
+              迁移后本项目使用独立配置。
+            </span>
+            <button
+              class="button button--secondary"
+              onclick={() => onAction("settings/preview-team-migration")}
+              >预览迁移到项目根</button
+            >
+          </div>
+        {/if}
+        {#if snapshot.team.migrationPreview}
+          {@const migration = snapshot.team.migrationPreview}
+          <div class="migration-preview" role="group" aria-label="迁移预览">
+            <strong>迁移预览</strong>
+            <p>
+              把 {migration.keys.join("、")} 从
+              <code>{migration.sourcePath}</code> 迁移到
+              <code>{migration.targetPath}</code>。
+            </p>
+            <details class="command-preview">
+              <summary>查看迁移后的项目根配置</summary>
+              <pre>{migration.targetContent}</pre>
+            </details>
+            <details class="command-preview">
+              <summary>查看迁移后的工作副本根配置</summary>
+              <pre>{migration.sourceContentAfter}</pre>
+            </details>
+            <p class="migration-preview__impact">
+              影响：其他仍继承工作副本根配置的项目将不再继承这些规则；不迁移任何凭据或私密材料。
+            </p>
+            {#if migration.issues.length > 0}
+              <div class="issue-list" role="alert">
+                {#each migration.issues as issue, issueIndex (issueIndex)}
+                  <div>
+                    <span class="codicon codicon-error" aria-hidden="true"
+                    ></span>
+                    {issue}
+                  </div>
+                {/each}
+              </div>
+            {:else}
+              <button
+                class="button button--primary"
+                onclick={() =>
+                  onAction("settings/execute-team-migration", {
+                    token: migration.token,
+                  })}
+                >确认迁移 {migration.keys.length} 项团队规则到项目根</button
+              >
+            {/if}
+          </div>
+        {/if}
         <label class="switch-row switch-row--strong"
           ><input type="checkbox" bind:checked={enabled} /><span
             ><strong>启用提交规范</strong><small

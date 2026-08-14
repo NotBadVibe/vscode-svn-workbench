@@ -49,6 +49,10 @@ export interface WorkbenchSession extends OpenWorkbenchRequest {
   taskId: WorkbenchTaskId;
   scopeView: WorkbenchScopeView;
   repositoryUuid: string;
+  /** v0.0.7：仓库根 URL，仅用于路径详情推导仓库内路径。 */
+  repositoryRootUrl?: string;
+  /** v0.0.7：工作副本根检出 URL，是推导文件 SVN URL 的唯一合法基础。 */
+  workingCopyUrl?: string;
   scopeHash: string;
   aiModels: Partial<Record<AiUsageScenario, string>>;
   security: {
@@ -96,6 +100,21 @@ export interface WorkbenchSession extends OpenWorkbenchRequest {
     selectionFeedback?: SettingsSnapshot["selection"]["feedback"];
     /** 保存被拒绝时的结构化校验错误列表。 */
     selectionSaveErrors?: string[];
+    /** v0.0.7 §9：团队规则迁移待确认预览（含源哈希与执行计划）。 */
+    teamMigration?: {
+      token: string;
+      sourcePath: string;
+      targetPath: string;
+      sourceHash: string;
+      plan: {
+        keys: string[];
+        targetContent: string;
+        sourceContentAfter: string;
+        issues: string[];
+      };
+    };
+    /** 团队规则动作一次性反馈。 */
+    teamFeedback?: { tone: "success" | "warning" | "error"; message: string };
   };
   repositoryState?: {
     update?: RepositorySnapshot["update"];

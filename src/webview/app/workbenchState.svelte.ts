@@ -67,6 +67,14 @@ export class WorkbenchState {
       >["payload"]
     | undefined
   >();
+  /** v0.0.7 文件路径详情（file/path-detail-result 一次性结果）。 */
+  pathDetail = $state<
+    | Extract<
+        HostToWebviewMessage,
+        { type: "file/path-detail-result" }
+      >["payload"]
+    | undefined
+  >();
 
   readonly dispose: () => void;
 
@@ -155,12 +163,14 @@ export class WorkbenchState {
         this.diffSaveResult = undefined;
         this.draftAck = undefined;
         this.targetSwitchRequest = undefined;
+        this.pathDetail = undefined;
         break;
       case "module/loading":
         this.loading = true;
         this.progress = undefined;
         this.notification = undefined;
         this.error = undefined;
+        this.pathDetail = undefined;
         break;
       case "module/snapshot":
         this.snapshot = message.payload.snapshot;
@@ -220,6 +230,9 @@ export class WorkbenchState {
         break;
       case "diff/target-switch-confirm":
         this.targetSwitchRequest = message.payload;
+        break;
+      case "file/path-detail-result":
+        this.pathDetail = message.payload;
         break;
     }
   }

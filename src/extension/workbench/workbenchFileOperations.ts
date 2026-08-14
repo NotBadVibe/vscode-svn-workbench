@@ -9,6 +9,8 @@ import type {
 } from "../../protocol/workbenchProtocol";
 import type { OperationScope } from "../../scope/operationScope";
 import { validatePathsInScope } from "../../scope/pathBoundaryGuard";
+import { isSameOrDescendantPath } from "../../scope/pathIdentity";
+import { projectRelativePath } from "../../scope/projectIdentity";
 import { runSvnCommand } from "../../svn/svnCommandRunner";
 import { quoteRelative } from "./workbenchPresentation";
 
@@ -198,6 +200,7 @@ export function fileOperationRecoverability(operation: FileOperation): string {
 export async function buildWorkbenchFileViews(
   candidates: Awaited<ReturnType<typeof collectCommitCandidates>>,
   currentRepositoryName: string,
+  scope?: OperationScope,
 ): Promise<WorkbenchFileView[]> {
   return Promise.all(
     candidates.map(async (candidate) => {
@@ -219,7 +222,7 @@ export async function buildWorkbenchFileViews(
           // Ordinary files and directories remain owned by the current working copy.
         }
       }
-      return {
+      const view: WorkbenchFileView = {
         relativePath: candidate.relativePath,
         status: candidate.status,
         propStatus: candidate.propStatus,
@@ -235,8 +238,38 @@ export async function buildWorkbenchFileViews(
             ? "嵌套工作副本：必须在其独立 SCM 仓库模型中操作。"
             : candidate.reason,
       };
+      return scope
+        ? withProjectFileView(view, candidate.absolutePath, scope)
+        : view;
     }),
   );
+}
+
+/**
+ * v0.0.7：文件主路径默认显示项目内路径；仅当 scope 为用户明确建立的
+ * 跨项目选择时附加项目徽标，单项目列表不逐行重复项目名。显示路径不
+ * 得作为 Host 写操作身份（身份仍使用 relativePath + 工作副本身份）。
+ */
+export function withProjectFileView(
+  view: WorkbenchFileView,
+  absolutePath: string,
+  scope: OperationScope,
+): WorkbenchFileView {
+  const projects = scope.projects;
+  const multiProject = projects !== undefined && projects.length > 1;
+  const owner = multiProject
+    ? (projects.find((project) =>
+        isSameOrDescendantPath(absolutePath, project.projectRoot),
+      ) ?? scope.project)
+    : scope.project;
+  if (!owner) return view;
+  const display = projectRelativePath(owner.projectRoot, absolutePath);
+  return {
+    ...view,
+    projectRelativePath:
+      display === undefined || display === "." ? undefined : display,
+    projectName: multiProject ? owner.projectName : undefined,
+  };
 }
 
 export function fileOperationSuccess(

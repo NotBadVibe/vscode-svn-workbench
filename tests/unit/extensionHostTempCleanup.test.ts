@@ -4,10 +4,9 @@ import { describe, expect, it } from "vitest";
 
 /**
  * Extension Host 测试基础设施的轻量静态回归：
- * 临时目录清理必须统一走 removeTestTempDirectory（Windows EPERM/EBUSY/
- * ENOTEMPTY 重试 + 延迟，最后只警告 defer 由 Runner 回收），不得在
- * fixture 内直接 fs.rmSync，否则真实 SVN 验收完成后会因 Windows 短暂
- * 文件占用误判失败。
+ * fixture 必须统一调用可测试的 removeTestTempDirectory，不得在 index.ts
+ * 内直接 fs.rmSync，否则真实 SVN 验收完成后会因 Windows 短暂文件占用
+ * 误判失败。错误分类和重试参数由 windowsPlatformContracts.test.ts 验证。
  */
 describe("Extension Host 临时目录清理", () => {
   const suiteSource = readFileSync(
@@ -15,19 +14,11 @@ describe("Extension Host 临时目录清理", () => {
     "utf8",
   );
 
-  it("直接 fs.rmSync(tempRoot 只允许出现在 removeTestTempDirectory 助手内", () => {
-    const helperStart = suiteSource.indexOf("function removeTestTempDirectory");
-    const helperEnd = suiteSource.indexOf("export async function run");
-    expect(helperStart).toBeGreaterThanOrEqual(0);
-    expect(helperEnd).toBeGreaterThan(helperStart);
-    const helperBody = suiteSource.slice(helperStart, helperEnd);
-    expect(helperBody).toContain("fs.rmSync(tempRoot");
-
-    // 全文件范围内，直接 fs.rmSync(tempRoot 的调用点数量必须等于助手内的
-    // 那一个；任何新增 fixture 直接清理都会使该断言失败。
-    const directCleanupCalls = suiteSource.match(/fs\.rmSync\(\s*tempRoot/g);
-    expect(directCleanupCalls).not.toBeNull();
-    expect(directCleanupCalls!.length).toBe(1);
+  it("index.ts 导入统一助手且不存在直接 fs.rmSync(tempRoot", () => {
+    expect(suiteSource).toContain(
+      'import { removeTestTempDirectory } from "./testTempDirectory"',
+    );
+    expect(suiteSource).not.toMatch(/fs\.rmSync\(\s*tempRoot/);
   });
 
   it("testDiffEditSvnBindingIsolation 的 finally 使用统一清理助手", () => {

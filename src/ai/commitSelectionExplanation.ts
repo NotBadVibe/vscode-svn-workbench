@@ -1,5 +1,5 @@
-import * as path from "node:path";
 import { CommitCandidate } from "../commit/commitCandidateCollector";
+import { normalizePathIdentity as normalizePathKey } from "../scope/pathIdentity";
 import { AiFileDecision, AiSelectionResult } from "./aiProvider";
 
 export type CommitSelectionAiDecision =
@@ -76,9 +76,4 @@ function createEmptySummary(): Record<CommitSelectionAiDecision, number> {
     blocked: 0,
     none: 0,
   };
-}
-
-function normalizePathKey(filePath: string): string {
-  const resolved = path.resolve(filePath);
-  return process.platform === "win32" ? resolved.toLocaleLowerCase() : resolved;
 }

@@ -222,6 +222,7 @@ function injectDiffTargetSwitch(relativePath: string): void {
       moduleId: "diff",
       scope: {
         repositoryName: "vscode-svn",
+        projectName: "vscode-svn",
         roots: [{ kind: "folder", relativePath: "." }],
         source: "internal",
       },
@@ -262,6 +263,7 @@ function createInitialMockSnapshot(
     agent: agentSnapshot,
     settings: settingsSnapshot,
     diagnostics: diagnosticsSnapshot,
+    projects: projectsSnapshot,
   };
   return factories[moduleId]();
 }
@@ -314,14 +316,15 @@ function injectHostMessage(
     | "diff/draft-checkpointed"
     | "diff/target-switch-confirm"
     | "module/loading"
+    | "file/path-detail-result"
     | "operation/result",
   payload: Record<string, unknown>,
 ): void {
   workbenchBridge.injectMock({
     protocolVersion: WORKBENCH_PROTOCOL_VERSION,
     type,
-    moduleId: "diff",
-    taskId: "diff/working",
+    moduleId: activeMockModuleId,
+    taskId: activeMockTaskId,
     sessionId: "mock-session-id",
     repositoryUuid: "mock-repository-uuid",
     scopeHash: "mock-scope-hash",
@@ -346,6 +349,7 @@ export function startMockWorkbench(): void {
       moduleId: initialModuleId,
       scope: {
         repositoryName: "vscode-svn",
+        projectName: "vscode-svn",
         roots: [{ kind: "folder", relativePath: "." }],
         source: "internal",
       },
@@ -428,12 +432,49 @@ export function startMockWorkbench(): void {
         agent: agentSnapshot,
         settings: settingsSnapshot,
         diagnostics: diagnosticsSnapshot,
+        projects: projectsSnapshot,
       };
       const createSnapshot = snapshots[moduleId];
       const taskId = isWorkbenchTaskForModule(data.taskId, moduleId)
         ? data.taskId
         : defaultWorkbenchTask(moduleId);
       if (createSnapshot) injectSnapshot(moduleId, createSnapshot(), taskId);
+    }
+    if (
+      action === "file/path-detail" &&
+      typeof data.relativePath === "string"
+    ) {
+      const relativePath = data.relativePath as string;
+      injectHostMessage("file/path-detail-result", {
+        relativePath,
+        detail: {
+          projectRelativePath: relativePath.startsWith("src/")
+            ? relativePath
+            : undefined,
+          workingCopyRelativePath: relativePath,
+          repositoryRelativePath: relativePath,
+          svnUrl: `https://svn.example.internal/svn/vscode-svn/${relativePath}`,
+          absolutePath: `/mock/vscode-svn/${relativePath}`,
+        },
+      });
+    }
+    if (action === "file/copy-path" && typeof data.relativePath === "string") {
+      injectHostMessage("operation/result", {
+        title: "已复制完整路径",
+        message: `/mock/vscode-svn/${data.relativePath as string}`,
+      });
+    }
+    if (action === "projects/open-task" && typeof data.task === "string") {
+      const taskSnapshots: Record<
+        string,
+        [WorkbenchModuleId, () => WorkbenchModuleSnapshot]
+      > = {
+        changes: ["changes", changesSnapshot],
+        commit: ["commit", commitSnapshot],
+        update: ["repository", repositorySnapshot],
+      };
+      const entry = taskSnapshots[data.task];
+      if (entry) injectSnapshot(entry[0], entry[1]());
     }
     if (action === "open-diff" && typeof data.relativePath === "string") {
       // 当前目标有草稿时模拟 Host 的三选一拦截：先确认，不直接切换。
@@ -588,6 +629,7 @@ export function startMockWorkbench(): void {
         agent: agentSnapshot,
         settings: settingsSnapshot,
         diagnostics: diagnosticsSnapshot,
+        projects: projectsSnapshot,
       };
       if (activeMockModuleId === "diff") {
         injectSnapshot("diff", mockDiffSnapshot(activeMockDiffPath));
@@ -847,6 +889,43 @@ export function startMockWorkbench(): void {
             ...settingsSnapshotValue.ai,
             models: [{ id: "deepseek-v4-flash", owner: "deepseek" }],
             feedback: { tone: "success", message: "读取到 1 个可用模型。" },
+          },
+        }),
+      );
+    }
+    if (action === "settings/preview-team-migration") {
+      injectSnapshot(
+        "settings",
+        settingsSnapshot({
+          team: {
+            ...settingsSnapshotValue.team,
+            configSource: "workingCopy",
+            inheritedFromWorkingCopy: true,
+            migrationPreview: {
+              token: "mock-migration-token",
+              sourcePath: "/mock/code/.svn-workbench.json",
+              targetPath: "/mock/code/EmApi/.svn-workbench.json",
+              keys: ["commitConvention", "commitSelection"],
+              targetContent: '{\n  "commitConvention": { "enabled": true }\n}',
+              sourceContentAfter: "{}",
+              issues: [],
+            },
+          },
+        }),
+      );
+    }
+    if (action === "settings/execute-team-migration") {
+      injectSnapshot(
+        "settings",
+        settingsSnapshot({
+          team: {
+            ...settingsSnapshotValue.team,
+            configSource: "project",
+            feedback: {
+              tone: "success",
+              message:
+                "已把 commitConvention、commitSelection 迁移到项目根配置。",
+            },
           },
         }),
       );
@@ -1793,6 +1872,7 @@ const settingsSnapshotValue = {
   },
   team: {
     configPath: ".svn-workbench.json",
+    configSource: "project" as const,
     enabled: true,
     requiredIssueId: true,
     issueIdPattern: "[A-Z]+-\\d+",
@@ -1860,6 +1940,43 @@ function settingsSnapshot(
     selection: buildMockSelectionSection(),
     ...overrides,
   } as WorkbenchModuleSnapshot;
+}
+
+function projectsSnapshot(): WorkbenchModuleSnapshot {
+  return {
+    kind: "projects",
+    projects: [
+      {
+        name: "vscode-svn",
+        absolutePath: "/mock/vscode-svn",
+        exists: true,
+        binding: "workingCopyRoot",
+        bindingLabel: "独立工作副本根",
+        workingCopyRoot: "/mock/vscode-svn",
+        counts: { changes: 2, conflicts: 0, unversioned: 1 },
+        current: true,
+      },
+      {
+        name: "EmApi",
+        absolutePath: "/mock/code/EmApi",
+        exists: true,
+        binding: "parentWorkingCopy",
+        bindingLabel: "位于上层工作副本",
+        workingCopyRoot: "/mock/code",
+        counts: { changes: 1, conflicts: 1, unversioned: 0 },
+        current: false,
+      },
+      {
+        name: "notes",
+        absolutePath: "/mock/notes",
+        exists: true,
+        binding: "notSvn",
+        bindingLabel: "非 SVN 目录",
+        current: false,
+      },
+    ],
+    generatedAt: new Date().toISOString(),
+  };
 }
 
 function diagnosticsSnapshot(): WorkbenchModuleSnapshot {
