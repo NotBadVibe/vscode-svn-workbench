@@ -1,8 +1,8 @@
-# SVN Workbench v0.0.7 开发中：多根工作区与项目边界
+# SVN Workbench v0.0.7 候选：多根工作区与项目边界
 
-> 文档身份：`developing-version-specification`
+> 文档身份：`release-candidate-record`
 >
-> 状态：开发中（draft）。第一批跨平台路径、Windows 文件系统和 CI 契约，第二批项目边界领域类型、活动项目解析与诊断归属分类，第三批路径显示与路径详情、SCM 项目切片、项目总览与项目切换草稿守卫、团队规则项目层与迁移预览均已落地，并有单元/组件/控制器测试支持；真实 `EM.code-workspace`、`Code2 / bchd-front-Dev3.0` 人工主路径与真实 Windows Runner 仍待候选验收。当前源码尚未绑定不可变候选提交或发布证据，不表示整个版本已经完成或可以发布。
+> 状态：候选（candidate）。三个开发批次已绑定不可变源码提交 `c3f6c7d617c781bd0fea56e1002a9f94a78fd2f4`、VSIX 指纹与 accepted evidence；本地完整门禁及干净安装/卸载/重装均通过。真实 GitHub Windows Runner 仍需由候选 PR 验证，真实 `EM.code-workspace`、`Code2 / bchd-front-Dev3.0` 为未执行的人工场景，不虚构通过。
 >
 > 基线版本：`v0.0.6`。当前实现事实仍以实际源码、测试和 [`../../current/`](../../current/) 为准。
 >
@@ -78,7 +78,7 @@ v0.0.7 只解决一个基础问题：**用户正在操作的项目、VS Code 工
 
 当前开发工作树已通过 `npm run test:windows-contracts` 和 `npm run verify`。这些是本地开发验证，不是候选 evidence；实际 GitHub Windows Runner 仍需在下一次 PR 中验证。
 
-### 1.2 仍待实施的版本主路径
+### 1.2 候选限制与后续项
 
 - `EM.code-workspace`、`Code2 / bchd-front-Dev3.0` 与真实 Windows Runner 的候选验收（人工主路径与 CI）；
 - 共享工作副本状态变化的跨窗口专门失效事件（当前依赖既有刷新与哈希失效链路）；
@@ -274,7 +274,7 @@ Diagnostics 必须复用工作副本解析器，不能只检查项目根是否�
 5. **已完成（开发批次 2）**：Diagnostics 复用工作副本解析器，识别上层工作副本、嵌套工作副本与 external；
 6. **已完成（开发批次 3）**：项目总览模块与范围栏项目切换入口；
 7. **已完成（开发批次 3）**：跨项目选择拆分与模块切换草稿守卫；
-8. **候选验收中**：运行完整候选测试并同步 `docs/current/` 与版本 manifest。
+8. **已完成（候选）**：完整本地门禁、发布 evidence、VSIX 打包与干净安装/卸载/重装已通过；三平台 GitHub CI 随候选 PR 验证。
 
 ## 11. 候选验收
 
@@ -315,9 +315,11 @@ Diagnostics 必须复用工作副本解析器，不能只检查项目根是否�
 
 人工主路径必须覆盖 `Code2 / bchd-front-Dev3.0`、`EM.code-workspace`、不同工作副本的多根 workspace、非 SVN folder 和跨项目脏草稿切换。
 
-### 11.5 自动化覆盖现状（开发批次 3 结束后）
+### 11.5 自动化覆盖与候选结果
 
-以下候选条目已有自动化测试支持（测试文件括注）；其余只能保留为“待候选人工/CI”，不得虚构通过。
+候选源码 `c3f6c7d617c781bd0fea56e1002a9f94a78fd2f4` 已通过 Node `26.0.0` / npm `12.0.2` 的 `npm run verify`：覆盖率套件 `810/810`、Lines `93.38%`，Webview E2E `59/59`，性能预算与真实 SVN Extension Host 通过；`svn-workbench-0.0.7.vsix`（`8,520,489` 字节，SHA256 `A725D4957D772E34C873F9D5567CA43A45ACFBD26170F6A698883CAEF753BE70`）在 VS Code `1.133.0` 完成干净安装、卸载与重装。accepted evidence 为 `2026-08-14T01-17-12-288Z-b29171e5`。
+
+以下候选条目已有自动化测试支持（测试文件括注）；其余只能保留为“未执行人工/待 CI”，不得虚构通过。
 
 - `UX07-ROOT-01/02/03/06`：`tests/unit/projectResolver.test.ts`、`tests/unit/projectIdentity.test.ts`（单项目名显示另见 `tests/components/ScopeBar.test.ts`）；
 - `UX07-ROOT-04`（项目级动作不含兄弟项目）：`tests/unit/svnSourceControlManager.test.ts`、`tests/unit/scmProjectSlicing.test.ts`；
@@ -331,7 +333,7 @@ Diagnostics 必须复用工作副本解析器，不能只检查项目根是否�
 - `UX07-SWITCH-01/02`：`tests/unit/workbenchProjectSwitch.test.ts`、`tests/unit/projectSwitchGuard.test.ts`；
 - `UX07-SAFE-02`（项目边界变化失效）：`tests/unit/workbenchArchitecture.test.ts`（范围哈希含项目根）、`tests/unit/workbenchProjectSwitch.test.ts`（旧预览/token 不恢复）；
 - `UX07-PLATFORM-01..04`、`UX07-CI-01`：批次 1 既有测试（`tests/unit/windowsPlatformContracts.test.ts`、`tests/unit/extensionHostTempCleanup.test.ts`、`tests/unit/githubWorkflow.test.ts`）；
-- 待候选人工/CI：`UX07-ROOT-05` 的真实检出组合、`EM.code-workspace` 与 `Code2 / bchd-front-Dev3.0` 人工主路径、`UX07-SAFE-01`（Relocate/Cleanup/恢复的工作副本级风险提示）与真实 Windows Runner。
+- 未执行人工/待 CI：`UX07-ROOT-05` 的真实检出组合、`EM.code-workspace` 与 `Code2 / bchd-front-Dev3.0` 人工主路径、`UX07-SAFE-01`（Relocate/Cleanup/恢复的工作副本级风险提示）与真实 Windows Runner；其中 Windows Runner 必须在发布前由候选 PR 通过。
 
 ## 12. 明确不做
 
