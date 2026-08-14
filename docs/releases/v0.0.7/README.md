@@ -1,8 +1,8 @@
-# SVN Workbench v0.0.7 候选：多根工作区与项目边界
+# SVN Workbench v0.0.7：多根工作区与项目边界
 
-> 文档身份：`release-candidate-record`
+> 文档身份：`released-version-record`
 >
-> 状态：候选（candidate）。三个开发批次已绑定不可变源码提交 `31379b0d0d5a74a58b44d576bec694ac1db13a75`、VSIX 指纹与 accepted evidence；本地完整门禁及干净安装/卸载/重装均通过。真实 GitHub Windows Runner 仍需由候选 PR 验证，真实 `EM.code-workspace`、`Code2 / bchd-front-Dev3.0` 为未执行的人工场景，不虚构通过。
+> 状态：已发布（released，2026-08-14）。标签 `v0.0.7` 指向不可变源码提交 `31379b0d0d5a74a58b44d576bec694ac1db13a75`；accepted evidence、VSIX 指纹、本地完整门禁、干净安装/卸载/重装及 PR #30 的 Linux/macOS/Windows GitHub Actions 均通过。真实 `EM.code-workspace`、`Code2 / bchd-front-Dev3.0` 为未执行的人工场景，不虚构通过。
 >
 > 基线版本：`v0.0.6`。当前实现事实仍以实际源码、测试和 [`../../current/`](../../current/) 为准。
 >
@@ -30,7 +30,7 @@ v0.0.7 只解决一个基础问题：**用户正在操作的项目、VS Code 工
 
 ### 1.1 已并入 v0.0.7 的开发内容
 
-以下内容已经由实际源码和测试支持，覆盖 v0.0.7 的三个开发批次；候选结论仍以本轮完整验收、发布 evidence 与 CI 为准。
+以下内容由已发布源码、测试、accepted evidence 与三平台 CI 支持，覆盖 v0.0.7 的三个开发批次。
 
 #### 跨平台路径 identity
 
@@ -78,7 +78,7 @@ v0.0.7 只解决一个基础问题：**用户正在操作的项目、VS Code 工
 
 当前开发工作树已通过 `npm run test:windows-contracts` 和 `npm run verify`。这些是本地开发验证，不是候选 evidence；实际 GitHub Windows Runner 仍需在下一次 PR 中验证。
 
-### 1.2 候选限制与后续项
+### 1.2 已知限制与后续项
 
 - `EM.code-workspace`、`Code2 / bchd-front-Dev3.0` 与真实 Windows Runner 的候选验收（人工主路径与 CI）；
 - 共享工作副本状态变化的跨窗口专门失效事件（当前依赖既有刷新与哈希失效链路）；
@@ -274,7 +274,7 @@ Diagnostics 必须复用工作副本解析器，不能只检查项目根是否�
 5. **已完成（开发批次 2）**：Diagnostics 复用工作副本解析器，识别上层工作副本、嵌套工作副本与 external；
 6. **已完成（开发批次 3）**：项目总览模块与范围栏项目切换入口；
 7. **已完成（开发批次 3）**：跨项目选择拆分与模块切换草稿守卫；
-8. **已完成（候选）**：完整本地门禁、发布 evidence、VSIX 打包与干净安装/卸载/重装已通过；三平台 GitHub CI 随候选 PR 验证。
+8. **已完成（发布）**：完整本地门禁、发布 evidence、VSIX 打包与干净安装/卸载/重装，以及 PR #30 的 Linux/macOS/Windows GitHub CI 均通过。
 
 ## 11. 候选验收
 
@@ -315,13 +315,13 @@ Diagnostics 必须复用工作副本解析器，不能只检查项目根是否�
 
 人工主路径必须覆盖 `Code2 / bchd-front-Dev3.0`、`EM.code-workspace`、不同工作副本的多根 workspace、非 SVN folder 和跨项目脏草稿切换。
 
-### 11.5 自动化覆盖与候选结果
+### 11.5 自动化覆盖与发布结果
 
 候选源码 `31379b0d0d5a74a58b44d576bec694ac1db13a75` 已通过 Node `26.0.0` / npm `12.0.2` 的 `npm run verify`：覆盖率套件 `810/810`、Lines `93.39%`，Webview E2E `59/59`，性能预算与真实 SVN Extension Host 通过；`svn-workbench-0.0.7.vsix`（`8,520,755` 字节，SHA256 `185B3A997AFBDF465A5AFE0601DFD642B8B69C4890D519A6B7F05AF03514FEA2`）在 VS Code `1.133.0` 完成干净安装、卸载与重装。accepted evidence 为 `2026-08-14T01-30-23-555Z-79ee9304`。
 
 候选 PR 首次 Windows 运行发现 synthetic POSIX 路径测试未显式注入平台，同时用户可见的 Windows 项目相对路径被内部 identity 小写化；候选源码已改为“identity 路径用于边界和 Host key、原始路径用于显示”，并为 POSIX/Windows 测试显式注入各自路径语义。首次运行不作为发布通过结论。
 
-以下候选条目已有自动化测试支持（测试文件括注）；其余只能保留为“未执行人工/待 CI”，不得虚构通过。
+以下条目已有自动化测试支持（测试文件括注）；其余只能保留为“未执行人工”，不得虚构通过。
 
 - `UX07-ROOT-01/02/03/06`：`tests/unit/projectResolver.test.ts`、`tests/unit/projectIdentity.test.ts`（单项目名显示另见 `tests/components/ScopeBar.test.ts`）；
 - `UX07-ROOT-04`（项目级动作不含兄弟项目）：`tests/unit/svnSourceControlManager.test.ts`、`tests/unit/scmProjectSlicing.test.ts`；
@@ -335,7 +335,8 @@ Diagnostics 必须复用工作副本解析器，不能只检查项目根是否�
 - `UX07-SWITCH-01/02`：`tests/unit/workbenchProjectSwitch.test.ts`、`tests/unit/projectSwitchGuard.test.ts`；
 - `UX07-SAFE-02`（项目边界变化失效）：`tests/unit/workbenchArchitecture.test.ts`（范围哈希含项目根）、`tests/unit/workbenchProjectSwitch.test.ts`（旧预览/token 不恢复）；
 - `UX07-PLATFORM-01..04`、`UX07-CI-01`：批次 1 既有测试（`tests/unit/windowsPlatformContracts.test.ts`、`tests/unit/extensionHostTempCleanup.test.ts`、`tests/unit/githubWorkflow.test.ts`）；
-- 未执行人工/待 CI：`UX07-ROOT-05` 的真实检出组合、`EM.code-workspace` 与 `Code2 / bchd-front-Dev3.0` 人工主路径、`UX07-SAFE-01`（Relocate/Cleanup/恢复的工作副本级风险提示）与真实 Windows Runner；其中 Windows Runner 必须在发布前由候选 PR 通过。
+- PR #30 的 Linux、macOS、Windows 与 CodeQL 共 6 项门禁全部通过；Windows 专项契约、覆盖率、Webview 与后续步骤均实际运行成功。
+- 未执行人工：`UX07-ROOT-05` 的真实检出组合、`EM.code-workspace` 与 `Code2 / bchd-front-Dev3.0` 人工主路径，以及 `UX07-SAFE-01`（Relocate/Cleanup/恢复的工作副本级风险提示）。
 
 ## 12. 明确不做
 
