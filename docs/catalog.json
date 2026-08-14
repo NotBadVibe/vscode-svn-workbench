@@ -166,12 +166,12 @@
     },
     {
       "version": "0.0.8",
-      "status": "candidate",
-      "phase": "candidate",
+      "status": "released",
+      "phase": "released",
       "baseVersion": "0.0.7",
       "canonicalEntry": "releases/v0.0.8/README.md",
       "manifest": "releases/v0.0.8/manifest.json",
-      "releasedFact": false,
+      "releasedFact": true,
       "topics": [
         "changes-usability",
         "commit-usability",
