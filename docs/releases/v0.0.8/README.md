@@ -1,8 +1,8 @@
 # SVN Workbench v0.0.8：Changes 与 Commit 高频操作闭环
 
-> 文档身份：`release-candidate-record`
+> 文档身份：`released-version-record`
 >
-> 状态：候选。源码提交、VSIX 指纹、本地完整门禁与发布 evidence 已绑定；最终发布状态以本目录 `manifest.json` 为准。
+> 状态：已发布。源码提交 `589a4ea4f014ae713e965b249cc25376f4bb1f31`、标签 `v0.0.8`、VSIX 指纹、本地完整门禁、Linux/macOS/Windows GitHub Actions 与发布 evidence 已绑定。
 >
 > 当前进度：批次 0（路径身份/展示边界硬化）、批次 1（选择/排序/刷新纯内核）
 > 与批次 2（共享列表底座 + Changes/Commit 集成闭环，见 §11b）已落地并有自动
@@ -375,8 +375,7 @@ file10）稳定兜底；状态/建议按产品优先级表、未知值恒排末�
   `npm run verify` 与 `.github/workflows/verify.yml`（Linux 先于完整覆盖率）；
   同一套合成用例不在 Windows Runner 重复执行，Windows 保留完整覆盖率与真实
   SVN 验收作为最终确认。
-- 状态：本批次属于 v0.0.8 开发基线，不改变 v0.0.7 已发布事实；相关回归测试
-  与文档同步见 `docs/current/`。
+- 状态：本批次已随 v0.0.8 发布；相关回归测试与文档同步见 `docs/current/`。
 
 ## 14. 后续版本关系
 
