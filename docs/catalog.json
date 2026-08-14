@@ -166,8 +166,8 @@
     },
     {
       "version": "0.0.8",
-      "status": "draft",
-      "phase": "developing",
+      "status": "candidate",
+      "phase": "candidate",
       "baseVersion": "0.0.7",
       "canonicalEntry": "releases/v0.0.8/README.md",
       "manifest": "releases/v0.0.8/manifest.json",
