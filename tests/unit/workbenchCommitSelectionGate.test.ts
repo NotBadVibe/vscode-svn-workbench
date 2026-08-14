@@ -61,6 +61,16 @@ const collectorControl = vi.hoisted(() => ({
   count: 0,
 }));
 
+vi.mock("../../src/commit/commitDiffSummary", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../src/commit/commitDiffSummary")>();
+  return {
+    ...actual,
+    // generate-message 的差异摘要：测试环境不执行真实 SVN。
+    collectCommitDiffSummaries: async () => [],
+  };
+});
+
 vi.mock("../../src/commit/commitCandidateCollector", async (importOriginal) => {
   const actual =
     await importOriginal<
@@ -320,6 +330,206 @@ describe("buildCommitSnapshot 旧状态清理与 feedback", () => {
       { timeout: 3000 },
     );
     expect(feedbackMessage()).toContain("已从工作副本快照中消失");
+  });
+});
+
+describe("commit/preview 与 generate-message 整批校验（Finding 1）", () => {
+  it("伪造 valid+ghost：整批拒绝，不改 state、不生成预览，返回错误与恢复动作", async () => {
+    const { session, send } = await createCommitSession();
+    await send("commit/update-selection", { selectedPaths: ["app/a.ts"] });
+    await vi.waitFor(() => expect(posted.length).toBeGreaterThan(0));
+    posted.length = 0;
+    await send("commit/preview", {
+      selectedPaths: ["app/a.ts", "app/ghost.ts"],
+      message: "feat: 测试",
+    });
+    await vi.waitFor(() => expect(posted.length).toBeGreaterThan(0));
+    // 不改 state、不生成 preview。
+    expect(session.commitState?.selectedPaths).toEqual(["app/a.ts"]);
+    expect(session.commitState?.preview).toBeUndefined();
+    expect(errorMessages().join("\n")).toContain("不在当前候选集合");
+    expect(errorMessages().join("\n")).toContain("刷新状态后重新选择");
+  });
+
+  it("伪造 excluded / blocked：整批拒绝且保留合法现状", async () => {
+    const { session, send } = await createCommitSession();
+    await send("commit/update-selection", { selectedPaths: ["app/a.ts"] });
+    await vi.waitFor(() => expect(posted.length).toBeGreaterThan(0));
+    posted.length = 0;
+    await send("commit/preview", {
+      selectedPaths: ["app/a.ts", "app/excluded.ts"],
+      message: "feat: 测试",
+    });
+    await vi.waitFor(() => expect(posted.length).toBeGreaterThan(0));
+    expect(session.commitState?.selectedPaths).toEqual(["app/a.ts"]);
+    expect(errorMessages().join("\n")).toContain("排除/阻止项");
+    posted.length = 0;
+    await send("commit/preview", {
+      selectedPaths: ["app/a.ts", "app/blocked.ts"],
+      message: "feat: 测试",
+    });
+    await vi.waitFor(() => expect(posted.length).toBeGreaterThan(0));
+    expect(session.commitState?.selectedPaths).toEqual(["app/a.ts"]);
+  });
+
+  it("合法重复规范化唯一后生成预览，且预览不因重复计数", async () => {
+    const { session, send } = await createCommitSession();
+    await send("commit/preview", {
+      selectedPaths: ["app/a.ts", "app/a.ts", "app/review.ts"],
+      message: "feat: 测试",
+    });
+    await vi.waitFor(() => expect(posted.length).toBeGreaterThan(0));
+    expect(session.commitState?.selectedPaths).toEqual([
+      "app/a.ts",
+      "app/review.ts",
+    ]);
+    expect(errorMessages()).toEqual([]);
+  });
+
+  it("generate-message 携带 invalid 选择：不调用 AI、不改状态", async () => {
+    const { session, send } = await createCommitSession();
+    await send("commit/update-selection", { selectedPaths: ["app/a.ts"] });
+    await vi.waitFor(() => expect(posted.length).toBeGreaterThan(0));
+    posted.length = 0;
+    const messageBefore = session.commitState?.message;
+    await send("commit/generate-message", {
+      selectedPaths: ["app/a.ts", "app/ghost.ts"],
+      message: "草稿",
+    });
+    await vi.waitFor(() => expect(posted.length).toBeGreaterThan(0));
+    // 状态不变、无 AI 结果。
+    expect(session.commitState?.selectedPaths).toEqual(["app/a.ts"]);
+    expect(session.commitState?.message).toBe(messageBefore);
+    expect(session.commitState?.ai).toBeUndefined();
+    expect(errorMessages().join("\n")).toContain("不在当前候选集合");
+  });
+});
+
+describe("快照身份一致性（Finding 2）", () => {
+  it("工作副本外候选 fail-closed 排除：files/summary/选择三处一致", async () => {
+    const { session, send } = await createCommitSession();
+    // 注入一个 WC 外候选（absolutePath 不在 repositoryRoot 下）。
+    collectorControl.candidates = [
+      ...collectorControl.candidates,
+      {
+        absolutePath: "/elsewhere/ghost.ts",
+        relativePath: "../ghost.ts",
+        status: "modified",
+        selection: "selected",
+      },
+    ];
+    await send("refresh");
+    // 快照异步构建后发布：轮询等待 commit 快照出现。
+    let snapshot: HostToWebviewMessage | undefined;
+    await vi.waitFor(
+      () => {
+        snapshot = posted.find(
+          (message) =>
+            message.type === "module/snapshot" &&
+            (message as { payload: { snapshot: { kind?: string } } }).payload
+              .snapshot.kind === "commit",
+        );
+        expect(snapshot).toBeDefined();
+      },
+      { timeout: 3000 },
+    );
+    const commitSnapshot = snapshot as unknown as {
+      payload: {
+        snapshot: {
+          files: Array<{ relativePath: string }>;
+          summary: { total: number; selected: number };
+          selectedPaths: string[];
+        };
+      };
+    };
+    const files = commitSnapshot.payload.snapshot.files;
+    expect(files.some((file) => file.relativePath === "../ghost.ts")).toBe(
+      false,
+    );
+    expect(commitSnapshot.payload.snapshot.summary.total).toBe(files.length);
+    expect(
+      commitSnapshot.payload.snapshot.selectedPaths.includes("../ghost.ts"),
+    ).toBe(false);
+    expect(
+      session.commitState?.candidates?.some(
+        (item) => item.relativePath === "../ghost.ts",
+      ),
+    ).toBe(false);
+    // WC 外候选不能经 update-selection 进入。
+    posted.length = 0;
+    await send("commit/update-selection", {
+      selectedPaths: ["app/a.ts", "../ghost.ts"],
+    });
+    await vi.waitFor(() => expect(posted.length).toBeGreaterThan(0));
+    expect(errorMessages().join("\n")).toContain("不在当前候选集合");
+  });
+});
+
+describe("provenance 回放保护（Lead 代码审查 finding）", () => {
+  it("apply-local-rules 后合法 preview 回放选择不虚构手动来源", async () => {
+    const { session, send } = await createCommitSession();
+    // 手动选择后应用规则：manual 清空。
+    await send("commit/update-selection", {
+      selectedPaths: ["app/a.ts", "app/review.ts"],
+    });
+    await vi.waitFor(() => expect(posted.length).toBeGreaterThan(0));
+    posted.length = 0;
+    await send("commit/apply-local-rules");
+    await vi.waitFor(() => expect(posted.length).toBeGreaterThan(0));
+    expect(session.commitState?.manualSelectedPaths).toBeUndefined();
+    // 合法 preview 带回相同 selectedPaths（规则推荐集）：只是回放，不得
+    // 重新创建 manualSelectedPaths。
+    posted.length = 0;
+    await send("commit/preview", {
+      selectedPaths: session.commitState?.selectedPaths ?? [],
+      message: "feat: 测试",
+    });
+    await vi.waitFor(() => expect(posted.length).toBeGreaterThan(0));
+    expect(session.commitState?.preview).toBeDefined();
+    expect(session.commitState?.manualSelectedPaths).toBeUndefined();
+  });
+
+  it("合法 generate-message 回放选择同样不虚构手动来源", async () => {
+    const { session, send } = await createCommitSession();
+    await send("commit/update-selection", {
+      selectedPaths: ["app/a.ts", "app/review.ts"],
+    });
+    await vi.waitFor(() => expect(posted.length).toBeGreaterThan(0));
+    posted.length = 0;
+    await send("commit/apply-local-rules");
+    await vi.waitFor(() => expect(posted.length).toBeGreaterThan(0));
+    expect(session.commitState?.manualSelectedPaths).toBeUndefined();
+    // 合法 generate-message（走 local-rule-fallback，无外部 AI 依赖）。
+    posted.length = 0;
+    await send("commit/generate-message", {
+      selectedPaths: session.commitState?.selectedPaths ?? [],
+      message: "",
+    });
+    await vi.waitFor(() => expect(posted.length).toBeGreaterThan(0));
+    expect(session.commitState?.message.length).toBeGreaterThan(0);
+    expect(session.commitState?.manualSelectedPaths).toBeUndefined();
+  });
+
+  it("preview 省略 selectedPaths 时对 stale state 整批拒绝（状态不变）", async () => {
+    const { session, send } = await createCommitSession();
+    await send("commit/update-selection", { selectedPaths: ["app/a.ts"] });
+    await vi.waitFor(() => expect(posted.length).toBeGreaterThan(0));
+    // 候选变化：a.ts 消失，state 残留 stale 选择。
+    collectorControl.candidates = collectorControl.candidates.filter(
+      (item) => item.relativePath !== "app/a.ts",
+    );
+    // 直接注入旧 state 的 stale 选择（模拟快照后消失的场景）。
+    session.commitState!.selectedPaths = ["app/a.ts", "app/stale.ts"];
+    posted.length = 0;
+    // 省略 selectedPaths：必须对当前 state 用本次权威候选校验，不得静默取交集。
+    await send("commit/preview", { message: "feat: 测试" });
+    await vi.waitFor(() => expect(posted.length).toBeGreaterThan(0));
+    expect(session.commitState?.selectedPaths).toEqual([
+      "app/a.ts",
+      "app/stale.ts",
+    ]);
+    expect(session.commitState?.preview).toBeUndefined();
+    expect(errorMessages().join("\n")).toContain("不在当前候选集合");
   });
 });
 

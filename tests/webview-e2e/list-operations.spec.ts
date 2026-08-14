@@ -86,21 +86,23 @@ test("UX08-SORT-01/02：aria-sort、图标与中文方向文字；恢复默认�
   );
 });
 
-test("UX08-FLOW-01/02：筛选后一次全选并进入 Commit，数量一致", async ({
+test("UX08-FLOW-01/02：筛选 7 个已修改文件后一次全选并进入 Commit，数量一致", async ({
   page,
 }) => {
-  await page.goto("/");
-  // 筛选“已修改”状态（mock 默认 1 个已修改可操作）。
-  await page.getByRole("button", { name: "已修改 1" }).click();
+  await page.goto("/?dataset=seven");
+  // 筛选“已修改”状态：真实 7 个 modified 的批量语义。
+  await page.getByRole("button", { name: "已修改 7" }).click();
   const header = page.getByRole("checkbox", {
-    name: /选择当前筛选可操作项（/,
+    name: "选择当前筛选可操作项（7）",
   });
   await header.click();
-  await page.getByRole("button", { name: /检查并提交所选（1）/ }).click();
-  // Commit 候选与选择数量一致。
-  await expect(page.getByText(/已选 1 \/ 候选/)).toBeVisible();
+  // 表头全选 7 个；批量按钮数量一致。
+  await page.getByRole("button", { name: "检查并提交所选（7）" }).click();
+  // Commit 选中与候选数量一致：7 个已选（范围候选 10，含 blocked/excluded），
+  // 预览按钮与选择数量一致（7）。
+  await expect(page.getByText(/已选 7 \/ 候选 10/)).toBeVisible();
   await expect(
-    page.getByRole("button", { name: /生成提交预览（1）/ }),
+    page.getByRole("button", { name: "生成提交预览（7）" }),
   ).toBeVisible();
 });
 
@@ -138,6 +140,35 @@ test("UX08-VIEW-01：720×480 小视口主操作可达且无页面级横向滚�
     page.getByRole("button", { name: /检查并提交所选（1）/ }),
   ).toBeVisible();
   await assertNoPageHorizontalOverflow(page);
+});
+
+test("UX08-VIEW-01b：Sticky 批量底栏不遮挡列表末行与焦点（Task 2 缺口）", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 720, height: 480 });
+  await page.goto("/?dataset=scroll");
+  const list = page.getByRole("list", { name: "SVN 变更文件" });
+  // 滚到末项。
+  await list.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+    element.dispatchEvent(new Event("scroll"));
+  });
+  const lastRow = list.getByRole("listitem").last();
+  await expect(lastRow).toBeVisible();
+  const [rowBox, barBox, listBox] = await Promise.all([
+    lastRow.boundingBox(),
+    page.getByRole("toolbar", { name: "批量操作" }).boundingBox(),
+    list.boundingBox(),
+  ]);
+  // 末行完整位于列表容器内（不被页面级 Sticky 底栏遮挡）。
+  expect(rowBox!.y + rowBox!.height).toBeLessThanOrEqual(
+    listBox!.y + listBox!.height + 1,
+  );
+  expect(barBox!.y).toBeGreaterThanOrEqual(listBox!.y + listBox!.height - 1);
+  // 末行聚焦不被底栏覆盖。
+  await lastRow.focus();
+  const activeBox = await lastRow.boundingBox();
+  expect(activeBox!.y + activeBox!.height).toBeLessThanOrEqual(barBox!.y + 1);
 });
 
 test("UX08-SEL-06/PERF-01：5,000 文件全选覆盖完整数据集且挂载行有预算", async ({

@@ -82,6 +82,8 @@
   let activeIndex = $state(-1);
   let anchorIndex = $state(-1);
   let contextFile = $state<WorkbenchFileView | undefined>();
+  /** 行菜单受控打开状态（Shift+F10 / Menu 键由键盘导航触发）。 */
+  let rowMenuOpen = $state(false);
   let fileList = $state<HTMLDivElement>();
   let scrollTop = $state(0);
   let viewportHeight = $state(500);
@@ -351,6 +353,15 @@
   /** 键盘：活动行与选择分离；Shift 连续选择；Ctrl/⌘+A 只选当前筛选可操作项。 */
   function handleListKeydown(event: KeyboardEvent): void {
     if (!shouldHandleListKeydown(event)) return;
+    // Escape 必须先于空列表早退处理：详情响应到达后候选刷新为空时仍可关闭。
+    if (event.key === "Escape") {
+      // Escape 关闭路径详情并恢复触发点焦点，滚动位置不变（规格 §6/§9）。
+      if (pathDetailOpen) {
+        event.preventDefault();
+        closeDetail();
+      }
+      return;
+    }
     const count = sortedFiles.length;
     if (count === 0) return;
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a") {
@@ -399,6 +410,20 @@
       event.preventDefault();
       const file = sortedFiles[activeIndex];
       if (file.selection !== "blocked") toggleKey(file.selectionKey);
+      return;
+    }
+    if (
+      (event.key === "F10" && event.shiftKey) ||
+      event.key === "ContextMenu"
+    ) {
+      // Shift+F10 / Menu：打开活动行的操作菜单（规格 §9）。
+      // 仅当找到活动行并实际打开菜单时才阻止默认（无活动行放行原行为）。
+      const file = sortedFiles[activeIndex];
+      if (file) {
+        event.preventDefault();
+        contextFile = file;
+        rowMenuOpen = true;
+      }
       return;
     }
     if (event.key === "Enter" && activeIndex >= 0) {
@@ -645,7 +670,10 @@
         </p>
       </div>
     {:else}
-      <ContextMenu.Root>
+      <ContextMenu.Root
+        open={rowMenuOpen}
+        onOpenChange={(value) => (rowMenuOpen = value)}
+      >
         <ContextMenu.Trigger>
           {#snippet child({ props })}
             <!-- svelte-ignore a11y_no_noninteractive_tabindex -- 文件列表需要键盘焦点，以支持 PageUp/PageDown 和 End 滚动。 -->

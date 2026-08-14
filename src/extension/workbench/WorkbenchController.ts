@@ -1096,22 +1096,24 @@ export class WorkbenchController implements vscode.Disposable {
         // excluded/blocked。复用最近一次权威采集缓存，refresh 后自动更新。
         const candidates =
           state.candidates ?? (await this.collectScopeCandidates(session));
-        const validation = validateCommitSelection(requested, candidates);
-        const { selectedPaths, missing, notSubmittable } = validation;
-        if (missing.length > 0 || notSubmittable.length > 0) {
-          // 非法输入：不修改 state.selectedPaths、不清除合法现状。
+        // 统一 Webview 选择校验入口（与 preview/generate-message 一致）：
+        // 非法输入不修改 state.selectedPaths、不清除合法现状。
+        const selectionError = this.applyWebviewSelection(
+          session,
+          requested,
+          candidates,
+          { trackManualSelection: true },
+        );
+        if (selectionError) {
           await this.sendError(
             "commit",
             "提交选择未通过候选校验",
-            `提交选择包含无效文件：${missing.length} 个不在当前候选集合${notSubmittable.length > 0 ? `，${notSubmittable.length} 个为排除/阻止项` : ""}。已保留原有选择，未做修改；请刷新状态后重新选择。`,
+            selectionError,
             true,
             message.requestId,
           );
           return;
         }
-        state.selectedPaths = selectedPaths;
-        state.manualSelectedPaths = selectedPaths;
-        state.preview = undefined;
         // 复用刚用于校验的候选快照：勾选不重跑 SVN status；真实写操作
         // （createCommitPreview/execute）仍会重新采集并复验。
         await this.sendCommitSnapshot(session, message.requestId, candidates);
@@ -1229,10 +1231,28 @@ export class WorkbenchController implements vscode.Disposable {
       }
       case "commit/generate-message": {
         const state = this.ensureCommitState(session);
-        state.message = asStringAllowEmpty(data.message) ?? state.message;
-        state.selectedPaths =
-          asStringArray(data.selectedPaths) ?? state.selectedPaths;
         const candidates = await this.collectScopeCandidates(session);
+        const requested = asStringArray(data.selectedPaths);
+        if (requested !== undefined) {
+          // 整批校验（Finding 1）：invalid 时保留旧状态、不调用 AI。
+          const selectionError = this.applyWebviewSelection(
+            session,
+            requested,
+            candidates,
+            { trackManualSelection: false },
+          );
+          if (selectionError) {
+            await this.sendError(
+              "commit",
+              "提交选择未通过候选校验",
+              selectionError,
+              true,
+              message.requestId,
+            );
+            return;
+          }
+        }
+        state.message = asStringAllowEmpty(data.message) ?? state.message;
         const selectedAbsolutePaths = this.resolveSelectedAbsolutePaths(
           session,
           candidates,
@@ -1285,10 +1305,29 @@ export class WorkbenchController implements vscode.Disposable {
       }
       case "commit/preview": {
         const state = this.ensureCommitState(session);
+        // 无论是否携带 selectedPaths，都用本次权威候选校验当前选择
+        // （Finding 1 + Lead 复审）：候选在快照后消失时不得静默取交集；
+        // 缺省时校验 state.selectedPaths，trackManual=false。
+        const candidates = await this.collectScopeCandidates(session);
+        const requested = asStringArray(data.selectedPaths);
+        const selectionError = this.applyWebviewSelection(
+          session,
+          requested ?? state.selectedPaths ?? [],
+          candidates,
+          { trackManualSelection: false },
+        );
+        if (selectionError) {
+          await this.sendError(
+            "commit",
+            "提交选择未通过候选校验",
+            selectionError,
+            true,
+            message.requestId,
+          );
+          return;
+        }
         state.message = asStringAllowEmpty(data.message) ?? state.message;
-        state.selectedPaths =
-          asStringArray(data.selectedPaths) ?? state.selectedPaths;
-        await this.createCommitPreview(session, message.requestId);
+        await this.createCommitPreview(session, message.requestId, candidates);
         return;
       }
       case "commit/execute": {
@@ -5428,8 +5467,32 @@ export class WorkbenchController implements vscode.Disposable {
     providedCandidates?: Awaited<ReturnType<typeof collectCommitCandidates>>,
   ): Promise<CommitSnapshot> {
     const state = this.ensureCommitState(session);
-    const candidates =
+    const rawCandidates =
       providedCandidates ?? (await this.collectScopeCandidates(session));
+    // 一次性建立“可生成选择身份的候选 + key”集合：绝对路径无法建立
+    // selectionKey（工作副本外/路径失效）者 fail-closed 排除，并从权威
+    // 候选、summary、缓存、选择与 AI hash 同步剔除，保证 files/summary/
+    // selectedPaths 三处一致（Finding 2）。files 构建不再重复调用
+    // createScopedFileKey。
+    const keyedCandidates: Array<{
+      candidate: CommitCandidate;
+      selectionKey: PathIdentityKey;
+    }> = [];
+    for (const candidate of rawCandidates) {
+      const selectionKey = createScopedFileKey(
+        session.scope.repositoryRoot,
+        candidate.absolutePath,
+        nativePathSemantics,
+      );
+      if (selectionKey === undefined) {
+        appendOutput(
+          `无法为 ${candidate.relativePath} 建立选择身份，已从提交视图排除。`,
+        );
+        continue;
+      }
+      keyedCandidates.push({ candidate, selectionKey });
+    }
+    const candidates = keyedCandidates.map(({ candidate }) => candidate);
     const summary = summarizeCommitCandidates(candidates);
     // 缓存最近一次权威候选采集：commit/update-selection 逐项复验复用。
     state.candidates = candidates;
@@ -5520,37 +5583,22 @@ export class WorkbenchController implements vscode.Disposable {
 
     return {
       kind: "commit",
-      files: candidates.flatMap((candidate) => {
-        // v0.0.8：选择身份由 Host 在权威 working-copy + 路径归属上生成；
-        // 无法建立身份时 fail-closed 排除并记录。
-        const selectionKey = createScopedFileKey(
-          session.scope.repositoryRoot,
+      files: keyedCandidates.map(({ candidate, selectionKey }) =>
+        withProjectFileView(
+          {
+            relativePath: candidate.relativePath,
+            selectionKey,
+            status: candidate.status,
+            propStatus: candidate.propStatus,
+            fileType: candidate.fileType,
+            selection: candidate.selection,
+            reason: candidate.reason,
+            evaluation: candidate.evaluation,
+          },
           candidate.absolutePath,
-          nativePathSemantics,
-        );
-        if (selectionKey === undefined) {
-          appendOutput(
-            `无法为 ${candidate.relativePath} 建立选择身份，已从提交视图排除。`,
-          );
-          return [];
-        }
-        return [
-          withProjectFileView(
-            {
-              relativePath: candidate.relativePath,
-              selectionKey,
-              status: candidate.status,
-              propStatus: candidate.propStatus,
-              fileType: candidate.fileType,
-              selection: candidate.selection,
-              reason: candidate.reason,
-              evaluation: candidate.evaluation,
-            },
-            candidate.absolutePath,
-            session.scope,
-          ),
-        ];
-      }),
+          session.scope,
+        ),
+      ),
       summary: {
         total: summary.total,
         selected: summary.selected,
@@ -5610,6 +5658,36 @@ export class WorkbenchController implements vscode.Disposable {
     });
   }
 
+  /**
+   * 统一 Webview 选择入口（preview / generate-message 共用）：整批校验
+   * （validateCommitSelection），任一 missing/excluded/blocked 即拒绝——
+   * 保留旧 state、不生成 preview/AI，返回中文错误与恢复动作；合法请求
+   * 去重保持首次顺序。调用方必须传入权威候选（避免重复采集）。
+   * 返回错误文案；成功返回 undefined。
+   */
+  private applyWebviewSelection(
+    session: WorkbenchSession,
+    requested: readonly string[],
+    candidates: Awaited<ReturnType<typeof collectCommitCandidates>>,
+    options: { trackManualSelection: boolean },
+  ): string | undefined {
+    const validation = validateCommitSelection(requested, candidates);
+    if (validation.missing.length > 0 || validation.notSubmittable.length > 0) {
+      return `提交选择包含无效文件：${validation.missing.length} 个不在当前候选集合${validation.notSubmittable.length > 0 ? `，${validation.notSubmittable.length} 个为排除/阻止项` : ""}。已保留原有选择，未做修改；请刷新状态后重新选择。`;
+    }
+    const state = this.ensureCommitState(session);
+    state.selectedPaths = validation.selectedPaths;
+    // trackManualSelection：只有 commit/update-selection=true（用户逐项
+    // 勾选）；preview/generate-message 即使带回相同 selectedPaths 也只是
+    // 回放当前选择，不得创建/覆盖 manualSelectedPaths（否则“应用本地规则/
+    // AI → 直接预览/AI 说明”会把推荐集合重新虚构成手动选择）。
+    if (options.trackManualSelection) {
+      state.manualSelectedPaths = validation.selectedPaths;
+    }
+    state.preview = undefined;
+    return undefined;
+  }
+
   private resolveSelectedAbsolutePaths(
     session: WorkbenchSession,
     candidates: Awaited<ReturnType<typeof collectCommitCandidates>>,
@@ -5624,9 +5702,11 @@ export class WorkbenchController implements vscode.Disposable {
   private async createCommitPreview(
     session: WorkbenchSession,
     requestId?: string,
+    providedCandidates?: Awaited<ReturnType<typeof collectCommitCandidates>>,
   ): Promise<void> {
     const state = this.ensureCommitState(session);
-    const candidates = await this.collectScopeCandidates(session);
+    const candidates =
+      providedCandidates ?? (await this.collectScopeCandidates(session));
     const selectedAbsolutePaths = this.resolveSelectedAbsolutePaths(
       session,
       candidates,

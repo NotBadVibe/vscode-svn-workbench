@@ -88,6 +88,22 @@ describe("文件路径显示与路径详情（v0.0.7）", () => {
     });
   });
 
+  it("项目内/仓库内/SVN URL 复制按钮写入剪贴板对应文本", async () => {
+    const writeText = vi.fn(async () => undefined);
+    Object.assign(navigator, {
+      clipboard: { writeText },
+    });
+    render(ChangesModule, { snapshot, onAction: vi.fn(), pathDetail });
+    await fireEvent.click(screen.getByTitle("点击复制项目内路径"));
+    expect(writeText).toHaveBeenCalledWith("src/index.ts");
+    await fireEvent.click(screen.getByTitle("点击复制仓库内路径"));
+    expect(writeText).toHaveBeenCalledWith("trunk/app/src/index.ts");
+    await fireEvent.click(screen.getByTitle("点击复制 SVN URL"));
+    expect(writeText).toHaveBeenCalledWith(
+      "https://svn.example.internal/svn/Code2/trunk/app/src/index.ts",
+    );
+  });
+
   it("路径详情错误如实展示且不渲染路径列表", () => {
     render(ChangesModule, {
       snapshot,

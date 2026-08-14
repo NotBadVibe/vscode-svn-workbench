@@ -254,31 +254,89 @@ Mock、虚拟列表、真实 SVN 数据接入与 UX08 人工/交互验收。UI �
 
 ### 12.1 选择与安全
 
-- `UX08-SEL-01`：三态与当前筛选可操作项完全一致；
-- `UX08-SEL-02`：筛选和排序不静默改变选择；
-- `UX08-SEL-03`：隐藏选择可见、可查看、可单独清除；
-- `UX08-SEL-04`：刷新只保留合法交集，不自动选择新文件；
-- `UX08-SEL-05`：`blocked`、范围外、过期、external 和混合仓库安全拒绝或拆分；
-- `UX08-SEL-06`：5,000 文件全选覆盖完整数据，不只覆盖挂载行；
-- `UX08-SEL-07`：所有批量按钮和 Host 预览数量一致。
+- `UX08-SEL-01`：三态与当前筛选可操作项完全一致——[自动化通过]
+  `tests/webview-e2e/list-operations.spec.ts`（表头全选数量与可操作项一致）、
+  `tests/components/ListSelection.test.ts`、`tests/unit/selectionCore.test.ts`；
+- `UX08-SEL-02`：筛选和排序不静默改变选择——[自动化通过]
+  list-operations（筛选/排序后选择保持）、ListSelection（toggle 快照语义、
+  新文件不自动加入）、selectionCore；
+- `UX08-SEL-03`：隐藏选择可见、可查看、可单独清除——[自动化通过]
+  list-operations（隐藏 N → 清除隐藏 → 隐藏 0）、ListSelection、selectionCore；
+- `UX08-SEL-04`：刷新只保留合法交集，不自动选择新文件——[自动化通过]
+  list-operations（刷新后保留且不自动全选）、selectionRefresh、组件刷新用例；
+- `UX08-SEL-05`：`blocked`、范围外、过期、external 和混合仓库安全拒绝或拆分
+  ——[部分自动化] blocked（e2e 禁用 + 组件 + unit）、范围外（Host 候选复验
+  `workbenchCommitSelectionGate.test.ts` 整批拒绝）、过期 AI（workbench.spec
+  stale 只读）；external 规则阻止与混合仓库拆分在当前自动化中没有针对
+  多工作副本/混合仓库的真实端到端用例（prepareWorkbenchRequest 的拆分
+  逻辑未发现独立自动化）；[待人工] 真实多工作副本/混合仓库工作区的
+  external 归属与拆分验证。
+- `UX08-SEL-06`：5,000 文件全选覆盖完整数据，不只覆盖挂载行——[自动化通过]
+  list-operations SEL-06/PERF-01、ListSelection（5,000 全选 + End/PageDown
+  远端行挂载聚焦）、selectionCore；
+- `UX08-SEL-07`：所有批量按钮和 Host 预览数量一致——[自动化通过]
+  list-operations（提交按钮 3 → Commit 已选 1/候选 → 生成预览（1））、
+  FLOW-01/02 数量断言、Changes 提交资格组件测试（excluded 阻止 + 数量一致）。
 
 ### 12.2 路径与排序
 
-- `UX08-PATH-01`：鼠标、键盘和触屏均能查看并复制完整项目内 / 仓库内路径；
-- `UX08-PATH-02`：中部省略保留文件名、扩展名和辨识目录；
-- `UX08-PATH-03`：关闭详情后焦点与滚动位置保持；
-- `UX08-SORT-01`：排序方向有图标、文字和 `aria-sort`；
-- `UX08-SORT-02`：排序稳定，不改变选择、活动文件或 scope。
+- `UX08-PATH-01`：鼠标、键盘和触屏均能查看并复制完整项目内 / 仓库内路径
+  ——[部分自动化] 鼠标/键盘（FilePathDetail 组件：四路径标注、项目内/仓库内/
+  SVN URL 复制按钮写入剪贴板断言、Host file/copy-path 复制本地完整路径）；
+  [待人工] 真实触屏设备上的查看与复制；
+- `UX08-PATH-02`：中部省略保留文件名、扩展名和辨识目录——[自动化通过]
+  `tests/unit/listModel.test.ts`（多段 + 单段扩展名保留）、page-screenshots
+  5000 文件窗口化截图基线；
+- `UX08-PATH-03`：关闭详情后焦点与滚动位置保持——[部分自动化] 焦点恢复
+  （FilePathDetail/ListSelection：关闭按钮与 Escape 后触发点重新聚焦）；
+  [待人工] 真实滚动位置保持的目视确认（组件逻辑无滚动副作用，e2e 未直接
+  断言 scrollTop）；
+- `UX08-SORT-01`：排序方向有图标、文字和 `aria-sort`——[自动化通过]
+  list-operations SORT-01（aria-sort ascending/descending + 升序/降序文字）、
+  SortHeader 组件；
+- `UX08-SORT-02`：排序稳定，不改变选择、活动文件或 scope——[自动化通过]
+  list-operations（恢复默认顺序）、selectionSort（稳定性 + 输入不变异 +
+  5,000 项）、ListSelection（排序不改变选择）。
 
 ### 12.3 主路径与可访问性
 
-- `UX08-FLOW-01`：筛选 7 个已修改文件后可一次全选并进入 Commit；
-- `UX08-FLOW-02`：Changes、Commit 和 Preview 的项目、路径与数量一致；
-- `UX08-A11Y-01`：键盘、读屏、触屏和中文 IME 完成相同流程；
-- `UX08-VIEW-01`：720×480、1024×600、1440×900 和 100%～200% 下主操作可达；
-- `UX08-PERF-01`：5,000 文件保持既有挂载行与滚动预算，新增筛选、排序和选择不遍历 DOM。
+- `UX08-FLOW-01`：筛选 7 个已修改文件后可一次全选并进入 Commit——[自动化
+  通过] list-operations FLOW-01（dataset=seven：筛选“已修改 7”→ 表头全选
+  7 → 检查并提交所选（7）→ Commit 已选 7 / 候选 10（含 blocked/excluded）
+  → 生成提交预览（7），批量语义真实覆盖）；
+- `UX08-FLOW-02`：Changes、Commit 和 Preview 的项目、路径与数量一致——
+  [自动化通过] list-operations FLOW-01/02、FilePathDetail（跨项目提交预览
+  分组）、Controller 预览复验（既有 commit 测试）；
+- `UX08-A11Y-01`：键盘、读屏、触屏和中文 IME 完成相同流程——[部分自动化]
+  键盘（list-operations A11Y-01：方向键/Space/Shift 连续/Ctrl+A 幂等）、
+  IME（ListSelection IME 候选不触发 + chinese-scroll）、读屏（axe 无违规 +
+  aria-label/role 断言 + reduced motion 用例）、Shift+F10/Menu 行菜单与
+  Escape 关闭详情（ListSelection 新增用例）；[待人工] 真实读屏软件
+  （NVDA/VoiceOver）与触屏设备的完整流程；
+- `UX08-VIEW-01`：720×480、1024×600、1440×900 和 100%～200% 下主操作可达
+  ——[部分自动化] visual-accessibility（三主题 × 三尺寸 axe 无违规 + 无页面
+  横向滚动）、chinese-scroll SCR-12/13/14/15（720×480@200% 认证页矩阵）、
+  VIEW-01（720×480 列表主操作 + 无横向滚动）、VIEW-01b（Sticky 批量底栏不
+  遮挡列表末行与焦点）；[待人工] 列表页 200% 缩放的目视确认；
+- `UX08-PERF-01`：5,000 文件保持既有挂载行与滚动预算，新增筛选、排序和
+  选择不遍历 DOM——[自动化通过] `scripts/measure-webview-performance.js`
+  （挂载行 16 < 100、滚动 51ms < 500ms、bundle gzip 预算）、list-operations
+  SEL-06/PERF-01（全选后挂载行仍 < 100）、visual-accessibility 窗口化滚动。
 
-人工主路径覆盖：状态筛选全选、隐藏选择、刷新失效、长中文路径、同名文件、多项目归属、Diff 往返、阻止项、小屏、200% 和纯键盘操作。
+### 12.4 验收证据与待人工清单
+
+- 自动化证据：上述 [自动化通过] / [部分自动化] 条目对应测试文件与用例；
+  `npm run verify`
+  全绿（含 check、platform-contracts、coverage、webview、performance、
+  Extension Host）。
+- [待人工] 项（不得用自动化冒充）：
+  1. 真实读屏软件（NVDA / VoiceOver）完成列表导航、选择与批量操作；
+  2. 触屏设备（触摸 + 触控笔）完成查看/复制路径与行菜单；
+  3. 真实多仓库/混合仓库工作区的 external 归属与拆分验证；
+  4. 关闭路径详情后滚动位置保持的目视确认；
+  5. 列表页 200% 缩放目视确认（自动化覆盖认证页矩阵）。
+- 人工主路径覆盖：状态筛选全选、隐藏选择、刷新失效、长中文路径、同名文件、
+  多项目归属、Diff 往返、阻止项、小屏、200% 和纯键盘操作。
 
 ## 13. 明确不做
 
