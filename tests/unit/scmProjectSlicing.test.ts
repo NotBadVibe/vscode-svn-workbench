@@ -8,43 +8,53 @@ import {
 } from "../../src/scm/projectSlicing";
 
 const win = { platform: "win32" as const, cwd: "C:\\" };
+const posix = { platform: "linux" as const, cwd: "/" };
 
 describe("SCM 项目切片（v0.0.7 §6.2）", () => {
   it("provider 标题为“SVN · 项目名”", () => {
     expect(
-      resolveSourceControlTitles([
-        { name: "EmApi", absolutePath: "/repo/code/EmApi" },
-        {
-          name: "EMSystem-front-pro",
-          absolutePath: "/repo/code/EMSystem-front-pro",
-        },
-      ]),
+      resolveSourceControlTitles(
+        [
+          { name: "EmApi", absolutePath: "/repo/code/EmApi" },
+          {
+            name: "EMSystem-front-pro",
+            absolutePath: "/repo/code/EMSystem-front-pro",
+          },
+        ],
+        posix,
+      ),
     ).toEqual(["SVN · EmApi", "SVN · EMSystem-front-pro"]);
   });
 
   it("同名项目补充可辨识父路径", () => {
-    const titles = resolveSourceControlTitles([
-      { name: "app", absolutePath: "/repo/one/app" },
-      { name: "app", absolutePath: "/repo/two/app" },
-      { name: "web", absolutePath: "/repo/web" },
-    ]);
+    const titles = resolveSourceControlTitles(
+      [
+        { name: "app", absolutePath: "/repo/one/app" },
+        { name: "app", absolutePath: "/repo/two/app" },
+        { name: "web", absolutePath: "/repo/web" },
+      ],
+      posix,
+    );
     expect(titles).toEqual(["SVN · one/app", "SVN · two/app", "SVN · web"]);
   });
 
   it("同一工作副本的项目归为一组共享采集", () => {
-    const groups = groupProjectsByWorkingCopy([
-      {
-        name: "a",
-        absolutePath: "/repo/code/a",
-        workingCopyRoot: "/repo/code",
-      },
-      {
-        name: "b",
-        absolutePath: "/repo/code/b",
-        workingCopyRoot: "/repo/code",
-      },
-      { name: "c", absolutePath: "/other/c", workingCopyRoot: "/other" },
-    ]);
+    const groups = groupProjectsByWorkingCopy(
+      [
+        {
+          name: "a",
+          absolutePath: "/repo/code/a",
+          workingCopyRoot: "/repo/code",
+        },
+        {
+          name: "b",
+          absolutePath: "/repo/code/b",
+          workingCopyRoot: "/repo/code",
+        },
+        { name: "c", absolutePath: "/other/c", workingCopyRoot: "/other" },
+      ],
+      posix,
+    );
     expect(groups.size).toBe(2);
     expect(groups.get("/repo/code")?.map((item) => item.name)).toEqual([
       "a",
@@ -70,14 +80,16 @@ describe("SCM 项目切片（v0.0.7 §6.2）", () => {
       { absolutePath: "/repo/code/EmSystem/b.ts" },
       { absolutePath: "/repo/code/sibling/c.ts" },
     ];
-    expect(sliceCandidatesForProject(candidates, "/repo/code/EmApi")).toEqual([
-      { absolutePath: "/repo/code/EmApi/a.ts" },
-    ]);
+    expect(
+      sliceCandidatesForProject(candidates, "/repo/code/EmApi", posix),
+    ).toEqual([{ absolutePath: "/repo/code/EmApi/a.ts" }]);
   });
 
   it("同前缀兄弟目录不被误切入项目", () => {
     const candidates = [{ absolutePath: "/repo/code/app2/x.ts" }];
-    expect(sliceCandidatesForProject(candidates, "/repo/code/app")).toEqual([]);
+    expect(
+      sliceCandidatesForProject(candidates, "/repo/code/app", posix),
+    ).toEqual([]);
   });
 
   it("findOwningProject 返回最具体项目归属", () => {
@@ -85,12 +97,14 @@ describe("SCM 项目切片（v0.0.7 §6.2）", () => {
       { absolutePath: "/repo/code" },
       { absolutePath: "/repo/code/app" },
     ];
-    expect(findOwningProject(projects, "/repo/code/app/x.ts")).toEqual(
+    expect(findOwningProject(projects, "/repo/code/app/x.ts", posix)).toEqual(
       projects[1],
     );
-    expect(findOwningProject(projects, "/repo/code/other/x.ts")).toEqual(
+    expect(findOwningProject(projects, "/repo/code/other/x.ts", posix)).toEqual(
       projects[0],
     );
-    expect(findOwningProject(projects, "/elsewhere/x.ts")).toBeUndefined();
+    expect(
+      findOwningProject(projects, "/elsewhere/x.ts", posix),
+    ).toBeUndefined();
   });
 });

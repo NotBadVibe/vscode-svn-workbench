@@ -8,10 +8,11 @@ import {
 } from "../../src/scope/projectIdentity";
 
 const win = { platform: "win32" as const, cwd: "C:\\" };
+const posix = { platform: "linux" as const, cwd: "/" };
 
 describe("项目与工作副本身份（v0.0.7）", () => {
   it("工作副本身份使用不透明 identity 键并保留原始路径", () => {
-    const identity = createWorkingCopyIdentity("/repo/code");
+    const identity = createWorkingCopyIdentity("/repo/code", posix);
     expect(identity.workingCopyRoot).toBe("/repo/code");
     expect(identity.workingCopyId).toBe("/repo/code");
 
@@ -25,6 +26,7 @@ describe("项目与工作副本身份（v0.0.7）", () => {
     const project = createProjectIdentity({
       projectRoot: "/repo/code",
       workingCopyRoot: "/repo/code",
+      options: posix,
     });
     expect(project.projectName).toBe("code");
     expect(project.rootIsWorkingCopyRoot).toBe(true);
@@ -35,6 +37,7 @@ describe("项目与工作副本身份（v0.0.7）", () => {
     const project = createProjectIdentity({
       projectRoot: "/repo/code/2024Project/bchd-front-Dev3.0",
       workingCopyRoot: "/repo/code",
+      options: posix,
     });
     expect(project.projectName).toBe("bchd-front-Dev3.0");
     expect(project.rootIsWorkingCopyRoot).toBe(false);
@@ -51,7 +54,7 @@ describe("项目与工作副本身份（v0.0.7）", () => {
     });
     expect(project.projectId).toBe("c:\\code\\2024project\\bchd-front");
     expect(project.rootIsWorkingCopyRoot).toBe(false);
-    expect(project.workingCopyRelativePath).toBe("2024project/bchd-front");
+    expect(project.workingCopyRelativePath).toBe("2024Project/BCHD-Front");
     expect(project.projectName).toBe("BCHD-Front");
   });
 
@@ -81,15 +84,15 @@ describe("项目与工作副本身份（v0.0.7）", () => {
 
   it("projectRelativePath 只服务项目内路径，项目外返回 undefined", () => {
     const root = "/repo/code/app";
-    expect(projectRelativePath(root, root)).toBe(".");
-    expect(projectRelativePath(root, "/repo/code/app/src/index.ts")).toBe(
-      "src/index.ts",
-    );
+    expect(projectRelativePath(root, root, posix)).toBe(".");
+    expect(
+      projectRelativePath(root, "/repo/code/app/src/index.ts", posix),
+    ).toBe("src/index.ts");
     // 同前缀兄弟目录不得被误判为项目内路径。
     expect(
-      projectRelativePath(root, "/repo/code/app2/src/index.ts"),
+      projectRelativePath(root, "/repo/code/app2/src/index.ts", posix),
     ).toBeUndefined();
-    expect(projectRelativePath(root, "/repo/code")).toBeUndefined();
+    expect(projectRelativePath(root, "/repo/code", posix)).toBeUndefined();
   });
 
   it("Host 文件 key 组合工作副本身份与规范化工作副本内路径", () => {
@@ -104,8 +107,16 @@ describe("项目与工作副本身份（v0.0.7）", () => {
       createScopedFileKey("C:\\Code", "C:\\Other\\a.ts", win),
     ).toBeUndefined();
     // 只使用项目内相对路径会在同工作副本多项目间碰撞。
-    const projectA = createScopedFileKey("/repo/code", "/repo/code/a/x.ts");
-    const projectB = createScopedFileKey("/repo/code", "/repo/code/b/x.ts");
+    const projectA = createScopedFileKey(
+      "/repo/code",
+      "/repo/code/a/x.ts",
+      posix,
+    );
+    const projectB = createScopedFileKey(
+      "/repo/code",
+      "/repo/code/b/x.ts",
+      posix,
+    );
     expect(projectA).not.toBe(projectB);
   });
 });

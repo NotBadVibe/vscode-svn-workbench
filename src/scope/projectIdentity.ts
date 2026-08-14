@@ -51,8 +51,8 @@ function resolvePathApi(options: PathIdentityOptions): typeof path.posix {
   return platform === "win32" ? path.win32 : path.posix;
 }
 
-/** 计算 candidate 相对 root 的规范化 "/" 分隔相对路径；root 本身返回 "."。 */
-function relativePathWithin(
+/** 计算仅供 identity 使用的规范化相对路径；root 本身返回 "."。 */
+function relativeIdentityPathWithin(
   candidate: string,
   root: string,
   options: PathIdentityOptions,
@@ -60,16 +60,37 @@ function relativePathWithin(
   const pathApi = resolvePathApi(options);
   const candidateKey = normalizePathIdentity(candidate, options);
   const rootKey = normalizePathIdentity(root, options);
-  const relative = pathApi.relative(rootKey, candidateKey);
-  if (relative === "") return ".";
+  const identityRelative = pathApi.relative(rootKey, candidateKey);
+  if (identityRelative === "") return ".";
   if (
-    relative === ".." ||
-    relative.startsWith(`..${pathApi.sep}`) ||
-    pathApi.isAbsolute(relative)
+    identityRelative === ".." ||
+    identityRelative.startsWith(`..${pathApi.sep}`) ||
+    pathApi.isAbsolute(identityRelative)
   ) {
     return undefined;
   }
-  return relative.split(pathApi.sep).join("/");
+  return identityRelative.split(pathApi.sep).join("/");
+}
+
+/** 计算 candidate 相对 root 的用户可见相对路径；root 本身返回 "."。 */
+function relativePathWithin(
+  candidate: string,
+  root: string,
+  options: PathIdentityOptions,
+): string | undefined {
+  const identityRelative = relativeIdentityPathWithin(candidate, root, options);
+  if (identityRelative === undefined || identityRelative === ".") {
+    return identityRelative;
+  }
+  const pathApi = resolvePathApi(options);
+  // identity 键在 Windows 下会统一小写，只能用于边界判断。展示路径必须从
+  // 原始路径重新计算，保留用户文件系统中的大小写。
+  const cwd = options.cwd ?? process.cwd();
+  const displayRelative = pathApi.relative(
+    pathApi.resolve(cwd, root),
+    pathApi.resolve(cwd, candidate),
+  );
+  return displayRelative.split(pathApi.sep).join("/");
 }
 
 export function createWorkingCopyIdentity(
@@ -137,7 +158,11 @@ export function createScopedFileKey(
   absolutePath: string,
   options: PathIdentityOptions = {},
 ): string | undefined {
-  const relative = relativePathWithin(absolutePath, workingCopyRoot, options);
+  const relative = relativeIdentityPathWithin(
+    absolutePath,
+    workingCopyRoot,
+    options,
+  );
   if (relative === undefined) return undefined;
   return `${normalizePathIdentity(workingCopyRoot, options)}::${relative}`;
 }

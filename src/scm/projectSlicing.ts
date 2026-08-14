@@ -37,6 +37,7 @@ export function resolveSourceControlTitles(
   projects: readonly { name: string; absolutePath: string }[],
   options: PathIdentityOptions = {},
 ): string[] {
+  const pathApi = options.platform === "win32" ? path.win32 : path.posix;
   const nameCounts = new Map<string, number>();
   for (const project of projects) {
     const key =
@@ -49,7 +50,7 @@ export function resolveSourceControlTitles(
     if ((nameCounts.get(key) ?? 0) <= 1) {
       return `SVN · ${project.name}`;
     }
-    const parent = path.basename(path.dirname(project.absolutePath));
+    const parent = pathApi.basename(pathApi.dirname(project.absolutePath));
     return parent ? `SVN · ${parent}/${project.name}` : `SVN · ${project.name}`;
   });
 }
