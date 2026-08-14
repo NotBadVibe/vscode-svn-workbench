@@ -171,12 +171,30 @@ v0.0.7 建立路径 identity，本版本完善 `PathCell`：
 
 ## 11. 实施顺序
 
-1. 先实现纯逻辑的自然排序、选择集合、三态和刷新交集；
+1. 先实现纯逻辑的自然排序、选择集合、三态和刷新交集（✅ 批次 1 已完成，见 §11a）；
 2. 实现 PathCell、SortHeader、SelectionSummary 和 BulkActionBar；
 3. 在 Changes 完成截图中的 31 文件闭环；
 4. 对齐 Commit 的权威选择、规则来源、隐藏选择和实际数量；
 5. 增加虚拟化、小屏、200%、键盘和中文 IME 测试；
 6. 运行候选验证并同步 `docs/current/`。
+
+## 11a. 批次 1 已实现（纯逻辑内核）
+
+本批次只交付可复用、无 DOM/VS Code/Svelte 依赖的 TypeScript 领域模块与
+unit tests（`src/selection/`）：选择集合与三态（selectionCore）、自然稳定
+排序（selectionSort）、刷新合法交集（selectionRefresh）。契约点：SelectionKey
+复用批次 0 的 PathIdentityKey 品牌（与 DisplayPath 编译期互斥）；actionability
+是调用方权威输入（可操作项 = actionable ∧ 非 blocked，blocked 二次 fail-closed，
+excluded/needsReview 可操作性由动作决定）；三态只基于当前筛选可操作项；表头
+toggle 只影响当次快照；blocked 永不被批量加入；excluded 不进入推荐但可由调用
+方明确选择；needsReview 保留；推荐合并只加不减；隐藏选择计数/清除/
+only-selected；刷新只保留 selected ∩ 保留项并返回结构化移除原因、重复 identity
+快照冲突 fail-closed 取消选择、新文件绝不自动加入；natural compare（file2 <
+file10）稳定兜底；状态/建议按产品优先级表、未知值恒排末尾。
+
+尚未完成（属后续批次）：Svelte 组件、WorkbenchController/Host/协议接线、
+Mock、虚拟列表、真实 SVN 数据接入与 UX08 人工/交互验收。UI 与人工验收结论
+不得引用本小节作为完成证据。
 
 ## 12. 候选验收
 
