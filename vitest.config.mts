@@ -24,6 +24,7 @@ export default defineConfig({
       include: [
         "src/protocol/**/*.ts",
         "src/scope/**/*.ts",
+        "src/selection/**/*.ts",
         "src/security/**/*.ts",
         "src/ai/**/*.ts",
         "src/commit/**/*.ts",
