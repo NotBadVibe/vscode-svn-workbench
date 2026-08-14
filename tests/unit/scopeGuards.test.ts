@@ -14,6 +14,7 @@ import {
 import type { PathSemantics } from "../../src/scope/pathIdentity";
 
 const posix: PathSemantics = { platform: "linux", cwd: "/" };
+const win32: PathSemantics = { platform: "win32", cwd: "C:\\workspace" };
 
 const temporaryRoots: string[] = [];
 afterEach(async () =>
@@ -68,8 +69,76 @@ describe("右键操作范围边界", () => {
     expect(
       validatePathsInScope(folderScope, ["/repo/src/a/x", "/outside"], posix),
     ).toEqual({
-      validItems: [path.resolve("/repo/src/a/x")],
-      outOfScopeItems: [path.resolve("/outside")],
+      // 返回路径按注入的 POSIX 语义规范化，不能由测试机器的宿主 path 决定。
+      validItems: ["/repo/src/a/x"],
+      outOfScopeItems: ["/outside"],
+    });
+  });
+
+  it("win32 对称契约：大小写折叠、盘符、子项、同前缀兄弟、父目录与 ..cache", () => {
+    const fileScope: OperationScope = {
+      id: "f-win",
+      repositoryRoot: "C:\\repo",
+      source: "explorerFile",
+      roots: [
+        {
+          absolutePath: "C:\\repo\\src\\a.ts",
+          relativePath: "src/a.ts",
+          kind: "file",
+        },
+      ],
+      allowExpandScope: false,
+      includeExternals: false,
+      includeNestedWorkingCopies: false,
+      createdAt: 0,
+    };
+    // 文件自身（含大小写不同写法）在范围内，同前缀兄弟不在。
+    expect(isPathInScope(fileScope, "C:\\repo\\src\\a.ts", win32)).toBe(true);
+    expect(isPathInScope(fileScope, "c:/repo/src/A.ts", win32)).toBe(true);
+    expect(isPathInScope(fileScope, "C:\\repo\\src\\a.ts.bak", win32)).toBe(
+      false,
+    );
+    const folderScope = {
+      ...fileScope,
+      roots: [
+        {
+          absolutePath: "C:\\repo\\src\\a",
+          relativePath: "src/a",
+          kind: "folder" as const,
+        },
+      ],
+    };
+    // 目录自身、子项（含大小写折叠）、..cache 子目录均在范围内。
+    expect(isPathInScope(folderScope, "C:\\repo\\src\\a", win32)).toBe(true);
+    expect(
+      isPathInScope(folderScope, "C:\\repo\\src\\a\\child.ts", win32),
+    ).toBe(true);
+    expect(
+      isPathInScope(folderScope, "C:\\REPO\\SRC\\A\\Child.ts", win32),
+    ).toBe(true);
+    expect(
+      isPathInScope(folderScope, "C:\\repo\\src\\a\\..cache\\file.ts", win32),
+    ).toBe(true);
+    // 同前缀兄弟与父目录不得误判。
+    expect(
+      isPathInScope(folderScope, "C:\\repo\\src\\ab\\child.ts", win32),
+    ).toBe(false);
+    expect(isPathInScope(folderScope, "C:\\repo\\src", win32)).toBe(false);
+    // 不同盘符不是同一路径。
+    expect(isPathInScope(folderScope, "D:\\repo\\src\\a\\x.ts", win32)).toBe(
+      false,
+    );
+    // valid/out-of-scope 返回路径按注入的 win32 语义规范化。
+    expect(
+      validatePathsInScope(
+        folderScope,
+        ["C:\\repo\\src\\a\\x", "C:\\outside"],
+        win32,
+      ),
+    ).toEqual({
+      // 返回路径按注入的 win32 语义规范化，与宿主平台无关。
+      validItems: [path.win32.resolve("C:\\workspace", "C:\\repo\\src\\a\\x")],
+      outOfScopeItems: [path.win32.resolve("C:\\workspace", "C:\\outside")],
     });
   });
 
