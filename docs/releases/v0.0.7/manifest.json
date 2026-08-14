@@ -1,10 +1,10 @@
 {
   "schemaVersion": 1,
   "version": "0.0.7",
-  "status": "candidate",
+  "status": "released",
   "baseVersion": "0.0.6",
-  "releaseDate": null,
-  "gitTag": null,
+  "releaseDate": "2026-08-14",
+  "gitTag": "v0.0.7",
   "gitCommit": "31379b0d0d5a74a58b44d576bec694ac1db13a75",
   "sourceState": "clean",
   "vsix": {
