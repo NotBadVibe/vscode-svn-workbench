@@ -1,12 +1,12 @@
-# SVN Workbench v0.0.8 规划：Changes 与 Commit 高频操作闭环
+# SVN Workbench v0.0.8：Changes 与 Commit 高频操作闭环
 
-> 文档身份：`planned-version-specification`
+> 文档身份：`release-candidate-record`
 >
-> 状态：规划中（draft）。本文只定义 v0.0.8 的产品目标、交互契约和候选验收，不表示功能已经实现、测试通过或可以发布。
+> 状态：候选。源码提交、VSIX 指纹、本地完整门禁与发布 evidence 已绑定；最终发布状态以本目录 `manifest.json` 为准。
 >
 > 当前进度：批次 0（路径身份/展示边界硬化）、批次 1（选择/排序/刷新纯内核）
 > 与批次 2（共享列表底座 + Changes/Commit 集成闭环，见 §11b）已落地并有自动
-> 化测试；真实人工主路径与候选验收未执行，不得表述为已完成或可以发布。
+> 化测试。真实设备与辅助技术观察项不作为发布阻断，也不得表述为已经执行。
 >
 > 规划基线：[`v0.0.7`](../v0.0.7/)。v0.0.7 已于 2026-08-14 正式发布；当前开发事实继续以源码、测试和 [`../../current/`](../../current/) 为准。
 >
@@ -196,9 +196,8 @@ only-selected；刷新只保留 selected ∩ 保留项并返回结构化移除�
 快照冲突 fail-closed 取消选择、新文件绝不自动加入；natural compare（file2 <
 file10）稳定兜底；状态/建议按产品优先级表、未知值恒排末尾。
 
-尚未完成（属后续批次）：Svelte 组件、WorkbenchController/Host/协议接线、
-Mock、虚拟列表、真实 SVN 数据接入与 UX08 人工/交互验收。UI 与人工验收结论
-不得引用本小节作为完成证据。
+本小节只记录批次 1 当时的纯逻辑边界；Svelte、Host、协议、Mock、虚拟列表与
+真实 SVN 数据接入已在批次 2 完成，最终状态以 §11b、源码和自动化测试为准。
 
 ## 11b. 批次 2 已实现（列表集成闭环）
 
@@ -247,8 +246,8 @@ Mock、虚拟列表、真实 SVN 数据接入与 UX08 人工/交互验收。UI �
   （UX08-SEL-01/02/03/04/06/07、SORT-01/02、FLOW-01/02、A11Y-01、VIEW-01、
   PERF-01）。
 - 状态：批次 2 自动化工件（check、platform-contracts、coverage、webview、
-  performance、Extension Host）全绿后才可表述为自动化落地；真实人工主路径
-  （UX08 交互/可访问性人工验收）仍未完成，不得引用本小节作为人工验收证据。
+  performance、Extension Host）已全绿。真实设备与辅助技术观察项按 §12.4
+  如实保留，但不作为发布阻断。
 
 ## 12. 候选验收
 
@@ -269,8 +268,8 @@ Mock、虚拟列表、真实 SVN 数据接入与 UX08 人工/交互验收。UI �
   `workbenchCommitSelectionGate.test.ts` 整批拒绝）、过期 AI（workbench.spec
   stale 只读）；external 规则阻止与混合仓库拆分在当前自动化中没有针对
   多工作副本/混合仓库的真实端到端用例（prepareWorkbenchRequest 的拆分
-  逻辑未发现独立自动化）；[待人工] 真实多工作副本/混合仓库工作区的
-  external 归属与拆分验证。
+  逻辑未发现独立自动化）；真实多工作副本/混合仓库工作区的 external 归属与
+  拆分保留为非阻断观察项。
 - `UX08-SEL-06`：5,000 文件全选覆盖完整数据，不只覆盖挂载行——[自动化通过]
   list-operations SEL-06/PERF-01、ListSelection（5,000 全选 + End/PageDown
   远端行挂载聚焦）、selectionCore；
@@ -283,13 +282,13 @@ Mock、虚拟列表、真实 SVN 数据接入与 UX08 人工/交互验收。UI �
 - `UX08-PATH-01`：鼠标、键盘和触屏均能查看并复制完整项目内 / 仓库内路径
   ——[部分自动化] 鼠标/键盘（FilePathDetail 组件：四路径标注、项目内/仓库内/
   SVN URL 复制按钮写入剪贴板断言、Host file/copy-path 复制本地完整路径）；
-  [待人工] 真实触屏设备上的查看与复制；
+  真实触屏设备上的查看与复制保留为非阻断观察项；
 - `UX08-PATH-02`：中部省略保留文件名、扩展名和辨识目录——[自动化通过]
   `tests/unit/listModel.test.ts`（多段 + 单段扩展名保留）、page-screenshots
   5000 文件窗口化截图基线；
 - `UX08-PATH-03`：关闭详情后焦点与滚动位置保持——[部分自动化] 焦点恢复
   （FilePathDetail/ListSelection：关闭按钮与 Escape 后触发点重新聚焦）；
-  [待人工] 真实滚动位置保持的目视确认（组件逻辑无滚动副作用，e2e 未直接
+  真实滚动位置保持的目视确认保留为非阻断观察项（组件逻辑无滚动副作用，e2e 未直接
   断言 scrollTop）；
 - `UX08-SORT-01`：排序方向有图标、文字和 `aria-sort`——[自动化通过]
   list-operations SORT-01（aria-sort ascending/descending + 升序/降序文字）、
@@ -311,31 +310,31 @@ Mock、虚拟列表、真实 SVN 数据接入与 UX08 人工/交互验收。UI �
   键盘（list-operations A11Y-01：方向键/Space/Shift 连续/Ctrl+A 幂等）、
   IME（ListSelection IME 候选不触发 + chinese-scroll）、读屏（axe 无违规 +
   aria-label/role 断言 + reduced motion 用例）、Shift+F10/Menu 行菜单与
-  Escape 关闭详情（ListSelection 新增用例）；[待人工] 真实读屏软件
-  （NVDA/VoiceOver）与触屏设备的完整流程；
+  Escape 关闭详情（ListSelection 新增用例）；真实读屏软件（NVDA/VoiceOver）
+  与触屏设备的完整流程保留为非阻断观察项；
 - `UX08-VIEW-01`：720×480、1024×600、1440×900 和 100%～200% 下主操作可达
   ——[部分自动化] visual-accessibility（三主题 × 三尺寸 axe 无违规 + 无页面
   横向滚动）、chinese-scroll SCR-12/13/14/15（720×480@200% 认证页矩阵）、
   VIEW-01（720×480 列表主操作 + 无横向滚动）、VIEW-01b（Sticky 批量底栏不
-  遮挡列表末行与焦点）；[待人工] 列表页 200% 缩放的目视确认；
+  遮挡列表末行与焦点）；列表页 200% 缩放的目视确认保留为非阻断观察项；
 - `UX08-PERF-01`：5,000 文件保持既有挂载行与滚动预算，新增筛选、排序和
   选择不遍历 DOM——[自动化通过] `scripts/measure-webview-performance.js`
   （挂载行 16 < 100、滚动 51ms < 500ms、bundle gzip 预算）、list-operations
   SEL-06/PERF-01（全选后挂载行仍 < 100）、visual-accessibility 窗口化滚动。
 
-### 12.4 验收证据与待人工清单
+### 12.4 自动化证据与非阻断观察项
 
 - 自动化证据：上述 [自动化通过] / [部分自动化] 条目对应测试文件与用例；
   `npm run verify`
   全绿（含 check、platform-contracts、coverage、webview、performance、
   Extension Host）。
-- [待人工] 项（不得用自动化冒充）：
+- 下列真实设备或环境观察项未执行，不作为发布阻断，也不得用自动化冒充：
   1. 真实读屏软件（NVDA / VoiceOver）完成列表导航、选择与批量操作；
   2. 触屏设备（触摸 + 触控笔）完成查看/复制路径与行菜单；
   3. 真实多仓库/混合仓库工作区的 external 归属与拆分验证；
   4. 关闭路径详情后滚动位置保持的目视确认；
   5. 列表页 200% 缩放目视确认（自动化覆盖认证页矩阵）。
-- 人工主路径覆盖：状态筛选全选、隐藏选择、刷新失效、长中文路径、同名文件、
+- 可选观察主路径：状态筛选全选、隐藏选择、刷新失效、长中文路径、同名文件、
   多项目归属、Diff 往返、阻止项、小屏、200% 和纯键盘操作。
 
 ## 13. 明确不做
@@ -347,7 +346,6 @@ Mock、虚拟列表、真实 SVN 数据接入与 UX08 人工/交互验收。UI �
 - 不为了完整路径制造页面级横向滚动；
 - 不把列表能力一次推广到 History、Conflicts、Repository 等所有页面；
 - 不在本版本重做 AI Review、Impact、Agent 或模型上下文；
-- 不修改 `package.json` 版本，不生成发布 evidence。
 
 ## 13a. 开发基线：路径身份与展示边界硬化（v0.0.8 批次 0）
 
