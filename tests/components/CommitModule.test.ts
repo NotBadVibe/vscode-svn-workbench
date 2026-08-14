@@ -8,6 +8,7 @@ const snapshot: CommitSnapshot = {
   files: [
     {
       relativePath: "src/a.ts",
+      selectionKey: "test-wc::src/a.ts" as never,
       status: "modified",
       selection: "selected",
       evaluation: {
@@ -19,6 +20,7 @@ const snapshot: CommitSnapshot = {
     },
     {
       relativePath: "dist/out.js",
+      selectionKey: "test-wc::dist/out.js" as never,
       status: "unversioned",
       selection: "excluded",
       evaluation: {
@@ -77,7 +79,7 @@ describe("CommitModule", () => {
     const onAction = renderCommit();
 
     expect(screen.getByLabelText("选择 dist/out.js")).toBeDisabled();
-    await fireEvent.click(screen.getByRole("button", { name: "确认提交" }));
+    await fireEvent.click(screen.getByRole("button", { name: /确认提交/ }));
     expect(onAction).toHaveBeenCalledWith("commit/execute", {
       previewToken: "preview-1",
     });

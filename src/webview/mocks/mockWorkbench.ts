@@ -12,6 +12,7 @@ import {
   type WorkbenchTaskId,
 } from "@protocol/workbenchProtocol";
 import { toDisplayPath } from "../../scope/pathBrands";
+import type { PathIdentityKey } from "../../scope/pathBrands";
 import {
   COMMIT_SELECTION_CONFIG_VERSION,
   validateCommitSelectionLayerConfig,
@@ -190,7 +191,15 @@ const files = [
     repositoryName: "vscode-svn",
     ownership: "current" as const,
   },
-];
+].map((item) => ({
+  ...item,
+  selectionKey: mockSelectionKey(item.relativePath),
+}));
+
+/** v0.0.8：mock 选择身份（与 Host 复合键同形，仅供 mock 快照使用）。 */
+function mockSelectionKey(relativePath: string): PathIdentityKey {
+  return `mock-wc::${relativePath}` as PathIdentityKey;
+}
 
 let activeMockModuleId: WorkbenchModuleId = "changes";
 let activeMockTaskId: WorkbenchTaskId = defaultWorkbenchTask("changes");
@@ -439,7 +448,17 @@ export function startMockWorkbench(): void {
       const taskId = isWorkbenchTaskForModule(data.taskId, moduleId)
         ? data.taskId
         : defaultWorkbenchTask(moduleId);
-      if (createSnapshot) injectSnapshot(moduleId, createSnapshot(), taskId);
+      // v0.0.8：携带明确选择进入 Commit 时保持数量一致（FLOW-02）。
+      if (
+        moduleId === "commit" &&
+        createSnapshot &&
+        Array.isArray(data.selectedPaths)
+      ) {
+        const selectedPaths = data.selectedPaths as string[];
+        injectSnapshot(moduleId, commitSnapshot({ selectedPaths }), taskId);
+      } else if (createSnapshot) {
+        injectSnapshot(moduleId, createSnapshot(), taskId);
+      }
     }
     if (
       action === "file/path-detail" &&
@@ -1384,6 +1403,9 @@ function changesSnapshot(
           { length: dataset === "large" ? 5000 : 120 },
           (_, index) => ({
             relativePath: `src/generated/deep/path/file-${String(index).padStart(4, "0")}.ts`,
+            selectionKey: mockSelectionKey(
+              `src/generated/deep/path/file-${String(index).padStart(4, "0")}.ts`,
+            ),
             status:
               index % 17 === 0
                 ? ("unversioned" as const)
@@ -1428,6 +1450,9 @@ function commitSnapshot(
     isScrollDataset()
       ? Array.from({ length: 80 }, (_, index) => ({
           relativePath: `项目资料/提交候选/第-${String(index + 1).padStart(2, "0")}-个文件.ts`,
+          selectionKey: mockSelectionKey(
+            `项目资料/提交候选/第-${String(index + 1).padStart(2, "0")}-个文件.ts`,
+          ),
           status:
             index % 7 === 0 ? ("unversioned" as const) : ("modified" as const),
           selection: "selected" as const,
@@ -2230,6 +2255,7 @@ function changelistsSnapshot(
   const scrollFiles = isScrollDataset()
     ? Array.from({ length: 40 }, (_, index) => ({
         relativePath: `项目资料/未分组-${index + 1}.ts`,
+        selectionKey: mockSelectionKey(`项目资料/未分组-${index + 1}.ts`),
         status: "modified" as const,
         selection: "selected" as const,
         fileType: "TypeScript",

@@ -293,6 +293,20 @@ describe("归属排序与规模", () => {
     );
   });
 
+  it("ruleSource 按自然比较排序（批次 2 规则来源列）", () => {
+    const items = [
+      item("b", { ruleSource: "team-rules-2" }),
+      item("a", { ruleSource: "team-rules-10" }),
+      item("c"),
+    ];
+    const options: SelectionSortOptions = {
+      field: "ruleSource",
+      direction: "asc",
+    };
+    // team-rules-2 < team-rules-10（numeric）；缺省按空串参与比较（最小）。
+    expect(keysOf(sortSelectionItems(items, options))).toEqual(["c", "b", "a"]);
+  });
+
   it("compareSelectionItems 对未知/缺省值确定性返回", () => {
     const options: SelectionSortOptions = {
       field: "recommendation",

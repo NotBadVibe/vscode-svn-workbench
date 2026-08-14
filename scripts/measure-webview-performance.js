@@ -102,7 +102,17 @@ async function main() {
       element.scrollTop = element.scrollHeight;
       element.dispatchEvent(new Event("scroll"));
     });
-    await page.getByText("src/generated/deep/path/file-4999.ts").waitFor();
+    // PathCell 已改为“文件名 + 父目录”两行：等待最后一项的文件名按钮挂载
+    // （同时校验父目录行），不再等待已不在 UI 上的整路径文本。
+    await page
+      .locator(".path-cell__name", { hasText: "file-4999.ts" })
+      .waitFor();
+    await page
+      .locator(".path-cell__parent", {
+        hasText: "src/generated/deep/path",
+      })
+      .first()
+      .waitFor();
     const largeListScrollMs = performance.now() - scrollStarted;
     const mountedRows = await list.getByRole("listitem").count();
     await browser.close();

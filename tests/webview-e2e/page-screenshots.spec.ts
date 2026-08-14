@@ -131,7 +131,7 @@ test("保存每个 Svelte 功能页面的验收截图", async ({ page }) => {
   await test.step("Commit", async () => {
     await openModule(page, "提交");
     await page.getByRole("button", { name: "AI 生成说明" }).click();
-    await page.getByRole("button", { name: "生成提交预览" }).click();
+    await page.getByRole("button", { name: /生成提交预览/ }).click();
     await expect(page.getByText("范围、状态和远端检查已通过")).toBeVisible();
     await capture(page, "03-commit");
   });

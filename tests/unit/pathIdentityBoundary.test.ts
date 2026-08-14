@@ -218,6 +218,28 @@ describe("纯路径 API 要求显式 PathSemantics（编译期必填）", () => 
   });
 });
 
+describe("Webview 不得伪造选择身份（生产 cast 契约）", () => {
+  it("app/components/features 不得出现把 string/DisplayPath 转成 SelectionKey 的生产 cast", () => {
+    // tests/mock 可显式构造 fixture；生产代码必须使用 protocol 必填的
+    // selectionKey（Host 权威生成），不得对 undefined/展示路径伪造 key。
+    for (const file of webviewRuntimeFiles()) {
+      const source = readFileSync(file, "utf8");
+      const matches = [...source.matchAll(/\bas\s+SelectionKey\b/g)];
+      expect(
+        matches,
+        `${path.relative(root, file)} 不得出现 as SelectionKey 生产 cast`,
+      ).toEqual([]);
+    }
+  });
+
+  it("protocol 的 selectionKey 为必填 SelectionKey 字段（非 string/DisplayPath）", () => {
+    expect(protocolSource).toContain("selectionKey: SelectionKey;");
+    expect(protocolSource).toContain(
+      'import type { SelectionKey } from "../selection/selectionCore";',
+    );
+  });
+});
+
 describe("身份 API 的返回类型契约（源码声明）", () => {
   it("normalizePathIdentity 声明返回 PathIdentityKey", () => {
     expect(pathIdentitySource).toMatch(/\): PathIdentityKey \{/);

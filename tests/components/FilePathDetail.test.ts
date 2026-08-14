@@ -16,6 +16,7 @@ const snapshot = {
   files: [
     {
       relativePath: "app/src/index.ts",
+      selectionKey: "test-wc::app/src/index.ts" as never,
       projectRelativePath: toDisplayPath("src/index.ts"),
       projectName: "app",
       status: "modified" as const,
@@ -39,20 +40,20 @@ const pathDetail = {
 };
 
 describe("文件路径显示与路径详情（v0.0.7）", () => {
-  it("默认显示项目内路径并保留工作副本内路径为 tooltip，跨项目显示徽标", () => {
+  it("默认显示项目内路径（文件名 + 父目录），跨项目显示徽标", () => {
     render(ChangesModule, { snapshot, onAction: vi.fn() });
-    const label = screen.getByText("src/index.ts");
-    expect(label.closest("button")?.getAttribute("title")).toBe(
-      "app/src/index.ts",
-    );
-    expect(screen.getByText("app")).toBeInTheDocument();
+    // PathCell：第一行文件名，第二行项目内父目录；tooltip 保留完整项目内路径。
+    const name = screen.getByText("index.ts");
+    expect(name.getAttribute("title")).toBe("src/index.ts");
+    expect(screen.getByText("src")).toBeInTheDocument();
+    expect(screen.getAllByText("app").length).toBeGreaterThanOrEqual(1);
   });
 
   it("路径详情按钮发送工作副本内路径，而非显示路径", async () => {
     const onAction = vi.fn();
     render(ChangesModule, { snapshot, onAction });
     await fireEvent.click(
-      screen.getByRole("button", { name: "查看 app/src/index.ts 路径详情" }),
+      screen.getByRole("button", { name: "查看 src/index.ts 路径详情" }),
     );
     expect(onAction).toHaveBeenCalledWith("file/path-detail", {
       relativePath: "app/src/index.ts",
@@ -116,6 +117,7 @@ describe("跨项目提交预览分组（v0.0.7 §7.2）", () => {
     files: [
       {
         relativePath: "app/a.ts",
+        selectionKey: "test-wc::app/a.ts" as never,
         projectRelativePath: toDisplayPath("a.ts"),
         projectName: "app",
         status: "modified" as const,
@@ -123,6 +125,7 @@ describe("跨项目提交预览分组（v0.0.7 §7.2）", () => {
       },
       {
         relativePath: "web/b.ts",
+        selectionKey: "test-wc::web/b.ts" as never,
         projectRelativePath: toDisplayPath("b.ts"),
         projectName: "web",
         status: "modified" as const,

@@ -9,6 +9,7 @@ import type {
   ResolvedCommitSelectionPathRule,
 } from "../commit/commitSelectionRules";
 import type { DisplayPath } from "../scope/pathBrands";
+import type { SelectionKey } from "../selection/selectionCore";
 
 export const WORKBENCH_PROTOCOL_VERSION = 2 as const;
 
@@ -154,6 +155,12 @@ export interface WorkbenchScopeView {
 
 export interface WorkbenchFileView {
   relativePath: string;
+  /**
+   * v0.0.8：选择集合/比较专用身份（working-copy identity + 规范化仓库内
+   * 路径）。Webview 只能接收、携带与比较，绝不展示、复制或作为 SVN/fs
+   * 参数；Host 动作仍提交 relativePath 并由 Host 复验范围。
+   */
+  selectionKey: SelectionKey;
   status: WorkbenchFileStatus;
   repositoryName?: string;
   ownership?: "current" | "external" | "nested";

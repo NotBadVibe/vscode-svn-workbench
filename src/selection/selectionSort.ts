@@ -24,7 +24,12 @@ export const RECOMMENDATION_ORDER = [
 export type SelectionRecommendation = (typeof RECOMMENDATION_ORDER)[number];
 
 export type SortField =
-  "path" | "fileName" | "status" | "recommendation" | "ownership";
+  | "path"
+  | "fileName"
+  | "status"
+  | "recommendation"
+  | "ownership"
+  | "ruleSource";
 
 export type SortDirection = "asc" | "desc";
 
@@ -41,6 +46,8 @@ export interface SelectionSortable {
   recommendation?: SelectionRecommendation;
   /** 项目/仓库归属标识（展示名或归属键）。 */
   ownership?: string;
+  /** 规则来源标识（Commit 最终决策来源）。 */
+  ruleSource?: string;
 }
 
 export interface SelectionSortOptions {
@@ -159,6 +166,8 @@ function compareByField(
       );
     case "ownership":
       return naturalCompare(left.ownership ?? "", right.ownership ?? "");
+    case "ruleSource":
+      return naturalCompare(left.ruleSource ?? "", right.ruleSource ?? "");
   }
 }
 
@@ -179,7 +188,8 @@ export function compareSelectionItems(
     result !== 0 &&
     (options.field === "path" ||
       options.field === "fileName" ||
-      options.field === "ownership")
+      options.field === "ownership" ||
+      options.field === "ruleSource")
   ) {
     result = -result;
   }

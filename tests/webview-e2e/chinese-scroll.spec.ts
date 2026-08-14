@@ -93,13 +93,13 @@ test("SCR-03：提交双栏分别滚动，底部确认操作可达", async ({ pa
   await page
     .getByRole("textbox", { name: "提交说明" })
     .fill("feat(中文界面): 验证小区域滚动");
-  await page.getByRole("button", { name: "生成提交预览" }).click();
+  await page.getByRole("button", { name: /生成提交预览/ }).click();
   const compose = page.getByRole("region", { name: "提交说明与提交前检查" });
   await assertScrollable(
     compose,
-    page.getByRole("button", { name: "确认提交" }),
+    page.getByRole("button", { name: /确认提交/ }),
   );
-  await expect(page.getByRole("button", { name: "确认提交" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: /确认提交/ })).toBeEnabled();
   await assertNoPageHorizontalOverflow(page);
 });
 
@@ -291,7 +291,7 @@ test("ZH-01/02/03/04/09：公共状态、数量、时间和 AI 外发说明符�
     ).toEqual([]);
   }
   await openModule(page, "提交");
-  await expect(page.getByText(/已选择 \d+\/\d+ 个文件/)).toBeVisible();
+  await expect(page.getByText(/已选 \d+ \/ 候选 \d+ 个文件/)).toBeVisible();
   await openModule(page, "AI 审查");
   await expect(page.locator(".privacy-strip")).toContainText("个文件");
   await expect(page.locator(".privacy-strip")).toContainText("个字符");
