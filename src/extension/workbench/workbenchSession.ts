@@ -1,5 +1,6 @@
 import type { AiUsageScenario } from "../../ai/aiModelConfiguration";
 import type { CommitConventionConfig } from "../../commit/commitConvention";
+import type { CommitCandidate } from "../../commit/commitCandidateCollector";
 import type { buildCommitPlanPreview } from "../../commit/commitPlanBuilder";
 import type {
   AgentSnapshot,
@@ -190,6 +191,18 @@ export interface WorkbenchSession extends OpenWorkbenchRequest {
 export interface CommitSessionState {
   message: string;
   selectedPaths?: string[];
+  /**
+   * 最近一次权威候选采集（buildCommitSnapshot 缓存）：commit/update-selection
+   * 用它逐项复验（路径 ∈ 候选集合且非 excluded/blocked），避免每次勾选都
+   * 重跑 SVN status；refresh 后重新采集并更新。
+   */
+  candidates?: CommitCandidate[];
+  /**
+   * 最后一次 commit/update-selection 的手动选择（provenance）：规则/AI
+   * 应用时用它计算“新增/保留/移除手动选择”摘要，随后清空（规则/AI 接管
+   * 后的选择不再称手动）。不得把规则/AI 推荐虚构成手动选择。
+   */
+  manualSelectedPaths?: string[];
   preview?: {
     token: string;
     stateHash: string;

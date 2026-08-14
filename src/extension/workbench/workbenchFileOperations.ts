@@ -11,6 +11,8 @@ import type { OperationScope } from "../../scope/operationScope";
 import { validatePathsInScope } from "../../scope/pathBoundaryGuard";
 import { isSameOrDescendantPath } from "../../scope/pathIdentity";
 import { nativePathSemantics } from "../../scope/nativePathSemantics";
+import { createScopedFileKey } from "../../scope/projectIdentity";
+import { appendOutput } from "../../diagnostics/outputChannel";
 import { projectRelativePath } from "../../scope/projectIdentity";
 import { toDisplayPath } from "../../scope/pathBrands";
 import { runSvnCommand } from "../../svn/svnCommandRunner";
@@ -208,9 +210,9 @@ export function fileOperationRecoverability(operation: FileOperation): string {
 export async function buildWorkbenchFileViews(
   candidates: Awaited<ReturnType<typeof collectCommitCandidates>>,
   currentRepositoryName: string,
-  scope?: OperationScope,
+  scope: OperationScope,
 ): Promise<WorkbenchFileView[]> {
-  return Promise.all(
+  const views = await Promise.all(
     candidates.map(async (candidate) => {
       let ownership: "current" | "external" | "nested" =
         candidate.status === "external" ? "external" : "current";
@@ -230,8 +232,22 @@ export async function buildWorkbenchFileViews(
           // Ordinary files and directories remain owned by the current working copy.
         }
       }
+      // v0.0.8：选择身份由 Host 在权威 working-copy + 路径归属上生成；
+      // 无法建立身份是数据完整性异常，fail-closed 丢弃并记录。
+      const selectionKey = createScopedFileKey(
+        scope.repositoryRoot,
+        candidate.absolutePath,
+        nativePathSemantics,
+      );
+      if (selectionKey === undefined) {
+        appendOutput(
+          `无法为 ${candidate.relativePath} 建立选择身份，已从文件视图排除。`,
+        );
+        return undefined;
+      }
       const view: WorkbenchFileView = {
         relativePath: candidate.relativePath,
+        selectionKey,
         status: candidate.status,
         propStatus: candidate.propStatus,
         repositoryName:
@@ -246,11 +262,10 @@ export async function buildWorkbenchFileViews(
             ? "嵌套工作副本：必须在其独立 SCM 仓库模型中操作。"
             : candidate.reason,
       };
-      return scope
-        ? withProjectFileView(view, candidate.absolutePath, scope)
-        : view;
+      return withProjectFileView(view, candidate.absolutePath, scope);
     }),
   );
+  return views.filter((view) => view !== undefined);
 }
 
 /**

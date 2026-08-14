@@ -122,7 +122,7 @@ test("5000-file dataset remains windowed while scrolling", async ({ page }) => {
     element.dispatchEvent(new Event("scroll"));
   });
   await expect(
-    page.getByText("src/generated/deep/path/file-4999.ts"),
+    page.locator(".path-cell__name", { hasText: "file-4999.ts" }),
   ).toBeVisible();
   expect(await list.getByRole("listitem").count()).toBeLessThan(100);
 });

@@ -4,6 +4,10 @@
 >
 > 状态：规划中（draft）。本文只定义 v0.0.8 的产品目标、交互契约和候选验收，不表示功能已经实现、测试通过或可以发布。
 >
+> 当前进度：批次 0（路径身份/展示边界硬化）、批次 1（选择/排序/刷新纯内核）
+> 与批次 2（共享列表底座 + Changes/Commit 集成闭环，见 §11b）已落地并有自动
+> 化测试；真实人工主路径与候选验收未执行，不得表述为已完成或可以发布。
+>
 > 规划基线：[`v0.0.7`](../v0.0.7/)。v0.0.7 已于 2026-08-14 正式发布；当前开发事实继续以源码、测试和 [`../../current/`](../../current/) 为准。
 >
 > 优先级：P0，高频用户价值；只覆盖 Changes、Commit 和共享列表底座的必要部分。
@@ -195,6 +199,56 @@ file10）稳定兜底；状态/建议按产品优先级表、未知值恒排末�
 尚未完成（属后续批次）：Svelte 组件、WorkbenchController/Host/协议接线、
 Mock、虚拟列表、真实 SVN 数据接入与 UX08 人工/交互验收。UI 与人工验收结论
 不得引用本小节作为完成证据。
+
+## 11b. 批次 2 已实现（列表集成闭环）
+
+批次 1 的三个纯内核已接入共享列表底座与 Changes/Commit 页面：
+
+- 身份与适配：`WorkbenchFileView.selectionKey`（协议 type-only 复用
+  `PathIdentityKey`）由 Host 经 `createScopedFileKey` 在权威 working-copy +
+  路径归属上生成，无法建立身份时 fail-closed 排除并记录；Webview 只做
+  key ↔ relativePath 查表（`src/webview/app/fileSelection.ts`），动作仍提交
+  relativePath 由 Host 复验；actionability 按动作权威（blocked 永不可操作，
+  excluded 不进批量但 Changes 允许逐项明确选择，Commit 下 excluded 不可选）。
+- 共享底座：`src/webview/components/list/`（PathCell 两行路径卡 + 中部省略、
+  SortHeader 语义列头 + aria-sort + 中文方向、SelectionSummary、BulkActionBar、
+  listModel 纯函数）与 `src/webview/app/listPreferences.ts`（排序/密度按模块
+  经 Webview state 本地保存，不发 Host、不跨模块串用）。
+- Changes：搜索清除/匹配数/空态恢复、状态筛选、五字段稳定排序与默认顺序
+  恢复、表头三态（只作用于当前筛选可操作项）、隐藏选择计数/清除、只看已
+  选、清空全部、推荐项入口、Sticky 批量底栏（数量与 payload 一致）、右键已
+  选行提示“对 N 个已选文件操作”、快照刷新经 refreshSelectionSet 保留合法
+  交集并 role=status 播报移除原因、5,000 文件继续窗口化（选择/排序作用全量）。
+- Commit：六档筛选、可提交项三态、五字段排序（含规则来源）、“已选 N / 候选
+  M，另有 K 个隐藏选择”、只看已选/清除隐藏/清空全部、空选择预览按钮说明
+  与禁用、选择变化即本地撤销旧预览可用性、Host 权威选择的回声防护（未回
+  显前旧快照不覆盖用户操作）、规则/AI 更新选择反馈新增/保留/移除明细
+  （`src/commit/selectionChangeSummary.ts`，provenance 只对最后一次手动选择
+  计算，规则/AI 推荐不虚构成手动选择）；>300（含 5,000）候选窗口化（复用
+  listModel.windowedRows，mounted rows < 100）；小屏排序菜单（路径/文件名/
+  状态/最终决策/规则来源/归属/默认）与密度切换按模块保存；小屏语义列头保留。
+- Host 提交选择 fail-closed（批次 2 收口）：commit/update-selection 逐项候选
+  复验（路径 ∈ 当前候选集合且非 excluded/blocked），重复路径规范化为唯一，
+  非法输入不修改既有选择并返回中文错误与恢复动作（`src/commit/commitSelectionValidation.ts`）；
+  buildCommitSnapshot 对初始路由/草稿恢复/旧状态同样过滤消失/excluded/blocked
+  并经一次性 feedback 说明数量与原因。
+- Changes → Commit 动作资格：excluded/blocked 可逐项选择（非提交动作），
+  “检查并提交所选”在含不可提交项时禁用并 role=status 提示“有 N 个所选文件
+  不可提交，请取消选择后继续”，按钮数量显示可提交数量且与 payload 一致；
+  Changes 本地选择改变后旧操作预览失效并提示重新预览。
+- 键盘/IME：列表内 ↑/↓/Home/End 导航、Space 切换、Shift+Click 与
+  Shift+↑/↓ 连续选择、Ctrl/⌘+A 幂等选择当前筛选可操作项（连按不反向
+  清空，不劫持输入框与 IME 候选）、Enter 打开差异；PageUp/PageDown 为
+  活动行分页导航（按一页可见行数移动并保持局部滚动）。
+- 回归：tests/unit/listModel.test.ts、tests/unit/fileSelection.test.ts、
+  tests/unit/commitSelectionValidation.test.ts、
+  tests/unit/workbenchCommitSelectionGate.test.ts、
+  tests/components/ListSelection.test.ts、tests/webview-e2e/list-operations.spec.ts
+  （UX08-SEL-01/02/03/04/06/07、SORT-01/02、FLOW-01/02、A11Y-01、VIEW-01、
+  PERF-01）。
+- 状态：批次 2 自动化工件（check、platform-contracts、coverage、webview、
+  performance、Extension Host）全绿后才可表述为自动化落地；真实人工主路径
+  （UX08 交互/可访问性人工验收）仍未完成，不得引用本小节作为人工验收证据。
 
 ## 12. 候选验收
 

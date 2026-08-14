@@ -9,6 +9,7 @@ import {
   hiddenSelectionKeys,
   isActionable,
   mergeRecommendedSelection,
+  selectActionable,
   toggleActionable,
   type SelectableItem,
   type SelectionKey,
@@ -142,6 +143,42 @@ describe("表头 toggle（UX08-SEL-02）", () => {
     expect(keysOf(next)).toEqual(["a", "b", "c"]);
     // 不点击表头时，新文件绝不自动加入。
     expect(keysOf(selected)).toEqual(["a", "b"]);
+  });
+});
+
+describe("Ctrl/⌘+A 幂等选择（UX08-SEL-02）", () => {
+  it("selectActionable 只加不减：已全选时连按保持全选，不反向清空", () => {
+    const visible = [item("a"), item("b")];
+    const once = selectActionable(visible, emptySelection());
+    expect(keysOf(once)).toEqual(["a", "b"]);
+    expect(keysOf(selectActionable(visible, once))).toEqual(["a", "b"]);
+  });
+
+  it("新筛选下连按 Ctrl+A 始终全选当前筛选可操作项", () => {
+    const first = selectActionable([item("a"), item("b")], emptySelection());
+    const second = selectActionable([item("b"), item("c")], first);
+    expect(keysOf(second)).toEqual(["a", "b", "c"]);
+    // 第三次按键仍只做联合，不清空。
+    expect(keysOf(selectActionable([item("c")], second))).toEqual([
+      "a",
+      "b",
+      "c",
+    ]);
+  });
+
+  it("不可操作项（blocked/actionable=false）永不进入 selectActionable", () => {
+    const visible = [
+      item("a"),
+      item("b", { actionable: true, blocked: true }),
+      item("e", { actionable: false, excluded: true }),
+    ];
+    expect(keysOf(selectActionable(visible, emptySelection()))).toEqual(["a"]);
+  });
+
+  it("selectActionable 与 toggleActionable 语义分离：toggle 在 all 时反向清空", () => {
+    const visible = [item("a"), item("b")];
+    const all = selectActionable(visible, emptySelection());
+    expect(keysOf(toggleActionable(visible, all))).toEqual([]);
   });
 });
 

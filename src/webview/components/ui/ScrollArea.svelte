@@ -7,6 +7,7 @@
     role = "region",
     element = $bindable(),
     onScroll,
+    onKeydown,
     children,
   }: {
     label: string;
@@ -14,6 +15,8 @@
     role?: "region" | "list" | "log";
     element?: HTMLElement;
     onScroll?: (event: Event) => void;
+    /** v0.0.8：列表键盘导航（方向键/Space/Ctrl+A），由使用方实现。 */
+    onKeydown?: (event: KeyboardEvent) => void;
     children: Snippet;
   } = $props();
 
@@ -76,6 +79,7 @@
   aria-label={label}
   tabindex="0"
   onscroll={handleScroll}
+  onkeydown={onKeydown}
 >
   {@render children()}
 </div>

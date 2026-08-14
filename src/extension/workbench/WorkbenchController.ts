@@ -58,6 +58,11 @@ import {
 } from "../../commit/commitCandidateCollector";
 import type { CommitCandidate } from "../../commit/commitCandidateCollector";
 import {
+  filterCommitSelectionByCandidates,
+  validateCommitSelection,
+} from "../../commit/commitSelectionValidation";
+import { describeSelectionChange } from "../../commit/selectionChangeSummary";
+import {
   CommitSelectionRuleService,
   type CommitSelectionRulesInvalidationEvent,
 } from "../../commit/commitSelectionRuleService";
@@ -141,6 +146,7 @@ import {
 } from "../../protocol/workbenchProtocol";
 import { toDisplayPath } from "../../scope/pathBrands";
 import { nativePathSemantics } from "../../scope/nativePathSemantics";
+import { createScopedFileKey } from "../../scope/projectIdentity";
 import type { PathIdentityKey } from "../../scope/pathIdentity";
 import { validatePathsInScope } from "../../scope/pathBoundaryGuard";
 import { isPathInScope } from "../../scope/pathBoundaryGuard";
@@ -1084,29 +1090,31 @@ export class WorkbenchController implements vscode.Disposable {
         return;
       }
       case "commit/update-selection": {
-        const selectedPaths = asStringArray(data.selectedPaths) ?? [];
-        const absolutePaths = selectedPaths.map((item) =>
-          path.resolve(session.scope.repositoryRoot, item),
-        );
-        const validation = validatePathsInScope(
-          session.scope,
-          absolutePaths,
-          nativePathSemantics,
-        );
-        if (validation.outOfScopeItems.length > 0) {
+        const requested = asStringArray(data.selectedPaths) ?? [];
+        const state = this.ensureCommitState(session);
+        // 候选复验（fail-closed）：路径必须在当前候选集合，且不是
+        // excluded/blocked。复用最近一次权威采集缓存，refresh 后自动更新。
+        const candidates =
+          state.candidates ?? (await this.collectScopeCandidates(session));
+        const validation = validateCommitSelection(requested, candidates);
+        const { selectedPaths, missing, notSubmittable } = validation;
+        if (missing.length > 0 || notSubmittable.length > 0) {
+          // 非法输入：不修改 state.selectedPaths、不清除合法现状。
           await this.sendError(
             "commit",
-            "范围校验失败",
-            "提交选择包含当前右键范围之外的文件。",
-            false,
+            "提交选择未通过候选校验",
+            `提交选择包含无效文件：${missing.length} 个不在当前候选集合${notSubmittable.length > 0 ? `，${notSubmittable.length} 个为排除/阻止项` : ""}。已保留原有选择，未做修改；请刷新状态后重新选择。`,
+            true,
             message.requestId,
           );
           return;
         }
-        const state = this.ensureCommitState(session);
         state.selectedPaths = selectedPaths;
+        state.manualSelectedPaths = selectedPaths;
         state.preview = undefined;
-        await this.sendCommitSnapshot(session, message.requestId);
+        // 复用刚用于校验的候选快照：勾选不重跑 SVN status；真实写操作
+        // （createCommitPreview/execute）仍会重新采集并复验。
+        await this.sendCommitSnapshot(session, message.requestId, candidates);
         return;
       }
       case "commit/apply-local-rules": {
@@ -1114,6 +1122,9 @@ export class WorkbenchController implements vscode.Disposable {
         // 用户显式触发，应用推荐选择属于预期覆盖。
         const candidates = await this.collectScopeCandidates(session);
         const state = this.ensureCommitState(session);
+        // provenance：摘要只对最后一次手动选择计算，不把规则/AI 推荐
+        // 虚构成手动选择；应用后清空手动跟踪。
+        const previousManual = state.manualSelectedPaths ?? [];
         const recommended = candidates
           .filter((candidate) => candidate.selection === "selected")
           .map((candidate) => candidate.relativePath);
@@ -1121,10 +1132,11 @@ export class WorkbenchController implements vscode.Disposable {
           (candidate) => candidate.selection === "needsReview",
         ).length;
         state.selectedPaths = recommended;
+        state.manualSelectedPaths = undefined;
         state.preview = undefined;
         state.feedback = {
           tone: "success",
-          message: `已按本地规则应用推荐选择 ${recommended.length} 个文件；${needsReview} 个文件待确认，可手动勾选。`,
+          message: `已按本地规则应用推荐选择 ${recommended.length} 个文件（${describeSelectionChange(previousManual, recommended)}）；${needsReview} 个文件待确认，可手动勾选。`,
         };
         await this.sendCommitSnapshot(session, message.requestId, candidates);
         return;
@@ -1165,6 +1177,8 @@ export class WorkbenchController implements vscode.Disposable {
         // 强制排除或用户配置排除的推荐条目在此丢弃并计入警告（规划 5.5）。
         const boundary = enforceAiSelectionLocalBoundary(candidates, validated);
         const effective = boundary.result;
+        // provenance：摘要只对最后一次手动选择计算；AI 应用后清空手动跟踪。
+        const previousManual = state.manualSelectedPaths ?? [];
         state.selectedPaths = effective.recommended
           .map((item) =>
             normalizeRelative(
@@ -1179,10 +1193,11 @@ export class WorkbenchController implements vscode.Disposable {
                 candidate.selection !== "excluded",
             ),
           );
+        state.manualSelectedPaths = undefined;
         state.preview = undefined;
         state.ai = {
           source,
-          summary: `建议选择 ${state.selectedPaths.length} 个文件；${effective.needsReview.length} 个需要人工确认，${effective.excluded.length} 个建议排除。`,
+          summary: `建议选择 ${state.selectedPaths.length} 个文件（${describeSelectionChange(previousManual, state.selectedPaths)}）；${effective.needsReview.length} 个需要人工确认，${effective.excluded.length} 个建议排除。`,
           warnings: [
             ...boundary.violations,
             ...(effective.blocked.length > 0
@@ -5239,14 +5254,25 @@ export class WorkbenchController implements vscode.Disposable {
       groups,
       unassigned: candidates
         .filter((item) => !assigned.has(item.relativePath))
-        .map((candidate) => ({
-          relativePath: candidate.relativePath,
-          status: candidate.status,
-          propStatus: candidate.propStatus,
-          fileType: candidate.fileType,
-          selection: candidate.selection,
-          reason: candidate.reason,
-        })),
+        .flatMap((candidate) => {
+          const selectionKey = createScopedFileKey(
+            session.scope.repositoryRoot,
+            candidate.absolutePath,
+            nativePathSemantics,
+          );
+          if (selectionKey === undefined) return [];
+          return [
+            {
+              relativePath: candidate.relativePath,
+              selectionKey,
+              status: candidate.status,
+              propStatus: candidate.propStatus,
+              fileType: candidate.fileType,
+              selection: candidate.selection,
+              reason: candidate.reason,
+            },
+          ];
+        }),
       suggestions: state.suggestions,
       warnings: state.warnings,
       source: state.source,
@@ -5405,17 +5431,46 @@ export class WorkbenchController implements vscode.Disposable {
     const candidates =
       providedCandidates ?? (await this.collectScopeCandidates(session));
     const summary = summarizeCommitCandidates(candidates);
+    // 缓存最近一次权威候选采集：commit/update-selection 逐项复验复用。
+    state.candidates = candidates;
     if (!state.selectedPaths) {
       state.selectedPaths = candidates
         .filter((candidate) => candidate.selection === "selected")
         .map((candidate) => candidate.relativePath);
     }
-    const candidatePaths = new Set(
-      candidates.map((candidate) => candidate.relativePath),
+    // 初始路由/草稿恢复/旧状态清理：消失、excluded、blocked 自动移除，
+    // 并通过一次性 feedback 说明数量与原因；excluded/blocked 不得以已选
+    // 状态进入预览。
+    const filtered = filterCommitSelectionByCandidates(
+      state.selectedPaths,
+      candidates,
     );
-    state.selectedPaths = state.selectedPaths.filter((relativePath) =>
-      candidatePaths.has(relativePath),
-    );
+    state.selectedPaths = filtered.kept;
+    // manualSelectedPaths 同步收敛到“仍保留的当前选择”（保持原手动顺序、
+    // 去重）：被刷新移除/失效的路径不得继续污染后续规则/AI provenance 摘要。
+    if (state.manualSelectedPaths) {
+      const keptSet = new Set(state.selectedPaths);
+      const manualSeen = new Set<string>();
+      const manualKept: string[] = [];
+      for (const relativePath of state.manualSelectedPaths) {
+        if (keptSet.has(relativePath) && !manualSeen.has(relativePath)) {
+          manualSeen.add(relativePath);
+          manualKept.push(relativePath);
+        }
+      }
+      state.manualSelectedPaths = manualKept;
+    }
+    const removedReasons = filtered.removedReasons;
+    if (removedReasons.length > 0 && !state.feedback) {
+      state.feedback = {
+        tone: "warning",
+        message: `刷新后移除 ${removedReasons.length} 个失效选择（${removedReasons
+          .slice(0, 3)
+          .join(
+            "；",
+          )}${removedReasons.length > 3 ? "…" : ""}）。请确认当前选择。`,
+      };
+    }
 
     const convention = await resolveCommitConventionConfig(
       session.scope.repositoryRoot,
@@ -5465,21 +5520,37 @@ export class WorkbenchController implements vscode.Disposable {
 
     return {
       kind: "commit",
-      files: candidates.map((candidate) =>
-        withProjectFileView(
-          {
-            relativePath: candidate.relativePath,
-            status: candidate.status,
-            propStatus: candidate.propStatus,
-            fileType: candidate.fileType,
-            selection: candidate.selection,
-            reason: candidate.reason,
-            evaluation: candidate.evaluation,
-          },
+      files: candidates.flatMap((candidate) => {
+        // v0.0.8：选择身份由 Host 在权威 working-copy + 路径归属上生成；
+        // 无法建立身份时 fail-closed 排除并记录。
+        const selectionKey = createScopedFileKey(
+          session.scope.repositoryRoot,
           candidate.absolutePath,
-          session.scope,
-        ),
-      ),
+          nativePathSemantics,
+        );
+        if (selectionKey === undefined) {
+          appendOutput(
+            `无法为 ${candidate.relativePath} 建立选择身份，已从提交视图排除。`,
+          );
+          return [];
+        }
+        return [
+          withProjectFileView(
+            {
+              relativePath: candidate.relativePath,
+              selectionKey,
+              status: candidate.status,
+              propStatus: candidate.propStatus,
+              fileType: candidate.fileType,
+              selection: candidate.selection,
+              reason: candidate.reason,
+              evaluation: candidate.evaluation,
+            },
+            candidate.absolutePath,
+            session.scope,
+          ),
+        ];
+      }),
       summary: {
         total: summary.total,
         selected: summary.selected,

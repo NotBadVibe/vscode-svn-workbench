@@ -9,7 +9,9 @@ test("opens the mock changes workspace and navigates to diff", async ({
   await expect(
     page.getByRole("heading", { name: "工作副本修改" }),
   ).toBeVisible();
-  await expect(page.getByText("src/extension.ts")).toBeVisible();
+  await expect(
+    page.locator(".path-cell__name", { hasText: "extension.ts" }),
+  ).toBeVisible();
 
   await page
     .getByRole("button", { name: "查看 src/extension.ts 差异" })
@@ -43,9 +45,9 @@ test("previews a commit before enabling execution", async ({ page }) => {
   await expect(page.getByRole("textbox", { name: "提交说明" })).toHaveValue(
     "feat(workbench): 迁移统一 Svelte UI",
   );
-  await page.getByRole("button", { name: "生成提交预览" }).click();
+  await page.getByRole("button", { name: /生成提交预览/ }).click();
   await expect(page.getByText("范围、状态和远端检查已通过")).toBeVisible();
-  await expect(page.getByRole("button", { name: "确认提交" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: /确认提交/ })).toBeEnabled();
 });
 
 test("keeps AI file selection advisory and user-editable", async ({ page }) => {
@@ -276,7 +278,7 @@ test("uses an accessible Svelte context menu and explicit file-operation preview
   page,
 }) => {
   await page.goto("/");
-  const row = page.locator(".file-row").filter({ hasText: "dist/debug.log" });
+  const row = page.locator(".file-row").filter({ hasText: "debug.log" });
   await row.click({ button: "right" });
   await expect(
     page.getByRole("menu", { name: "dist/debug.log 操作菜单" }),
@@ -295,7 +297,7 @@ test("supports keyboard navigation and dismissal in the Svelte context menu", as
   page,
 }) => {
   await page.goto("/");
-  const row = page.locator(".file-row").filter({ hasText: "src/extension.ts" });
+  const row = page.locator(".file-row").filter({ hasText: "extension.ts" });
   await row.click({ button: "right" });
   const menu = page.getByRole("menu", { name: "src/extension.ts 操作菜单" });
   await expect(menu).toBeVisible();

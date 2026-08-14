@@ -115,6 +115,20 @@ export function toggleActionable(
 }
 
 /**
+ * 幂等“选择当前筛选可操作项”（Ctrl/⌘+A）：返回 selected ∪ 本次可操作
+ * key，绝不清空——已是 all 时再次按键保持全选，新筛选连按也不反向取消。
+ * 与 toggleActionable（表头 checkbox 的 none/partial→all、all→none）不同。
+ */
+export function selectActionable(
+  visible: readonly SelectableItem[],
+  selected: ReadonlySet<SelectionKey>,
+): ReadonlySet<SelectionKey> {
+  const next = new Set(selected);
+  for (const key of actionableKeys(visible)) next.add(key);
+  return next;
+}
+
+/**
  * 推荐初始化/合并：把本地规则推荐、当前动作可操作（actionable 且非 blocked）
  * 且非 excluded/needsReview 的可见项加入 selected。只加不减：用户手动保留项
  * 与隐藏选择不被覆盖、不被移除。needsReview/excluded/blocked 永不被推荐自动
