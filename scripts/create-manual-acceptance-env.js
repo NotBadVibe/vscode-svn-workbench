@@ -613,6 +613,38 @@ function parseStatusXmlModifiedPaths(xml) {
 }
 
 /**
+ * 比较两个 SVN URL 是否精确指向同一目标。
+ * 只解码 RFC 3986 unreserved 字符；保留 `%2F` 等 reserved 编码的语义边界。
+ */
+function svnUrlsReferToSameTarget(left, right) {
+  try {
+    const leftUrl = new URL(left);
+    const rightUrl = new URL(right);
+    const normalizePath = (value) =>
+      value.replace(/%[0-9a-f]{2}/gi, (encoded) => {
+        const decoded = String.fromCharCode(
+          Number.parseInt(encoded.slice(1), 16),
+        );
+        return /^[A-Za-z0-9._~-]$/.test(decoded)
+          ? decoded
+          : encoded.toUpperCase();
+      });
+    return (
+      leftUrl.protocol === rightUrl.protocol &&
+      leftUrl.username === rightUrl.username &&
+      leftUrl.password === rightUrl.password &&
+      leftUrl.hostname === rightUrl.hostname &&
+      leftUrl.port === rightUrl.port &&
+      normalizePath(leftUrl.pathname) === normalizePath(rightUrl.pathname) &&
+      leftUrl.search === rightUrl.search &&
+      leftUrl.hash === rightUrl.hash
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
  * 生成后自检：
  * 1. WC1 第一列 M 的路径集合必须与 sevenModifiedFiles 完全一致；
  * 2. externals 的 svn info URL 必须指向第二仓库 trunk；
@@ -635,7 +667,7 @@ function verifyGeneratedEnvironment(wc1, wc2) {
     "url",
     path.join(wc1, externalDir, externalName),
   ]).stdout.trim();
-  if (externalUrl !== repoUrl2) {
+  if (!svnUrlsReferToSameTarget(externalUrl, repoUrl2)) {
     throw new Error(
       `externals ${externalName} 的 URL 未精确指向第二仓库 trunk。\n期望：${repoUrl2}\n实际：${externalUrl}`,
     );
@@ -664,6 +696,7 @@ if (require.main === module) {
 module.exports = {
   ensureSafeValidationPath,
   parseStatusXmlModifiedPaths,
+  svnUrlsReferToSameTarget,
   buildReadme,
   buildWorkspaceFile,
   sevenModifiedFiles,

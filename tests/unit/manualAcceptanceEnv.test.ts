@@ -12,6 +12,7 @@ import {
   parseStatusXmlModifiedPaths,
   sameNameFiles,
   sevenModifiedFiles,
+  svnUrlsReferToSameTarget,
   svnRepo,
   svnRepo2,
   validationRoot,
@@ -122,6 +123,35 @@ describe("人工验收环境：svn status --xml 解析（自检纯逻辑）", ()
       "</status>",
     ].join("\n");
     expect(parseStatusXmlModifiedPaths(posixXml)).toEqual(["src\\a.ts"]);
+  });
+});
+
+describe("人工验收环境：externals URL 精确目标比较", () => {
+  it("把 Windows 8.3 路径中的 %7E 与 ~ 视为同一目标", () => {
+    expect(
+      svnUrlsReferToSameTarget(
+        "file:///C:/Users/RUNNER%7E1/fixture/repo2/trunk",
+        "file:///C:/Users/RUNNER~1/fixture/repo2/trunk",
+      ),
+    ).toBe(true);
+  });
+
+  it("不同仓库、reserved 分隔符编码或非法 URL 均 fail-closed", () => {
+    expect(
+      svnUrlsReferToSameTarget(
+        "file:///fixture/repo2/trunk",
+        "file:///fixture/repo3/trunk",
+      ),
+    ).toBe(false);
+    expect(
+      svnUrlsReferToSameTarget(
+        "file:///fixture/repo%2Ftwo/trunk",
+        "file:///fixture/repo/two/trunk",
+      ),
+    ).toBe(false);
+    expect(svnUrlsReferToSameTarget("not a url", "file:///fixture")).toBe(
+      false,
+    );
   });
 });
 
