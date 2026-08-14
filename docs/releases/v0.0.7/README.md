@@ -2,7 +2,7 @@
 
 > 文档身份：`release-candidate-record`
 >
-> 状态：候选（candidate）。三个开发批次已绑定不可变源码提交 `c3f6c7d617c781bd0fea56e1002a9f94a78fd2f4`、VSIX 指纹与 accepted evidence；本地完整门禁及干净安装/卸载/重装均通过。真实 GitHub Windows Runner 仍需由候选 PR 验证，真实 `EM.code-workspace`、`Code2 / bchd-front-Dev3.0` 为未执行的人工场景，不虚构通过。
+> 状态：候选（candidate）。三个开发批次已绑定不可变源码提交 `31379b0d0d5a74a58b44d576bec694ac1db13a75`、VSIX 指纹与 accepted evidence；本地完整门禁及干净安装/卸载/重装均通过。真实 GitHub Windows Runner 仍需由候选 PR 验证，真实 `EM.code-workspace`、`Code2 / bchd-front-Dev3.0` 为未执行的人工场景，不虚构通过。
 >
 > 基线版本：`v0.0.6`。当前实现事实仍以实际源码、测试和 [`../../current/`](../../current/) 为准。
 >
@@ -317,7 +317,9 @@ Diagnostics 必须复用工作副本解析器，不能只检查项目根是否�
 
 ### 11.5 自动化覆盖与候选结果
 
-候选源码 `c3f6c7d617c781bd0fea56e1002a9f94a78fd2f4` 已通过 Node `26.0.0` / npm `12.0.2` 的 `npm run verify`：覆盖率套件 `810/810`、Lines `93.38%`，Webview E2E `59/59`，性能预算与真实 SVN Extension Host 通过；`svn-workbench-0.0.7.vsix`（`8,520,489` 字节，SHA256 `A725D4957D772E34C873F9D5567CA43A45ACFBD26170F6A698883CAEF753BE70`）在 VS Code `1.133.0` 完成干净安装、卸载与重装。accepted evidence 为 `2026-08-14T01-17-12-288Z-b29171e5`。
+候选源码 `31379b0d0d5a74a58b44d576bec694ac1db13a75` 已通过 Node `26.0.0` / npm `12.0.2` 的 `npm run verify`：覆盖率套件 `810/810`、Lines `93.39%`，Webview E2E `59/59`，性能预算与真实 SVN Extension Host 通过；`svn-workbench-0.0.7.vsix`（`8,520,755` 字节，SHA256 `185B3A997AFBDF465A5AFE0601DFD642B8B69C4890D519A6B7F05AF03514FEA2`）在 VS Code `1.133.0` 完成干净安装、卸载与重装。accepted evidence 为 `2026-08-14T01-30-23-555Z-79ee9304`。
+
+候选 PR 首次 Windows 运行发现 synthetic POSIX 路径测试未显式注入平台，同时用户可见的 Windows 项目相对路径被内部 identity 小写化；候选源码已改为“identity 路径用于边界和 Host key、原始路径用于显示”，并为 POSIX/Windows 测试显式注入各自路径语义。首次运行不作为发布通过结论。
 
 以下候选条目已有自动化测试支持（测试文件括注）；其余只能保留为“未执行人工/待 CI”，不得虚构通过。
 
