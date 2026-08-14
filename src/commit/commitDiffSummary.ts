@@ -2,6 +2,7 @@ import * as path from "node:path";
 import { OperationScope } from "../scope/operationScope";
 import { isPathInScope } from "../scope/pathBoundaryGuard";
 import { normalizePathIdentity } from "../scope/pathIdentity";
+import { nativePathSemantics } from "../scope/nativePathSemantics";
 import { runSvnCommand } from "../svn/svnCommandRunner";
 
 const MAX_DIFF_CHARS_PER_PATH = 160000;
@@ -24,7 +25,7 @@ export async function collectCommitDiffSummaries(
   selectedPaths: string[],
 ): Promise<CommitDiffSummary[]> {
   const uniquePaths = uniqueNormalizedPaths(selectedPaths)
-    .filter((filePath) => isPathInScope(scope, filePath))
+    .filter((filePath) => isPathInScope(scope, filePath, nativePathSemantics))
     .slice(0, MAX_DIFF_PATHS);
   const summaries: CommitDiffSummary[] = [];
 
@@ -145,7 +146,7 @@ function uniqueNormalizedPaths(filePaths: string[]): string[] {
 
   for (const filePath of filePaths) {
     const absolutePath = path.resolve(filePath);
-    const key = normalizePathIdentity(absolutePath);
+    const key = normalizePathIdentity(absolutePath, nativePathSemantics);
     if (!seen.has(key)) {
       seen.add(key);
       result.push(absolutePath);

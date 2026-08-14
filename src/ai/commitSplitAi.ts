@@ -11,6 +11,7 @@ import { inferCommitCandidateModuleGroup } from "../commit/commitCandidateGroupi
 import { OperationScope } from "../scope/operationScope";
 import { isPathInScope } from "../scope/pathBoundaryGuard";
 import { normalizePathIdentity as normalizePathKey } from "../scope/pathIdentity";
+import { nativePathSemantics } from "../scope/nativePathSemantics";
 
 const MAX_FILES_IN_COMMIT_SPLIT_REQUEST = 120;
 
@@ -21,11 +22,15 @@ export function buildCommitSplitAiRequest(
   options: { convention?: AiCommitConventionHint } = {},
 ): AiCommitSplitRequest {
   const selected = new Set(
-    selectedPaths.map((filePath) => normalizePathKey(filePath)),
+    selectedPaths.map((filePath) =>
+      normalizePathKey(filePath, nativePathSemantics),
+    ),
   );
   const files = candidates
     .filter((candidate) =>
-      selected.has(normalizePathKey(candidate.absolutePath)),
+      selected.has(
+        normalizePathKey(candidate.absolutePath, nativePathSemantics),
+      ),
     )
     .filter(
       (candidate) =>
@@ -96,17 +101,23 @@ export function validateCommitSplitResult(
   allowedPaths: string[],
 ): AiCommitSplitResult {
   const allowed = new Set(
-    allowedPaths.map((filePath) => normalizePathKey(filePath)),
+    allowedPaths.map((filePath) =>
+      normalizePathKey(filePath, nativePathSemantics),
+    ),
   );
   const used = new Set<string>();
   const splits = result.splits
     .map((split, index) => {
       const paths = split.paths
         .map((filePath) => toAbsolutePath(scope, filePath))
-        .filter((filePath) => isPathInScope(scope, filePath))
-        .filter((filePath) => allowed.has(normalizePathKey(filePath)))
+        .filter((filePath) =>
+          isPathInScope(scope, filePath, nativePathSemantics),
+        )
+        .filter((filePath) =>
+          allowed.has(normalizePathKey(filePath, nativePathSemantics)),
+        )
         .filter((filePath) => {
-          const key = normalizePathKey(filePath);
+          const key = normalizePathKey(filePath, nativePathSemantics);
           if (used.has(key)) {
             return false;
           }

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import {
   isSameOrDescendantPath,
   isSamePathIdentity,
-  type PathIdentityOptions,
+  type PathSemantics,
 } from "../scope/pathIdentity";
 import {
   serializeSvnWorkbenchConfig,
@@ -41,7 +41,7 @@ export interface TeamConfigMigrationInput {
   targetExists: boolean;
   projectRoot: string;
   workingCopyRoot: string;
-  options?: PathIdentityOptions;
+  options: PathSemantics;
 }
 
 export function planTeamConfigMigration(
@@ -49,11 +49,7 @@ export function planTeamConfigMigration(
 ): TeamConfigMigrationPlan {
   const issues: string[] = [];
   if (
-    isSamePathIdentity(
-      input.projectRoot,
-      input.workingCopyRoot,
-      input.options ?? {},
-    )
+    isSamePathIdentity(input.projectRoot, input.workingCopyRoot, input.options)
   ) {
     issues.push("项目根与工作副本根重合，无需迁移。");
   }
@@ -61,7 +57,7 @@ export function planTeamConfigMigration(
     !isSameOrDescendantPath(
       input.projectRoot,
       input.workingCopyRoot,
-      input.options ?? {},
+      input.options,
     )
   ) {
     issues.push("项目根不在当前工作副本内，边界校验未通过，已拒绝迁移。");

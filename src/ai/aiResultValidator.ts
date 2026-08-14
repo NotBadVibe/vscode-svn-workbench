@@ -3,6 +3,7 @@ import { CommitSelectionExplanation } from "../commit/commitSelectionRules";
 import { OperationScope } from "../scope/operationScope";
 import { isPathInScope } from "../scope/pathBoundaryGuard";
 import { normalizePathIdentity as normalizePathKey } from "../scope/pathIdentity";
+import { nativePathSemantics } from "../scope/nativePathSemantics";
 import { AiFileDecision, AiSelectionResult } from "./aiProvider";
 
 const AI_SELECTION_CATEGORIES = [
@@ -76,13 +77,18 @@ function assertAiSelectionStructure(
         issues.push(`${where} 缺少有效的 path。`);
       } else {
         const trimmedPath = raw.path.trim();
-        const existing = seen.get(normalizePathKey(trimmedPath));
+        const existing = seen.get(
+          normalizePathKey(trimmedPath, nativePathSemantics),
+        );
         if (existing !== undefined && existing !== category) {
           issues.push(
             `路径 ${trimmedPath} 同时出现在 ${existing} 与 ${category}，同一路径不得跨分类重复。`,
           );
         } else {
-          seen.set(normalizePathKey(trimmedPath), category);
+          seen.set(
+            normalizePathKey(trimmedPath, nativePathSemantics),
+            category,
+          );
         }
       }
       if (typeof raw.reason !== "string") {
@@ -101,7 +107,11 @@ export function validateAiSelectionResult(
   allowedPaths?: string[],
 ): AiSelectionResult {
   const allowed = allowedPaths
-    ? new Set(allowedPaths.map((filePath) => normalizePathKey(filePath)))
+    ? new Set(
+        allowedPaths.map((filePath) =>
+          normalizePathKey(filePath, nativePathSemantics),
+        ),
+      )
     : undefined;
   return {
     recommended: validateDecisionList(scope, result.recommended, allowed),
@@ -137,12 +147,17 @@ export function enforceAiSelectionLocalBoundary(
   const byPath = new Map(
     candidates.map(
       (candidate) =>
-        [normalizePathKey(candidate.absolutePath), candidate] as const,
+        [
+          normalizePathKey(candidate.absolutePath, nativePathSemantics),
+          candidate,
+        ] as const,
     ),
   );
   const violations: string[] = [];
   const recommended = result.recommended.filter((item) => {
-    const candidate = byPath.get(normalizePathKey(item.path));
+    const candidate = byPath.get(
+      normalizePathKey(item.path, nativePathSemantics),
+    );
     if (!candidate) {
       // 不在当前候选集合的条目由范围/候选校验负责，这里保持原样。
       return true;
@@ -198,8 +213,12 @@ function validateDecisionList(
       path: toAbsoluteDecisionPath(scope, item.path),
       reason: item.reason,
     }))
-    .filter((item) => isPathInScope(scope, item.path))
-    .filter((item) => !allowed || allowed.has(normalizePathKey(item.path)));
+    .filter((item) => isPathInScope(scope, item.path, nativePathSemantics))
+    .filter(
+      (item) =>
+        !allowed ||
+        allowed.has(normalizePathKey(item.path, nativePathSemantics)),
+    );
 }
 
 function normalizeDecisionList(value: unknown): AiFileDecision[] {

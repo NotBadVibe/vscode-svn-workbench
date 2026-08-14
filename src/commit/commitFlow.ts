@@ -3,6 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import { normalizePathIdentity as normalizePathKey } from "../scope/pathIdentity";
+import { nativePathSemantics } from "../scope/nativePathSemantics";
 import { runSvnCommand } from "../svn/svnCommandRunner";
 import { parseStatusXml } from "../svn/parsers/statusXmlParser";
 import { SvnCommandResult, SvnStatusItem } from "../svn/svnTypes";
@@ -122,19 +123,26 @@ async function resolveSafeWindowsUnicodeCommitTargets(
   throwIfFailed(statusResult, "无法验证中文路径提交范围。");
 
   const selectedPaths = new Set(
-    plan.commitPaths.map((filePath) => normalizePathKey(filePath)),
+    plan.commitPaths.map((filePath) =>
+      normalizePathKey(filePath, nativePathSemantics),
+    ),
   );
   const relevantItems = parseStatusXml(statusResult.stdout, plan.cwd).filter(
     isRootCommitRelevant,
   );
   const relevantPaths = new Set(
-    relevantItems.map((item) => normalizePathKey(item.absolutePath)),
+    relevantItems.map((item) =>
+      normalizePathKey(item.absolutePath, nativePathSemantics),
+    ),
   );
   const outsideSelection = relevantItems.filter(
-    (item) => !selectedPaths.has(normalizePathKey(item.absolutePath)),
+    (item) =>
+      !selectedPaths.has(
+        normalizePathKey(item.absolutePath, nativePathSemantics),
+      ),
   );
   const missingSelection = plan.commitPaths.filter(
-    (item) => !relevantPaths.has(normalizePathKey(item)),
+    (item) => !relevantPaths.has(normalizePathKey(item, nativePathSemantics)),
   );
 
   if (outsideSelection.length > 0 || missingSelection.length > 0) {

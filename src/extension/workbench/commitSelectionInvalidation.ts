@@ -11,6 +11,7 @@
  */
 
 import { normalizePathIdentity as normalizeRootKey } from "../../scope/pathIdentity";
+import { nativePathSemantics } from "../../scope/nativePathSemantics";
 import type { WorkbenchSession } from "./workbenchSession";
 
 /**
@@ -23,8 +24,8 @@ export function applyCommitSelectionRulesInvalidation(
 ): boolean {
   if (
     invalidatedRepositoryRoot &&
-    normalizeRootKey(invalidatedRepositoryRoot) !==
-      normalizeRootKey(session.scope.repositoryRoot)
+    normalizeRootKey(invalidatedRepositoryRoot, nativePathSemantics) !==
+      normalizeRootKey(session.scope.repositoryRoot, nativePathSemantics)
   ) {
     return false;
   }

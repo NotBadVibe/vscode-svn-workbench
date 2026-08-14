@@ -4,7 +4,7 @@
 >
 > 状态：规划中（draft）。本文只定义 v0.0.8 的产品目标、交互契约和候选验收，不表示功能已经实现、测试通过或可以发布。
 >
-> 规划基线：[`v0.0.7`](../v0.0.7/)。v0.0.7 已进入开发但尚未形成候选，不能视为完整依赖；当前事实继续以源码、测试和 [`../../current/`](../../current/) 为准。
+> 规划基线：[`v0.0.7`](../v0.0.7/)。v0.0.7 已于 2026-08-14 正式发布；当前开发事实继续以源码、测试和 [`../../current/`](../../current/) 为准。
 >
 > 优先级：P0，高频用户价值；只覆盖 Changes、Commit 和共享列表底座的必要部分。
 >
@@ -218,6 +218,37 @@ v0.0.7 建立路径 identity，本版本完善 `PathCell`：
 - 不把列表能力一次推广到 History、Conflicts、Repository 等所有页面；
 - 不在本版本重做 AI Review、Impact、Agent 或模型上下文；
 - 不修改 `package.json` 版本，不生成发布 evidence。
+
+## 13a. 开发基线：路径身份与展示边界硬化（v0.0.8 批次 0）
+
+本版本在 Changes/Commit 列表增强之前先系统性消除 Windows 路径大小写与平台
+语义问题反复到 CI 才暴露的情况：
+
+- 类型边界：`src/scope/pathBrands.ts`（品牌归属身份领域，零依赖；scope 不反向
+  依赖 protocol）定义互不兼容的 `PathIdentityKey` 与 `DisplayPath` 品牌、
+  `Assert<T extends true>` 编译期契约（品牌互斥 + `DisplayPathSource` 拒绝
+  identity 键，由 npm run check 的 tsc 与 svelte-check 强制）；
+  `normalizePathIdentity`/`workingCopyId`/`projectId`/`scmProjectKey`/
+  `createScopedFileKey` 只返回 `PathIdentityKey`（Map/Set、比较、排序、缓存
+  键、范围判断），协议展示字段（`WorkbenchScopeView`、
+  `WorkbenchFileView.projectRelativePath`、`file/path-detail-result`）声明为
+  `DisplayPath`，Host 构建处经唯一显式转换 `toDisplayPath` 进入协议；
+  identity 键编译期无法赋给展示字段，直接传入 `toDisplayPath` 也是编译错误。
+- 语义边界：全部纯路径 API 要求显式 `PathSemantics`（platform + cwd 必填，
+  无默认回退），领域函数不读取 process；生产 Host 从唯一
+  `nativePathSemantics` 边界注入，合成路径测试显式 posix/win32，真实路径
+  夹具显式构造宿主语义对象。
+- 测试边界：`tests/unit/dualPlatformPathContracts.test.ts` 显式注入
+  posix/win32 语义，覆盖大小写保留与 identity 等价、盘符、UNC、斜杠、
+  中文、同前缀兄弟目录、项目相对路径与 SCM 同名标题/切片；
+  `tests/unit/pathIdentityBoundary.test.ts` 静态契约保证协议展示字段品牌、
+  Webview 运行时不得导入身份/转换模块、pathBrands 零依赖。
+- 门禁：新增 `npm run test:platform-contracts` 快速双平台契约门禁，纳入本地
+  `npm run verify` 与 `.github/workflows/verify.yml`（Linux 先于完整覆盖率）；
+  同一套合成用例不在 Windows Runner 重复执行，Windows 保留完整覆盖率与真实
+  SVN 验收作为最终确认。
+- 状态：本批次属于 v0.0.8 开发基线，不改变 v0.0.7 已发布事实；相关回归测试
+  与文档同步见 `docs/current/`。
 
 ## 14. 后续版本关系
 

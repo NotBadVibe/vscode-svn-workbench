@@ -90,9 +90,11 @@ jobs:
       - name: Static checks
         run: npm run check
 
-      - name: Windows platform contracts
-        if: runner.os == 'Windows'
-        run: npm run test:windows-contracts
+      - name: Fast dual-platform path contracts
+        # 合成 posix/win32 路径契约在任意平台等价执行，作为快速门禁先行失败；
+        # 同一套用例不在 Windows Runner 重复运行（完整覆盖率仍覆盖）。
+        if: runner.os == 'Linux'
+        run: npm run test:platform-contracts
 
       - name: Unit, domain and coverage gates
         run: npm run test:coverage

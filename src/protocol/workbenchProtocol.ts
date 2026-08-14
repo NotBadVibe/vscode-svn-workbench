@@ -8,6 +8,7 @@ import type {
   CommitSelectionStatusPolicies,
   ResolvedCommitSelectionPathRule,
 } from "../commit/commitSelectionRules";
+import type { DisplayPath } from "../scope/pathBrands";
 
 export const WORKBENCH_PROTOCOL_VERSION = 2 as const;
 
@@ -143,10 +144,10 @@ export interface WorkbenchScopeView {
   /** true 表示项目根回退为工作副本根，界面需提示“尚未设置项目根”。 */
   projectRootIsFallback?: boolean;
   /** 项目根在工作副本内的 "/" 分隔相对路径；空串/缺省表示重合。 */
-  projectWorkingCopyRelativePath?: string;
+  projectWorkingCopyRelativePath?: DisplayPath;
   roots: Array<{
     kind: "file" | "folder";
-    relativePath: string;
+    relativePath: DisplayPath;
   }>;
   source: "explorer" | "editor" | "scm" | "commandPalette" | "internal";
 }
@@ -160,7 +161,7 @@ export interface WorkbenchFileView {
    * v0.0.7：文件主路径默认显示项目内路径；缺省时使用 relativePath
    * （工作副本内路径）。显示路径不得作为 Host 写操作身份。
    */
-  projectRelativePath?: string;
+  projectRelativePath?: DisplayPath;
   /** v0.0.7：跨项目 scope 时设置项目徽标；单项目列表不逐行重复。 */
   projectName?: string;
   propStatus?: WorkbenchFileStatus;
@@ -974,15 +975,15 @@ export type HostToWebviewMessage =
         /** 请求对应的工作副本内路径。 */
         relativePath: string;
         detail?: {
-          projectRelativePath?: string;
+          projectRelativePath?: DisplayPath;
           /** 工作副本内路径（本地检出视角）。 */
-          workingCopyRelativePath: string;
+          workingCopyRelativePath: DisplayPath;
           /** 仓库内路径（相对 repository root URL）；不可推导时缺省。 */
-          repositoryRelativePath?: string;
+          repositoryRelativePath?: DisplayPath;
           /** 由工作副本根检出 URL 推导；SVN 不可用时缺省。 */
           svnUrl?: string;
           /** 本地完整路径只用于详情展示；复制与定位仍由 Host 完成。 */
-          absolutePath: string;
+          absolutePath: DisplayPath;
         };
         error?: string;
       }

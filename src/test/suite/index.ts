@@ -164,8 +164,20 @@ import {
   OperationScope,
 } from "../../scope/operationScope";
 import { validatePathsInScope } from "../../scope/pathBoundaryGuard";
-import { normalizePathIdentity as normalizeTestPath } from "../../scope/pathIdentity";
+import {
+  normalizePathIdentity as normalizeTestPath,
+  type PathSemantics,
+} from "../../scope/pathIdentity";
 import { resolveWorkingCopySet } from "../../scope/workingCopyResolver";
+
+/**
+ * 真实 SVN fixture 的路径语义：fixture 创建在宿主真实文件系统上，路径比较
+ * 必须与宿主平台一致。显式构造语义对象（不依赖 pathIdentity 默认回退）。
+ */
+const fixtureSemantics: PathSemantics = {
+  platform: process.platform,
+  cwd: process.cwd(),
+};
 import {
   buildReleaseNotes,
   parseSvnListXml,
@@ -1647,10 +1659,11 @@ async function testFolderOperationScope(): Promise<void> {
   assert.equal(scope.roots[0].kind, "folder");
   assert.equal(scope.roots[0].relativePath, path.join("src", "pages", "order"));
 
-  const result = validatePathsInScope(scope, [
-    childFile.fsPath,
-    outOfScopeFile.fsPath,
-  ]);
+  const result = validatePathsInScope(
+    scope,
+    [childFile.fsPath, outOfScopeFile.fsPath],
+    fixtureSemantics,
+  );
   assert.deepEqual(result.validItems, [path.resolve(childFile.fsPath)]);
   assert.deepEqual(result.outOfScopeItems, [
     path.resolve(outOfScopeFile.fsPath),
@@ -1694,8 +1707,8 @@ async function testMixedWorkingCopyResolution(): Promise<void> {
   assert.equal(single.mixed, false);
   assert.equal(single.invalidTargets.length, 0);
   assert.equal(
-    normalizeTestPath(single.root!),
-    normalizeTestPath(workspace.uri.fsPath),
+    normalizeTestPath(single.root!, fixtureSemantics),
+    normalizeTestPath(workspace.uri.fsPath, fixtureSemantics),
   );
 
   const mixed = await resolveWorkingCopySet(svnPath, [
@@ -1711,8 +1724,8 @@ async function testMixedWorkingCopyResolution(): Promise<void> {
     [workspace.uri.fsPath],
   );
   assert.equal(
-    normalizeTestPath(missingCli.root!),
-    normalizeTestPath(workspace.uri.fsPath),
+    normalizeTestPath(missingCli.root!, fixtureSemantics),
+    normalizeTestPath(workspace.uri.fsPath, fixtureSemantics),
   );
   assert.equal(missingCli.invalidTargets.length, 0);
 }
@@ -1893,8 +1906,10 @@ async function testCommitSelectionAiCandidateGuard(): Promise<void> {
   );
 
   assert.deepEqual(
-    validated.recommended.map((item) => normalizeTestPath(item.path)),
-    [normalizeTestPath(missingReadme.absolutePath)],
+    validated.recommended.map((item) =>
+      normalizeTestPath(item.path, fixtureSemantics),
+    ),
+    [normalizeTestPath(missingReadme.absolutePath, fixtureSemantics)],
   );
 }
 
@@ -2366,10 +2381,12 @@ async function testCommitSplitAiValidation(): Promise<void> {
   );
 
   assert.deepEqual(
-    result.splits[0].paths.map((filePath) => normalizeTestPath(filePath)),
+    result.splits[0].paths.map((filePath) =>
+      normalizeTestPath(filePath, fixtureSemantics),
+    ),
     [
-      normalizeTestPath(candidates[0].absolutePath),
-      normalizeTestPath(candidates[1].absolutePath),
+      normalizeTestPath(candidates[0].absolutePath, fixtureSemantics),
+      normalizeTestPath(candidates[1].absolutePath, fixtureSemantics),
     ],
   );
 }

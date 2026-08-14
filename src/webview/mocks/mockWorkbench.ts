@@ -11,6 +11,7 @@ import {
   type WorkbenchModuleSnapshot,
   type WorkbenchTaskId,
 } from "@protocol/workbenchProtocol";
+import { toDisplayPath } from "../../scope/pathBrands";
 import {
   COMMIT_SELECTION_CONFIG_VERSION,
   validateCommitSelectionLayerConfig,
@@ -223,7 +224,7 @@ function injectDiffTargetSwitch(relativePath: string): void {
       scope: {
         repositoryName: "vscode-svn",
         projectName: "vscode-svn",
-        roots: [{ kind: "folder", relativePath: "." }],
+        roots: [{ kind: "folder", relativePath: toDisplayPath(".") }],
         source: "internal",
       },
       snapshot: mockDiffSnapshot(relativePath),
@@ -350,7 +351,7 @@ export function startMockWorkbench(): void {
       scope: {
         repositoryName: "vscode-svn",
         projectName: "vscode-svn",
-        roots: [{ kind: "folder", relativePath: "." }],
+        roots: [{ kind: "folder", relativePath: toDisplayPath(".") }],
         source: "internal",
       },
       snapshot: createInitialMockSnapshot(initialModuleId),
@@ -449,12 +450,12 @@ export function startMockWorkbench(): void {
         relativePath,
         detail: {
           projectRelativePath: relativePath.startsWith("src/")
-            ? relativePath
+            ? toDisplayPath(relativePath)
             : undefined,
-          workingCopyRelativePath: relativePath,
-          repositoryRelativePath: relativePath,
+          workingCopyRelativePath: toDisplayPath(relativePath),
+          repositoryRelativePath: toDisplayPath(relativePath),
           svnUrl: `https://svn.example.internal/svn/vscode-svn/${relativePath}`,
-          absolutePath: `/mock/vscode-svn/${relativePath}`,
+          absolutePath: toDisplayPath(`/mock/vscode-svn/${relativePath}`),
         },
       });
     }

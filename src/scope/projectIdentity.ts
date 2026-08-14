@@ -2,13 +2,15 @@ import * as path from "node:path";
 import {
   isSamePathIdentity,
   normalizePathIdentity,
-  type PathIdentityOptions,
+  type PathSemantics,
 } from "./pathIdentity";
+import type { PathIdentityKey } from "./pathBrands";
 
 /*
  * v0.0.7 项目边界领域类型：明确区分 VS Code 工作区容器、项目、本地
  * 工作副本和 SVN 仓库身份。identity 键只用于 Map/Set、相等与范围判断；
  * 界面展示与真实文件操作继续使用原始路径，不得把 identity 键显示给用户。
+ * 所有纯函数要求显式 PathSemantics（platform + cwd），禁止读取宿主平台。
  */
 
 /** VS Code workspace folder 引用；多根工作区中一个 folder 对应一个项目。 */
@@ -18,9 +20,9 @@ export interface WorkspaceFolderRef {
   index: number;
 }
 
-/** 本地工作副本身份：workingCopyId 为不透明路径 identity 键。 */
+/** 本地工作副本身份：workingCopyId 为不透明路径身份键。 */
 export interface WorkingCopyIdentity {
-  workingCopyId: string;
+  workingCopyId: PathIdentityKey;
   workingCopyRoot: string;
 }
 
@@ -35,8 +37,8 @@ export interface RepositoryIdentity {
  * 一个子目录；项目根不是独立 SVN 仓库，工作副本根也不是用户项目名。
  */
 export interface ProjectIdentity {
-  /** 不透明 identity：项目根的规范化路径 identity 键。 */
-  projectId: string;
+  /** 不透明 identity：项目根的规范化路径身份键。 */
+  projectId: PathIdentityKey;
   /** 原始绝对路径，仅用于展示与真实文件操作。 */
   projectRoot: string;
   projectName: string;
@@ -46,16 +48,15 @@ export interface ProjectIdentity {
   workingCopyRelativePath: string;
 }
 
-function resolvePathApi(options: PathIdentityOptions): typeof path.posix {
-  const platform = options.platform ?? process.platform;
-  return platform === "win32" ? path.win32 : path.posix;
+function resolvePathApi(options: PathSemantics): typeof path.posix {
+  return options.platform === "win32" ? path.win32 : path.posix;
 }
 
 /** 计算仅供 identity 使用的规范化相对路径；root 本身返回 "."。 */
 function relativeIdentityPathWithin(
   candidate: string,
   root: string,
-  options: PathIdentityOptions,
+  options: PathSemantics,
 ): string | undefined {
   const pathApi = resolvePathApi(options);
   const candidateKey = normalizePathIdentity(candidate, options);
@@ -76,7 +77,7 @@ function relativeIdentityPathWithin(
 function relativePathWithin(
   candidate: string,
   root: string,
-  options: PathIdentityOptions,
+  options: PathSemantics,
 ): string | undefined {
   const identityRelative = relativeIdentityPathWithin(candidate, root, options);
   if (identityRelative === undefined || identityRelative === ".") {
@@ -85,17 +86,16 @@ function relativePathWithin(
   const pathApi = resolvePathApi(options);
   // identity 键在 Windows 下会统一小写，只能用于边界判断。展示路径必须从
   // 原始路径重新计算，保留用户文件系统中的大小写。
-  const cwd = options.cwd ?? process.cwd();
   const displayRelative = pathApi.relative(
-    pathApi.resolve(cwd, root),
-    pathApi.resolve(cwd, candidate),
+    pathApi.resolve(options.cwd, root),
+    pathApi.resolve(options.cwd, candidate),
   );
   return displayRelative.split(pathApi.sep).join("/");
 }
 
 export function createWorkingCopyIdentity(
   workingCopyRoot: string,
-  options: PathIdentityOptions = {},
+  options: PathSemantics,
 ): WorkingCopyIdentity {
   return {
     workingCopyId: normalizePathIdentity(workingCopyRoot, options),
@@ -106,9 +106,9 @@ export function createWorkingCopyIdentity(
 export function createProjectIdentity(input: {
   projectRoot: string;
   workingCopyRoot: string;
-  options?: PathIdentityOptions;
+  options: PathSemantics;
 }): ProjectIdentity {
-  const options = input.options ?? {};
+  const options = input.options;
   const pathApi = resolvePathApi(options);
   const relative = relativePathWithin(
     input.projectRoot,
@@ -143,7 +143,7 @@ export function isSameProject(
 export function projectRelativePath(
   projectRoot: string,
   absolutePath: string,
-  options: PathIdentityOptions = {},
+  options: PathSemantics,
 ): string | undefined {
   return relativePathWithin(absolutePath, projectRoot, options);
 }
@@ -156,13 +156,13 @@ export function projectRelativePath(
 export function createScopedFileKey(
   workingCopyRoot: string,
   absolutePath: string,
-  options: PathIdentityOptions = {},
-): string | undefined {
+  options: PathSemantics,
+): PathIdentityKey | undefined {
   const relative = relativeIdentityPathWithin(
     absolutePath,
     workingCopyRoot,
     options,
   );
   if (relative === undefined) return undefined;
-  return `${normalizePathIdentity(workingCopyRoot, options)}::${relative}`;
+  return `${normalizePathIdentity(workingCopyRoot, options)}::${relative}` as PathIdentityKey;
 }

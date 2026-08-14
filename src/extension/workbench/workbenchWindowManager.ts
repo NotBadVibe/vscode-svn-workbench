@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import type { CommitSelectionRuleService } from "../../commit/commitSelectionRuleService";
 import type { WorkbenchModuleId } from "../../protocol/workbenchProtocol";
 import { SvnSecurityContextRegistry } from "../../security/svnSecurityContextRegistry";
+import type { PathIdentityKey } from "../../scope/pathIdentity";
 import type { OpenWorkbenchRequest } from "./workbenchSession";
 import { WorkbenchController } from "./WorkbenchController";
 import { WorkbenchWindowRegistry } from "./workbenchWindowRegistry";
@@ -10,7 +11,7 @@ import { WorkbenchWindowRegistry } from "./workbenchWindowRegistry";
 export interface ModuleWindow {
   open(request: OpenWorkbenchRequest): Promise<void>;
   openNativeDiffInEditor?(requestId?: string): Promise<void>;
-  handleSecurityInvalidated?(repositoryRoot: string): void;
+  handleSecurityInvalidated?(repositoryRoot: PathIdentityKey): void;
   readonly isDisposed: boolean;
   dispose(): void;
 }

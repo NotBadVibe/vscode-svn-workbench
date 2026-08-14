@@ -7,11 +7,12 @@ import {
 import { buildEnvironmentDiagnosticReport } from "../../src/diagnostics/environmentDiagnostics";
 
 const win = { platform: "win32" as const, cwd: "C:\\" };
+const posix = { platform: "linux" as const, cwd: "/" };
 
 function classify(
   input: Omit<Parameters<typeof classifyWorkingCopyBinding>[0], "exists">,
 ) {
-  return classifyWorkingCopyBinding({ exists: true, ...input });
+  return classifyWorkingCopyBinding({ exists: true, ...input }, posix);
 }
 
 describe("工作副本归属分类（v0.0.7 §6.3）", () => {

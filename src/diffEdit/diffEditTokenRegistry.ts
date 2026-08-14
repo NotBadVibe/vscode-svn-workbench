@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { normalizePathIdentity } from "../scope/pathIdentity";
+import { nativePathSemantics } from "../scope/nativePathSemantics";
 
 /**
  * v0.0.6 页内编辑 editToken 注册表（纯逻辑，可单测）。
@@ -102,9 +103,12 @@ export class DiffEditTokenRegistry {
 
   /** 目标文件外部/文档变化后按规范路径撤销（大小写敏感性与平台一致）。 */
   revokeAllForPath(targetPath: string): void {
-    const wanted = normalizePathIdentity(targetPath);
+    const wanted = normalizePathIdentity(targetPath, nativePathSemantics);
     for (const binding of [...this.tokens.values()]) {
-      if (normalizePathIdentity(binding.targetPath) === wanted) {
+      if (
+        normalizePathIdentity(binding.targetPath, nativePathSemantics) ===
+        wanted
+      ) {
         this.revokeAllForTarget(binding.targetId);
         return;
       }

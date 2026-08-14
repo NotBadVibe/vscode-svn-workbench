@@ -1,6 +1,7 @@
 import * as path from "node:path";
 import { OperationScope } from "../scope/operationScope";
 import { isPathInScope } from "../scope/pathBoundaryGuard";
+import { nativePathSemantics } from "../scope/nativePathSemantics";
 import { runSvnCommand } from "../svn/svnCommandRunner";
 import { SvnCommandResult } from "../svn/svnTypes";
 
@@ -24,7 +25,7 @@ export function buildResolveConflictPreview(
   const absolutePath = path.resolve(filePath);
   const issues: string[] = [];
 
-  if (!isPathInScope(scope, absolutePath)) {
+  if (!isPathInScope(scope, absolutePath, nativePathSemantics)) {
     issues.push("文件不在当前冲突处理范围内，已阻止。");
   }
 

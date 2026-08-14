@@ -2,6 +2,7 @@ import { CommitCandidate } from "../commit/commitCandidateCollector";
 import { CommitDiffSummary } from "../commit/commitDiffSummary";
 import { OperationScope } from "../scope/operationScope";
 import { normalizePathIdentity as normalizePathKey } from "../scope/pathIdentity";
+import { nativePathSemantics } from "../scope/nativePathSemantics";
 import {
   AiCommitMessageFileContext,
   AiCommitMessageRequest,
@@ -27,22 +28,28 @@ export function buildCommitMessageAiRequest(
   options: CommitMessageAiRequestOptions = {},
 ): AiCommitMessageRequest {
   const selected = new Set(
-    selectedPaths.map((filePath) => normalizePathKey(filePath)),
+    selectedPaths.map((filePath) =>
+      normalizePathKey(filePath, nativePathSemantics),
+    ),
   );
   const diffByPath = new Map(
     diffSummaries.map((summary) => [
-      normalizePathKey(summary.absolutePath),
+      normalizePathKey(summary.absolutePath, nativePathSemantics),
       summary,
     ]),
   );
   const files = candidates
     .filter((candidate) =>
-      selected.has(normalizePathKey(candidate.absolutePath)),
+      selected.has(
+        normalizePathKey(candidate.absolutePath, nativePathSemantics),
+      ),
     )
     .map((candidate) =>
       toCommitMessageFileContext(
         candidate,
-        diffByPath.get(normalizePathKey(candidate.absolutePath)),
+        diffByPath.get(
+          normalizePathKey(candidate.absolutePath, nativePathSemantics),
+        ),
       ),
     )
     .sort((left, right) => left.path.localeCompare(right.path));

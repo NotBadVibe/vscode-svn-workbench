@@ -10,7 +10,9 @@ import type {
 import type { OperationScope } from "../../scope/operationScope";
 import { validatePathsInScope } from "../../scope/pathBoundaryGuard";
 import { isSameOrDescendantPath } from "../../scope/pathIdentity";
+import { nativePathSemantics } from "../../scope/nativePathSemantics";
 import { projectRelativePath } from "../../scope/projectIdentity";
+import { toDisplayPath } from "../../scope/pathBrands";
 import { runSvnCommand } from "../../svn/svnCommandRunner";
 import { quoteRelative } from "./workbenchPresentation";
 
@@ -78,7 +80,10 @@ export function validateFileOperation(
   const absolutePaths = relativePaths.map((item) =>
     path.resolve(scope.repositoryRoot, item),
   );
-  if (validatePathsInScope(scope, absolutePaths).outOfScopeItems.length > 0) {
+  if (
+    validatePathsInScope(scope, absolutePaths, nativePathSemantics)
+      .outOfScopeItems.length > 0
+  ) {
     issues.push("选择中包含当前右键范围外路径。");
   }
   for (const relativePath of relativePaths) {
@@ -124,7 +129,10 @@ export function validateFileOperation(
       }
     } else {
       const parents = absolutePaths.map((item) => path.dirname(item));
-      if (validatePathsInScope(scope, parents).outOfScopeItems.length > 0) {
+      if (
+        validatePathsInScope(scope, parents, nativePathSemantics)
+          .outOfScopeItems.length > 0
+      ) {
         issues.push(
           "目录忽略会修改父目录 svn:ignore，但父目录不在当前操作范围内。请从父目录右键进入。",
         );
@@ -259,15 +267,26 @@ export function withProjectFileView(
   const multiProject = projects !== undefined && projects.length > 1;
   const owner = multiProject
     ? (projects.find((project) =>
-        isSameOrDescendantPath(absolutePath, project.projectRoot),
+        isSameOrDescendantPath(
+          absolutePath,
+          project.projectRoot,
+          nativePathSemantics,
+        ),
       ) ?? scope.project)
     : scope.project;
   if (!owner) return view;
-  const display = projectRelativePath(owner.projectRoot, absolutePath);
+  const display = projectRelativePath(
+    owner.projectRoot,
+    absolutePath,
+    nativePathSemantics,
+  );
   return {
     ...view,
+    // 展示边界显式转换：协议展示字段不接受 identity 键。
     projectRelativePath:
-      display === undefined || display === "." ? undefined : display,
+      display === undefined || display === "."
+        ? undefined
+        : toDisplayPath(display),
     projectName: multiProject ? owner.projectName : undefined,
   };
 }

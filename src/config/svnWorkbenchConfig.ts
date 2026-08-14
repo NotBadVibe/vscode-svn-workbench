@@ -1,6 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { isSamePathIdentity } from "../scope/pathIdentity";
+import { nativePathSemantics } from "../scope/nativePathSemantics";
 
 export const SVN_WORKBENCH_CONFIG_FILE = ".svn-workbench.json";
 
@@ -53,7 +54,10 @@ export async function resolveSvnWorkbenchConfigLocation(
   workingCopyRoot: string,
 ): Promise<SvnWorkbenchConfigLocation> {
   const wcPath = getSvnWorkbenchConfigPath(workingCopyRoot);
-  if (!projectRoot || isSamePathIdentity(projectRoot, workingCopyRoot)) {
+  if (
+    !projectRoot ||
+    isSamePathIdentity(projectRoot, workingCopyRoot, nativePathSemantics)
+  ) {
     return {
       configRoot: workingCopyRoot,
       configPath: wcPath,
@@ -94,7 +98,10 @@ export function resolveSvnWorkbenchConfigWriteRoot(
   projectRoot: string | undefined,
   workingCopyRoot: string,
 ): string {
-  if (projectRoot && !isSamePathIdentity(projectRoot, workingCopyRoot)) {
+  if (
+    projectRoot &&
+    !isSamePathIdentity(projectRoot, workingCopyRoot, nativePathSemantics)
+  ) {
     return projectRoot;
   }
   return workingCopyRoot;

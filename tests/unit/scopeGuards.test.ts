@@ -11,6 +11,9 @@ import {
   isPathInScope,
   validatePathsInScope,
 } from "../../src/scope/pathBoundaryGuard";
+import type { PathSemantics } from "../../src/scope/pathIdentity";
+
+const posix: PathSemantics = { platform: "linux", cwd: "/" };
 
 const temporaryRoots: string[] = [];
 afterEach(async () =>
@@ -39,8 +42,8 @@ describe("右键操作范围边界", () => {
       includeNestedWorkingCopies: false,
       createdAt: 0,
     };
-    expect(isPathInScope(fileScope, "/repo/src/a.ts")).toBe(true);
-    expect(isPathInScope(fileScope, "/repo/src/a.ts.bak")).toBe(false);
+    expect(isPathInScope(fileScope, "/repo/src/a.ts", posix)).toBe(true);
+    expect(isPathInScope(fileScope, "/repo/src/a.ts.bak", posix)).toBe(false);
     const folderScope = {
       ...fileScope,
       roots: [
@@ -51,15 +54,19 @@ describe("右键操作范围边界", () => {
         },
       ],
     };
-    expect(isPathInScope(folderScope, "/repo/src/a")).toBe(true);
-    expect(isPathInScope(folderScope, "/repo/src/a/child.ts")).toBe(true);
-    expect(isPathInScope(folderScope, "/repo/src/a/..cache/file.ts")).toBe(
+    expect(isPathInScope(folderScope, "/repo/src/a", posix)).toBe(true);
+    expect(isPathInScope(folderScope, "/repo/src/a/child.ts", posix)).toBe(
       true,
     );
-    expect(isPathInScope(folderScope, "/repo/src/ab/child.ts")).toBe(false);
-    expect(isPathInScope(folderScope, "/repo/src")).toBe(false);
     expect(
-      validatePathsInScope(folderScope, ["/repo/src/a/x", "/outside"]),
+      isPathInScope(folderScope, "/repo/src/a/..cache/file.ts", posix),
+    ).toBe(true);
+    expect(isPathInScope(folderScope, "/repo/src/ab/child.ts", posix)).toBe(
+      false,
+    );
+    expect(isPathInScope(folderScope, "/repo/src", posix)).toBe(false);
+    expect(
+      validatePathsInScope(folderScope, ["/repo/src/a/x", "/outside"], posix),
     ).toEqual({
       validItems: [path.resolve("/repo/src/a/x")],
       outOfScopeItems: [path.resolve("/outside")],

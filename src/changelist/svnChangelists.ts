@@ -1,6 +1,7 @@
 import * as path from "node:path";
 import type { OperationScope } from "../scope/operationScope";
 import { validatePathsInScope } from "../scope/pathBoundaryGuard";
+import { nativePathSemantics } from "../scope/nativePathSemantics";
 import { runSvnCommand } from "../svn/svnCommandRunner";
 import {
   parseSvnChangelistsXml,
@@ -34,7 +35,11 @@ export async function applySvnChangelist(
   const absolutePaths = relativePaths.map((item) =>
     path.resolve(scope.repositoryRoot, item),
   );
-  const validation = validatePathsInScope(scope, absolutePaths);
+  const validation = validatePathsInScope(
+    scope,
+    absolutePaths,
+    nativePathSemantics,
+  );
   if (validation.outOfScopeItems.length > 0) {
     throw new Error("Changelist 包含当前右键范围外路径。");
   }

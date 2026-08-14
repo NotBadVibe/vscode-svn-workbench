@@ -2,7 +2,7 @@ import {
   isSameOrDescendantPath,
   isSamePathIdentity,
   normalizePathIdentity,
-  type PathIdentityOptions,
+  type PathSemantics,
 } from "./pathIdentity";
 import { createProjectIdentity } from "./projectIdentity";
 import type { OperationScopeProject } from "./operationScope";
@@ -66,7 +66,7 @@ export interface ResolveProjectTargetInput {
 export function mostSpecificWorkspaceFolder(
   folders: readonly ProjectResolverFolder[],
   target: string,
-  options: PathIdentityOptions = {},
+  options: PathSemantics,
 ): ProjectResolverFolder | undefined {
   let best: ProjectResolverFolder | undefined;
   let bestLength = -1;
@@ -96,7 +96,7 @@ export function mostSpecificWorkspaceFolder(
  */
 export function resolveProjectTarget(
   input: ResolveProjectTargetInput,
-  options: PathIdentityOptions = {},
+  options: PathSemantics,
 ): ProjectTargetResolution {
   const folders = input.workspaceFolders;
 
@@ -202,7 +202,7 @@ export interface ProjectRootFinalization {
 export function finalizeProjectRoot(
   projectRootCandidate: string | undefined,
   workingCopyRoot: string,
-  options: PathIdentityOptions = {},
+  options: PathSemantics,
 ): ProjectRootFinalization {
   if (
     projectRootCandidate &&
@@ -220,7 +220,7 @@ export function finalizeProjectRoot(
 export function finalizeScopeProject(
   projectRootCandidate: string | undefined,
   workingCopyRoot: string,
-  options: PathIdentityOptions = {},
+  options: PathSemantics,
 ): OperationScopeProject {
   const finalization = finalizeProjectRoot(
     projectRootCandidate,

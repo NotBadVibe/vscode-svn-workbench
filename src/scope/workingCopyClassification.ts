@@ -1,7 +1,7 @@
 import {
   isSameOrDescendantPath,
   isSamePathIdentity,
-  type PathIdentityOptions,
+  type PathSemantics,
 } from "./pathIdentity";
 
 /*
@@ -44,7 +44,7 @@ export interface WorkingCopyBindingInput {
 
 export function classifyWorkingCopyBinding(
   input: WorkingCopyBindingInput,
-  options: PathIdentityOptions = {},
+  options: PathSemantics,
 ): WorkingCopyBinding {
   if (!input.exists) return "missing";
   const { folderPath, workingCopyRoot, parentWorkingCopyRoot } = input;

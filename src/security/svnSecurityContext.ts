@@ -1,7 +1,9 @@
 import {
   isSameOrDescendantPath,
   normalizePathIdentity,
+  type PathIdentityKey,
 } from "../scope/pathIdentity";
+import { nativePathSemantics } from "../scope/nativePathSemantics";
 
 export type SvnCertificateFailure =
   "unknown-ca" | "cn-mismatch" | "expired" | "not-yet-valid" | "other";
@@ -29,11 +31,14 @@ export interface SvnSecurityInvocation {
   stdin?: string;
 }
 
-const contexts = new Map<string, SvnSecurityContext>();
+const contexts = new Map<PathIdentityKey, SvnSecurityContext>();
 
-/** 仓库根路径归一化（跨平台大小写）键；供注册表与控制器比较用。 */
-export function normalizeSvnRepositoryRoot(value: string): string {
-  return normalizePathIdentity(value);
+/**
+ * 仓库根路径归一化（跨平台大小写）键；供注册表与控制器比较用。
+ * 返回值是 PathIdentityKey 品牌：不得把归一化键当作真实路径或展示路径。
+ */
+export function normalizeSvnRepositoryRoot(value: string): PathIdentityKey {
+  return normalizePathIdentity(value, nativePathSemantics);
 }
 
 /** 测试辅助：清空模块级上下文，避免用例之间互相污染。 */
@@ -45,7 +50,7 @@ export function setSvnSecurityContext(
   repositoryRoot: string,
   context: SvnSecurityContext | undefined,
 ): void {
-  const key = normalizePathIdentity(repositoryRoot);
+  const key = normalizePathIdentity(repositoryRoot, nativePathSemantics);
   if (!context || (!context.authentication && !context.certificateTrust)) {
     contexts.delete(key);
     return;
@@ -54,17 +59,17 @@ export function setSvnSecurityContext(
 }
 
 export function clearSvnSecurityContext(repositoryRoot: string): void {
-  contexts.delete(normalizePathIdentity(repositoryRoot));
+  contexts.delete(normalizePathIdentity(repositoryRoot, nativePathSemantics));
 }
 
 export function resolveSvnSecurityContext(
   cwd: string | undefined,
 ): SvnSecurityContext | undefined {
   if (!cwd) return undefined;
-  const candidate = normalizePathIdentity(cwd);
-  let matched: [string, SvnSecurityContext] | undefined;
+  const candidate = normalizePathIdentity(cwd, nativePathSemantics);
+  let matched: [PathIdentityKey, SvnSecurityContext] | undefined;
   for (const entry of contexts.entries()) {
-    if (isSameOrDescendantPath(candidate, entry[0])) {
+    if (isSameOrDescendantPath(candidate, entry[0], nativePathSemantics)) {
       if (!matched || entry[0].length > matched[0].length) matched = entry;
     }
   }

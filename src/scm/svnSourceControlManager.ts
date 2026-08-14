@@ -5,6 +5,7 @@ import type { CommitSelectionRuleService } from "../commit/commitSelectionRuleSe
 import { createWorkingCopyScope } from "../scope/operationScope";
 import { resolveWorkingCopyRoot } from "../scope/workingCopyResolver";
 import { isSameOrDescendantPath } from "../scope/pathIdentity";
+import { nativePathSemantics } from "../scope/nativePathSemantics";
 import { appendOutput } from "../diagnostics/outputChannel";
 import {
   groupProjectsByWorkingCopy,
@@ -78,6 +79,7 @@ export class SvnSourceControlManager implements vscode.Disposable {
     // 同一工作副本共享一次状态采集，再按项目根切片。
     const groups = groupProjectsByWorkingCopy(
       [...this.projects.values()].map((model) => model.project),
+      nativePathSemantics,
     );
     await Promise.all(
       [...groups.entries()].map(async ([, group]) => {
@@ -88,11 +90,17 @@ export class SvnSourceControlManager implements vscode.Disposable {
         );
         if (!candidates) return;
         for (const project of group) {
-          const model = this.projects.get(scmProjectKey(project.absolutePath));
+          const model = this.projects.get(
+            scmProjectKey(project.absolutePath, nativePathSemantics),
+          );
           if (!model) continue;
           this.applyCandidates(
             model,
-            sliceCandidatesForProject(candidates, project.absolutePath),
+            sliceCandidatesForProject(
+              candidates,
+              project.absolutePath,
+              nativePathSemantics,
+            ),
           );
         }
       }),
@@ -132,11 +140,11 @@ export class SvnSourceControlManager implements vscode.Disposable {
         workingCopyRoot: path.resolve(root),
       });
     }
-    const titles = resolveSourceControlTitles(projects);
+    const titles = resolveSourceControlTitles(projects, nativePathSemantics);
 
     const seenProjects = new Set<string>();
     projects.forEach((project, index) => {
-      const key = scmProjectKey(project.absolutePath);
+      const key = scmProjectKey(project.absolutePath, nativePathSemantics);
       seenProjects.add(key);
       const existing = this.projects.get(key);
       if (existing) {
@@ -174,7 +182,11 @@ export class SvnSourceControlManager implements vscode.Disposable {
       for (const item of metadata) {
         const root = path.dirname(path.dirname(item.fsPath));
         const coveredByFolder = folders.some((candidate) =>
-          isSameOrDescendantPath(candidate.uri.fsPath, root),
+          isSameOrDescendantPath(
+            candidate.uri.fsPath,
+            root,
+            nativePathSemantics,
+          ),
         );
         if (!coveredByFolder) orphanRoots.add(root);
       }
@@ -186,7 +198,7 @@ export class SvnSourceControlManager implements vscode.Disposable {
       }
     }
     for (const root of orphanRoots) {
-      const key = scmProjectKey(root);
+      const key = scmProjectKey(root, nativePathSemantics);
       if (!this.workingCopies.has(key)) {
         this.workingCopies.set(key, this.createWorkingCopyProvider(root));
       }
@@ -342,10 +354,14 @@ export class SvnSourceControlManager implements vscode.Disposable {
     if (!uri || uri.scheme !== "file") return;
     const inScope =
       [...this.projects.values()].some((model) =>
-        isSameOrDescendantPath(uri.fsPath, model.project.absolutePath),
+        isSameOrDescendantPath(
+          uri.fsPath,
+          model.project.absolutePath,
+          nativePathSemantics,
+        ),
       ) ||
       [...this.workingCopies.values()].some((model) =>
-        isSameOrDescendantPath(uri.fsPath, model.root),
+        isSameOrDescendantPath(uri.fsPath, model.root, nativePathSemantics),
       );
     if (!inScope) return;
     if (this.refreshTimer) clearTimeout(this.refreshTimer);

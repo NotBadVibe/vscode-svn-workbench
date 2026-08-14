@@ -139,6 +139,9 @@ import {
   type WorkbenchModuleSnapshot,
   type ProjectsSnapshot,
 } from "../../protocol/workbenchProtocol";
+import { toDisplayPath } from "../../scope/pathBrands";
+import { nativePathSemantics } from "../../scope/nativePathSemantics";
+import type { PathIdentityKey } from "../../scope/pathIdentity";
 import { validatePathsInScope } from "../../scope/pathBoundaryGuard";
 import { isPathInScope } from "../../scope/pathBoundaryGuard";
 import { projectRelativePath } from "../../scope/projectIdentity";
@@ -319,7 +322,7 @@ export class WorkbenchController implements vscode.Disposable {
   private static readonly PROJECT_DRAFTS_STATE_KEY =
     "svnWorkbench.projectDrafts";
   /** 本控制器当前持有的仓库安全引用（归一化键）；一控制器最多持有一个。 */
-  private securityReferenceRoot: string | undefined;
+  private securityReferenceRoot: PathIdentityKey | undefined;
   /** v0.0.6 页内编辑服务（仅 Diff 窗口创建）。 */
   private readonly diffEdit?: DiffEditingService;
   /** 当前 Diff 会话目标摘要；同目标重复打开只 reveal，不重新初始化。 */
@@ -618,7 +621,7 @@ export class WorkbenchController implements vscode.Disposable {
    * 仅处理当前会话所在仓库，重新读取 SecretStorage 并更新会话安全状态；
    * 设置页同步刷新展示，不重载其他模块以保留未提交输入。
    */
-  handleSecurityInvalidated(repositoryRoot: string): void {
+  handleSecurityInvalidated(repositoryRoot: PathIdentityKey): void {
     const session = this.session;
     if (
       !session ||
@@ -913,7 +916,11 @@ export class WorkbenchController implements vscode.Disposable {
           session.scope.repositoryRoot,
           relativePath,
         );
-        const validation = validatePathsInScope(session.scope, [absolutePath]);
+        const validation = validatePathsInScope(
+          session.scope,
+          [absolutePath],
+          nativePathSemantics,
+        );
         if (validation.outOfScopeItems.length > 0) {
           await this.sendError(
             session.moduleId,
@@ -955,8 +962,11 @@ export class WorkbenchController implements vscode.Disposable {
           relativePath,
         );
         if (
-          validatePathsInScope(session.scope, [absolutePath]).outOfScopeItems
-            .length > 0
+          validatePathsInScope(
+            session.scope,
+            [absolutePath],
+            nativePathSemantics,
+          ).outOfScopeItems.length > 0
         ) {
           await this.sendError(
             session.moduleId,
@@ -1078,7 +1088,11 @@ export class WorkbenchController implements vscode.Disposable {
         const absolutePaths = selectedPaths.map((item) =>
           path.resolve(session.scope.repositoryRoot, item),
         );
-        const validation = validatePathsInScope(session.scope, absolutePaths);
+        const validation = validatePathsInScope(
+          session.scope,
+          absolutePaths,
+          nativePathSemantics,
+        );
         if (validation.outOfScopeItems.length > 0) {
           await this.sendError(
             "commit",
@@ -1521,8 +1535,11 @@ export class WorkbenchController implements vscode.Disposable {
           editState.relativePath,
         );
         if (
-          validatePathsInScope(session.scope, [absolutePath]).outOfScopeItems
-            .length > 0
+          validatePathsInScope(
+            session.scope,
+            [absolutePath],
+            nativePathSemantics,
+          ).outOfScopeItems.length > 0
         ) {
           await this.sendError(
             "conflicts",
@@ -2110,8 +2127,11 @@ export class WorkbenchController implements vscode.Disposable {
           return;
         }
         if (
-          validatePathsInScope(session.scope, [preview.target]).outOfScopeItems
-            .length > 0
+          validatePathsInScope(
+            session.scope,
+            [preview.target],
+            nativePathSemantics,
+          ).outOfScopeItems.length > 0
         ) {
           await this.sendError(
             "repository",
@@ -2201,8 +2221,11 @@ export class WorkbenchController implements vscode.Disposable {
           return;
         }
         if (
-          validatePathsInScope(session.scope, [preview.target]).outOfScopeItems
-            .length > 0
+          validatePathsInScope(
+            session.scope,
+            [preview.target],
+            nativePathSemantics,
+          ).outOfScopeItems.length > 0
         ) {
           await this.sendError(
             "repository",
@@ -2698,8 +2721,11 @@ export class WorkbenchController implements vscode.Disposable {
           relativePath,
         );
         if (
-          validatePathsInScope(session.scope, [absolutePath]).outOfScopeItems
-            .length > 0
+          validatePathsInScope(
+            session.scope,
+            [absolutePath],
+            nativePathSemantics,
+          ).outOfScopeItems.length > 0
         ) {
           await this.sendError(
             "changes",
@@ -2738,8 +2764,11 @@ export class WorkbenchController implements vscode.Disposable {
           relativePath,
         );
         if (
-          validatePathsInScope(session.scope, [absolutePath]).outOfScopeItems
-            .length > 0
+          validatePathsInScope(
+            session.scope,
+            [absolutePath],
+            nativePathSemantics,
+          ).outOfScopeItems.length > 0
         ) {
           await this.sendError(
             "changes",
@@ -3026,8 +3055,8 @@ export class WorkbenchController implements vscode.Disposable {
 
     const absolutePath = path.resolve(session.targetFile);
     if (
-      validatePathsInScope(session.scope, [absolutePath]).outOfScopeItems
-        .length > 0
+      validatePathsInScope(session.scope, [absolutePath], nativePathSemantics)
+        .outOfScopeItems.length > 0
     ) {
       await this.sendError(
         "diff",
@@ -3174,8 +3203,8 @@ export class WorkbenchController implements vscode.Disposable {
   ): Promise<DiffSnapshot> {
     const absolutePath = path.resolve(targetFile);
     if (
-      validatePathsInScope(session.scope, [absolutePath]).outOfScopeItems
-        .length > 0
+      validatePathsInScope(session.scope, [absolutePath], nativePathSemantics)
+        .outOfScopeItems.length > 0
     ) {
       throw new Error("文件不在当前右键操作范围内。");
     }
@@ -3399,8 +3428,8 @@ export class WorkbenchController implements vscode.Disposable {
     }
     const absolutePath = path.resolve(session.targetFile);
     if (
-      validatePathsInScope(session.scope, [absolutePath]).outOfScopeItems
-        .length > 0
+      validatePathsInScope(session.scope, [absolutePath], nativePathSemantics)
+        .outOfScopeItems.length > 0
     ) {
       await this.sendError(
         "diff",
@@ -4242,7 +4271,7 @@ export class WorkbenchController implements vscode.Disposable {
       session.scope.repositoryRoot,
       relativePath,
     );
-    return isPathInScope(session.scope, absolutePath)
+    return isPathInScope(session.scope, absolutePath, nativePathSemantics)
       ? absolutePath
       : undefined;
   }
@@ -4280,7 +4309,11 @@ export class WorkbenchController implements vscode.Disposable {
     }
     const project = session.scope.project;
     const projectRel = project
-      ? projectRelativePath(project.projectRoot, absolutePath)
+      ? projectRelativePath(
+          project.projectRoot,
+          absolutePath,
+          nativePathSemantics,
+        )
       : undefined;
     const normalized = normalizeRelative(relativePath);
     // SVN URL 只能由工作副本根检出 URL 推导；repos-root 拼接会产生错误
@@ -4302,11 +4335,14 @@ export class WorkbenchController implements vscode.Disposable {
         projectRelativePath:
           projectRel === undefined || projectRel === "."
             ? undefined
-            : projectRel,
-        workingCopyRelativePath: normalized,
-        repositoryRelativePath,
+            : // 展示边界显式转换：协议展示字段不接受 identity 键。
+              toDisplayPath(projectRel),
+        workingCopyRelativePath: toDisplayPath(normalized),
+        repositoryRelativePath: repositoryRelativePath
+          ? toDisplayPath(repositoryRelativePath)
+          : undefined,
         svnUrl,
-        absolutePath,
+        absolutePath: toDisplayPath(absolutePath),
       },
     });
   }
@@ -4377,6 +4413,7 @@ export class WorkbenchController implements vscode.Disposable {
             ? isSamePathIdentity(
                 folder.absolutePath,
                 session.scope.project.projectRoot,
+                nativePathSemantics,
               )
             : false,
         };
@@ -4395,6 +4432,7 @@ export class WorkbenchController implements vscode.Disposable {
         absolutePath: item.absolutePath,
         workingCopyRoot: item.workingCopyRoot!,
       })),
+      nativePathSemantics,
     );
     await Promise.all(
       [...groups.values()].map(async (group) => {
@@ -4414,6 +4452,7 @@ export class WorkbenchController implements vscode.Disposable {
             const sliced = sliceCandidatesForProject(
               candidates,
               project.absolutePath,
+              nativePathSemantics,
             );
             countByProject.set(project.absolutePath, {
               conflicts: sliced.filter(
@@ -4457,7 +4496,7 @@ export class WorkbenchController implements vscode.Disposable {
       workingCopyRoot,
       vscode.Uri.file(folderPath),
       undefined,
-      finalizeScopeProject(folderPath, workingCopyRoot),
+      finalizeScopeProject(folderPath, workingCopyRoot, nativePathSemantics),
     );
   }
 
@@ -4480,7 +4519,11 @@ export class WorkbenchController implements vscode.Disposable {
     const folder = (vscode.workspace.workspaceFolders ?? []).find(
       (candidate) =>
         projectRoot !== undefined &&
-        isSamePathIdentity(candidate.uri.fsPath, projectRoot),
+        isSamePathIdentity(
+          candidate.uri.fsPath,
+          projectRoot,
+          nativePathSemantics,
+        ),
     );
     if (!entry || !projectRoot || !folder) {
       await this.sendError(
@@ -4627,7 +4670,7 @@ export class WorkbenchController implements vscode.Disposable {
     return (
       current !== undefined &&
       next !== undefined &&
-      !isSamePathIdentity(current, next)
+      !isSamePathIdentity(current, next, nativePathSemantics)
     );
   }
 
@@ -4692,6 +4735,7 @@ export class WorkbenchController implements vscode.Disposable {
       projectRoot,
       session.moduleId,
       session.scopeHash,
+      nativePathSemantics,
     );
     void this.context.workspaceState.update(
       WorkbenchController.PROJECT_DRAFTS_STATE_KEY,
@@ -4718,6 +4762,7 @@ export class WorkbenchController implements vscode.Disposable {
       projectRoot,
       session.moduleId,
       session.scopeHash,
+      nativePathSemantics,
     );
     const store = this.context.workspaceState.get<ProjectDraftMap>(
       WorkbenchController.PROJECT_DRAFTS_STATE_KEY,
@@ -4788,7 +4833,10 @@ export class WorkbenchController implements vscode.Disposable {
     state.teamMigration = undefined;
     const workingCopyRoot = session.scope.repositoryRoot;
     const projectRoot = session.scope.project?.projectRoot;
-    if (!projectRoot || isSamePathIdentity(projectRoot, workingCopyRoot)) {
+    if (
+      !projectRoot ||
+      isSamePathIdentity(projectRoot, workingCopyRoot, nativePathSemantics)
+    ) {
       state.teamFeedback = {
         tone: "warning",
         message: "当前项目根与工作副本根重合，无需迁移团队规则。",
@@ -4811,6 +4859,7 @@ export class WorkbenchController implements vscode.Disposable {
       targetExists,
       projectRoot,
       workingCopyRoot,
+      options: nativePathSemantics,
     });
     state.teamMigration = {
       token: randomUUID(),
@@ -4855,8 +4904,12 @@ export class WorkbenchController implements vscode.Disposable {
     const projectRoot = session.scope.project?.projectRoot;
     if (
       !projectRoot ||
-      !isSameOrDescendantPath(projectRoot, workingCopyRoot) ||
-      isSamePathIdentity(projectRoot, workingCopyRoot)
+      !isSameOrDescendantPath(
+        projectRoot,
+        workingCopyRoot,
+        nativePathSemantics,
+      ) ||
+      isSamePathIdentity(projectRoot, workingCopyRoot, nativePathSemantics)
     ) {
       state.teamMigration = undefined;
       await fail("项目边界已变化，迁移已取消；请重新生成迁移预览。");
@@ -4928,7 +4981,10 @@ export class WorkbenchController implements vscode.Disposable {
     );
     let parentWorkingCopyRoot: string | undefined;
     let isExternalsTarget: boolean | undefined;
-    if (workingCopyRoot && isSamePathIdentity(workingCopyRoot, folderPath)) {
+    if (
+      workingCopyRoot &&
+      isSamePathIdentity(workingCopyRoot, folderPath, nativePathSemantics)
+    ) {
       const parentDir = path.dirname(folderPath);
       parentWorkingCopyRoot = await resolveWorkingCopyRoot(
         executable,
@@ -4951,13 +5007,16 @@ export class WorkbenchController implements vscode.Disposable {
         }
       }
     }
-    return classifyWorkingCopyBinding({
-      exists,
-      folderPath,
-      workingCopyRoot,
-      parentWorkingCopyRoot,
-      isExternalsTarget,
-    });
+    return classifyWorkingCopyBinding(
+      {
+        exists,
+        folderPath,
+        workingCopyRoot,
+        parentWorkingCopyRoot,
+        isExternalsTarget,
+      },
+      nativePathSemantics,
+    );
   }
 
   private async buildDiagnosticsSnapshot(): Promise<DiagnosticsSnapshot> {

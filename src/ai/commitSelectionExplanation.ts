@@ -1,5 +1,6 @@
 import { CommitCandidate } from "../commit/commitCandidateCollector";
 import { normalizePathIdentity as normalizePathKey } from "../scope/pathIdentity";
+import { nativePathSemantics } from "../scope/nativePathSemantics";
 import { AiFileDecision, AiSelectionResult } from "./aiProvider";
 
 export type CommitSelectionAiDecision =
@@ -34,7 +35,7 @@ export function buildCommitSelectionExplanation(
   const summary = createEmptySummary();
   const items = candidates.map((candidate) => {
     const decision = decisionByPath.get(
-      normalizePathKey(candidate.absolutePath),
+      normalizePathKey(candidate.absolutePath, nativePathSemantics),
     ) ?? {
       decision: "none" as const,
       reason: "AI 未给出建议，保留当前默认选择。",
@@ -61,7 +62,7 @@ function addDecisions(
   decision: CommitSelectionAiDecision,
 ): void {
   for (const item of items) {
-    target.set(normalizePathKey(item.path), {
+    target.set(normalizePathKey(item.path, nativePathSemantics), {
       decision,
       reason: item.reason || "AI 未提供原因。",
     });

@@ -5,6 +5,7 @@ import { WorkbenchController } from "../../src/extension/workbench/WorkbenchCont
 import type { WorkbenchSession } from "../../src/extension/workbench/workbenchSession";
 import type { OperationScope } from "../../src/scope/operationScope";
 import { projectDraftKey } from "../../src/extension/workbench/projectDraftStore";
+import type { PathSemantics } from "../../src/scope/pathIdentity";
 import { hashOperationScope } from "../../src/extension/workbench/workbenchSupport";
 import { __resetWebviewPanels } from "../mocks/vscode";
 
@@ -13,6 +14,10 @@ import { __resetWebviewPanels } from "../mocks/vscode";
  * 检查未完成内容；三选一（保留草稿并切换 / 放弃并切换 / 留在当前项目）；
  * 草稿按 projectId + moduleId + scopeHash 隔离；恢复时重新采集候选并
  * 复验手动选择，采集失败安全清空旧选择；旧预览与确认令牌不恢复。
+ *
+ * 路径语义：本夹具的工作副本由真实临时目录（WC_ROOT，path.resolve 构造）
+ * 建立，草稿 key 必须按宿主平台归一化。显式构造宿主集成语义对象，
+ * 不导入生产 native 单例（测试夹具与生产边界隔离）。
  */
 
 vi.mock("../../src/extension/workbench/WebviewAssetManifest", () => ({
@@ -70,6 +75,12 @@ vi.mock("../../src/commit/commitCandidateCollector", async (importOriginal) => {
 });
 
 const WC_ROOT = path.resolve("/repo/code");
+
+/** 宿主集成语义：WC_ROOT 由 path.resolve 按宿主规则构造，归一化必须匹配宿主平台。 */
+const hostSemantics: PathSemantics = {
+  platform: process.platform,
+  cwd: process.cwd(),
+};
 
 function projectScope(projectName: string, rootSub?: string): OperationScope {
   const projectRoot = path.join(WC_ROOT, projectName);
@@ -162,6 +173,7 @@ function seedDraft(
     scope.project!.projectRoot,
     "changes",
     hashOperationScope(scope),
+    hostSemantics,
   );
   store["svnWorkbench.projectDrafts"] = {
     [key]: { ...draft, scopeHash: hashOperationScope(scope), savedAt: 1 },
@@ -229,6 +241,7 @@ describe("项目切换草稿守卫（v0.0.7 §8）", () => {
       path.join(WC_ROOT, "appA"),
       "changes",
       scopeHashA,
+      hostSemantics,
     );
     const drafts = store["svnWorkbench.projectDrafts"] as Record<
       string,

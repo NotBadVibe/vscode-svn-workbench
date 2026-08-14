@@ -6,6 +6,7 @@ import {
   type HostToWebviewMessage,
   type WebviewToHostMessage,
 } from "../../src/protocol/workbenchProtocol";
+import { toDisplayPath } from "../../src/scope/pathBrands";
 
 const SESSION_ID = "session-a";
 const states: WorkbenchState[] = [];
@@ -70,7 +71,7 @@ describe("Workbench Webview 状态机", () => {
     const state = createState();
     const scope = {
       repositoryName: "r",
-      roots: [{ kind: "folder" as const, relativePath: "." }],
+      roots: [{ kind: "folder" as const, relativePath: toDisplayPath(".") }],
       source: "explorer" as const,
     };
     const snapshot = {

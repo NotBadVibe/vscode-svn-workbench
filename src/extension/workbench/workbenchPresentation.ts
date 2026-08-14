@@ -19,6 +19,7 @@ import {
   type WorkbenchTaskId,
 } from "../../protocol/workbenchProtocol";
 import type { OperationScope } from "../../scope/operationScope";
+import { toDisplayPath } from "../../scope/pathBrands";
 
 export function toScopeView(scope: OperationScope): WorkbenchScopeView {
   const project = scope.project;
@@ -29,12 +30,15 @@ export function toScopeView(scope: OperationScope): WorkbenchScopeView {
       ? {
           projectName: project.projectName,
           projectRootIsFallback: project.rootIsFallback,
-          projectWorkingCopyRelativePath: project.workingCopyRelativePath,
+          projectWorkingCopyRelativePath: toDisplayPath(
+            project.workingCopyRelativePath,
+          ),
         }
       : {}),
     roots: scope.roots.map((root) => ({
       kind: root.kind,
-      relativePath: normalizeRelative(root.relativePath),
+      // 展示边界显式转换：协议展示字段不接受 identity 键。
+      relativePath: toDisplayPath(normalizeRelative(root.relativePath)),
     })),
     source:
       scope.source === "editorFile"

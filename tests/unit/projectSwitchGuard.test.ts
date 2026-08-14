@@ -12,6 +12,7 @@ import {
 } from "../../src/extension/workbench/projectDraftStore";
 
 const win = { platform: "win32" as const, cwd: "C:\\" };
+const posix = { platform: "linux" as const, cwd: "/" };
 
 describe("项目切换未完成内容检查（v0.0.7 §8）", () => {
   it("空白会话不拦截切换", () => {
@@ -75,24 +76,31 @@ describe("项目草稿存储（按项目 + 模块 + 范围隔离）", () => {
     let store: ProjectDraftMap = {};
     store = writeProjectDraft(
       store,
-      projectDraftKey("/repo/a", "commit", "scope-1"),
+      projectDraftKey("/repo/a", "commit", "scope-1", posix),
       { ...draft, message: "范围一草稿", scopeHash: "scope-1" },
     );
     store = writeProjectDraft(
       store,
-      projectDraftKey("/repo/a", "commit", "scope-2"),
+      projectDraftKey("/repo/a", "commit", "scope-2", posix),
       { ...draft, message: "范围二草稿", scopeHash: "scope-2" },
     );
     expect(
-      readProjectDraft(store, projectDraftKey("/repo/a", "commit", "scope-1"))
-        ?.message,
+      readProjectDraft(
+        store,
+        projectDraftKey("/repo/a", "commit", "scope-1", posix),
+      )?.message,
     ).toBe("范围一草稿");
     expect(
-      readProjectDraft(store, projectDraftKey("/repo/a", "commit", "scope-2"))
-        ?.message,
+      readProjectDraft(
+        store,
+        projectDraftKey("/repo/a", "commit", "scope-2", posix),
+      )?.message,
     ).toBe("范围二草稿");
     expect(
-      readProjectDraft(store, projectDraftKey("/repo/a", "commit", "scope-3")),
+      readProjectDraft(
+        store,
+        projectDraftKey("/repo/a", "commit", "scope-3", posix),
+      ),
     ).toBeUndefined();
   });
 
@@ -100,33 +108,42 @@ describe("项目草稿存储（按项目 + 模块 + 范围隔离）", () => {
     let store: ProjectDraftMap = {};
     store = writeProjectDraft(
       store,
-      projectDraftKey("/repo/a", "commit", "scope-1"),
+      projectDraftKey("/repo/a", "commit", "scope-1", posix),
       { ...draft, message: "A 项目草稿" },
     );
     store = writeProjectDraft(
       store,
-      projectDraftKey("/repo/b", "commit", "scope-1"),
+      projectDraftKey("/repo/b", "commit", "scope-1", posix),
       { ...draft, message: "B 项目草稿" },
     );
     store = writeProjectDraft(
       store,
-      projectDraftKey("/repo/a", "changes", "scope-1"),
+      projectDraftKey("/repo/a", "changes", "scope-1", posix),
       { ...draft, message: "A 变更草稿" },
     );
     expect(
-      readProjectDraft(store, projectDraftKey("/repo/a", "commit", "scope-1"))
-        ?.message,
+      readProjectDraft(
+        store,
+        projectDraftKey("/repo/a", "commit", "scope-1", posix),
+      )?.message,
     ).toBe("A 项目草稿");
     expect(
-      readProjectDraft(store, projectDraftKey("/repo/b", "commit", "scope-1"))
-        ?.message,
+      readProjectDraft(
+        store,
+        projectDraftKey("/repo/b", "commit", "scope-1", posix),
+      )?.message,
     ).toBe("B 项目草稿");
     expect(
-      readProjectDraft(store, projectDraftKey("/repo/a", "changes", "scope-1"))
-        ?.message,
+      readProjectDraft(
+        store,
+        projectDraftKey("/repo/a", "changes", "scope-1", posix),
+      )?.message,
     ).toBe("A 变更草稿");
     expect(
-      readProjectDraft(store, projectDraftKey("/repo/b", "changes", "scope-1")),
+      readProjectDraft(
+        store,
+        projectDraftKey("/repo/b", "changes", "scope-1", posix),
+      ),
     ).toBeUndefined();
   });
 
