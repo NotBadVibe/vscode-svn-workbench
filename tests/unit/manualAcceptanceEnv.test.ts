@@ -98,7 +98,7 @@ describe("人工验收环境：svn status --xml 解析（自检纯逻辑）", ()
     expect(parseStatusXmlModifiedPaths("<status></status>")).toEqual([]);
   });
 
-  it("剥离 Windows 反斜杠 target 前缀", () => {
+  it("剥离 Windows 反斜杠 target 前缀并统一为跨平台相对路径", () => {
     const windowsXml = [
       "<status>",
       '<target path="C:\\fixture\\wc">',
@@ -108,7 +108,20 @@ describe("人工验收环境：svn status --xml 解析（自检纯逻辑）", ()
       "</target>",
       "</status>",
     ].join("\n");
-    expect(parseStatusXmlModifiedPaths(windowsXml)).toEqual(["src\\a.ts"]);
+    expect(parseStatusXmlModifiedPaths(windowsXml)).toEqual(["src/a.ts"]);
+  });
+
+  it("只在 Windows target 边界规范分隔符，不改写 POSIX 合法反斜杠文件名", () => {
+    const posixXml = [
+      "<status>",
+      '<target path="/fixture/wc">',
+      '<entry path="/fixture/wc/src\\a.ts">',
+      '<wc-status item="modified" props="none"></wc-status>',
+      "</entry>",
+      "</target>",
+      "</status>",
+    ].join("\n");
+    expect(parseStatusXmlModifiedPaths(posixXml)).toEqual(["src\\a.ts"]);
   });
 });
 

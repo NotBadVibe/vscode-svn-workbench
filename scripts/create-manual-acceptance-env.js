@@ -600,13 +600,13 @@ function parseStatusXmlModifiedPaths(xml) {
       const raw = match[1];
       const slashPrefix = target ? `${target}/` : "";
       const backslashPrefix = target ? `${target}\\` : "";
-      paths.push(
-        slashPrefix && raw.startsWith(slashPrefix)
-          ? raw.slice(slashPrefix.length)
-          : backslashPrefix && raw.startsWith(backslashPrefix)
-            ? raw.slice(backslashPrefix.length)
-            : raw,
-      );
+      if (slashPrefix && raw.startsWith(slashPrefix)) {
+        paths.push(raw.slice(slashPrefix.length));
+      } else if (backslashPrefix && raw.startsWith(backslashPrefix)) {
+        paths.push(raw.slice(backslashPrefix.length).replaceAll("\\", "/"));
+      } else {
+        paths.push(raw);
+      }
     }
   }
   return paths.sort();
