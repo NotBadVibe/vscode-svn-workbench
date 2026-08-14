@@ -2,10 +2,11 @@ const { spawnSync } = require("node:child_process");
 const path = require("node:path");
 
 const projectRoot = path.resolve(__dirname, "..");
-const validationRoot =
-  process.platform === "win32"
-    ? "C:\\svn-workbench-manual-ui-acceptance-v2"
-    : "/tmp/svn-workbench-manual-ui-acceptance-v2";
+// 与 create-manual-acceptance-env.js 的安全根一致：os.tmpdir() 下固定目录名。
+const validationRoot = path.join(
+  require("node:os").tmpdir(),
+  "svn-workbench-manual-ui-acceptance-v2",
+);
 const testTempRoot = path.join(validationRoot, "test-temp");
 const prepare = spawnSync(
   process.execPath,
