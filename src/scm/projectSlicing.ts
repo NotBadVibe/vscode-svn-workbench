@@ -2,8 +2,9 @@ import * as path from "node:path";
 import {
   isSameOrDescendantPath,
   normalizePathIdentity,
-  type PathIdentityOptions,
+  type PathSemantics,
 } from "../scope/pathIdentity";
+import type { PathIdentityKey } from "../scope/pathBrands";
 
 /*
  * v0.0.7 SCM 项目切片（releases/v0.0.7 §6.2）：
@@ -24,8 +25,8 @@ export interface ScmProjectRef {
 /** 项目/工作副本的 Map 键：不透明路径 identity。 */
 export function scmProjectKey(
   absolutePath: string,
-  options: PathIdentityOptions = {},
-): string {
+  options: PathSemantics,
+): PathIdentityKey {
   return normalizePathIdentity(absolutePath, options);
 }
 
@@ -35,7 +36,7 @@ export function scmProjectKey(
  */
 export function resolveSourceControlTitles(
   projects: readonly { name: string; absolutePath: string }[],
-  options: PathIdentityOptions = {},
+  options: PathSemantics,
 ): string[] {
   const pathApi = options.platform === "win32" ? path.win32 : path.posix;
   const nameCounts = new Map<string, number>();
@@ -58,7 +59,7 @@ export function resolveSourceControlTitles(
 /** 按工作副本根分组项目，同组共享一次状态采集。 */
 export function groupProjectsByWorkingCopy<
   T extends { workingCopyRoot: string },
->(projects: readonly T[], options: PathIdentityOptions = {}): Map<string, T[]> {
+>(projects: readonly T[], options: PathSemantics): Map<string, T[]> {
   const groups = new Map<string, T[]>();
   for (const project of projects) {
     const key = normalizePathIdentity(project.workingCopyRoot, options);
@@ -79,7 +80,7 @@ export function groupProjectsByWorkingCopy<
 export function sliceCandidatesForProject<T extends { absolutePath: string }>(
   candidates: readonly T[],
   projectRoot: string,
-  options: PathIdentityOptions = {},
+  options: PathSemantics,
 ): T[] {
   return candidates.filter((candidate) =>
     isSameOrDescendantPath(candidate.absolutePath, projectRoot, options),
@@ -90,7 +91,7 @@ export function sliceCandidatesForProject<T extends { absolutePath: string }>(
 export function findOwningProject<T extends { absolutePath: string }>(
   projects: readonly T[],
   candidatePath: string,
-  options: PathIdentityOptions = {},
+  options: PathSemantics,
 ): T | undefined {
   let best: T | undefined;
   let bestLength = -1;

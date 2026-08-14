@@ -17,6 +17,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as vscode from "vscode";
 import { normalizePathIdentity as normalizeRepositoryRootKey } from "../scope/pathIdentity";
+import { nativePathSemantics } from "../scope/nativePathSemantics";
 import {
   SVN_WORKBENCH_CONFIG_FILE,
   describeSvnWorkbenchConfigError,
@@ -148,8 +149,10 @@ export class CommitSelectionRuleService implements vscode.Disposable {
     }
     // resolveRules 内部捕获全部异常（降级内置默认），缓存的 Promise 不会拒绝。
     const pending = this.resolveRules(
-      normalizeRepositoryRootKey(repositoryRoot),
-      projectRoot ? normalizeRepositoryRootKey(projectRoot) : undefined,
+      normalizeRepositoryRootKey(repositoryRoot, nativePathSemantics),
+      projectRoot
+        ? normalizeRepositoryRootKey(projectRoot, nativePathSemantics)
+        : undefined,
     );
     if (!this.disposed) {
       this.cache.set(key, pending);
@@ -159,9 +162,12 @@ export class CommitSelectionRuleService implements vscode.Disposable {
 
   /** 缓存键：工作副本根 identity + 可选项目根 identity。 */
   private cacheKey(repositoryRoot: string, projectRoot?: string): string {
-    const rootKey = normalizeRepositoryRootKey(repositoryRoot);
+    const rootKey = normalizeRepositoryRootKey(
+      repositoryRoot,
+      nativePathSemantics,
+    );
     return projectRoot
-      ? `${rootKey}::${normalizeRepositoryRootKey(projectRoot)}`
+      ? `${rootKey}::${normalizeRepositoryRootKey(projectRoot, nativePathSemantics)}`
       : `${rootKey}::`;
   }
 
@@ -170,7 +176,10 @@ export class CommitSelectionRuleService implements vscode.Disposable {
     repositoryRoot: string,
     reason: CommitSelectionRulesInvalidationReason = "manual",
   ): void {
-    const rootKey = normalizeRepositoryRootKey(repositoryRoot);
+    const rootKey = normalizeRepositoryRootKey(
+      repositoryRoot,
+      nativePathSemantics,
+    );
     for (const key of [...this.cache.keys()]) {
       if (key.startsWith(`${rootKey}::`)) this.cache.delete(key);
     }
@@ -179,7 +188,10 @@ export class CommitSelectionRuleService implements vscode.Disposable {
 
   /** `.svn-workbench.json` 变更入口：按文件所在目录定位受影响缓存。 */
   invalidateRepositoryConfig(configFilePath: string): void {
-    const dirKey = normalizeRepositoryRootKey(path.dirname(configFilePath));
+    const dirKey = normalizeRepositoryRootKey(
+      path.dirname(configFilePath),
+      nativePathSemantics,
+    );
     // 工作副本根或任一项目根的配置变更都可能影响组合缓存键。
     for (const key of [...this.cache.keys()]) {
       const [rootKey, projectKey] = key.split("::");

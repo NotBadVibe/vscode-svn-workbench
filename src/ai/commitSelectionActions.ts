@@ -1,5 +1,6 @@
 import { CommitCandidate } from "../commit/commitCandidateCollector";
 import { normalizePathIdentity as normalizePathKey } from "../scope/pathIdentity";
+import { nativePathSemantics } from "../scope/nativePathSemantics";
 import {
   CommitSelectionAiDecision,
   CommitSelectionExplanation,
@@ -56,8 +57,8 @@ export function getAiDecisionForCandidate(
 
   const item = explanation.items.find(
     (entry) =>
-      normalizePathKey(entry.absolutePath) ===
-      normalizePathKey(candidate.absolutePath),
+      normalizePathKey(entry.absolutePath, nativePathSemantics) ===
+      normalizePathKey(candidate.absolutePath, nativePathSemantics),
   );
   return item?.decision ?? "none";
 }

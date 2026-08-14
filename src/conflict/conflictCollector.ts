@@ -2,6 +2,7 @@ import * as path from "node:path";
 import { OperationScope } from "../scope/operationScope";
 import { isPathInScope } from "../scope/pathBoundaryGuard";
 import { normalizePathIdentity as normalizePathKey } from "../scope/pathIdentity";
+import { nativePathSemantics } from "../scope/nativePathSemantics";
 import { runSvnCommand } from "../svn/svnCommandRunner";
 import { parseStatusXml } from "../svn/parsers/statusXmlParser";
 
@@ -43,7 +44,7 @@ export async function collectConflictItems(
     for (const item of statusItems.filter(
       (statusItem) => statusItem.status === "conflicted",
     )) {
-      if (!isPathInScope(scope, item.absolutePath)) {
+      if (!isPathInScope(scope, item.absolutePath, nativePathSemantics)) {
         continue;
       }
 
@@ -64,7 +65,10 @@ export async function collectConflictItems(
         item.absolutePath,
         scope.repositoryRoot,
       );
-      byPath.set(normalizePathKey(conflict.absolutePath), conflict);
+      byPath.set(
+        normalizePathKey(conflict.absolutePath, nativePathSemantics),
+        conflict,
+      );
     }
   }
 

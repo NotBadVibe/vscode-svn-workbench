@@ -6,6 +6,7 @@ import {
 } from "../../src/scope/projectResolver";
 
 const win = { platform: "win32" as const, cwd: "C:\\" };
+const posix = { platform: "linux" as const, cwd: "/" };
 
 const emFolders = [
   { name: "EmApi", absolutePath: "/repo/code/EmApi" },
@@ -15,11 +16,14 @@ const emFolders = [
 
 describe("活动项目解析契约（v0.0.7 §5）", () => {
   it("命令携带的明确目标优先，定位到最具体 workspace folder", () => {
-    const resolution = resolveProjectTarget({
-      explicitTarget: "/repo/code/EmApi/src/index.ts",
-      activeEditorTarget: "/repo/code/EMSystem-front-pro/app.ts",
-      workspaceFolders: emFolders,
-    });
+    const resolution = resolveProjectTarget(
+      {
+        explicitTarget: "/repo/code/EmApi/src/index.ts",
+        activeEditorTarget: "/repo/code/EMSystem-front-pro/app.ts",
+        workspaceFolders: emFolders,
+      },
+      posix,
+    );
     expect(resolution).toEqual({
       kind: "resolved",
       target: "/repo/code/EmApi/src/index.ts",
@@ -36,22 +40,26 @@ describe("活动项目解析契约（v0.0.7 §5）", () => {
       { name: "inner", absolutePath: "/repo/code/inner" },
     ];
     expect(
-      mostSpecificWorkspaceFolder(folders, "/repo/code/inner/a.ts"),
+      mostSpecificWorkspaceFolder(folders, "/repo/code/inner/a.ts", posix),
     ).toEqual(folders[1]);
     // 同前缀兄弟目录不得误判归属。
     expect(
       mostSpecificWorkspaceFolder(
         [{ name: "app", absolutePath: "/repo/code/app" }],
         "/repo/code/app2/a.ts",
+        posix,
       ),
     ).toBeUndefined();
   });
 
   it("明确目标不在任何 workspace folder 时按目标解析并标记提示", () => {
-    const resolution = resolveProjectTarget({
-      explicitTarget: "/elsewhere/other/file.ts",
-      workspaceFolders: emFolders,
-    });
+    const resolution = resolveProjectTarget(
+      {
+        explicitTarget: "/elsewhere/other/file.ts",
+        workspaceFolders: emFolders,
+      },
+      posix,
+    );
     expect(resolution).toMatchObject({
       kind: "resolved",
       target: "/elsewhere/other/file.ts",
@@ -64,10 +72,13 @@ describe("活动项目解析契约（v0.0.7 §5）", () => {
   });
 
   it("无明确目标时使用活动编辑器所属 folder", () => {
-    const resolution = resolveProjectTarget({
-      activeEditorTarget: "/repo/code/EMSystem-front-pro/src/app.ts",
-      workspaceFolders: emFolders,
-    });
+    const resolution = resolveProjectTarget(
+      {
+        activeEditorTarget: "/repo/code/EMSystem-front-pro/src/app.ts",
+        workspaceFolders: emFolders,
+      },
+      posix,
+    );
     expect(resolution).toMatchObject({
       kind: "resolved",
       projectRoot: "/repo/code/EMSystem-front-pro",
@@ -77,11 +88,14 @@ describe("活动项目解析契约（v0.0.7 §5）", () => {
   });
 
   it("活动编辑器不在工作区时回退到容器保存的项目根", () => {
-    const resolution = resolveProjectTarget({
-      activeEditorTarget: "/tmp/scratch-notes.md",
-      savedProjectRoot: "/repo/code/EmApi",
-      workspaceFolders: emFolders,
-    });
+    const resolution = resolveProjectTarget(
+      {
+        activeEditorTarget: "/tmp/scratch-notes.md",
+        savedProjectRoot: "/repo/code/EmApi",
+        workspaceFolders: emFolders,
+      },
+      posix,
+    );
     expect(resolution).toMatchObject({
       kind: "resolved",
       target: "/repo/code/EmApi",
@@ -91,17 +105,23 @@ describe("活动项目解析契约（v0.0.7 §5）", () => {
   });
 
   it("保存的项目根已不在任何 folder 内时不得静默使用", () => {
-    const resolution = resolveProjectTarget({
-      savedProjectRoot: "/stale/removed-project",
-      workspaceFolders: emFolders,
-    });
+    const resolution = resolveProjectTarget(
+      {
+        savedProjectRoot: "/stale/removed-project",
+        workspaceFolders: emFolders,
+      },
+      posix,
+    );
     expect(resolution.kind).toBe("needsSelection");
   });
 
   it("单根工作区直接使用该 folder，不打开选择器", () => {
-    const resolution = resolveProjectTarget({
-      workspaceFolders: [{ name: "only", absolutePath: "/repo/code" }],
-    });
+    const resolution = resolveProjectTarget(
+      {
+        workspaceFolders: [{ name: "only", absolutePath: "/repo/code" }],
+      },
+      posix,
+    );
     expect(resolution).toMatchObject({
       kind: "resolved",
       target: "/repo/code",
@@ -111,10 +131,13 @@ describe("活动项目解析契约（v0.0.7 §5）", () => {
   });
 
   it("多根且无活动目标时返回可突出的选择器候选，不自动进入", () => {
-    const resolution = resolveProjectTarget({
-      recentProjectRoot: "/repo/code/EMApi-oauth-bridge",
-      workspaceFolders: emFolders,
-    });
+    const resolution = resolveProjectTarget(
+      {
+        recentProjectRoot: "/repo/code/EMApi-oauth-bridge",
+        workspaceFolders: emFolders,
+      },
+      posix,
+    );
     expect(resolution.kind).toBe("needsSelection");
     if (resolution.kind !== "needsSelection") return;
     expect(resolution.candidates).toHaveLength(3);
@@ -164,19 +187,21 @@ describe("活动项目解析契约（v0.0.7 §5）", () => {
 
 describe("项目根定案（工作副本根确定后）", () => {
   it("候选项目根仍位于工作副本内时采用候选", () => {
-    expect(finalizeProjectRoot("/repo/code/EmApi", "/repo/code")).toEqual({
+    expect(
+      finalizeProjectRoot("/repo/code/EmApi", "/repo/code", posix),
+    ).toEqual({
       projectRoot: "/repo/code/EmApi",
       projectRootIsFallback: false,
     });
   });
 
   it("候选缺失或已不在工作副本内时回退工作副本根，不静默猜测", () => {
-    expect(finalizeProjectRoot(undefined, "/repo/code")).toEqual({
+    expect(finalizeProjectRoot(undefined, "/repo/code", posix)).toEqual({
       projectRoot: "/repo/code",
       projectRootIsFallback: true,
     });
     // symlink、external 或嵌套工作副本归属变化后候选失效。
-    expect(finalizeProjectRoot("/other/place", "/repo/code")).toEqual({
+    expect(finalizeProjectRoot("/other/place", "/repo/code", posix)).toEqual({
       projectRoot: "/repo/code",
       projectRootIsFallback: true,
     });

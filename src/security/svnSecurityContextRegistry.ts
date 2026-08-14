@@ -6,6 +6,7 @@ import {
   setSvnSecurityContext,
   type SvnSecurityContext,
 } from "./svnSecurityContext";
+import type { PathIdentityKey } from "../scope/pathIdentity";
 
 /**
  * 0.0.5 多窗口共享的 SVN 安全上下文注册表。
@@ -21,8 +22,10 @@ import {
  * - 存储写穿到模块级 `svnSecurityContext` 映射，`SvnCommandRunner` 无需改动。
  */
 export class SvnSecurityContextRegistry {
-  private readonly refCounts = new Map<string, number>();
-  private readonly listeners = new Set<(repositoryRoot: string) => void>();
+  private readonly refCounts = new Map<PathIdentityKey, number>();
+  private readonly listeners = new Set<
+    (repositoryRoot: PathIdentityKey) => void
+  >();
 
   /** 窗口会话登记对该仓库上下文的引用。 */
   acquire(repositoryRoot: string): void {
@@ -83,9 +86,9 @@ export class SvnSecurityContextRegistry {
     return resolveSvnSecurityContext(cwd);
   }
 
-  /** 订阅安全上下文失效事件（repositoryRoot 为归一化键）。 */
+  /** 订阅安全上下文失效事件（repositoryRoot 为归一化身份键）。 */
   onDidInvalidate(
-    listener: (repositoryRoot: string) => void,
+    listener: (repositoryRoot: PathIdentityKey) => void,
   ): vscode.Disposable {
     this.listeners.add(listener);
     return {
@@ -100,7 +103,7 @@ export class SvnSecurityContextRegistry {
     this.refCounts.clear();
   }
 
-  private emitInvalidation(repositoryRoot: string): void {
+  private emitInvalidation(repositoryRoot: PathIdentityKey): void {
     for (const listener of this.listeners) {
       listener(repositoryRoot);
     }

@@ -25,6 +25,7 @@ import {
   isSameOrDescendantPath,
   normalizePathIdentity as normalizePathKey,
 } from "./scope/pathIdentity";
+import { nativePathSemantics } from "./scope/nativePathSemantics";
 import { resolveSvnExecutable } from "./svn/svnExecutableResolver";
 import { runSvnCommand } from "./svn/svnCommandRunner";
 import { WorkbenchWindowManager } from "./extension/workbench/workbenchWindowManager";
@@ -256,17 +257,20 @@ async function resolveCommandTarget(
   options: { silentUnavailable?: boolean } = {},
 ): Promise<CommandTargetResult> {
   const workspaceFolders = currentFolderRefs();
-  const resolution = resolveProjectTarget({
-    explicitTarget: explicitUri?.fsPath,
-    activeEditorTarget: vscode.window.activeTextEditor?.document.uri.fsPath,
-    savedProjectRoot: extensionContext?.workspaceState.get<string>(
-      PROJECT_ROOT_STATE_KEY,
-    ),
-    recentProjectRoot: extensionContext?.workspaceState.get<string>(
-      RECENT_PROJECT_ROOT_STATE_KEY,
-    ),
-    workspaceFolders,
-  });
+  const resolution = resolveProjectTarget(
+    {
+      explicitTarget: explicitUri?.fsPath,
+      activeEditorTarget: vscode.window.activeTextEditor?.document.uri.fsPath,
+      savedProjectRoot: extensionContext?.workspaceState.get<string>(
+        PROJECT_ROOT_STATE_KEY,
+      ),
+      recentProjectRoot: extensionContext?.workspaceState.get<string>(
+        RECENT_PROJECT_ROOT_STATE_KEY,
+      ),
+      workspaceFolders,
+    },
+    nativePathSemantics,
+  );
 
   if (resolution.kind === "unavailable") {
     if (!options.silentUnavailable) {
@@ -323,7 +327,11 @@ function buildScopeProject(
   projectRootCandidate: string | undefined,
   workingCopyRoot: string,
 ): OperationScopeProject {
-  const project = finalizeScopeProject(projectRootCandidate, workingCopyRoot);
+  const project = finalizeScopeProject(
+    projectRootCandidate,
+    workingCopyRoot,
+    nativePathSemantics,
+  );
   if (!project.rootIsFallback) {
     void extensionContext?.workspaceState.update(
       RECENT_PROJECT_ROOT_STATE_KEY,
@@ -477,7 +485,11 @@ async function openDiff(resource?: unknown): Promise<void> {
 
   const target = vscode.Uri.file(filePath);
   const repositoryRoot = await getRepositoryRootForTarget(target, svnPath);
-  const folder = mostSpecificWorkspaceFolder(currentFolderRefs(), filePath);
+  const folder = mostSpecificWorkspaceFolder(
+    currentFolderRefs(),
+    filePath,
+    nativePathSemantics,
+  );
   const scope = await createScopeFromExplorer(
     repositoryRoot,
     target,
@@ -571,7 +583,7 @@ async function prepareWorkbenchRequest(
   }
   const byRoot = new Map<string, { root: string; items: typeof valid }>();
   for (const item of valid) {
-    const key = normalizePathKey(item.root);
+    const key = normalizePathKey(item.root, nativePathSemantics);
     const group = byRoot.get(key) ?? { root: item.root, items: [] };
     group.items.push(item);
     byRoot.set(key, group);
@@ -582,7 +594,11 @@ async function prepareWorkbenchRequest(
     const units = await Promise.all(
       [...byRoot.values()].map(async (group) => {
         const projects = folders.filter((folder) =>
-          isSameOrDescendantPath(folder.absolutePath, group.root),
+          isSameOrDescendantPath(
+            folder.absolutePath,
+            group.root,
+            nativePathSemantics,
+          ),
         );
         const repositoryUuid = await resolveRepositoryUuidFor(
           svnPath,
@@ -632,10 +648,25 @@ async function prepareWorkbenchRequest(
     const folder = mostSpecificWorkspaceFolder(
       currentFolderRefs(),
       item.uri.fsPath,
+      nativePathSemantics,
     );
-    if (folder && isSameOrDescendantPath(folder.absolutePath, repositoryRoot)) {
-      const project = finalizeScopeProject(folder.absolutePath, repositoryRoot);
-      projectRoots.set(normalizePathKey(project.projectRoot), project);
+    if (
+      folder &&
+      isSameOrDescendantPath(
+        folder.absolutePath,
+        repositoryRoot,
+        nativePathSemantics,
+      )
+    ) {
+      const project = finalizeScopeProject(
+        folder.absolutePath,
+        repositoryRoot,
+        nativePathSemantics,
+      );
+      projectRoots.set(
+        normalizePathKey(project.projectRoot, nativePathSemantics),
+        project,
+      );
     }
   }
   if (projectRoots.size > 1) {
@@ -695,6 +726,7 @@ async function openTeamConfig(resource?: unknown): Promise<void> {
         ? commandTarget.projectRootCandidate
         : undefined,
       repositoryRoot,
+      nativePathSemantics,
     );
     const configPath = await ensureSvnWorkbenchProjectConfig(
       repositoryRoot,

@@ -5,6 +5,7 @@ import {
   isSamePathIdentity,
   normalizePathIdentity,
 } from "../scope/pathIdentity";
+import { nativePathSemantics } from "../scope/nativePathSemantics";
 import { hashBytes } from "./diffPathGuard";
 
 /**
@@ -134,7 +135,10 @@ export class DiffAtomicWriter {
     }>;
   }): Promise<DiffAtomicWriteOutcome> {
     const targetPath = path.resolve(input.targetPath);
-    const targetIdentity = normalizePathIdentity(targetPath);
+    const targetIdentity = normalizePathIdentity(
+      targetPath,
+      nativePathSemantics,
+    );
     return serialize(targetIdentity, async () => {
       const freshness =
         input.freshness ??
@@ -185,7 +189,13 @@ export class DiffAtomicWriter {
       const expectedRealPath = await fs
         .realpath(targetPath)
         .catch(() => targetPath);
-      if (!isSamePathIdentity(current.realPath, expectedRealPath)) {
+      if (
+        !isSamePathIdentity(
+          current.realPath,
+          expectedRealPath,
+          nativePathSemantics,
+        )
+      ) {
         return {
           ok: false,
           reason: "targetMoved",

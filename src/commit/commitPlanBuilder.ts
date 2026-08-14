@@ -2,6 +2,7 @@ import * as path from "node:path";
 import { OperationScope } from "../scope/operationScope";
 import { isPathInScope } from "../scope/pathBoundaryGuard";
 import { normalizePathIdentity as normalizePathKey } from "../scope/pathIdentity";
+import { nativePathSemantics } from "../scope/nativePathSemantics";
 import { SvnStatus } from "../svn/svnTypes";
 import { CommitCandidate } from "./commitCandidateCollector";
 import { CommitFlowPlan } from "./commitFlow";
@@ -30,7 +31,7 @@ export function buildCommitPlanPreview(
 ): CommitPlanPreview {
   const candidateByPath = new Map(
     candidates.map((candidate) => [
-      normalizePathKey(candidate.absolutePath),
+      normalizePathKey(candidate.absolutePath, nativePathSemantics),
       candidate,
     ]),
   );
@@ -46,7 +47,7 @@ export function buildCommitPlanPreview(
 
   for (const selectedPath of selected) {
     const absolutePath = path.resolve(selectedPath);
-    if (!isPathInScope(scope, absolutePath)) {
+    if (!isPathInScope(scope, absolutePath, nativePathSemantics)) {
       issues.push({
         path: absolutePath,
         reason: "文件不在当前提交范围内，已阻止。",
@@ -54,7 +55,9 @@ export function buildCommitPlanPreview(
       continue;
     }
 
-    const candidate = candidateByPath.get(normalizePathKey(absolutePath));
+    const candidate = candidateByPath.get(
+      normalizePathKey(absolutePath, nativePathSemantics),
+    );
     if (!candidate) {
       issues.push({
         path: absolutePath,
@@ -177,7 +180,10 @@ function dedupePaths(paths: string[]): string[] {
   const byPath = new Map<string, string>();
   for (const value of paths) {
     const absolutePath = path.resolve(value);
-    byPath.set(normalizePathKey(absolutePath), absolutePath);
+    byPath.set(
+      normalizePathKey(absolutePath, nativePathSemantics),
+      absolutePath,
+    );
   }
   return [...byPath.values()].sort((left, right) => left.localeCompare(right));
 }

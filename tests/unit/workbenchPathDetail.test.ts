@@ -8,6 +8,7 @@ import {
 } from "../../src/protocol/workbenchProtocol";
 import type { OperationScope } from "../../src/scope/operationScope";
 import { __resetWebviewPanels, __webviewPanels } from "../mocks/vscode";
+import { toDisplayPath } from "../../src/scope/pathBrands";
 
 /*
  * v0.0.7 路径详情 Host 边界：file/path-detail 与 file/copy-path 的
@@ -140,11 +141,11 @@ describe("路径详情 Host 边界（v0.0.7）", () => {
     expect(result?.payload).toMatchObject({
       relativePath: "app/src/a.ts",
       detail: {
-        projectRelativePath: "src/a.ts",
-        workingCopyRelativePath: "app/src/a.ts",
-        repositoryRelativePath: "trunk/app/src/a.ts",
+        projectRelativePath: toDisplayPath("src/a.ts"),
+        workingCopyRelativePath: toDisplayPath("app/src/a.ts"),
+        repositoryRelativePath: toDisplayPath("trunk/app/src/a.ts"),
         svnUrl: "https://svn.example.internal/svn/Code2/trunk/app/src/a.ts",
-        absolutePath: path.join(WC_ROOT, "app/src/a.ts"),
+        absolutePath: toDisplayPath(path.join(WC_ROOT, "app/src/a.ts")),
       },
     });
   });

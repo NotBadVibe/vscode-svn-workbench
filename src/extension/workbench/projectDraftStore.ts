@@ -1,6 +1,6 @@
 import {
   normalizePathIdentity,
-  type PathIdentityOptions,
+  type PathSemantics,
 } from "../../scope/pathIdentity";
 
 /*
@@ -25,7 +25,7 @@ export function projectDraftKey(
   projectRoot: string,
   moduleId: string,
   scopeHash: string,
-  options: PathIdentityOptions = {},
+  options: PathSemantics,
 ): string {
   // §8：草稿按 projectId + moduleId + operationScope（scopeHash）隔离；
   // workspace container 由 workspaceState 本身隐式隔离。

@@ -9,6 +9,7 @@ import {
 } from "../commit/preCommitRemoteCheck";
 import { OperationScope } from "../scope/operationScope";
 import { isSameOrDescendantPath } from "../scope/pathIdentity";
+import { nativePathSemantics } from "../scope/nativePathSemantics";
 import { runSvnCommand } from "../svn/svnCommandRunner";
 import { SvnCommandResult } from "../svn/svnTypes";
 
@@ -368,7 +369,7 @@ function quotePath(filePath: string): string {
 
 function isPathInUpdateScope(scope: OperationScope, filePath: string): boolean {
   return scope.roots.some((root) =>
-    isSameOrDescendantPath(filePath, root.absolutePath),
+    isSameOrDescendantPath(filePath, root.absolutePath, nativePathSemantics),
   );
 }
 

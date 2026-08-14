@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { OperationScope } from "../scope/operationScope";
 import { isPathInScope } from "../scope/pathBoundaryGuard";
 import { normalizePathIdentity as normalizePathKey } from "../scope/pathIdentity";
+import { nativePathSemantics } from "../scope/nativePathSemantics";
 import { runSvnCommand } from "../svn/svnCommandRunner";
 import { SvnStatus, SvnStatusItem } from "../svn/svnTypes";
 import { parseStatusXml } from "../svn/parsers/statusXmlParser";
@@ -82,11 +83,11 @@ export async function collectCommitCandidates(
     }
 
     for (const item of parseStatusXml(result.stdout, scope.repositoryRoot)) {
-      if (!isPathInScope(scope, item.absolutePath)) {
+      if (!isPathInScope(scope, item.absolutePath, nativePathSemantics)) {
         continue;
       }
 
-      const key = normalizePathKey(item.absolutePath);
+      const key = normalizePathKey(item.absolutePath, nativePathSemantics);
       if (!byPath.has(key)) {
         byPath.set(key, toCommitCandidate(item, evaluator));
       }

@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/svelte";
 import { describe, expect, it } from "vitest";
 import type { WorkbenchScopeView } from "../../src/protocol/workbenchProtocol";
 import ScopeBar from "../../src/webview/components/svn/ScopeBar.svelte";
+import { toDisplayPath } from "../../src/scope/pathBrands";
 
 /*
  * v0.0.7 范围栏项目上下文：多根工作区与上层工作副本场景下项目名是
@@ -11,7 +12,7 @@ import ScopeBar from "../../src/webview/components/svn/ScopeBar.svelte";
 
 const baseScope: WorkbenchScopeView = {
   repositoryName: "code",
-  roots: [{ kind: "folder", relativePath: "src" }],
+  roots: [{ kind: "folder", relativePath: toDisplayPath("src") }],
   source: "explorer",
 };
 
@@ -26,7 +27,9 @@ describe("范围栏项目显示（v0.0.7）", () => {
     renderScopeBar({
       ...baseScope,
       projectName: "bchd-front-Dev3.0",
-      projectWorkingCopyRelativePath: "2024Project/bchd-front-Dev3.0",
+      projectWorkingCopyRelativePath: toDisplayPath(
+        "2024Project/bchd-front-Dev3.0",
+      ),
     });
     const eyebrow = document.querySelector(".eyebrow");
     expect(eyebrow?.textContent).toBe("bchd-front-Dev3.0");

@@ -18,6 +18,7 @@ import {
   validateRepositoryUrl,
 } from "../../repository/advancedRepositoryTools";
 import { validatePathsInScope } from "../../scope/pathBoundaryGuard";
+import { nativePathSemantics } from "../../scope/nativePathSemantics";
 import { parseInfoXml } from "../../svn/parsers/infoXmlParser";
 import { runSvnCommand } from "../../svn/svnCommandRunner";
 import {
@@ -630,8 +631,8 @@ export class RepositoryWorkbenchActions {
       throw new Error("搁置候选状态已变化，请重新预览。");
     const absolutePaths = shelfCandidates.map((item) => item.absolutePath);
     if (
-      validatePathsInScope(session.scope, absolutePaths).outOfScopeItems
-        .length > 0
+      validatePathsInScope(session.scope, absolutePaths, nativePathSemantics)
+        .outOfScopeItems.length > 0
     )
       throw new Error("搁置中包含当前操作范围外路径。");
     const relativePaths = shelfCandidates.map((item) =>

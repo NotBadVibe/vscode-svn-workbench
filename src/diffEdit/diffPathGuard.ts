@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { createHash } from "node:crypto";
 import type { OperationScope } from "../scope/operationScope";
 import { isPathInScope } from "../scope/pathBoundaryGuard";
+import { nativePathSemantics } from "../scope/nativePathSemantics";
 import type { DiffEditTargetContext } from "./diffEditTypes";
 
 /**
@@ -158,7 +159,7 @@ export async function validateDiffEditTarget(input: {
     repositoryRoot: repositoryRootResolved,
     roots: resolvedRoots,
   };
-  if (!isPathInScope(resolvedScope, resolved)) {
+  if (!isPathInScope(resolvedScope, resolved, nativePathSemantics)) {
     return {
       ok: false,
       code: "outOfScope",

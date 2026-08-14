@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/svelte";
 import { describe, expect, it, vi } from "vitest";
 import ChangesModule from "../../src/webview/features/changes/ChangesModule.svelte";
 import CommitModule from "../../src/webview/features/commit/CommitModule.svelte";
+import { toDisplayPath } from "../../src/scope/pathBrands";
 
 /*
  * v0.0.7 路径显示与路径详情（§7.1）：默认显示项目内路径、跨项目徽标、
@@ -15,7 +16,7 @@ const snapshot = {
   files: [
     {
       relativePath: "app/src/index.ts",
-      projectRelativePath: "src/index.ts",
+      projectRelativePath: toDisplayPath("src/index.ts"),
       projectName: "app",
       status: "modified" as const,
       selection: "selected" as const,
@@ -29,11 +30,11 @@ const snapshot = {
 const pathDetail = {
   relativePath: "app/src/index.ts",
   detail: {
-    projectRelativePath: "src/index.ts",
-    workingCopyRelativePath: "app/src/index.ts",
-    repositoryRelativePath: "trunk/app/src/index.ts",
+    projectRelativePath: toDisplayPath("src/index.ts"),
+    workingCopyRelativePath: toDisplayPath("app/src/index.ts"),
+    repositoryRelativePath: toDisplayPath("trunk/app/src/index.ts"),
     svnUrl: "https://svn.example.internal/svn/Code2/trunk/app/src/index.ts",
-    absolutePath: "/repo/code/app/src/index.ts",
+    absolutePath: toDisplayPath("/repo/code/app/src/index.ts"),
   },
 };
 
@@ -115,14 +116,14 @@ describe("跨项目提交预览分组（v0.0.7 §7.2）", () => {
     files: [
       {
         relativePath: "app/a.ts",
-        projectRelativePath: "a.ts",
+        projectRelativePath: toDisplayPath("a.ts"),
         projectName: "app",
         status: "modified" as const,
         selection: "selected" as const,
       },
       {
         relativePath: "web/b.ts",
-        projectRelativePath: "b.ts",
+        projectRelativePath: toDisplayPath("b.ts"),
         projectName: "web",
         status: "modified" as const,
         selection: "selected" as const,

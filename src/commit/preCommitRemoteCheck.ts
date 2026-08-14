@@ -1,6 +1,7 @@
 import * as path from "node:path";
 import { OperationScope } from "../scope/operationScope";
 import { isPathInScope } from "../scope/pathBoundaryGuard";
+import { nativePathSemantics } from "../scope/nativePathSemantics";
 import { runSvnCommand } from "../svn/svnCommandRunner";
 
 export interface RemoteUpdateItem {
@@ -47,7 +48,7 @@ export function parseRemoteUpdateStatusXml(
   while ((entryMatch = entryPattern.exec(xml)) !== null) {
     const entryPath = decodeXml(entryMatch[1]);
     const absolutePath = path.resolve(scope.repositoryRoot, entryPath);
-    if (!isPathInScope(scope, absolutePath)) {
+    if (!isPathInScope(scope, absolutePath, nativePathSemantics)) {
       continue;
     }
 

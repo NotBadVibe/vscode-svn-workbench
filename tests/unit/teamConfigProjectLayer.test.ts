@@ -14,6 +14,16 @@ import {
 } from "../../src/config/teamConfigMigration";
 import { resolveCommitConventionConfig } from "../../src/commit/commitConvention";
 import { CommitSelectionRuleService } from "../../src/commit/commitSelectionRuleService";
+import type { PathSemantics } from "../../src/scope/pathIdentity";
+
+/*
+ * 本夹具在真实临时目录上运行，路径比较必须与宿主平台一致；显式构造
+ * 语义对象（不依赖任何默认回退），合成路径测试则必须显式 posix/win32。
+ */
+const hostSemantics: PathSemantics = {
+  platform: process.platform,
+  cwd: process.cwd(),
+};
 
 /*
  * v0.0.7 §9 团队规则配置层：项目根优先、工作副本根继承、新建默认写入
@@ -228,6 +238,7 @@ describe("团队规则迁移计划（§9）", () => {
       targetExists: false,
       projectRoot,
       workingCopyRoot: wcRoot,
+      options: hostSemantics,
     });
     expect(plan.issues).toEqual([]);
     expect(plan.keys).toEqual(["commitConvention", "commitSelection"]);
@@ -245,6 +256,7 @@ describe("团队规则迁移计划（§9）", () => {
         targetExists: true,
         projectRoot,
         workingCopyRoot: wcRoot,
+        options: hostSemantics,
       }).issues[0],
     ).toContain("已存在");
     expect(
@@ -254,6 +266,7 @@ describe("团队规则迁移计划（§9）", () => {
         targetExists: false,
         projectRoot,
         workingCopyRoot: wcRoot,
+        options: hostSemantics,
       }).issues[0],
     ).toContain("无可迁移内容");
     expect(
@@ -263,6 +276,7 @@ describe("团队规则迁移计划（§9）", () => {
         targetExists: false,
         projectRoot: path.join(tempRoot, "outside"),
         workingCopyRoot: wcRoot,
+        options: hostSemantics,
       }).issues[0],
     ).toContain("边界校验未通过");
     expect(
@@ -272,6 +286,7 @@ describe("团队规则迁移计划（§9）", () => {
         targetExists: false,
         projectRoot: wcRoot,
         workingCopyRoot: wcRoot,
+        options: hostSemantics,
       }).issues[0],
     ).toContain("无需迁移");
     expect(
@@ -281,6 +296,7 @@ describe("团队规则迁移计划（§9）", () => {
         targetExists: false,
         projectRoot,
         workingCopyRoot: wcRoot,
+        options: hostSemantics,
       }).issues[0],
     ).toContain("没有可迁移的团队规则键");
   });

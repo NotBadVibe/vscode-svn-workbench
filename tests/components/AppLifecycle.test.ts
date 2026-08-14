@@ -8,6 +8,7 @@ import type {
 import App from "../../src/webview/App.svelte";
 import { WorkbenchState } from "../../src/webview/app/workbenchState.svelte";
 import { workbenchBridge } from "../../src/webview/bridge/vscodeBridge";
+import { toDisplayPath } from "../../src/scope/pathBrands";
 
 /*
  * App 生命周期回归（v0.0.6 连续保存 flake 根因）：
@@ -64,7 +65,7 @@ describe("App 生命周期：快照刷新不卸载模块（v0.0.6 回归）", ()
         moduleId: "changes",
         scope: {
           repositoryName: "test-repo",
-          roots: [{ kind: "folder", relativePath: "." }],
+          roots: [{ kind: "folder", relativePath: toDisplayPath(".") }],
           source: "explorer",
         },
         snapshot: changesSnapshot,

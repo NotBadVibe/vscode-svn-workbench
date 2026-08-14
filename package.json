@@ -725,7 +725,8 @@
     "check:webview": "svelte-check --tsconfig ./src/webview/tsconfig.json",
     "check": "npm run lint && npm run format:check && npm run compile:extension && npm run check:webview",
     "test:unit": "vitest run --config vitest.config.mts",
-    "test:windows-contracts": "vitest run --config vitest.config.mts tests/unit/windowsPlatformContracts.test.ts tests/unit/extensionHostTempCleanup.test.ts tests/unit/githubWorkflow.test.ts",
+    "test:windows-contracts": "vitest run --config vitest.config.mts tests/unit/windowsPlatformContracts.test.ts tests/unit/dualPlatformPathContracts.test.ts tests/unit/pathIdentityBoundary.test.ts tests/unit/extensionHostTempCleanup.test.ts tests/unit/githubWorkflow.test.ts",
+    "test:platform-contracts": "vitest run --config vitest.config.mts tests/unit/windowsPlatformContracts.test.ts tests/unit/dualPlatformPathContracts.test.ts tests/unit/pathIdentityBoundary.test.ts tests/unit/extensionHostTempCleanup.test.ts tests/unit/githubWorkflow.test.ts",
     "test:coverage": "node scripts/run-vitest-coverage.js",
     "pretest:webview": "npm run build:webview",
     "test:webview": "node scripts/run-webview-tests.js",
@@ -734,7 +735,7 @@
     "docs:verify": "node scripts/verify-docs.js",
     "audit:dependencies": "npm audit --audit-level=high",
     "evidence:release": "node scripts/run-release-evidence.js",
-    "verify": "npm run docs:verify && npm run audit:dependencies && npm run check && npm run test:coverage && npm run test:webview && npm run test:performance && npm run test:extension",
+    "verify": "npm run docs:verify && npm run audit:dependencies && npm run check && npm run test:platform-contracts && npm run test:coverage && npm run test:webview && npm run test:performance && npm run test:extension",
     "package:vsix": "npm run build && vsce package",
     "validate:vsix-install": "node scripts/validate-vsix-install.js",
     "prepare:manual-test-env": "node scripts/create-manual-acceptance-env.js"

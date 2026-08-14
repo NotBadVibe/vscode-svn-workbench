@@ -2,6 +2,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { runSvnCommand } from "../svn/svnCommandRunner";
 import { normalizePathIdentity as normalizePathKey } from "./pathIdentity";
+import { nativePathSemantics } from "./nativePathSemantics";
 
 export interface WorkingCopySetResolution {
   root?: string;
@@ -51,7 +52,7 @@ export async function resolveWorkingCopySet(
   const roots = [
     ...new Set(
       resolved.flatMap((item) =>
-        item.root ? [normalizePathKey(item.root)] : [],
+        item.root ? [normalizePathKey(item.root, nativePathSemantics)] : [],
       ),
     ),
   ];
