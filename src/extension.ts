@@ -11,12 +11,22 @@ import {
   CommitSelectionRuleService,
   registerCommitSelectionRuleWatchers,
 } from "./commit/commitSelectionRuleService";
-import { createScopeFromExplorer } from "./scope/operationScope";
 import {
-  resolveWorkingCopyRoot,
-  resolveWorkingCopySet,
-} from "./scope/workingCopyResolver";
+  createScopeFromExplorer,
+  type OperationScopeProject,
+} from "./scope/operationScope";
+import {
+  finalizeScopeProject,
+  mostSpecificWorkspaceFolder,
+  resolveProjectTarget,
+} from "./scope/projectResolver";
+import { resolveWorkingCopyRoot } from "./scope/workingCopyResolver";
+import {
+  isSameOrDescendantPath,
+  normalizePathIdentity as normalizePathKey,
+} from "./scope/pathIdentity";
 import { resolveSvnExecutable } from "./svn/svnExecutableResolver";
+import { runSvnCommand } from "./svn/svnCommandRunner";
 import { WorkbenchWindowManager } from "./extension/workbench/workbenchWindowManager";
 import { SvnSourceControlManager } from "./scm/svnSourceControlManager";
 import type { WorkbenchTaskId } from "./protocol/workbenchProtocol";
@@ -147,6 +157,9 @@ export function activate(context: vscode.ExtensionContext): void {
       "svnWorkbench.openAcceptanceChecklist",
       openAcceptanceChecklist,
     ),
+    vscode.commands.registerCommand("svnWorkbench.openProjects", () =>
+      openSupportModule("projects", "projects/overview"),
+    ),
     vscode.commands.registerCommand("svnWorkbench.scmRefresh", () =>
       sourceControlManager?.refreshAll(),
     ),
@@ -210,6 +223,114 @@ function resourceUris(values: unknown[] | undefined): vscode.Uri[] | undefined {
     .map(resourceUri)
     .filter((value): value is vscode.Uri => value !== undefined);
   return uris.length > 0 ? uris : undefined;
+}
+
+/*
+ * v0.0.7 活动项目解析（releases/v0.0.7 §5）：命令目标与项目上下文统一
+ * 经 resolveProjectTarget 确定，禁止业务入口固定使用 workspaceFolders[0]。
+ * 项目根与最近项目只保存在当前 workspace 容器的本地状态。
+ */
+const PROJECT_ROOT_STATE_KEY = "svnWorkbench.projectRoot";
+const RECENT_PROJECT_ROOT_STATE_KEY = "svnWorkbench.recentProjectRoot";
+
+type CommandTargetResult =
+  | {
+      status: "resolved";
+      target: vscode.Uri;
+      projectRootCandidate?: string;
+      outsideWorkspace: boolean;
+    }
+  | { status: "cancelled" }
+  | { status: "unavailable" };
+
+/** 当前工作区 folder 引用列表（项目解析与切片共用）。 */
+function currentFolderRefs(): { name: string; absolutePath: string }[] {
+  return (vscode.workspace.workspaceFolders ?? []).map((folder) => ({
+    name: folder.name,
+    absolutePath: folder.uri.fsPath,
+  }));
+}
+
+async function resolveCommandTarget(
+  explicitUri?: vscode.Uri,
+  options: { silentUnavailable?: boolean } = {},
+): Promise<CommandTargetResult> {
+  const workspaceFolders = currentFolderRefs();
+  const resolution = resolveProjectTarget({
+    explicitTarget: explicitUri?.fsPath,
+    activeEditorTarget: vscode.window.activeTextEditor?.document.uri.fsPath,
+    savedProjectRoot: extensionContext?.workspaceState.get<string>(
+      PROJECT_ROOT_STATE_KEY,
+    ),
+    recentProjectRoot: extensionContext?.workspaceState.get<string>(
+      RECENT_PROJECT_ROOT_STATE_KEY,
+    ),
+    workspaceFolders,
+  });
+
+  if (resolution.kind === "unavailable") {
+    if (!options.silentUnavailable) {
+      vscode.window.showWarningMessage("请先打开工作区或选择 SVN 路径。");
+    }
+    return { status: "unavailable" };
+  }
+
+  if (resolution.kind === "needsSelection") {
+    // 多根工作区且没有活动目标：可搜索、键盘可用的项目选择器，
+    // 突出最近项目但不自动进入。
+    const picked = await vscode.window.showQuickPick(
+      resolution.candidates.map((candidate) => ({
+        label: candidate.name,
+        description: candidate.absolutePath,
+        detail: candidate.isRecent ? "最近使用的项目" : undefined,
+        candidate,
+      })),
+      {
+        placeHolder: "当前工作区包含多个项目，请选择本次操作的项目",
+        canPickMany: false,
+      },
+    );
+    if (!picked) {
+      return { status: "cancelled" };
+    }
+    const projectRoot = picked.candidate.absolutePath;
+    await extensionContext?.workspaceState.update(
+      PROJECT_ROOT_STATE_KEY,
+      projectRoot,
+    );
+    await extensionContext?.workspaceState.update(
+      RECENT_PROJECT_ROOT_STATE_KEY,
+      projectRoot,
+    );
+    return {
+      status: "resolved",
+      target: vscode.Uri.file(projectRoot),
+      projectRootCandidate: projectRoot,
+      outsideWorkspace: false,
+    };
+  }
+
+  return {
+    status: "resolved",
+    target: explicitUri ?? vscode.Uri.file(resolution.target),
+    projectRootCandidate: resolution.projectRoot,
+    outsideWorkspace: resolution.outsideWorkspace,
+  };
+}
+
+/** 工作副本根确定后构建 scope 项目上下文；项目边界变化使旧结果失效。 */
+function buildScopeProject(
+  projectRootCandidate: string | undefined,
+  workingCopyRoot: string,
+): OperationScopeProject {
+  const project = finalizeScopeProject(projectRootCandidate, workingCopyRoot);
+  if (!project.rootIsFallback) {
+    void extensionContext?.workspaceState.update(
+      RECENT_PROJECT_ROOT_STATE_KEY,
+      project.projectRoot,
+    );
+  }
+  return project;
 }
 
 async function openWorkbench(
@@ -356,7 +477,13 @@ async function openDiff(resource?: unknown): Promise<void> {
 
   const target = vscode.Uri.file(filePath);
   const repositoryRoot = await getRepositoryRootForTarget(target, svnPath);
-  const scope = await createScopeFromExplorer(repositoryRoot, target);
+  const folder = mostSpecificWorkspaceFolder(currentFolderRefs(), filePath);
+  const scope = await createScopeFromExplorer(
+    repositoryRoot,
+    target,
+    undefined,
+    buildScopeProject(folder?.absolutePath, repositoryRoot),
+  );
   if (!workbenchWindowManager) {
     return;
   }
@@ -401,38 +528,119 @@ async function prepareWorkbenchRequest(
   if (!svnPath) {
     return undefined;
   }
-  const target =
-    uri ??
-    vscode.window.activeTextEditor?.document.uri ??
-    vscode.workspace.workspaceFolders?.[0]?.uri;
-  if (!target) {
-    vscode.window.showWarningMessage("请先打开工作区或选择 SVN 路径。");
+  const commandTarget = await resolveCommandTarget(uri);
+  if (commandTarget.status !== "resolved") {
     return undefined;
+  }
+  const { target, projectRootCandidate, outsideWorkspace } = commandTarget;
+  if (outsideWorkspace) {
+    vscode.window.showInformationMessage(
+      "当前目标不在工作区项目中，将按目标所在位置解析。",
+    );
   }
   const scopedUris =
     selectedUris && selectedUris.length > 0 ? selectedUris : [target];
-  const resolution = await resolveWorkingCopySet(
-    svnPath,
-    scopedUris.map((current) => current.fsPath),
+  /*
+   * v0.0.7 §7.2：逐目标解析工作副本。非 SVN 路径排除并说明；同一工作
+   * 副本内的明确跨项目多选允许形成一个 scope；跨工作副本/跨仓库的选择
+   * 拆分为独立执行单元，由用户选择本次操作的范围，绝不合并为一次修订。
+   */
+  const perTarget = await Promise.all(
+    scopedUris.map(async (current) => ({
+      uri: current,
+      root: await resolveWorkingCopyRoot(svnPath, current.fsPath),
+    })),
   );
-  if (resolution.invalidTargets.length > 0) {
+  const invalid = perTarget.filter((item) => !item.root);
+  const valid = perTarget.filter(
+    (item): item is { uri: vscode.Uri; root: string } =>
+      item.root !== undefined,
+  );
+  if (invalid.length > 0) {
+    vscode.window.showInformationMessage(
+      `已排除 ${invalid.length} 个非 SVN 路径（不属于任何工作副本）：${invalid
+        .map((item) => path.basename(item.uri.fsPath))
+        .join("、")}。`,
+    );
+  }
+  if (valid.length === 0) {
     vscode.window.showWarningMessage(
       "所选路径不属于 SVN 工作副本。请先检出（Checkout），或从有效工作副本内重新选择。",
     );
     return undefined;
   }
-  if (resolution.mixed || !resolution.root) {
-    vscode.window.showWarningMessage(
-      "检测到多个 SVN 工作副本或外部工作副本（external）。一次操作不能跨仓库，请按工作副本分别执行。",
-    );
-    return undefined;
+  const byRoot = new Map<string, { root: string; items: typeof valid }>();
+  for (const item of valid) {
+    const key = normalizePathKey(item.root);
+    const group = byRoot.get(key) ?? { root: item.root, items: [] };
+    group.items.push(item);
+    byRoot.set(key, group);
   }
-  const repositoryRoot = resolution.root;
+  let chosen = valid;
+  if (byRoot.size > 1) {
+    const folders = currentFolderRefs();
+    const units = await Promise.all(
+      [...byRoot.values()].map(async (group) => {
+        const projects = folders.filter((folder) =>
+          isSameOrDescendantPath(folder.absolutePath, group.root),
+        );
+        const repositoryUuid = await resolveRepositoryUuidFor(
+          svnPath,
+          group.root,
+        );
+        return { group, projects, repositoryUuid };
+      }),
+    );
+    const sharedUuid =
+      units.every(
+        (unit) =>
+          unit.repositoryUuid &&
+          unit.repositoryUuid === units[0].repositoryUuid,
+      ) && units[0].repositoryUuid;
+    const picked = await vscode.window.showQuickPick(
+      units.map((unit) => ({
+        label:
+          unit.projects.length > 0
+            ? unit.projects.map((project) => project.name).join("、")
+            : path.basename(unit.group.root),
+        description: unit.group.root,
+        detail: sharedUuid
+          ? "同一仓库的不同工作副本：必须拆分为独立执行，不能合并为一次修订。"
+          : `不同 SVN 仓库（UUID ${unit.repositoryUuid ?? "未知"}）：必须按仓库拆分执行。`,
+        group: unit.group,
+      })),
+      {
+        placeHolder:
+          "所选内容跨多个工作副本/仓库，已拆分为独立执行单元，请选择本次操作的范围",
+        canPickMany: false,
+      },
+    );
+    if (!picked) return undefined;
+    chosen = picked.group.items;
+  }
+  const repositoryRoot = chosen[0].root;
+  const chosenUris = chosen.map((item) => item.uri);
   const scope = await createScopeFromExplorer(
     repositoryRoot,
     target,
-    selectedUris,
+    selectedUris && selectedUris.length > 0 ? chosenUris : undefined,
+    buildScopeProject(projectRootCandidate, repositoryRoot),
   );
+  // 明确跨项目多选：记录涉及的全部项目，用于文件徽标与预览分组。
+  const projectRoots = new Map<string, OperationScopeProject>();
+  for (const item of chosen) {
+    const folder = mostSpecificWorkspaceFolder(
+      currentFolderRefs(),
+      item.uri.fsPath,
+    );
+    if (folder && isSameOrDescendantPath(folder.absolutePath, repositoryRoot)) {
+      const project = finalizeScopeProject(folder.absolutePath, repositoryRoot);
+      projectRoots.set(normalizePathKey(project.projectRoot), project);
+    }
+  }
+  if (projectRoots.size > 1) {
+    scope.projects = [...projectRoots.values()];
+  }
   return { svnPath, scope };
 }
 
@@ -465,10 +673,13 @@ async function aiConfigure(): Promise<void> {
 }
 
 async function openTeamConfig(resource?: unknown): Promise<void> {
+  const commandTarget = await resolveCommandTarget(resourceUri(resource));
+  if (commandTarget.status === "cancelled") {
+    return;
+  }
   const target =
-    resourceUri(resource) ?? vscode.workspace.workspaceFolders?.[0]?.uri;
+    commandTarget.status === "resolved" ? commandTarget.target : undefined;
   if (!target) {
-    vscode.window.showWarningMessage("请先打开工作区或选择 SVN 路径。");
     return;
   }
 
@@ -477,7 +688,18 @@ async function openTeamConfig(resource?: unknown): Promise<void> {
       target,
       (await getSvnPath()) ?? undefined,
     );
-    const configPath = await ensureSvnWorkbenchProjectConfig(repositoryRoot);
+    // v0.0.7 §9：新建团队规则默认写入已确认项目根；项目根回退时仍是
+    // 工作副本根，行为与既有版本一致。
+    const project = finalizeScopeProject(
+      commandTarget.status === "resolved"
+        ? commandTarget.projectRootCandidate
+        : undefined,
+      repositoryRoot,
+    );
+    const configPath = await ensureSvnWorkbenchProjectConfig(
+      repositoryRoot,
+      project.projectRoot,
+    );
     const document = await vscode.workspace.openTextDocument(
       vscode.Uri.file(configPath),
     );
@@ -494,12 +716,11 @@ async function openTeamConfig(resource?: unknown): Promise<void> {
 }
 
 async function configureTeamConfig(resource?: unknown): Promise<void> {
-  const target =
-    resourceUri(resource) ?? vscode.workspace.workspaceFolders?.[0]?.uri;
-  if (!target) {
-    vscode.window.showWarningMessage("请先打开工作区或选择 SVN 路径。");
+  const commandTarget = await resolveCommandTarget(resourceUri(resource));
+  if (commandTarget.status !== "resolved") {
     return;
   }
+  const target = commandTarget.target;
 
   try {
     await openSupportModule("settings", "settings/team", target);
@@ -515,7 +736,7 @@ async function configureTeamConfig(resource?: unknown): Promise<void> {
 }
 
 async function openSupportModule(
-  moduleId: "settings" | "diagnostics",
+  moduleId: "settings" | "diagnostics" | "projects",
   taskId: WorkbenchTaskId,
   uri?: vscode.Uri,
 ): Promise<void> {
@@ -523,11 +744,16 @@ async function openSupportModule(
     vscode.window.showErrorMessage("SVN 工作台尚未激活。");
     return;
   }
+  const commandTarget = await resolveCommandTarget(uri, {
+    silentUnavailable: true,
+  });
+  if (commandTarget.status === "cancelled") {
+    return;
+  }
   const target =
-    uri ??
-    vscode.window.activeTextEditor?.document.uri ??
-    vscode.workspace.workspaceFolders?.[0]?.uri ??
-    extensionContext?.extensionUri;
+    commandTarget.status === "resolved"
+      ? commandTarget.target
+      : extensionContext?.extensionUri;
   if (!target) {
     vscode.window.showWarningMessage("无法确定工作台上下文。");
     return;
@@ -556,6 +782,13 @@ async function openSupportModule(
         kind: "folder" as const,
       },
     ],
+    // v0.0.7：支持模块同样携带项目上下文，范围栏显示一致。
+    project: buildScopeProject(
+      commandTarget.status === "resolved"
+        ? commandTarget.projectRootCandidate
+        : undefined,
+      repositoryRoot,
+    ),
     allowExpandScope: false as const,
     includeExternals: false,
     includeNestedWorkingCopies: false,
@@ -640,6 +873,25 @@ async function openAgent(
     taskId: "agent/plan",
     ...prepared,
   });
+}
+
+/** 拆分执行单元时读取仓库 UUID 以区分同仓库与不同仓库；失败返回 undefined。 */
+async function resolveRepositoryUuidFor(
+  svnPath: string,
+  workingCopyRoot: string,
+): Promise<string | undefined> {
+  try {
+    const result = await runSvnCommand(
+      svnPath,
+      ["info", "--show-item", "repos-uuid", workingCopyRoot],
+      workingCopyRoot,
+    );
+    const uuid = result.stdout.trim();
+    if (result.exitCode === 0 && uuid) return uuid;
+  } catch {
+    // 无法识别时按未知仓库处理，拆分行为不变。
+  }
+  return undefined;
 }
 
 async function getSvnPath(): Promise<string> {

@@ -16,6 +16,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as vscode from "vscode";
+import { normalizePathIdentity as normalizeRepositoryRootKey } from "../scope/pathIdentity";
 import {
   SVN_WORKBENCH_CONFIG_FILE,
   describeSvnWorkbenchConfigError,
@@ -23,6 +24,8 @@ import {
   readSvnWorkbenchConfig,
   readSvnWorkbenchConfigContent,
   removeSvnWorkbenchConfigKey,
+  resolveSvnWorkbenchConfigLocation,
+  resolveSvnWorkbenchConfigWriteRoot,
   updateSvnWorkbenchConfig,
 } from "../config/svnWorkbenchConfig";
 import { readCommitSelectionVscodeLayers } from "../config/commitSelectionSettings";
@@ -43,6 +46,9 @@ import { mergeCommitSelectionForSave } from "./commitSelectionSettingsSupport";
 export interface CommitSelectionRepositoryLayerReadResult {
   layer?: unknown;
   warnings: string[];
+  /** v0.0.7 §9：实际读取的配置文件与继承标记（界面显示来源）。 */
+  configPath?: string;
+  inheritedFromWorkingCopy?: boolean;
 }
 
 export interface CommitSelectionRuleServiceDeps {
@@ -51,6 +57,7 @@ export interface CommitSelectionRuleServiceDeps {
   /** 读取仓库层原始配置；缺省走 .svn-workbench.json 统一读写层。 */
   readRepositoryLayer?: (
     repositoryRoot: string,
+    projectRoot?: string,
   ) => Promise<CommitSelectionRepositoryLayerReadResult>;
 }
 
@@ -90,8 +97,14 @@ export interface CommitSelectionRuleInvalidationListener {
  */
 export async function readRepositoryCommitSelectionLayer(
   repositoryRoot: string,
+  projectRoot?: string,
 ): Promise<CommitSelectionRepositoryLayerReadResult> {
-  const result = await readSvnWorkbenchConfig(repositoryRoot);
+  // v0.0.7 §9：项目根有独立配置时读项目根，否则继承工作副本根配置。
+  const location = await resolveSvnWorkbenchConfigLocation(
+    projectRoot,
+    repositoryRoot,
+  );
+  const result = await readSvnWorkbenchConfig(location.configRoot);
   const warnings = [...result.warnings];
   if (result.readError) {
     warnings.push(
@@ -100,7 +113,12 @@ export async function readRepositoryCommitSelectionLayer(
   }
   const extracted = extractCommitSelectionLayerConfig(result.raw);
   warnings.push(...extracted.warnings);
-  return { layer: extracted.layer, warnings };
+  return {
+    layer: extracted.layer,
+    warnings,
+    configPath: location.configPath,
+    inheritedFromWorkingCopy: location.inherited,
+  };
 }
 
 export class CommitSelectionRuleService implements vscode.Disposable {
@@ -121,18 +139,30 @@ export class CommitSelectionRuleService implements vscode.Disposable {
    */
   async getEffectiveRules(
     repositoryRoot: string,
+    projectRoot?: string,
   ): Promise<ResolvedCommitSelectionRules> {
-    const key = normalizeRepositoryRootKey(repositoryRoot);
+    const key = this.cacheKey(repositoryRoot, projectRoot);
     const cached = this.cache.get(key);
     if (cached) {
       return cached;
     }
     // resolveRules 内部捕获全部异常（降级内置默认），缓存的 Promise 不会拒绝。
-    const pending = this.resolveRules(key);
+    const pending = this.resolveRules(
+      normalizeRepositoryRootKey(repositoryRoot),
+      projectRoot ? normalizeRepositoryRootKey(projectRoot) : undefined,
+    );
     if (!this.disposed) {
       this.cache.set(key, pending);
     }
     return pending;
+  }
+
+  /** 缓存键：工作副本根 identity + 可选项目根 identity。 */
+  private cacheKey(repositoryRoot: string, projectRoot?: string): string {
+    const rootKey = normalizeRepositoryRootKey(repositoryRoot);
+    return projectRoot
+      ? `${rootKey}::${normalizeRepositoryRootKey(projectRoot)}`
+      : `${rootKey}::`;
   }
 
   /** 使指定仓库的缓存失效（例如对应 .svn-workbench.json 变更）。 */
@@ -140,16 +170,27 @@ export class CommitSelectionRuleService implements vscode.Disposable {
     repositoryRoot: string,
     reason: CommitSelectionRulesInvalidationReason = "manual",
   ): void {
-    this.cache.delete(normalizeRepositoryRootKey(repositoryRoot));
+    const rootKey = normalizeRepositoryRootKey(repositoryRoot);
+    for (const key of [...this.cache.keys()]) {
+      if (key.startsWith(`${rootKey}::`)) this.cache.delete(key);
+    }
     this.emit({ repositoryRoot, reason });
   }
 
-  /** `.svn-workbench.json` 变更入口：按文件所在目录定位受影响仓库。 */
+  /** `.svn-workbench.json` 变更入口：按文件所在目录定位受影响缓存。 */
   invalidateRepositoryConfig(configFilePath: string): void {
-    this.invalidateRepository(
-      path.dirname(configFilePath),
-      "repository-config",
-    );
+    const dirKey = normalizeRepositoryRootKey(path.dirname(configFilePath));
+    // 工作副本根或任一项目根的配置变更都可能影响组合缓存键。
+    for (const key of [...this.cache.keys()]) {
+      const [rootKey, projectKey] = key.split("::");
+      if (rootKey === dirKey || projectKey === dirKey) {
+        this.cache.delete(key);
+      }
+    }
+    this.emit({
+      repositoryRoot: path.dirname(configFilePath),
+      reason: "repository-config",
+    });
   }
 
   /**
@@ -165,9 +206,15 @@ export class CommitSelectionRuleService implements vscode.Disposable {
   async saveRepositoryRules(
     repositoryRoot: string,
     config: CommitSelectionLayerConfig,
+    projectRoot?: string,
   ): Promise<CommitSelectionSaveRulesResult> {
+    // v0.0.7 §9：项目根与工作副本根不同时，保存默认写入已确认项目根。
+    const writeRoot = resolveSvnWorkbenchConfigWriteRoot(
+      projectRoot,
+      repositoryRoot,
+    );
     try {
-      const existing = await readSvnWorkbenchConfig(repositoryRoot);
+      const existing = await readSvnWorkbenchConfig(writeRoot);
       if (existing.readError) {
         return {
           ok: false,
@@ -187,13 +234,15 @@ export class CommitSelectionRuleService implements vscode.Disposable {
         config,
       );
       const result = await updateSvnWorkbenchConfig(
-        repositoryRoot,
+        writeRoot,
         { commitSelection: mergedSection },
         serializeSvnWorkbenchProjectConfig(
           createDefaultSvnWorkbenchProjectConfig(),
         ),
       );
       this.invalidateRepository(repositoryRoot, "repository-config");
+      if (projectRoot)
+        this.invalidateRepository(projectRoot, "repository-config");
       return {
         ok: true,
         configPath: result.configPath,
@@ -214,10 +263,15 @@ export class CommitSelectionRuleService implements vscode.Disposable {
    */
   async restoreRepositoryRulesToDefault(
     repositoryRoot: string,
+    projectRoot?: string,
   ): Promise<CommitSelectionRestoreRulesResult> {
-    const configPath = getSvnWorkbenchConfigPath(repositoryRoot);
+    const writeRoot = resolveSvnWorkbenchConfigWriteRoot(
+      projectRoot,
+      repositoryRoot,
+    );
+    const configPath = getSvnWorkbenchConfigPath(writeRoot);
     try {
-      const existing = await readSvnWorkbenchConfig(repositoryRoot);
+      const existing = await readSvnWorkbenchConfig(writeRoot);
       if (!existing.exists && !existing.readError) {
         return { ok: true, configPath, removed: false };
       }
@@ -228,7 +282,7 @@ export class CommitSelectionRuleService implements vscode.Disposable {
           error: `读取 ${SVN_WORKBENCH_CONFIG_FILE} 失败，未执行恢复默认：${describeSvnWorkbenchConfigError(existing.readError)}`,
         };
       }
-      const content = await readSvnWorkbenchConfigContent(repositoryRoot);
+      const content = await readSvnWorkbenchConfigContent(writeRoot);
       const removal = removeSvnWorkbenchConfigKey(content, "commitSelection");
       if (!removal.ok) {
         return { ok: false, configPath, error: removal.error };
@@ -236,6 +290,9 @@ export class CommitSelectionRuleService implements vscode.Disposable {
       if (removal.removed) {
         await fs.writeFile(configPath, removal.content, "utf8");
         this.invalidateRepository(repositoryRoot, "repository-config");
+        if (projectRoot) {
+          this.invalidateRepository(projectRoot, "repository-config");
+        }
       }
       return { ok: true, configPath, removed: removal.removed };
     } catch (error) {
@@ -272,6 +329,7 @@ export class CommitSelectionRuleService implements vscode.Disposable {
 
   private async resolveRules(
     repositoryRootKey: string,
+    projectRootKey?: string,
   ): Promise<ResolvedCommitSelectionRules> {
     try {
       const vscodeLayers = (
@@ -279,7 +337,7 @@ export class CommitSelectionRuleService implements vscode.Disposable {
       )();
       const repository = await (
         this.deps.readRepositoryLayer ?? readRepositoryCommitSelectionLayer
-      )(repositoryRootKey);
+      )(repositoryRootKey, projectRootKey);
       const resolved = resolveCommitSelectionRules({
         user: vscodeLayers.user,
         workspace: vscodeLayers.workspace,
@@ -334,9 +392,4 @@ export function registerCommitSelectionRuleWatchers(
     () => service.invalidateAll("workspace-folders"),
   );
   return [configurationListener, configFileWatcher, workspaceFoldersListener];
-}
-
-function normalizeRepositoryRootKey(repositoryRoot: string): string {
-  const resolved = path.resolve(repositoryRoot);
-  return process.platform === "win32" ? resolved.toLocaleLowerCase() : resolved;
 }

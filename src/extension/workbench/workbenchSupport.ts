@@ -61,6 +61,16 @@ export function hashOperationScope(scope: OperationScope): string {
           ),
         includeExternals: scope.includeExternals,
         includeNestedWorkingCopies: scope.includeNestedWorkingCopies,
+        // v0.0.7：项目根或工作副本归属变化后，依赖旧边界的快照、
+        // 确认令牌与 AI 结果必须失效；跨项目项目集合本身的变化同样失效。
+        projectRoot: scope.project
+          ? path.resolve(scope.project.projectRoot)
+          : undefined,
+        projectRoots: scope.projects
+          ? scope.projects
+              .map((project) => path.resolve(project.projectRoot))
+              .sort()
+          : undefined,
       }),
     )
     .digest("hex");
@@ -86,6 +96,48 @@ export async function resolveRepositoryUuid(
     .digest("hex")
     .slice(0, 16);
   return `unavailable-${rootHash}`;
+}
+
+/** v0.0.7：解析仓库根 URL，仅用于路径详情展示；SVN 不可用时返回 undefined。 */
+export async function resolveRepositoryRootUrl(
+  svnPath: string,
+  scope: OperationScope,
+): Promise<string | undefined> {
+  try {
+    const result = await runSvnCommand(
+      svnPath,
+      ["info", "--show-item", "repos-root", scope.repositoryRoot],
+      scope.repositoryRoot,
+    );
+    const rootUrl = result.stdout.trim();
+    if (result.exitCode === 0 && rootUrl) return rootUrl;
+  } catch {
+    // 与 resolveRepositoryUuid 一致：无 SVN 时保持页面可用。
+  }
+  return undefined;
+}
+
+/**
+ * v0.0.7：解析工作副本根的检出 URL（svn info --show-item url）。SVN URL
+ * 推导必须以它为基础；repos-root 不能代替它（工作副本可能检出自仓库
+ * 子目录）。SVN 不可用时返回 undefined，界面如实缺省。
+ */
+export async function resolveWorkingCopyUrl(
+  svnPath: string,
+  scope: OperationScope,
+): Promise<string | undefined> {
+  try {
+    const result = await runSvnCommand(
+      svnPath,
+      ["info", "--show-item", "url", scope.repositoryRoot],
+      scope.repositoryRoot,
+    );
+    const url = result.stdout.trim();
+    if (result.exitCode === 0 && url) return url;
+  } catch {
+    // 同上：无 SVN 时保持页面可用。
+  }
+  return undefined;
 }
 
 export function hashCandidateState(

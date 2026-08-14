@@ -73,6 +73,85 @@ describe("工作台职责拆分后的纯逻辑", () => {
     expect(asRevisionArray(["1", "x", 2, "003"])).toEqual(["1", "003"]);
   });
 
+  it("范围视图携带 v0.0.7 项目上下文：项目名为主显示，工作副本为次级", () => {
+    const projectScope: OperationScope = {
+      ...scope,
+      project: {
+        projectRoot: path.join(repositoryRoot, "app"),
+        projectName: "app",
+        rootIsFallback: false,
+        workingCopyRelativePath: "app",
+      },
+    };
+    expect(toScopeView(projectScope)).toEqual({
+      repositoryName: "repo",
+      projectName: "app",
+      projectRootIsFallback: false,
+      projectWorkingCopyRelativePath: "app",
+      roots: [{ kind: "folder", relativePath: "src" }],
+      source: "editor",
+    });
+    // 未解析项目上下文的旧调用方不产生项目字段。
+    expect(toScopeView(scope).projectName).toBeUndefined();
+  });
+
+  it("项目边界变化使范围哈希失效，旧预览与确认令牌不得复用", () => {
+    const baseHash = hashOperationScope(scope);
+    const withProject = hashOperationScope({
+      ...scope,
+      project: {
+        projectRoot: path.join(repositoryRoot, "app"),
+        projectName: "app",
+        rootIsFallback: false,
+        workingCopyRelativePath: "app",
+      },
+    });
+    expect(withProject).not.toBe(baseHash);
+    const otherProject = hashOperationScope({
+      ...scope,
+      project: {
+        projectRoot: path.join(repositoryRoot, "other"),
+        projectName: "other",
+        rootIsFallback: false,
+        workingCopyRelativePath: "other",
+      },
+    });
+    expect(otherProject).not.toBe(withProject);
+  });
+
+  it("跨项目项目集合本身变化使范围哈希失效（与 roots 无关）", () => {
+    const project = {
+      projectRoot: path.join(repositoryRoot, "app"),
+      projectName: "app",
+      rootIsFallback: false,
+      workingCopyRelativePath: "app",
+    };
+    const web = {
+      projectRoot: path.join(repositoryRoot, "web"),
+      projectName: "web",
+      rootIsFallback: false,
+      workingCopyRelativePath: "web",
+    };
+    const single = hashOperationScope({
+      ...scope,
+      project,
+      projects: [project],
+    });
+    const cross = hashOperationScope({
+      ...scope,
+      project,
+      projects: [project, web],
+    });
+    expect(cross).not.toBe(single);
+    // 项目集合顺序不影响哈希（排序后纳入）。
+    const crossReordered = hashOperationScope({
+      ...scope,
+      project,
+      projects: [web, project],
+    });
+    expect(crossReordered).toBe(cross);
+  });
+
   it("以范围和 SVN 状态为依据验证文件操作", () => {
     const unversioned = candidate("src/new.ts");
     expect(asFileOperation("add")).toBe("add");

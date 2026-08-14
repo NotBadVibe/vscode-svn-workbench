@@ -3,18 +3,26 @@
   import { SvelteSet } from "svelte/reactivity";
   import type {
     ChangesSnapshot,
+    HostToWebviewMessage,
     WebviewAction,
     WorkbenchFileStatus,
   } from "@protocol/workbenchProtocol";
   import { formatZhTime } from "../../i18n/formatters";
   import { fileStatusLabels } from "../../i18n/terminology";
+  import FilePathDetail from "../../components/svn/FilePathDetail.svelte";
 
   let {
     snapshot,
     onAction,
+    pathDetail,
   }: {
     snapshot: ChangesSnapshot;
     onAction: (action: WebviewAction, data?: Record<string, unknown>) => void;
+    /** v0.0.7 路径详情结果（Host 一次性下发）。 */
+    pathDetail?: Extract<
+      HostToWebviewMessage,
+      { type: "file/path-detail-result" }
+    >["payload"];
   } = $props();
 
   let query = $state("");
@@ -28,6 +36,7 @@
   let synchronizedCommitDraft = $state("");
   let destructiveConfirmed = $state(false);
   let operationPreviewToken = $state<string | undefined>();
+  let pathDetailOpen = $state(false);
 
   const rowHeight = 34;
   const virtualizeAfter = 300;
@@ -82,6 +91,11 @@
       operationPreviewToken = token;
       destructiveConfirmed = false;
     }
+  });
+
+  // 新的路径详情结果到达时自动展开；用户可手动关闭。
+  $effect(() => {
+    if (pathDetail) pathDetailOpen = true;
   });
 
   const selectionLabels = {
@@ -241,6 +255,28 @@
   </div>
 
   <div class="table-card">
+    {#if pathDetail && pathDetailOpen}
+      <div class="path-detail-host">
+        <div class="path-detail-host__bar">
+          <span class="path-detail-host__target">{pathDetail.relativePath}</span
+          >
+          <button
+            class="icon-button icon-button--small"
+            aria-label="关闭路径详情"
+            onclick={() => (pathDetailOpen = false)}
+            ><span class="codicon codicon-close" aria-hidden="true"
+            ></span></button
+          >
+        </div>
+        <FilePathDetail
+          detail={pathDetail}
+          onCopyLocalPath={() =>
+            onAction("file/copy-path", {
+              relativePath: pathDetail.relativePath,
+            })}
+        />
+      </div>
+    {/if}
     <div class="table-header" aria-hidden="true">
       <span></span><span>文件</span><span>状态</span><span>选择建议</span><span
       ></span>
@@ -312,8 +348,14 @@
                         class="codicon codicon-file-code"
                         aria-hidden="true"
                       ></span><span class="file-path__label"
-                        >{row.file.relativePath}</span
-                      >{#if row.file.repositoryName}<small
+                        >{row.file.projectRelativePath ??
+                          row.file.relativePath}</span
+                      >{#if row.file.projectName}<small class="project-badge"
+                          ><span
+                            class="codicon codicon-project"
+                            aria-hidden="true"
+                          ></span>{row.file.projectName}</small
+                        >{/if}{#if row.file.repositoryName}<small
                           class={`ownership-badge ownership-badge--${row.file.ownership ?? "current"}`}
                           ><span class="codicon codicon-repo" aria-hidden="true"
                           ></span>{row.file.repositoryName}{row.file
@@ -333,6 +375,16 @@
                         (row.file.selection
                           ? selectionLabels[row.file.selection]
                           : "—")}</span
+                    >
+                    <button
+                      class="icon-button icon-button--small"
+                      aria-label={`查看 ${row.file.relativePath} 路径详情`}
+                      onclick={() =>
+                        onAction("file/path-detail", {
+                          relativePath: row.file.relativePath,
+                        })}
+                      ><span class="codicon codicon-info" aria-hidden="true"
+                      ></span></button
                     >
                     <button
                       class="icon-button icon-button--small"

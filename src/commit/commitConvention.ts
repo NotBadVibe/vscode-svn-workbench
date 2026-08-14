@@ -7,9 +7,11 @@ import {
   mergeSvnWorkbenchConfigContent,
   parseSvnWorkbenchConfigContent,
   readSvnWorkbenchConfig,
-  readSvnWorkbenchConfigContent,
+  resolveSvnWorkbenchConfigLocation,
+  resolveSvnWorkbenchConfigWriteRoot,
   serializeSvnWorkbenchConfig,
   updateSvnWorkbenchConfig,
+  type SvnWorkbenchConfigLocation,
 } from "../config/svnWorkbenchConfig";
 
 export interface CommitConventionConfig {
@@ -39,8 +41,11 @@ export interface ProjectCommitConventionParseResult {
 
 export interface CommitConventionResolution {
   config: CommitConventionConfig;
-  source: "vscodeSettings" | "repository";
+  /** v0.0.7 §9：project = 项目根配置；repository = 工作副本根配置。 */
+  source: "vscodeSettings" | "repository" | "project";
   configPath?: string;
+  /** true 表示项目继承工作副本根的既有配置，界面必须显示来源。 */
+  inheritedFromWorkingCopy?: boolean;
   warnings: string[];
 }
 
@@ -64,6 +69,10 @@ export interface CommitConventionEditState {
   configPath: string;
   config: CommitConventionConfig;
   warnings: string[];
+  /** v0.0.7 §9：配置来源（project = 项目根，workingCopy = 工作副本根）。 */
+  source: "project" | "workingCopy";
+  /** true 表示项目继承工作副本根的既有配置，界面必须显示来源。 */
+  inherited: boolean;
 }
 
 export { SVN_WORKBENCH_CONFIG_FILE };
@@ -130,6 +139,7 @@ export function readCommitConventionConfig(): CommitConventionConfig {
 
 export async function resolveCommitConventionConfig(
   repositoryRoot?: string,
+  projectRoot?: string,
 ): Promise<CommitConventionResolution> {
   const userConfig = readCommitConventionConfig();
   if (!repositoryRoot) {
@@ -140,7 +150,10 @@ export async function resolveCommitConventionConfig(
     };
   }
 
-  const project = await readProjectCommitConventionConfig(repositoryRoot);
+  const project = await readProjectCommitConventionConfig(
+    repositoryRoot,
+    projectRoot,
+  );
   if (!project.config) {
     return {
       config: userConfig,
@@ -152,23 +165,31 @@ export async function resolveCommitConventionConfig(
 
   return {
     config: mergeCommitConventionConfig(userConfig, project.config),
-    source: "repository",
+    source: project.location.source === "project" ? "project" : "repository",
     configPath: project.configPath,
+    inheritedFromWorkingCopy: project.location.inherited,
     warnings: project.warnings,
   };
 }
 
 export async function readProjectCommitConventionConfig(
   repositoryRoot: string,
+  projectRoot?: string,
 ): Promise<{
   config?: Partial<CommitConventionConfig>;
   configPath: string;
   warnings: string[];
+  location: SvnWorkbenchConfigLocation;
 }> {
-  const result = await readSvnWorkbenchConfig(repositoryRoot);
+  const location = await resolveSvnWorkbenchConfigLocation(
+    projectRoot,
+    repositoryRoot,
+  );
+  const result = await readSvnWorkbenchConfig(location.configRoot);
   if (result.readError !== undefined) {
     return {
       configPath: result.configPath,
+      location,
       warnings: [
         `读取 ${SVN_WORKBENCH_CONFIG_FILE} 失败：${describeSvnWorkbenchConfigError(result.readError)}`,
       ],
@@ -178,6 +199,7 @@ export async function readProjectCommitConventionConfig(
   if (!result.exists) {
     return {
       configPath: result.configPath,
+      location,
       warnings: [],
     };
   }
@@ -185,6 +207,7 @@ export async function readProjectCommitConventionConfig(
   if (!result.raw) {
     return {
       configPath: result.configPath,
+      location,
       warnings: result.warnings,
     };
   }
@@ -193,6 +216,7 @@ export async function readProjectCommitConventionConfig(
   return {
     config: parsed.config,
     configPath: result.configPath,
+    location,
     warnings: parsed.warnings,
   };
 }
@@ -255,17 +279,39 @@ export function mergeCommitConventionConfig(
 
 export async function readCommitConventionEditState(
   repositoryRoot: string,
+  projectRoot?: string,
 ): Promise<CommitConventionEditState> {
-  const configPath = await ensureSvnWorkbenchProjectConfig(repositoryRoot);
-  const content = await readSvnWorkbenchConfigContent(repositoryRoot);
-  const parsed = parseSvnWorkbenchProjectConfig(content);
+  /*
+   * v0.0.7 §9：读取有效配置位置（项目根优先，否则继承工作副本根）；
+   * 不再为了展示而创建文件——继承关系必须保持可见，只有明确的“打开
+   * 配置文件”或保存动作才在项目根创建新配置。
+   */
+  const location = await resolveSvnWorkbenchConfigLocation(
+    projectRoot,
+    repositoryRoot,
+  );
+  const result = await readSvnWorkbenchConfig(location.configRoot);
+  const warnings = [...result.warnings];
+  if (result.readError !== undefined) {
+    warnings.push(
+      `读取 ${SVN_WORKBENCH_CONFIG_FILE} 失败：${describeSvnWorkbenchConfigError(result.readError)}`,
+    );
+  }
+  let parsedConfig: Partial<CommitConventionConfig> | undefined;
+  if (result.raw && "commitConvention" in result.raw) {
+    const parsed = extractCommitConventionConfig(result.raw);
+    parsedConfig = parsed.config;
+    warnings.push(...parsed.warnings);
+  }
   return {
-    configPath,
+    configPath: location.configPath,
     config: mergeCommitConventionConfig(
       defaultCommitConventionConfig,
-      parsed.config ?? {},
+      parsedConfig ?? {},
     ),
-    warnings: parsed.warnings,
+    warnings,
+    source: location.source,
+    inherited: location.inherited,
   };
 }
 
@@ -291,9 +337,10 @@ export function serializeSvnWorkbenchProjectConfig(
 
 export async function ensureSvnWorkbenchProjectConfig(
   repositoryRoot: string,
+  projectRoot?: string,
 ): Promise<string> {
   return ensureSvnWorkbenchConfigFile(
-    repositoryRoot,
+    resolveSvnWorkbenchConfigWriteRoot(projectRoot, repositoryRoot),
     serializeSvnWorkbenchProjectConfig(
       createDefaultSvnWorkbenchProjectConfig(),
     ),
@@ -356,9 +403,10 @@ export function updateSvnWorkbenchProjectConfigContent(
 export async function saveProjectCommitConventionConfig(
   repositoryRoot: string,
   commitConvention: CommitConventionConfig,
+  projectRoot?: string,
 ): Promise<{ configPath: string; warnings: string[] }> {
   return updateSvnWorkbenchConfig(
-    repositoryRoot,
+    resolveSvnWorkbenchConfigWriteRoot(projectRoot, repositoryRoot),
     { commitConvention },
     serializeSvnWorkbenchProjectConfig(
       createDefaultSvnWorkbenchProjectConfig(),

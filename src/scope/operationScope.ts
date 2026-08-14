@@ -18,11 +18,31 @@ export interface OperationScopeRoot {
   kind: "file" | "folder";
 }
 
+/**
+ * v0.0.7 项目上下文：项目根可以与工作副本根重合，也可以是其子目录。
+ * 只作为显示与失效绑定的上下文；操作范围仍由 roots 决定，不得扩大。
+ */
+export interface OperationScopeProject {
+  projectRoot: string;
+  projectName: string;
+  /** true 表示未能可靠确定项目根，已回退为工作副本根。 */
+  rootIsFallback: boolean;
+  /** 项目根相对工作副本根的 "/" 分隔路径；空串表示两者重合。 */
+  workingCopyRelativePath: string;
+}
+
 export interface OperationScope {
   id: string;
   repositoryRoot: string;
   source: OperationScopeSource;
   roots: OperationScopeRoot[];
+  /** 当前项目上下文（v0.0.7）；旧调用方未提供时缺省。 */
+  project?: OperationScopeProject;
+  /**
+   * v0.0.7：用户明确跨项目多选时涉及的全部项目；仅当跨越多个项目时
+   * 设置，用于文件徽标与预览分组。跨项目 scope 只能由明确选择产生。
+   */
+  projects?: OperationScopeProject[];
   allowExpandScope: false;
   includeExternals: boolean;
   includeNestedWorkingCopies: boolean;
@@ -33,6 +53,7 @@ export async function createScopeFromExplorer(
   repositoryRoot: string,
   uri: vscode.Uri,
   selectedUris?: vscode.Uri[],
+  project?: OperationScopeProject,
 ): Promise<OperationScope> {
   const uris = selectedUris && selectedUris.length > 0 ? selectedUris : [uri];
   const roots: OperationScopeRoot[] = [];
@@ -59,6 +80,30 @@ export async function createScopeFromExplorer(
           ? "explorerFolder"
           : "explorerFile",
     roots: mergeParentChildRoots(roots),
+    ...(project ? { project } : {}),
+    allowExpandScope: false,
+    includeExternals: false,
+    includeNestedWorkingCopies: false,
+    createdAt: Date.now(),
+  };
+}
+
+/**
+ * v0.0.7：整个工作副本的采集 scope（SCM 共享采集、项目总览统计共用），
+ * 只用于状态采集，不携带项目上下文。
+ */
+export function createWorkingCopyScope(repositoryRoot: string): OperationScope {
+  return {
+    id: `wc-${Date.now()}`,
+    repositoryRoot: path.resolve(repositoryRoot),
+    source: "workspace",
+    roots: [
+      {
+        absolutePath: path.resolve(repositoryRoot),
+        relativePath: ".",
+        kind: "folder",
+      },
+    ],
     allowExpandScope: false,
     includeExternals: false,
     includeNestedWorkingCopies: false,

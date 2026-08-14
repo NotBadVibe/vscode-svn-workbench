@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "version": "0.0.11",
+  "status": "draft",
+  "baseVersion": "0.0.10",
+  "releaseDate": null,
+  "gitTag": null,
+  "gitCommit": null,
+  "sourceState": "未形成 v0.0.11 候选源码；当前仅有受限差异、动作级外发回执、有证据提交说明与草稿恢复规划，前序依赖尚未形成候选版本",
+  "vsix": null,
+  "tests": null,
+  "acceptedEvidenceRun": null,
+  "evidencePath": null
+}

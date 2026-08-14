@@ -1,6 +1,7 @@
 import * as path from "node:path";
 import { OperationScope } from "../scope/operationScope";
 import { isPathInScope } from "../scope/pathBoundaryGuard";
+import { normalizePathIdentity as normalizePathKey } from "../scope/pathIdentity";
 import { SvnStatus } from "../svn/svnTypes";
 import { CommitCandidate } from "./commitCandidateCollector";
 import { CommitFlowPlan } from "./commitFlow";
@@ -179,11 +180,6 @@ function dedupePaths(paths: string[]): string[] {
     byPath.set(normalizePathKey(absolutePath), absolutePath);
   }
   return [...byPath.values()].sort((left, right) => left.localeCompare(right));
-}
-
-function normalizePathKey(filePath: string): string {
-  const resolved = path.resolve(filePath);
-  return process.platform === "win32" ? resolved.toLocaleLowerCase() : resolved;
 }
 
 function quotePath(filePath: string): string {

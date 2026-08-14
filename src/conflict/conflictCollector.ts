@@ -1,6 +1,7 @@
 import * as path from "node:path";
 import { OperationScope } from "../scope/operationScope";
 import { isPathInScope } from "../scope/pathBoundaryGuard";
+import { normalizePathIdentity as normalizePathKey } from "../scope/pathIdentity";
 import { runSvnCommand } from "../svn/svnCommandRunner";
 import { parseStatusXml } from "../svn/parsers/statusXmlParser";
 
@@ -131,9 +132,4 @@ function decodeXml(value: string): string {
 
 function normalizeRelativePath(relativePath: string): string {
   return relativePath.split(path.sep).join("/");
-}
-
-function normalizePathKey(filePath: string): string {
-  const resolved = path.resolve(filePath);
-  return process.platform === "win32" ? resolved.toLocaleLowerCase() : resolved;
 }

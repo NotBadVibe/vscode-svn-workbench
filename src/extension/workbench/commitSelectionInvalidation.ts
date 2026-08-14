@@ -10,7 +10,7 @@
  * WorkbenchController 在调用本函数后负责。
  */
 
-import * as path from "node:path";
+import { normalizePathIdentity as normalizeRootKey } from "../../scope/pathIdentity";
 import type { WorkbenchSession } from "./workbenchSession";
 
 /**
@@ -44,9 +44,4 @@ export function applyCommitSelectionRulesInvalidation(
       "提交选择规则已更新，基于旧分类的拆分建议已失效，请重新获取拆分建议。";
   }
   return true;
-}
-
-function normalizeRootKey(repositoryRoot: string): string {
-  const resolved = path.resolve(repositoryRoot);
-  return process.platform === "win32" ? resolved.toLocaleLowerCase() : resolved;
 }

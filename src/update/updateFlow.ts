@@ -1,4 +1,3 @@
-import * as path from "node:path";
 import {
   CommitCandidate,
   CommitTemplateGroup,
@@ -9,6 +8,7 @@ import {
   RemoteUpdateItem,
 } from "../commit/preCommitRemoteCheck";
 import { OperationScope } from "../scope/operationScope";
+import { isSameOrDescendantPath } from "../scope/pathIdentity";
 import { runSvnCommand } from "../svn/svnCommandRunner";
 import { SvnCommandResult } from "../svn/svnTypes";
 
@@ -367,18 +367,9 @@ function quotePath(filePath: string): string {
 }
 
 function isPathInUpdateScope(scope: OperationScope, filePath: string): boolean {
-  const target = normalizePath(path.resolve(filePath));
-  return scope.roots.some((root) => {
-    const base = normalizePath(path.resolve(root.absolutePath));
-    return target === base || target.startsWith(`${base}/`);
-  });
-}
-
-function normalizePath(filePath: string): string {
-  const normalized = filePath.replace(/\\/g, "/");
-  return process.platform === "win32"
-    ? normalized.toLocaleLowerCase()
-    : normalized;
+  return scope.roots.some((root) =>
+    isSameOrDescendantPath(filePath, root.absolutePath),
+  );
 }
 
 function normalizeRelative(filePath: string): string {

@@ -1,6 +1,10 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { randomBytes } from "node:crypto";
+import {
+  isSamePathIdentity,
+  normalizePathIdentity,
+} from "../scope/pathIdentity";
 import { hashBytes } from "./diffPathGuard";
 
 /**
@@ -41,6 +45,39 @@ export interface DiffAtomicWriterDeps {
   }>;
 }
 
+export interface SyncWritableFileHandle {
+  writeFile(data: Uint8Array): Promise<void>;
+  sync(): Promise<void>;
+  close(): Promise<void>;
+}
+
+export type OpenSyncWritableFile = (
+  filePath: string,
+  flags: "w",
+  mode: number,
+) => Promise<SyncWritableFileHandle>;
+
+/**
+ * 以写句柄写入临时文件并 fsync 落盘。
+ * `openFile` 可注入，使 macOS/Linux 单测也能锁定 Windows 的
+ * FlushFileBuffers 写访问契约。
+ */
+export async function writeAndSyncTempFile(
+  tempPath: string,
+  bytes: Buffer,
+  mode: number,
+  openFile: OpenSyncWritableFile = (filePath, flags, fileMode) =>
+    fs.open(filePath, flags, fileMode),
+): Promise<void> {
+  const handle = await openFile(tempPath, "w", mode);
+  try {
+    await handle.writeFile(bytes);
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+}
+
 const pendingWrites = new Map<string, Promise<unknown>>();
 
 function serialize<T>(key: string, task: () => Promise<T>): Promise<T> {
@@ -79,25 +116,6 @@ export function toPreservingBytes(
 }
 
 export class DiffAtomicWriter {
-  /**
-   * 以写句柄写入临时文件并 fsync 落盘（保留目标权限 mode）。
-   * 必须用写句柄：Windows 上 FlushFileBuffers 需要写访问，只读句柄
-   * （open "r" + sync）会确定性返回 EACCES。
-   */
-  private async writeAndSyncTemp(
-    tempPath: string,
-    bytes: Buffer,
-    mode: number,
-  ): Promise<void> {
-    const handle = await fs.open(tempPath, "w", mode);
-    try {
-      await handle.writeFile(bytes);
-      await handle.sync();
-    } finally {
-      await handle.close();
-    }
-  }
-
   /** 写入原始字节（不归一化），供需要精确字节语义的调用方。 */
   async writeRawBytes(input: {
     targetPath: string;
@@ -115,15 +133,16 @@ export class DiffAtomicWriter {
       rawHash: string;
     }>;
   }): Promise<DiffAtomicWriteOutcome> {
-    const normalized = path.resolve(input.targetPath);
-    return serialize(normalized, async () => {
+    const targetPath = path.resolve(input.targetPath);
+    const targetIdentity = normalizePathIdentity(targetPath);
+    return serialize(targetIdentity, async () => {
       const freshness =
         input.freshness ??
         (async () => {
           try {
-            const stat = await fs.lstat(normalized);
-            const bytes = await fs.readFile(normalized);
-            const real = await fs.realpath(normalized);
+            const stat = await fs.lstat(targetPath);
+            const bytes = await fs.readFile(targetPath);
+            const real = await fs.realpath(targetPath);
             return {
               exists: true,
               isRegularFile: stat.isFile(),
@@ -134,14 +153,14 @@ export class DiffAtomicWriter {
             return {
               exists: false,
               isRegularFile: false,
-              realPath: normalized,
+              realPath: targetPath,
               rawHash: "",
             };
           }
         });
       let current;
       try {
-        current = await freshness(normalized);
+        current = await freshness(targetPath);
       } catch {
         return {
           ok: false,
@@ -164,9 +183,9 @@ export class DiffAtomicWriter {
         };
       }
       const expectedRealPath = await fs
-        .realpath(normalized)
-        .catch(() => normalized);
-      if (path.resolve(current.realPath) !== path.resolve(expectedRealPath)) {
+        .realpath(targetPath)
+        .catch(() => targetPath);
+      if (!isSamePathIdentity(current.realPath, expectedRealPath)) {
         return {
           ok: false,
           reason: "targetMoved",
@@ -181,12 +200,12 @@ export class DiffAtomicWriter {
         };
       }
 
-      const dir = path.dirname(normalized);
+      const dir = path.dirname(targetPath);
       const tempName = `.svn-workbench-diff-${randomBytes(6).toString("hex")}.tmp`;
       const tempPath = path.join(dir, tempName);
       let mode: number | undefined;
       try {
-        const targetStat = await fs.stat(normalized);
+        const targetStat = await fs.stat(targetPath);
         mode = targetStat.mode & 0o777;
       } catch {
         return {
@@ -196,8 +215,8 @@ export class DiffAtomicWriter {
         };
       }
       try {
-        await this.writeAndSyncTemp(tempPath, input.bytes, mode);
-        await fs.rename(tempPath, normalized);
+        await writeAndSyncTempFile(tempPath, input.bytes, mode);
+        await fs.rename(tempPath, targetPath);
       } catch {
         await fs.rm(tempPath, { force: true }).catch(() => undefined);
         return {

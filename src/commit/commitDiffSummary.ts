@@ -1,6 +1,7 @@
 import * as path from "node:path";
 import { OperationScope } from "../scope/operationScope";
 import { isPathInScope } from "../scope/pathBoundaryGuard";
+import { normalizePathIdentity } from "../scope/pathIdentity";
 import { runSvnCommand } from "../svn/svnCommandRunner";
 
 const MAX_DIFF_CHARS_PER_PATH = 160000;
@@ -144,10 +145,7 @@ function uniqueNormalizedPaths(filePaths: string[]): string[] {
 
   for (const filePath of filePaths) {
     const absolutePath = path.resolve(filePath);
-    const key =
-      process.platform === "win32"
-        ? absolutePath.toLocaleLowerCase()
-        : absolutePath;
+    const key = normalizePathIdentity(absolutePath);
     if (!seen.has(key)) {
       seen.add(key);
       result.push(absolutePath);

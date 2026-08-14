@@ -2,6 +2,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
+import { normalizePathIdentity as normalizePathKey } from "../scope/pathIdentity";
 import { runSvnCommand } from "../svn/svnCommandRunner";
 import { parseStatusXml } from "../svn/parsers/statusXmlParser";
 import { SvnCommandResult, SvnStatusItem } from "../svn/svnTypes";
@@ -120,7 +121,9 @@ async function resolveSafeWindowsUnicodeCommitTargets(
   );
   throwIfFailed(statusResult, "无法验证中文路径提交范围。");
 
-  const selectedPaths = new Set(plan.commitPaths.map(normalizePathKey));
+  const selectedPaths = new Set(
+    plan.commitPaths.map((filePath) => normalizePathKey(filePath)),
+  );
   const relevantItems = parseStatusXml(statusResult.stdout, plan.cwd).filter(
     isRootCommitRelevant,
   );
@@ -167,11 +170,6 @@ function isRootCommitRelevant(item: SvnStatusItem): boolean {
 
 function containsNonAscii(value: string): boolean {
   return [...value].some((character) => character.charCodeAt(0) > 0x7f);
-}
-
-function normalizePathKey(value: string): string {
-  const resolved = path.resolve(value);
-  return process.platform === "win32" ? resolved.toLocaleLowerCase() : resolved;
 }
 
 function throwIfFailed(

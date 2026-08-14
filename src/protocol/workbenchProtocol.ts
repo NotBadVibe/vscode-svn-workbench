@@ -23,7 +23,8 @@ export type WorkbenchModuleId =
   | "agent"
   | "repository"
   | "settings"
-  | "diagnostics";
+  | "diagnostics"
+  | "projects";
 
 export type WorkbenchTaskId =
   | "changes/overview"
@@ -51,7 +52,8 @@ export type WorkbenchTaskId =
   | "settings/svn"
   | "settings/selection"
   | "diagnostics/environment"
-  | "diagnostics/acceptance";
+  | "diagnostics/acceptance"
+  | "projects/overview";
 
 const defaultTasks: Record<WorkbenchModuleId, WorkbenchTaskId> = {
   changes: "changes/overview",
@@ -66,6 +68,7 @@ const defaultTasks: Record<WorkbenchModuleId, WorkbenchTaskId> = {
   repository: "repository/update",
   settings: "settings/ai",
   diagnostics: "diagnostics/environment",
+  projects: "projects/overview",
 };
 
 const taskModules: Record<WorkbenchTaskId, WorkbenchModuleId> = {
@@ -95,6 +98,7 @@ const taskModules: Record<WorkbenchTaskId, WorkbenchModuleId> = {
   "settings/selection": "settings",
   "diagnostics/environment": "diagnostics",
   "diagnostics/acceptance": "diagnostics",
+  "projects/overview": "projects",
 };
 
 export function defaultWorkbenchTask(
@@ -131,6 +135,15 @@ export type WorkbenchFileStatus =
 
 export interface WorkbenchScopeView {
   repositoryName: string;
+  /**
+   * 当前项目名（v0.0.7）：多根工作区与上层工作副本场景的主显示名；
+   * 未解析项目上下文时缺省，界面回退显示 repositoryName。
+   */
+  projectName?: string;
+  /** true 表示项目根回退为工作副本根，界面需提示“尚未设置项目根”。 */
+  projectRootIsFallback?: boolean;
+  /** 项目根在工作副本内的 "/" 分隔相对路径；空串/缺省表示重合。 */
+  projectWorkingCopyRelativePath?: string;
   roots: Array<{
     kind: "file" | "folder";
     relativePath: string;
@@ -143,6 +156,13 @@ export interface WorkbenchFileView {
   status: WorkbenchFileStatus;
   repositoryName?: string;
   ownership?: "current" | "external" | "nested";
+  /**
+   * v0.0.7：文件主路径默认显示项目内路径；缺省时使用 relativePath
+   * （工作副本内路径）。显示路径不得作为 Host 写操作身份。
+   */
+  projectRelativePath?: string;
+  /** v0.0.7：跨项目 scope 时设置项目徽标；单项目列表不逐行重复。 */
+  projectName?: string;
   propStatus?: WorkbenchFileStatus;
   fileType?: string;
   selection?: "selected" | "needsReview" | "excluded" | "blocked";
@@ -504,6 +524,22 @@ export interface SettingsSnapshot {
   };
   team: {
     configPath: string;
+    /** v0.0.7 §9：配置来源；inherited 为 true 时界面必须显示“继承自工作副本根”。 */
+    configSource?: "project" | "workingCopy" | "vscodeSettings";
+    inheritedFromWorkingCopy?: boolean;
+    /** 可从工作副本根迁移到项目根时为 true。 */
+    migrationAvailable?: boolean;
+    /** 迁移预览（含确认令牌）；执行前 Host 重新校验源哈希与目标边界。 */
+    migrationPreview?: {
+      token: string;
+      sourcePath: string;
+      targetPath: string;
+      keys: string[];
+      targetContent: string;
+      sourceContentAfter: string;
+      issues: string[];
+    };
+    feedback?: { tone: "success" | "warning" | "error"; message: string };
     enabled: boolean;
     requiredIssueId: boolean;
     issueIdPattern: string;
@@ -778,7 +814,45 @@ export type WorkbenchModuleSnapshot =
   | AiReviewSnapshot
   | ImpactSnapshot
   | ChangelistsSnapshot
-  | AgentSnapshot;
+  | AgentSnapshot
+  | ProjectsSnapshot;
+
+/**
+ * v0.0.7 项目总览（§6.1）：只读优先的项目列表。允许聚合数量，但不得
+ * 把多个项目自动合成一个 operationScope。
+ */
+export interface ProjectOverviewItem {
+  /** workspace folder / 项目名称。 */
+  name: string;
+  /** 项目根显示路径。 */
+  absolutePath: string;
+  /** 路径是否仍可用。 */
+  exists: boolean;
+  /** 工作副本归属分类。 */
+  binding:
+    | "workingCopyRoot"
+    | "parentWorkingCopy"
+    | "nestedWorkingCopy"
+    | "external"
+    | "notSvn"
+    | "missing";
+  /** 归属分类中文标签（Host 统一生成）。 */
+  bindingLabel: string;
+  /** 所属工作副本根（仅展示）。 */
+  workingCopyRoot?: string;
+  /** 所属仓库 UUID（仅展示）。 */
+  repositoryUuid?: string;
+  /** 变更、冲突和未版本化数量；非 SVN 项目缺省。 */
+  counts?: { changes: number; conflicts: number; unversioned: number };
+  /** 是否为当前会话项目。 */
+  current: boolean;
+}
+
+export interface ProjectsSnapshot {
+  kind: "projects";
+  projects: ProjectOverviewItem[];
+  generatedAt: string;
+}
 
 export interface MessageEnvelope<TType extends string, TPayload> {
   protocolVersion: typeof WORKBENCH_PROTOCOL_VERSION;
@@ -894,6 +968,25 @@ export type HostToWebviewMessage =
         nextRelativePath: string;
       }
     >
+  | MessageEnvelope<
+      "file/path-detail-result",
+      {
+        /** 请求对应的工作副本内路径。 */
+        relativePath: string;
+        detail?: {
+          projectRelativePath?: string;
+          /** 工作副本内路径（本地检出视角）。 */
+          workingCopyRelativePath: string;
+          /** 仓库内路径（相对 repository root URL）；不可推导时缺省。 */
+          repositoryRelativePath?: string;
+          /** 由工作副本根检出 URL 推导；SVN 不可用时缺省。 */
+          svnUrl?: string;
+          /** 本地完整路径只用于详情展示；复制与定位仍由 Host 完成。 */
+          absolutePath: string;
+        };
+        error?: string;
+      }
+    >
   | MessageEnvelope<"operation/result", { title: string; message: string }>
   | MessageEnvelope<"operation/cancelled", { title: string; message: string }>
   | MessageEnvelope<"scope/changed", { scope: WorkbenchScopeView }>;
@@ -939,6 +1032,8 @@ export type WebviewAction =
   | "settings/save-team"
   | "settings/recommend-team"
   | "settings/open-team-file"
+  | "settings/preview-team-migration"
+  | "settings/execute-team-migration"
   | "settings/clear-team-memory"
   | "settings/save-selection"
   | "settings/restore-selection-defaults"
@@ -971,6 +1066,10 @@ export type WebviewAction =
   | "changes/execute-operation"
   | "changes/copy-url"
   | "changes/show-in-repository"
+  | "file/path-detail"
+  | "file/copy-path"
+  | "projects/open-task"
+  | "projects/switch"
   | "operation/cancel";
 
 export type WebviewToHostMessage =
@@ -996,6 +1095,7 @@ const moduleIds = new Set<WorkbenchModuleId>([
   "repository",
   "settings",
   "diagnostics",
+  "projects",
 ]);
 
 /**
@@ -1043,6 +1143,8 @@ export const webviewActions = [
   "settings/save-team",
   "settings/recommend-team",
   "settings/open-team-file",
+  "settings/preview-team-migration",
+  "settings/execute-team-migration",
   "settings/clear-team-memory",
   "settings/save-selection",
   "settings/restore-selection-defaults",
@@ -1075,6 +1177,10 @@ export const webviewActions = [
   "changes/execute-operation",
   "changes/copy-url",
   "changes/show-in-repository",
+  "file/path-detail",
+  "file/copy-path",
+  "projects/open-task",
+  "projects/switch",
   "operation/cancel",
 ] as const satisfies readonly WebviewAction[];
 

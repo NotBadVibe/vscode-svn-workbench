@@ -2,7 +2,7 @@
   "name": "svn-workbench",
   "displayName": "SVN 工作台",
   "description": "面向中文用户的 AI 原生 SVN 工作台。",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "publisher": "local",
   "private": true,
   "license": "MIT",
@@ -61,7 +61,8 @@
     "onCommand:svnWorkbench.analyzeImpact",
     "onCommand:svnWorkbench.openChangelists",
     "onCommand:svnWorkbench.openAgent",
-    "onCommand:svnWorkbench.openAcceptanceChecklist"
+    "onCommand:svnWorkbench.openAcceptanceChecklist",
+    "onCommand:svnWorkbench.openProjects"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -473,6 +474,10 @@
         "title": "SVN：打开验收清单"
       },
       {
+        "command": "svnWorkbench.openProjects",
+        "title": "SVN：项目总览"
+      },
+      {
         "command": "svnWorkbench.scmRefresh",
         "title": "SVN：刷新所有工作副本",
         "icon": "$(refresh)"
@@ -720,6 +725,7 @@
     "check:webview": "svelte-check --tsconfig ./src/webview/tsconfig.json",
     "check": "npm run lint && npm run format:check && npm run compile:extension && npm run check:webview",
     "test:unit": "vitest run --config vitest.config.mts",
+    "test:windows-contracts": "vitest run --config vitest.config.mts tests/unit/windowsPlatformContracts.test.ts tests/unit/extensionHostTempCleanup.test.ts tests/unit/githubWorkflow.test.ts",
     "test:coverage": "node scripts/run-vitest-coverage.js",
     "pretest:webview": "npm run build:webview",
     "test:webview": "node scripts/run-webview-tests.js",

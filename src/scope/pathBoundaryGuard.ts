@@ -1,5 +1,6 @@
 import * as path from "node:path";
 import { OperationScope } from "./operationScope";
+import { isSameOrDescendantPath, isSamePathIdentity } from "./pathIdentity";
 
 export interface ScopeValidationResult {
   validItems: string[];
@@ -33,20 +34,8 @@ export function isPathInScope(
   return scope.roots.some((root) => {
     const rootPath = path.resolve(root.absolutePath);
     if (root.kind === "file") {
-      return comparePlatformPath(rootPath, absolutePath) === 0;
+      return isSamePathIdentity(rootPath, absolutePath);
     }
-
-    const relative = path.relative(rootPath, absolutePath);
-    return (
-      relative === "" ||
-      (!relative.startsWith("..") && !path.isAbsolute(relative))
-    );
+    return isSameOrDescendantPath(absolutePath, rootPath);
   });
-}
-
-function comparePlatformPath(left: string, right: string): number {
-  if (process.platform === "win32") {
-    return left.toLocaleLowerCase().localeCompare(right.toLocaleLowerCase());
-  }
-  return left.localeCompare(right);
 }

@@ -30,6 +30,7 @@
       scope={workbenchState.scope}
       taskId={workbenchState.taskId}
       onRefresh={() => workbenchState.action("refresh")}
+      onSwitchProject={() => workbenchState.action("projects/switch")}
     />
     {#if workbenchState.progress}
       <div class="progress-strip" role="status" aria-live="polite">

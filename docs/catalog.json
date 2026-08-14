@@ -142,6 +142,111 @@
       "manifest": "releases/v0.0.6/manifest.json",
       "releasedFact": true,
       "topics": ["diff-editing", "edit-token", "draft-recovery", "atomic-write"]
+    },
+    {
+      "version": "0.0.7",
+      "status": "draft",
+      "phase": "developing",
+      "baseVersion": "0.0.6",
+      "canonicalEntry": "releases/v0.0.7/README.md",
+      "manifest": "releases/v0.0.7/manifest.json",
+      "releasedFact": false,
+      "topics": [
+        "project-workspace-boundary",
+        "multi-root-workspace",
+        "working-copy-identity",
+        "operation-scope",
+        "scm-project-isolation",
+        "cross-platform-path-identity",
+        "windows-filesystem-contracts",
+        "ci-deduplication",
+        "project-target-resolution",
+        "working-copy-binding-diagnostics"
+      ]
+    },
+    {
+      "version": "0.0.8",
+      "status": "draft",
+      "phase": "planned",
+      "baseVersion": "0.0.7",
+      "canonicalEntry": "releases/v0.0.8/README.md",
+      "manifest": "releases/v0.0.8/manifest.json",
+      "releasedFact": false,
+      "topics": [
+        "changes-usability",
+        "commit-usability",
+        "path-visibility",
+        "bulk-selection",
+        "sorting",
+        "accessibility"
+      ]
+    },
+    {
+      "version": "0.0.9",
+      "status": "draft",
+      "phase": "planned",
+      "baseVersion": "0.0.8",
+      "canonicalEntry": "releases/v0.0.9/README.md",
+      "manifest": "releases/v0.0.9/manifest.json",
+      "releasedFact": false,
+      "topics": [
+        "ai-truthfulness",
+        "source-transparency",
+        "commit-draft-protection",
+        "agent-entry-removal",
+        "graceful-degradation"
+      ]
+    },
+    {
+      "version": "0.0.10",
+      "status": "draft",
+      "phase": "planned",
+      "baseVersion": "0.0.9",
+      "canonicalEntry": "releases/v0.0.10/README.md",
+      "manifest": "releases/v0.0.10/manifest.json",
+      "releasedFact": false,
+      "topics": [
+        "cross-module-list-usability",
+        "path-consistency",
+        "changelists",
+        "history",
+        "conflicts",
+        "repository",
+        "accessibility"
+      ]
+    },
+    {
+      "version": "0.0.11",
+      "status": "draft",
+      "phase": "planned",
+      "baseVersion": "0.0.10",
+      "canonicalEntry": "releases/v0.0.11/README.md",
+      "manifest": "releases/v0.0.11/manifest.json",
+      "releasedFact": false,
+      "topics": [
+        "bounded-diff-context",
+        "analysis-receipt",
+        "evidence-grounded-commit-draft",
+        "privacy",
+        "coverage"
+      ]
+    },
+    {
+      "version": "0.0.12",
+      "status": "draft",
+      "phase": "planned",
+      "baseVersion": "0.0.11",
+      "canonicalEntry": "releases/v0.0.12/README.md",
+      "manifest": "releases/v0.0.12/manifest.json",
+      "releasedFact": false,
+      "topics": [
+        "change-understanding",
+        "evidence-grounded-summary",
+        "verification-suggestions",
+        "semantic-splitting",
+        "conflict-intent",
+        "human-centered-design"
+      ]
     }
   ],
   "archive": [

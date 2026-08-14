@@ -1,5 +1,6 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { isSamePathIdentity } from "../scope/pathIdentity";
 
 export const SVN_WORKBENCH_CONFIG_FILE = ".svn-workbench.json";
 
@@ -18,6 +19,85 @@ export interface SvnWorkbenchConfigReadResult extends SvnWorkbenchConfigParseRes
 
 export function getSvnWorkbenchConfigPath(repositoryRoot: string): string {
   return path.join(repositoryRoot, SVN_WORKBENCH_CONFIG_FILE);
+}
+
+export interface SvnWorkbenchConfigLocation {
+  /** 配置所在根目录（项目根或工作副本根），供既有读写函数使用。 */
+  configRoot: string;
+  configPath: string;
+  /** project = 项目根配置；workingCopy = 工作副本根配置。 */
+  source: "project" | "workingCopy";
+  /** true 表示项目继承工作副本根的既有配置（项目根尚无独立配置）。 */
+  inherited: boolean;
+}
+
+async function configFileExists(configPath: string): Promise<boolean> {
+  try {
+    await fs.access(configPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * v0.0.7 §9：解析团队规则配置位置。
+ * - 项目根已有独立配置时使用项目根；
+ * - 否则继承工作副本根的既有配置（inherited=true，界面必须显示来源）；
+ * - 两者都没有时默认项目根（新建团队规则写入已确认项目根）；
+ * - 项目根与工作副本根重合（含未设置项目根的回退）时就是工作副本根。
+ * 既有工作副本根配置不得被静默移动、复制或覆盖。
+ */
+export async function resolveSvnWorkbenchConfigLocation(
+  projectRoot: string | undefined,
+  workingCopyRoot: string,
+): Promise<SvnWorkbenchConfigLocation> {
+  const wcPath = getSvnWorkbenchConfigPath(workingCopyRoot);
+  if (!projectRoot || isSamePathIdentity(projectRoot, workingCopyRoot)) {
+    return {
+      configRoot: workingCopyRoot,
+      configPath: wcPath,
+      source: "workingCopy",
+      inherited: false,
+    };
+  }
+  const projectPath = getSvnWorkbenchConfigPath(projectRoot);
+  if (await configFileExists(projectPath)) {
+    return {
+      configRoot: projectRoot,
+      configPath: projectPath,
+      source: "project",
+      inherited: false,
+    };
+  }
+  if (await configFileExists(wcPath)) {
+    return {
+      configRoot: workingCopyRoot,
+      configPath: wcPath,
+      source: "workingCopy",
+      inherited: true,
+    };
+  }
+  return {
+    configRoot: projectRoot,
+    configPath: projectPath,
+    source: "project",
+    inherited: false,
+  };
+}
+
+/**
+ * 写入目标的根目录：项目根与工作副本根不同的时候，新建/保存团队规则
+ * 默认写入已确认项目根；重合时写入工作副本根。
+ */
+export function resolveSvnWorkbenchConfigWriteRoot(
+  projectRoot: string | undefined,
+  workingCopyRoot: string,
+): string {
+  if (projectRoot && !isSamePathIdentity(projectRoot, workingCopyRoot)) {
+    return projectRoot;
+  }
+  return workingCopyRoot;
 }
 
 export function parseSvnWorkbenchConfigContent(

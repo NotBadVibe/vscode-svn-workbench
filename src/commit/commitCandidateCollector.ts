@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { OperationScope } from "../scope/operationScope";
 import { isPathInScope } from "../scope/pathBoundaryGuard";
+import { normalizePathIdentity as normalizePathKey } from "../scope/pathIdentity";
 import { runSvnCommand } from "../svn/svnCommandRunner";
 import { SvnStatus, SvnStatusItem } from "../svn/svnTypes";
 import { parseStatusXml } from "../svn/parsers/statusXmlParser";
@@ -281,11 +282,6 @@ function inferTemplateGroup(
     return "asset";
   }
   return "other";
-}
-
-function normalizePathKey(filePath: string): string {
-  const resolved = path.resolve(filePath);
-  return process.platform === "win32" ? resolved.toLocaleLowerCase() : resolved;
 }
 
 function normalizeRelativePath(relativePath: string): string {

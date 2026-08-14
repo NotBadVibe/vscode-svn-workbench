@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "version": "0.0.7",
+  "status": "draft",
+  "baseVersion": "0.0.6",
+  "releaseDate": null,
+  "gitTag": null,
+  "gitCommit": null,
+  "sourceState": "已形成 v0.0.7 第一批（跨平台路径 identity、Windows 写入与测试目录清理契约、CI 去重与 Windows 前置专项测试）、第二批（项目边界领域类型与组合 identity、活动项目解析与多根项目选择器、Diagnostics 工作副本归属分类、范围栏项目上下文）与第三批（文件项目内路径默认显示与路径详情、SCM 工作副本采集 + 项目切片、项目总览与范围栏项目切换、跨项目选择拆分与切换草稿守卫、团队规则项目层与迁移预览）开发源码；真实多根人工主路径与真实 Windows Runner 仍待候选验收，尚未绑定候选提交或发布证据",
+  "vsix": null,
+  "tests": null,
+  "acceptedEvidenceRun": null,
+  "evidencePath": null
+}

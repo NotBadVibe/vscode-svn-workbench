@@ -2,13 +2,17 @@ name: Verify SVN Workbench
 
 on:
   push:
+    branches:
+      - main
+    tags:
+      - "v*"
   pull_request:
 
 permissions:
   contents: read
 
 concurrency:
-  group: verify-${{ github.workflow }}-${{ github.ref }}
+  group: verify-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -85,6 +89,10 @@ jobs:
 
       - name: Static checks
         run: npm run check
+
+      - name: Windows platform contracts
+        if: runner.os == 'Windows'
+        run: npm run test:windows-contracts
 
       - name: Unit, domain and coverage gates
         run: npm run test:coverage

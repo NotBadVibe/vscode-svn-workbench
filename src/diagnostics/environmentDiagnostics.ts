@@ -1,11 +1,18 @@
 import { SvnExecutable } from "../svn/svnTypes";
+import {
+  workingCopyBindingLabels,
+  type WorkingCopyBinding,
+} from "../scope/workingCopyClassification";
 
 export type EnvironmentDiagnosticStatus = "pass" | "warn" | "fail";
 
 export interface EnvironmentDiagnosticWorkspace {
   name: string;
   path: string;
+  /** 是否属于某个 SVN 工作副本（含上层工作副本、嵌套与 external）。 */
   isSvnWorkingCopy: boolean;
+  /** v0.0.7：工作副本归属分类；旧调用方未提供时缺省。 */
+  binding?: WorkingCopyBinding;
 }
 
 export interface EnvironmentDiagnosticAiConfig {
@@ -178,7 +185,7 @@ function buildWorkspaceCheck(
       id: "workspace",
       label: "工作区",
       status: "pass",
-      detail: `${svnWorkspaces.length}/${workspaces.length} 个工作区包含 .svn`,
+      detail: `${svnWorkspaces.length}/${workspaces.length} 个工作区位于 SVN 工作副本${describeWorkspaceBindings(workspaces)}`,
       action: undefined,
     };
   }
@@ -187,10 +194,24 @@ function buildWorkspaceCheck(
     id: "workspace",
     label: "工作区",
     status: "warn",
-    detail: `${workspaces.length} 个工作区均未检测到 .svn`,
+    detail: `${workspaces.length} 个工作区均未检测到 SVN 工作副本${describeWorkspaceBindings(workspaces)}`,
     action:
-      "确认打开的是 SVN 工作副本根目录，或在资源管理器中选择 SVN 工作副本内的文件夹。",
+      "确认打开的是 SVN 工作副本内的目录；位于上层工作副本的项目会被自动识别，非 SVN 目录请先检出（Checkout）。",
   };
+}
+
+/** 汇总各工作区归属分类；没有分类信息时返回空串。 */
+function describeWorkspaceBindings(
+  workspaces: EnvironmentDiagnosticWorkspace[],
+): string {
+  if (workspaces.every((workspace) => !workspace.binding)) {
+    return "";
+  }
+  const parts = workspaces.map(
+    (workspace) =>
+      `${workspace.name}：${workspace.binding ? workingCopyBindingLabels[workspace.binding] : "未知"}`,
+  );
+  return `（${parts.join("；")}）`;
 }
 
 function buildAiCheck(

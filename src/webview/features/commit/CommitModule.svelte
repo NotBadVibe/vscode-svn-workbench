@@ -2,9 +2,11 @@
   import { SvelteSet } from "svelte/reactivity";
   import type {
     CommitSnapshot,
+    HostToWebviewMessage,
     WebviewAction,
   } from "@protocol/workbenchProtocol";
   import ScrollArea from "../../components/ui/ScrollArea.svelte";
+  import FilePathDetail from "../../components/svn/FilePathDetail.svelte";
   import { isExplicitSubmitShortcut } from "../../i18n/keyboard";
   import { formatZhDateTime } from "../../i18n/formatters";
   import {
@@ -17,14 +19,26 @@
   let {
     snapshot,
     onAction,
+    pathDetail,
   }: {
     snapshot: CommitSnapshot;
     onAction: (action: WebviewAction, data?: Record<string, unknown>) => void;
+    /** v0.0.7 路径详情结果（Host 一次性下发）。 */
+    pathDetail?: Extract<
+      HostToWebviewMessage,
+      { type: "file/path-detail-result" }
+    >["payload"];
   } = $props();
 
   let query = $state("");
   let message = $state("");
+  let pathDetailOpen = $state(false);
   const selected = new SvelteSet<string>();
+
+  // 新的路径详情结果到达时自动展开；用户可手动关闭。
+  $effect(() => {
+    if (pathDetail) pathDetailOpen = true;
+  });
 
   $effect(() => {
     message = snapshot.message;
@@ -39,6 +53,36 @@
       file.relativePath.toLowerCase().includes(query.trim().toLowerCase()),
     ),
   );
+
+  // v0.0.7 §7.2：跨项目 scope 的提交预览按项目分组；单项目不分组。
+  const previewGroups = $derived.by(() => {
+    const preview = snapshot.preview;
+    if (!preview) return undefined;
+    const groups: { project: string; paths: string[] }[] = [];
+    let crossProject = false;
+    for (const selectedPath of preview.selectedPaths) {
+      const file = snapshot.files.find(
+        (candidate) => candidate.relativePath === selectedPath,
+      );
+      const project = file?.projectName ?? "";
+      if (project) crossProject = true;
+      const group = groups.find((item) => item.project === project);
+      if (group) {
+        group.paths.push(selectedPath);
+      } else {
+        groups.push({ project, paths: [selectedPath] });
+      }
+    }
+    if (!crossProject) return undefined;
+    return groups;
+  });
+
+  function previewDisplayPath(relativePath: string): string {
+    const file = snapshot.files.find(
+      (candidate) => candidate.relativePath === relativePath,
+    );
+    return file?.projectRelativePath ?? relativePath;
+  }
   const selectionPrivacy = $derived(
     snapshot.selectionAi.configured
       ? snapshot.aiPrivacy.find((item) => item.scenario === "selection")
@@ -134,6 +178,29 @@
         >
       </div>{/if}
     <ScrollArea class="commit-file-list" role="list" label="提交候选文件">
+      {#if pathDetail && pathDetailOpen}
+        <div class="path-detail-host">
+          <div class="path-detail-host__bar">
+            <span class="path-detail-host__target"
+              >{pathDetail.relativePath}</span
+            >
+            <button
+              class="icon-button icon-button--small"
+              aria-label="关闭路径详情"
+              onclick={() => (pathDetailOpen = false)}
+              ><span class="codicon codicon-close" aria-hidden="true"
+              ></span></button
+            >
+          </div>
+          <FilePathDetail
+            detail={pathDetail}
+            onCopyLocalPath={() =>
+              onAction("file/copy-path", {
+                relativePath: pathDetail.relativePath,
+              })}
+          />
+        </div>
+      {/if}
       {#each visibleFiles as file (file.relativePath)}
         <div
           class="commit-file-row"
@@ -151,8 +218,12 @@
           <span class="codicon codicon-file" aria-hidden="true"></span>
           <span class="commit-file-text">
             <span class="commit-file-path" title={file.relativePath}
-              >{file.relativePath}</span
+              >{file.projectRelativePath ?? file.relativePath}</span
             >
+            {#if file.projectName}<span class="project-badge"
+                ><span class="codicon codicon-project" aria-hidden="true"
+                ></span>{file.projectName}</span
+              >{/if}
             {#if file.evaluation}<span class="commit-file-decision"
                 >{describeCommitSelectionEvaluation(file.evaluation)}</span
               >{/if}
@@ -160,6 +231,17 @@
           <span class={`status-badge status-badge--${file.status}`}
             >{fileStatusLabels[file.status]}</span
           >
+          <button
+            type="button"
+            class="icon-button icon-button--small"
+            aria-label={`查看 ${file.relativePath} 路径详情`}
+            onclick={(event) => {
+              event.preventDefault();
+              onAction("file/path-detail", { relativePath: file.relativePath });
+            }}
+          >
+            <span class="codicon codicon-info" aria-hidden="true"></span>
+          </button>
           <button
             type="button"
             class="icon-button icon-button--small"
@@ -320,6 +402,19 @@
             <span class="codicon codicon-pass-filled" aria-hidden="true"
             ></span>范围、状态和远端检查已通过
           </div>
+        {/if}
+        {#if previewGroups}
+          <details class="command-preview" open>
+            <summary>按项目分组的提交文件</summary>
+            {#each previewGroups as group (group.project)}
+              <div class="preview-project-group">
+                <strong>{group.project || "未归属项目"}</strong>
+                {#each group.paths as selectedPath (selectedPath)}<code
+                    >{previewDisplayPath(selectedPath)}</code
+                  >{/each}
+              </div>
+            {/each}
+          </details>
         {/if}
         <details class="command-preview">
           <summary>查看命令预览</summary>

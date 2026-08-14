@@ -10,6 +10,7 @@ import { CommitCandidate } from "../commit/commitCandidateCollector";
 import { inferCommitCandidateModuleGroup } from "../commit/commitCandidateGrouping";
 import { OperationScope } from "../scope/operationScope";
 import { isPathInScope } from "../scope/pathBoundaryGuard";
+import { normalizePathIdentity as normalizePathKey } from "../scope/pathIdentity";
 
 const MAX_FILES_IN_COMMIT_SPLIT_REQUEST = 120;
 
@@ -94,7 +95,9 @@ export function validateCommitSplitResult(
   result: AiCommitSplitResult,
   allowedPaths: string[],
 ): AiCommitSplitResult {
-  const allowed = new Set(allowedPaths.map(normalizePathKey));
+  const allowed = new Set(
+    allowedPaths.map((filePath) => normalizePathKey(filePath)),
+  );
   const used = new Set<string>();
   const splits = result.splits
     .map((split, index) => {
@@ -337,9 +340,4 @@ function toAbsolutePath(scope: OperationScope, filePath: string): string {
   return path.isAbsolute(filePath)
     ? path.resolve(filePath)
     : path.resolve(scope.repositoryRoot, filePath);
-}
-
-function normalizePathKey(filePath: string): string {
-  const resolved = path.resolve(filePath);
-  return process.platform === "win32" ? resolved.toLocaleLowerCase() : resolved;
 }

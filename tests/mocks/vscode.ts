@@ -56,9 +56,11 @@ export interface MockWebviewPanel {
   title: string;
   webview: {
     postMessage: (message: unknown) => Promise<void>;
-    onDidReceiveMessage: () => Disposable;
+    onDidReceiveMessage: (callback: (message: unknown) => void) => Disposable;
     html: string;
   };
+  /** 测试驱动：Webview 消息处理器（Host 注册后被捕获）。 */
+  __onMessage?: (message: unknown) => unknown;
   reveal: () => void;
   dispose: () => void;
   onDidDispose: (callback: () => void) => Disposable;
@@ -89,7 +91,10 @@ export const window = {
       title,
       webview: {
         postMessage: async () => undefined,
-        onDidReceiveMessage: () => new Disposable(),
+        onDidReceiveMessage: (callback: (message: unknown) => void) => {
+          panel.__onMessage = callback;
+          return new Disposable();
+        },
         html: "",
       },
       reveal: () => undefined,
@@ -146,10 +151,78 @@ export const workspace = {
     __registeredContentProviders.push({ scheme, provider });
     return new Disposable();
   },
+  /** SCM 管理器单测可注入的 findFiles 结果（默认无嵌套工作副本）。 */
+  findFiles: async () => __findFilesResults.shift() ?? [],
+  onDidChangeWorkspaceFolders: () => new Disposable(),
+  onDidSaveTextDocument: () => new Disposable(),
+  onDidCreateFiles: () => new Disposable(),
+  onDidDeleteFiles: () => new Disposable(),
+  onDidRenameFiles: () => new Disposable(),
   fs: {
     stat: async (uri: { fsPath: string }) => {
       const value = await fs.stat(uri.fsPath);
       return { type: value.isDirectory() ? FileType.Directory : FileType.File };
     },
+  },
+};
+
+/** findFiles 的队列式返回（每个元素对应一次调用）。 */
+export const __findFilesResults: Array<Array<{ fsPath: string }>> = [];
+
+export class RelativePattern {
+  constructor(
+    public readonly base: unknown,
+    public readonly pattern: string,
+  ) {}
+}
+
+export interface MockSourceControl {
+  id: string;
+  label: string;
+  rootUri?: { fsPath: string };
+  count: number;
+  acceptInputCommand?: unknown;
+  statusBarCommands?: unknown;
+  groups: Map<string, { resourceStates: unknown[]; label: string }>;
+  createResourceGroup: (
+    id: string,
+    label: string,
+  ) => { resourceStates: unknown[]; label: string };
+  dispose: () => void;
+  disposed: boolean;
+}
+
+/** 已创建的 SCM provider（按创建顺序），供 SCM 管理器单测断言。 */
+export const __sourceControls: MockSourceControl[] = [];
+
+export function __resetSourceControls(): void {
+  __sourceControls.length = 0;
+  __findFilesResults.length = 0;
+}
+
+export const scm = {
+  createSourceControl: (
+    id: string,
+    label: string,
+    rootUri?: { fsPath: string },
+  ): MockSourceControl => {
+    const control: MockSourceControl = {
+      id,
+      label,
+      rootUri,
+      count: 0,
+      groups: new Map(),
+      createResourceGroup: (groupId: string, groupLabel: string) => {
+        const group = { resourceStates: [] as unknown[], label: groupLabel };
+        control.groups.set(groupId, group);
+        return group;
+      },
+      dispose: () => {
+        control.disposed = true;
+      },
+      disposed: false,
+    };
+    __sourceControls.push(control);
+    return control;
   },
 };

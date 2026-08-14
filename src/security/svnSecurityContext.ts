@@ -1,4 +1,7 @@
-import * as path from "node:path";
+import {
+  isSameOrDescendantPath,
+  normalizePathIdentity,
+} from "../scope/pathIdentity";
 
 export type SvnCertificateFailure =
   "unknown-ca" | "cn-mismatch" | "expired" | "not-yet-valid" | "other";
@@ -30,7 +33,7 @@ const contexts = new Map<string, SvnSecurityContext>();
 
 /** 仓库根路径归一化（跨平台大小写）键；供注册表与控制器比较用。 */
 export function normalizeSvnRepositoryRoot(value: string): string {
-  return normalizePath(value);
+  return normalizePathIdentity(value);
 }
 
 /** 测试辅助：清空模块级上下文，避免用例之间互相污染。 */
@@ -42,7 +45,7 @@ export function setSvnSecurityContext(
   repositoryRoot: string,
   context: SvnSecurityContext | undefined,
 ): void {
-  const key = normalizePath(repositoryRoot);
+  const key = normalizePathIdentity(repositoryRoot);
   if (!context || (!context.authentication && !context.certificateTrust)) {
     contexts.delete(key);
     return;
@@ -51,20 +54,17 @@ export function setSvnSecurityContext(
 }
 
 export function clearSvnSecurityContext(repositoryRoot: string): void {
-  contexts.delete(normalizePath(repositoryRoot));
+  contexts.delete(normalizePathIdentity(repositoryRoot));
 }
 
 export function resolveSvnSecurityContext(
   cwd: string | undefined,
 ): SvnSecurityContext | undefined {
   if (!cwd) return undefined;
-  const candidate = normalizePath(cwd);
+  const candidate = normalizePathIdentity(cwd);
   let matched: [string, SvnSecurityContext] | undefined;
   for (const entry of contexts.entries()) {
-    if (
-      candidate === entry[0] ||
-      candidate.startsWith(`${entry[0]}${path.sep}`)
-    ) {
+    if (isSameOrDescendantPath(candidate, entry[0])) {
       if (!matched || entry[0].length > matched[0].length) matched = entry;
     }
   }
@@ -154,9 +154,4 @@ function cloneContext(context: SvnSecurityContext): SvnSecurityContext {
         }
       : undefined,
   };
-}
-
-function normalizePath(value: string): string {
-  const resolved = path.resolve(value);
-  return process.platform === "win32" ? resolved.toLocaleLowerCase() : resolved;
 }
