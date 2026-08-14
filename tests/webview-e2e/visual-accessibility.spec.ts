@@ -112,6 +112,23 @@ for (const [theme, variables] of Object.entries(themes)) {
   }
 }
 
+test("reduced motion 下列表主操作无违规、无动画依赖（Task 2 缺口）", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/");
+  await page.getByRole("heading", { name: "工作副本修改" }).waitFor();
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
+  // 主操作（全选 + 提交入口）在 reduced motion 下仍可达。
+  await page.getByLabel("选择 src/extension.ts").check();
+  await expect(
+    page.getByRole("button", { name: /检查并提交所选（1）/ }),
+  ).toBeVisible();
+  // 无动画时操作不依赖延迟：立即响应。
+  await page.getByRole("button", { name: /检查并提交所选（1）/ }).click();
+  await expect(page.getByText(/已选 1 \/ 候选/)).toBeVisible();
+});
+
 test("5000-file dataset remains windowed while scrolling", async ({ page }) => {
   await page.goto("/?dataset=large");
   const list = page.getByRole("list", { name: "SVN 变更文件" });

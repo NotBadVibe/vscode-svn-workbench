@@ -287,6 +287,152 @@ describe("Changes 选择闭环（v0.0.8）", () => {
     expect(list.contains(active)).toBe(true);
   });
 
+  it("Shift+F10 / Menu 打开活动行操作菜单（Task 2 缺口）", async () => {
+    render(ChangesModule, {
+      snapshot: changesSnapshot(threeFiles()),
+      onAction: vi.fn(),
+    });
+    const list = screen.getByRole("list", { name: "SVN 变更文件" });
+    await fireEvent.keyDown(list, { key: "ArrowDown" });
+    await fireEvent.keyDown(list, { key: "F10", shiftKey: true });
+    // 菜单打开并针对活动行。
+    const menu = await screen.findByRole("menu", {
+      name: "src/a.ts 操作菜单",
+    });
+    expect(menu).toBeInTheDocument();
+    // Menu 键（ContextMenu）同样打开。
+    await fireEvent.keyDown(list, { key: "Escape" });
+    await fireEvent.keyDown(list, { key: "ArrowDown" });
+    await fireEvent.keyDown(list, { key: "ContextMenu" });
+    await screen.findByRole("menu", { name: "src/b.ts 操作菜单" });
+  });
+
+  it("Escape 关闭路径详情并恢复触发点焦点（Task 2 缺口）", async () => {
+    render(ChangesModule, {
+      snapshot: changesSnapshot(threeFiles()),
+      onAction: vi.fn(),
+      pathDetail: {
+        relativePath: "src/a.ts",
+        detail: {
+          projectRelativePath: "a.ts",
+          workingCopyRelativePath: "src/a.ts",
+          repositoryRelativePath: "trunk/src/a.ts",
+          svnUrl: "https://svn.example.internal/svn/repo/trunk/src/a.ts",
+          absolutePath: "/repo/src/a.ts",
+        },
+      },
+    });
+    // 打开详情（触发按钮获得焦点）。
+    const trigger = screen.getByRole("button", {
+      name: "查看 src/a.ts 路径详情",
+    });
+    await fireEvent.click(trigger);
+    expect(screen.getByText("项目内路径")).toBeInTheDocument();
+    const list = screen.getByRole("list", { name: "SVN 变更文件" });
+    await fireEvent.keyDown(list, { key: "Escape" });
+    expect(screen.queryByText("项目内路径")).not.toBeInTheDocument();
+    // 焦点恢复到触发按钮。
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it("Commit 5,000 项 PageDown 多次跳转后远端行挂载且聚焦（Task 2 缺口）", async () => {
+    const files = [] as ReturnType<typeof changeFile>[];
+    for (let index = 0; index < 5_000; index += 1) {
+      files.push(changeFile(`src/file-${index}.ts`, "modified", "selected"));
+    }
+    render(CommitModule, {
+      snapshot: commitSnapshotWith(files, []),
+      onAction: vi.fn(),
+    });
+    const list = screen.getByRole("list", { name: "提交候选文件" });
+    await fireEvent.keyDown(list, { key: "ArrowDown" });
+    // 连续 PageDown 20 次（每页约 10 行）跳到远端。
+    for (let index = 0; index < 20; index += 1) {
+      await fireEvent.keyDown(list, { key: "PageDown" });
+    }
+    await new Promise((resolve) => requestAnimationFrame(() => resolve(null)));
+    const active = document.querySelector(".commit-file-row--active");
+    expect(active).not.toBeNull();
+    const rowIndex = Number(active?.getAttribute("data-row-index"));
+    expect(rowIndex).toBeGreaterThan(100);
+    expect(document.activeElement).toBe(active);
+  });
+
+  it("空结果给出原因与恢复动作；清除搜索后恢复列表（Task 2 缺口）", async () => {
+    render(ChangesModule, {
+      snapshot: changesSnapshot(threeFiles()),
+      onAction: vi.fn(),
+    });
+    await fireEvent.input(screen.getByLabelText("筛选变更文件"), {
+      target: { value: "不存在的文件xyz" },
+    });
+    expect(screen.getByText("没有匹配的文件")).toBeInTheDocument();
+    expect(
+      screen.getByText(/调整搜索词或状态筛选，或清除搜索后重试/),
+    ).toBeInTheDocument();
+    // 恢复动作：清除搜索后列表恢复。
+    await fireEvent.click(screen.getByRole("button", { name: "清除筛选" }));
+    expect(screen.getByText("a.ts")).toBeInTheDocument();
+  });
+
+  it("只看已选无匹配时给出专门原因与恢复指引", async () => {
+    render(ChangesModule, {
+      snapshot: changesSnapshot(threeFiles()),
+      onAction: vi.fn(),
+    });
+    // 勾选 b，然后只看已选并筛选掉它。
+    await fireEvent.click(screen.getByLabelText("选择 src/b.ts"));
+    await fireEvent.click(screen.getByRole("button", { name: "只看已选" }));
+    await fireEvent.input(screen.getByLabelText("筛选变更文件"), {
+      target: { value: "a.ts" },
+    });
+    expect(screen.getByText("已选文件不在当前筛选中")).toBeInTheDocument();
+    expect(
+      screen.getByText(/关闭“只看已选”或调整筛选条件/),
+    ).toBeInTheDocument();
+  });
+
+  it("候选刷新为空时 Escape 仍能关闭路径详情（复审 4）", async () => {
+    // Commit 列表在候选为空时仍渲染（无 empty-state 分支），Escape 在
+    // 空列表早退之前处理，详情仍可关闭。
+    render(CommitModule, {
+      snapshot: commitSnapshotWith([], []),
+      onAction: vi.fn(),
+      pathDetail: {
+        relativePath: "src/a.ts",
+        detail: {
+          projectRelativePath: "a.ts",
+          workingCopyRelativePath: "src/a.ts",
+          repositoryRelativePath: "trunk/src/a.ts",
+          svnUrl: "https://svn.example.internal/svn/repo/trunk/src/a.ts",
+          absolutePath: "/repo/src/a.ts",
+        },
+      },
+    });
+    // 详情自动展开（即使列表为空）。
+    expect(screen.getByText("项目内路径")).toBeInTheDocument();
+    const list = screen.getByRole("list", { name: "提交候选文件" });
+    await fireEvent.keyDown(list, { key: "Escape" });
+    expect(screen.queryByText("项目内路径")).not.toBeInTheDocument();
+  });
+
+  it("无活动行时 Shift+F10 不阻止默认、不打开菜单（复审 4）", async () => {
+    render(ChangesModule, {
+      snapshot: changesSnapshot(threeFiles()),
+      onAction: vi.fn(),
+    });
+    const list = screen.getByRole("list", { name: "SVN 变更文件" });
+    const event = new KeyboardEvent("keydown", {
+      key: "F10",
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    await fireEvent(list, event);
+    expect(event.defaultPrevented).toBe(false);
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  });
+
   it("Shift+方向键连续选择且活动行与选择分离", async () => {
     render(ChangesModule, {
       snapshot: changesSnapshot([

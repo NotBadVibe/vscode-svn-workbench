@@ -201,6 +201,31 @@ function mockSelectionKey(relativePath: string): PathIdentityKey {
   return `mock-wc::${relativePath}` as PathIdentityKey;
 }
 
+/** UX08-FLOW-01：Changes 与 Commit 共用同一组 7+3 候选。 */
+function sevenDatasetFiles() {
+  return Array.from({ length: 10 }, (_, index) => ({
+    relativePath: `src/module-${index}.ts`,
+    selectionKey: mockSelectionKey(`src/module-${index}.ts`),
+    status:
+      index < 7
+        ? ("modified" as const)
+        : index === 7
+          ? ("unversioned" as const)
+          : index === 8
+            ? ("conflicted" as const)
+            : ("normal" as const),
+    selection:
+      index < 7
+        ? ("selected" as const)
+        : index === 7
+          ? ("needsReview" as const)
+          : index === 8
+            ? ("blocked" as const)
+            : ("excluded" as const),
+    fileType: "TypeScript",
+  }));
+}
+
 let activeMockModuleId: WorkbenchModuleId = "changes";
 let activeMockTaskId: WorkbenchTaskId = defaultWorkbenchTask("changes");
 /** 当前 mock Diff 目标（open-edit/save 的 targetId 与快照一致）。 */
@@ -1417,7 +1442,9 @@ function changesSnapshot(
             fileType: "TypeScript",
           }),
         )
-      : files;
+      : dataset === "seven"
+        ? sevenDatasetFiles()
+        : files;
   return {
     kind: "changes",
     commitDraft: "feat(workbench): 完善统一 Svelte 工作台",
@@ -1431,6 +1458,13 @@ function changesSnapshot(
             unversioned: snapshotFiles.filter(
               (item) => item.status === "unversioned",
             ).length,
+            ...(dataset === "seven"
+              ? {
+                  conflicted: snapshotFiles.filter(
+                    (item) => item.status === "conflicted",
+                  ).length,
+                }
+              : {}),
           },
     refreshedAt: new Date().toISOString(),
     ...overrides,
@@ -1446,6 +1480,10 @@ function commitSnapshot(
   const commitRulesScenario = new URLSearchParams(window.location.search).get(
     "commitRules",
   );
+  const commitDataset =
+    typeof window !== "undefined"
+      ? new URLSearchParams(window.location.search).get("dataset")
+      : undefined;
   const snapshotFiles = (
     isScrollDataset()
       ? Array.from({ length: 80 }, (_, index) => ({
@@ -1457,7 +1495,9 @@ function commitSnapshot(
             index % 7 === 0 ? ("unversioned" as const) : ("modified" as const),
           selection: "selected" as const,
         }))
-      : files.slice(0, 3)
+      : commitDataset === "seven"
+        ? sevenDatasetFiles()
+        : files.slice(0, 3)
   ).map((item) => ({ ...item, evaluation: mockCommitEvaluation(item.status) }));
   return {
     kind: "commit",

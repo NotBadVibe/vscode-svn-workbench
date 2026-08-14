@@ -391,6 +391,15 @@
 
   function handleListKeydown(event: KeyboardEvent): void {
     if (!shouldHandleListKeydown(event)) return;
+    // Escape 必须先于空列表早退处理：详情响应到达后候选刷新为空时仍可关闭。
+    if (event.key === "Escape") {
+      // Escape 关闭路径详情并恢复触发点焦点，滚动位置不变（规格 §6/§9）。
+      if (pathDetailOpen) {
+        event.preventDefault();
+        closeDetail();
+      }
+      return;
+    }
     const count = sortedFiles.length;
     if (count === 0) return;
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a") {
