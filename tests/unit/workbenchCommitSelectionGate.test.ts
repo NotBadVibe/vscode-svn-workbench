@@ -500,13 +500,18 @@ describe("provenance 回放保护（Lead 代码审查 finding）", () => {
     await vi.waitFor(() => expect(posted.length).toBeGreaterThan(0));
     expect(session.commitState?.manualSelectedPaths).toBeUndefined();
     // 合法 generate-message（走 local-rule-fallback，无外部 AI 依赖）。
+    // v0.0.9 §4：生成结果只进入建议草稿，绝不覆盖用户已填草稿。
+    const messageBefore = session.commitState?.message ?? "";
     posted.length = 0;
     await send("commit/generate-message", {
       selectedPaths: session.commitState?.selectedPaths ?? [],
-      message: "",
+      message: messageBefore,
     });
     await vi.waitFor(() => expect(posted.length).toBeGreaterThan(0));
-    expect(session.commitState?.message.length).toBeGreaterThan(0);
+    expect(session.commitState?.message).toBe(messageBefore);
+    expect(
+      (session.commitState?.messageSuggestion?.message ?? "").length,
+    ).toBeGreaterThan(0);
     expect(session.commitState?.manualSelectedPaths).toBeUndefined();
   });
 

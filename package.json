@@ -2,7 +2,7 @@
   "name": "svn-workbench",
   "displayName": "SVN 工作台",
   "description": "面向中文用户的 AI 原生 SVN 工作台。",
-  "version": "0.0.8",
+  "version": "0.0.9",
   "publisher": "local",
   "private": true,
   "license": "MIT",
@@ -451,23 +451,23 @@
       },
       {
         "command": "svnWorkbench.aiSelectScope",
-        "title": "SVN：AI 审查当前范围"
+        "title": "SVN：本地变更检查当前范围"
       },
       {
         "command": "svnWorkbench.aiReviewScope",
-        "title": "SVN：AI 变更审查"
+        "title": "SVN：本地变更检查"
       },
       {
         "command": "svnWorkbench.analyzeImpact",
-        "title": "SVN：分析影响与测试"
+        "title": "SVN：分析影响与测试建议"
       },
       {
         "command": "svnWorkbench.openChangelists",
-        "title": "SVN：变更集与智能拆分"
+        "title": "SVN：变更集管理"
       },
       {
         "command": "svnWorkbench.openAgent",
-        "title": "SVN：受控 AI 任务代理"
+        "title": "SVN：本地检查流水线"
       },
       {
         "command": "svnWorkbench.openAcceptanceChecklist",

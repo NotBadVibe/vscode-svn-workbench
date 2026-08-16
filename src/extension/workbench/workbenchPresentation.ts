@@ -62,9 +62,9 @@ export function getModuleTitle(
     "history/revisions": "历史记录",
     "conflicts/resolve": "冲突处理",
     "changelists/manage": "变更集",
-    "ai-review/review": "AI 变更审查",
-    "impact/analyze": "影响与测试",
-    "agent/plan": "AI 任务代理",
+    "ai-review/review": "本地变更检查",
+    "impact/analyze": "影响与测试建议",
+    "agent/plan": "本地检查流水线",
     "repository/update": "更新当前范围",
     "repository/recovery": "清理与恢复工作副本",
     "repository/browse": "浏览 SVN 仓库",
@@ -234,9 +234,9 @@ export function emptyAgentSnapshot(): AgentSnapshot {
     steps: [],
     guardrails: [
       "只访问当前右键范围",
-      "每一步都需要显式批准",
+      "只执行只读采集与本地分析",
       "不自动修改文件、不自动提交",
-      "状态变化后计划立即失效",
+      "状态变化后流水线结果立即失效",
     ],
   };
 }

@@ -5,7 +5,12 @@ import * as vscode from "vscode";
 import {
   buildCommitMessageAiRequest,
   createMockCommitMessageResult,
+  normalizeCommitMessageResult,
 } from "../../ai/commitMessageAiGenerator";
+import {
+  insertSuggestionBlankFields,
+  replaceDraftWithSuggestion,
+} from "../../commit/commitMessageSuggestion";
 import {
   buildCommitSelectionAiRequest,
   createLocalCommitSelectionResult,
@@ -26,7 +31,7 @@ import {
 import {
   AI_API_KEY_SECRET_KEY,
   AI_PROVIDER_PRESETS,
-  AI_USAGE_SCENARIOS,
+  AI_VISIBLE_USAGE_SCENARIOS,
   normalizeAiBaseUrl,
   readStoredAiConfiguration,
   saveAiConfiguration,
@@ -132,6 +137,7 @@ import {
   isWebviewToHostMessage,
   isWorkbenchModuleId,
   isWorkbenchTaskForModule,
+  type CommitMessageSuggestion,
   type DiffSnapshot,
   type CommitPlanView,
   type CommitSnapshot,
@@ -1084,7 +1090,13 @@ export class WorkbenchController implements vscode.Disposable {
       }
       case "commit/update-draft": {
         const state = this.ensureCommitState(session);
-        state.message = asStringAllowEmpty(data.message) ?? state.message;
+        const next = asStringAllowEmpty(data.message) ?? state.message;
+        // v0.0.9 §4：仅在用户真正改动草稿（内容与当前不同）时清除替换前
+        // 备份——blur/回显等未改动的同步不得使“撤销替换”入口消失。
+        if (state.messageSuggestionReplaceBackup && next !== state.message) {
+          state.messageSuggestionReplaceBackup = undefined;
+        }
+        state.message = next;
         state.preview = undefined;
         await this.sendCommitSnapshot(session, message.requestId);
         return;
@@ -1225,6 +1237,8 @@ export class WorkbenchController implements vscode.Disposable {
         }
         const state = this.ensureCommitState(session);
         state.message = applyCommitMessageTemplate(templateId);
+        // 用户显式套用模板接管草稿：替换前备份失效。
+        state.messageSuggestionReplaceBackup = undefined;
         state.preview = undefined;
         await this.sendCommitSnapshot(session, message.requestId);
         return;
@@ -1292,15 +1306,193 @@ export class WorkbenchController implements vscode.Disposable {
           (provider) => provider.generateCommitMessage(request),
         );
         const { result, source, fallbackReason } = aiResult;
-        state.message = result.message;
-        state.preview = undefined;
-        state.ai = {
+        // v0.0.9 §4：生成、失败、超时、取消、降级均不得覆盖用户已填草稿。
+        // 结果只进入 messageSuggestion 建议区，不写入 state.message；
+        // 采用必须经 commit/adopt-suggestion 显式执行。
+        const generated = normalizeCommitMessageResult(result);
+        if (!generated.message.trim()) {
+          // 没有足够输入（如未勾选文件）：不生成建议，保留用户草稿。
+          state.messageSuggestion = undefined;
+          state.feedback = {
+            tone: "warning",
+            message: `${
+              generated.summary || "当前没有足够的文件信息生成建议草稿"
+            }；当前提交说明保持不变。`,
+          };
+          state.preview = undefined;
+          await this.sendCommitSnapshot(session, message.requestId, candidates);
+          return;
+        }
+        const suggestion: CommitMessageSuggestion = {
+          token: randomUUID(),
+          message: generated.message,
           source,
-          summary: result.summary,
-          warnings: result.warnings,
-          fallbackReason,
+          model: session.aiModels.commitMessage || undefined,
+          // 输入仅含文件信息与差异统计（未读取差异正文）：
+          // 本地回退为结构化占位草稿，明确标记“基于文件信息”。
+          metadataOnly: source === "local-rule-fallback",
+          warnings: [
+            ...generated.warnings,
+            ...(fallbackReason
+              ? [`模型不可用，已使用本地回退：${fallbackReason}`]
+              : []),
+          ],
+          binding: {
+            repositoryUuid: session.repositoryUuid,
+            scopeHash: session.scopeHash,
+            candidateHash: hashCandidateState(candidates, "", []),
+            generatedAt: new Date().toISOString(),
+            model: session.aiModels.commitMessage || undefined,
+          },
         };
+        state.messageSuggestion = suggestion;
+        state.preview = undefined;
         await this.sendCommitSnapshot(session, message.requestId, candidates);
+        return;
+      }
+      case "commit/adopt-suggestion": {
+        // v0.0.9 §4：显式采用建议草稿（插入空白字段 / 替换草稿）。
+        // 生成结果不覆盖草稿；这里由用户明确动作才写回主草稿。
+        const state = this.ensureCommitState(session);
+        const token = asString(data.token);
+        const mode = asString(data.mode);
+        const currentMessage = asStringAllowEmpty(data.currentMessage) ?? "";
+        const suggestion = state.messageSuggestion;
+        if (!suggestion || suggestion.token !== token) {
+          await this.sendError(
+            "commit",
+            "建议草稿已失效",
+            "该建议草稿已不存在或已被替换，未修改当前提交说明。",
+            true,
+            message.requestId,
+          );
+          // 补发快照：Webview 在 replace 确认时已把本地 message 置为建议
+          // 文本，拒绝后必须用 Host 权威草稿回滚，避免界面与草稿分歧。
+          await this.sendCommitSnapshot(session, message.requestId);
+          return;
+        }
+        // 采用是写回草稿的动作：执行前重新校验候选与范围，不能只信
+        // Webview 回传或快照里的 stale 标记（fail-closed）。
+        const candidates = await this.collectScopeCandidates(session);
+        if (
+          this.isCommitMessageSuggestionStale(session, suggestion, candidates)
+        ) {
+          await this.sendError(
+            "commit",
+            "建议草稿已过期",
+            "范围或候选已变化，该建议只能查看；当前提交说明保持不变。",
+            true,
+            message.requestId,
+          );
+          // 补发快照：拒绝后回滚 Webview 本地 message 到 Host 权威草稿。
+          await this.sendCommitSnapshot(session, message.requestId, candidates);
+          return;
+        }
+        if (mode === "insert-blank-fields") {
+          // 只补充建议中“标签:”为空的空白字段，不删除、不改写用户已填内容
+          // （幂等：重复提交不重复插入）。
+          const outcome = insertSuggestionBlankFields(
+            currentMessage,
+            suggestion.message,
+          );
+          state.message = outcome.message;
+          state.messageSuggestionReplaceBackup = undefined;
+          state.preview = undefined;
+          state.feedback = {
+            tone: "success",
+            message:
+              outcome.inserted.length > 0
+                ? `已插入 ${outcome.inserted.length} 个空白字段，用户已填内容保持不变。`
+                : "建议中无新空白字段，当前提交说明保持不变。",
+          };
+          await this.sendCommitSnapshot(session, message.requestId);
+          return;
+        }
+        if (mode === "replace") {
+          const check = replaceDraftWithSuggestion(
+            currentMessage,
+            suggestion.message,
+          );
+          if (!check.ok) {
+            await this.sendError(
+              "commit",
+              "未替换提交说明",
+              check.reason,
+              true,
+              message.requestId,
+            );
+            // 补发快照：replace 被拒（同内容/超限）时回滚 Webview 本地
+            // message，确保文本框与 Host 草稿一致（AI09-DRAFT-02）。
+            await this.sendCommitSnapshot(
+              session,
+              message.requestId,
+              candidates,
+            );
+            return;
+          }
+          // 替换前备份，供 commit/undo-suggestion-replace 恢复。
+          state.messageSuggestionReplaceBackup = { previous: currentMessage };
+          state.message = check.message;
+          state.preview = undefined;
+          state.feedback = {
+            tone: "success",
+            message: "已用建议替换提交说明；可撤销替换恢复原内容。",
+          };
+          await this.sendCommitSnapshot(session, message.requestId);
+          return;
+        }
+        await this.sendError(
+          "commit",
+          "未知的采用方式",
+          "未知的 adopt-suggestion 模式，未修改当前提交说明。",
+          true,
+          message.requestId,
+        );
+        // 补发快照：未知 mode 拒绝后同样回滚 Webview 本地 message。
+        await this.sendCommitSnapshot(session, message.requestId, candidates);
+        return;
+      }
+      case "commit/undo-suggestion-replace": {
+        const state = this.ensureCommitState(session);
+        if (!state.messageSuggestionReplaceBackup) {
+          await this.sendError(
+            "commit",
+            "没有可撤销的替换",
+            "没有可撤销的提交说明替换记录；当前提交说明保持不变。",
+            true,
+            message.requestId,
+          );
+          return;
+        }
+        state.message = state.messageSuggestionReplaceBackup.previous;
+        state.messageSuggestionReplaceBackup = undefined;
+        state.preview = undefined;
+        state.feedback = {
+          tone: "success",
+          message: "已撤销建议替换，已恢复原提交说明。",
+        };
+        await this.sendCommitSnapshot(session, message.requestId);
+        return;
+      }
+      case "commit/discard-suggestion": {
+        const state = this.ensureCommitState(session);
+        const token = asString(data.token);
+        if (
+          !state.messageSuggestion ||
+          state.messageSuggestion.token !== token
+        ) {
+          // 建议已不存在：视为已放弃，幂等成功。
+          await this.sendCommitSnapshot(session, message.requestId);
+          return;
+        }
+        state.messageSuggestion = undefined;
+        state.messageSuggestionReplaceBackup = undefined;
+        state.preview = undefined;
+        state.feedback = {
+          tone: "success",
+          message: "已放弃建议草稿；当前提交说明保持不变。",
+        };
+        await this.sendCommitSnapshot(session, message.requestId);
         return;
       }
       case "commit/preview": {
@@ -2537,9 +2729,9 @@ export class WorkbenchController implements vscode.Disposable {
             objective,
             guardrails: [
               "只访问当前右键范围",
-              "每一步都需要显式批准",
+              "只执行只读采集与本地分析",
               "不自动修改文件、不自动提交",
-              "状态变化后计划立即失效",
+              "状态变化后流水线结果立即失效",
             ],
             steps: [
               {
@@ -2556,8 +2748,9 @@ export class WorkbenchController implements vscode.Disposable {
               },
               {
                 id: "review",
-                title: "执行证据审查",
-                detail: "使用本地敏感信息、调试代码与生成物规则扫描。",
+                title: "执行本地证据检查",
+                detail:
+                  "使用本地敏感信息、调试代码与生成物规则扫描，不调用外部模型。",
                 capability: "local-analysis",
                 scope: "当前候选元数据与受限差异",
                 risk: "低 · 可能产生误报",
@@ -2568,7 +2761,7 @@ export class WorkbenchController implements vscode.Disposable {
               {
                 id: "impact",
                 title: "生成影响与测试计划",
-                detail: "根据实际变更路径给出验证命令和上线观察点。",
+                detail: "根据实际变更路径与本地规则给出验证命令和上线观察点。",
                 capability: "local-analysis",
                 scope: "当前候选路径和文件类型",
                 risk: "低 · 需要人工验证建议",
@@ -2589,8 +2782,8 @@ export class WorkbenchController implements vscode.Disposable {
         if (!stepId || !state || state.snapshot.nextStepId !== stepId) {
           await this.sendError(
             "agent",
-            "代理步骤不可执行",
-            "只能批准当前待执行步骤，请重新生成计划。",
+            "流水线步骤不可执行",
+            "只能执行当前待运行步骤，请重新运行流水线。",
             true,
             message.requestId,
           );
@@ -2600,7 +2793,7 @@ export class WorkbenchController implements vscode.Disposable {
         if (hashCandidateState(candidates, "", []) !== state.candidateHash) {
           state.snapshot.status = "failed";
           state.snapshot.message =
-            "工作副本已变化，原计划已过期。请重新生成计划。";
+            "工作副本已变化，原流水线结果已过期。请重新运行流水线。";
           await this.sendAgentSnapshot(session, message.requestId);
           return;
         }
@@ -2628,8 +2821,8 @@ export class WorkbenchController implements vscode.Disposable {
           state.snapshot.nextStepId = next?.id;
           state.snapshot.status = next ? "planned" : "completed";
           state.snapshot.message = next
-            ? "当前步骤完成，等待批准下一步。"
-            : "受控分析计划已完成，可以进入审查、影响或提交模块继续操作。";
+            ? "当前步骤完成，等待执行下一步。"
+            : "只读流水线已完成，可以进入本地检查、影响或提交模块继续操作。";
         } catch (error) {
           step.status = "failed";
           step.output = errorMessage(error);
@@ -3943,7 +4136,8 @@ export class WorkbenchController implements vscode.Disposable {
       },
       ai: {
         presets: AI_PROVIDER_PRESETS,
-        scenarios: AI_USAGE_SCENARIOS,
+        // v0.0.9 §6：设置页只列出有真实调用链的场景，不展示无调用链的伪场景。
+        scenarios: AI_VISIBLE_USAGE_SCENARIOS,
         providerPreset: stored.providerPreset,
         baseUrl: stored.baseUrl,
         model: stored.model,
@@ -4736,6 +4930,8 @@ export class WorkbenchController implements vscode.Disposable {
       commitMessage: session.commitState?.message,
       hasManualSelection: (session.commitState?.selectedPaths?.length ?? 0) > 0,
       hasCommitAiResult: session.commitState?.ai !== undefined,
+      hasCommitMessageSuggestion:
+        session.commitState?.messageSuggestion !== undefined,
       hasCommitPreview: session.commitState?.preview !== undefined,
       hasChangesPreview: session.changesState?.preview !== undefined,
       hasHistoryRestorePreview:
@@ -5452,6 +5648,24 @@ export class WorkbenchController implements vscode.Disposable {
     await this.sendChangesSnapshot(session, undefined, candidates);
   }
 
+  /**
+   * v0.0.9 §4：提交说明建议草稿过期判定（与快照 stale 标记同一来源）。
+   * binding 与当前范围/候选哈希不匹配即过期：只能查看，不能采用。
+   * 采用（adopt）前必须用它重新校验，不依赖 Webview 回传或快照副本。
+   */
+  private isCommitMessageSuggestionStale(
+    session: WorkbenchSession,
+    suggestion: CommitMessageSuggestion,
+    candidates: Awaited<ReturnType<typeof collectCommitCandidates>>,
+  ): boolean {
+    return (
+      suggestion.binding !== undefined &&
+      (suggestion.binding.scopeHash !== session.scopeHash ||
+        suggestion.binding.candidateHash !==
+          hashCandidateState(candidates, "", []))
+    );
+  }
+
   private ensureCommitState(session: WorkbenchSession): CommitSessionState {
     if (!session.commitState) {
       session.commitState = {
@@ -5578,8 +5792,31 @@ export class WorkbenchController implements vscode.Disposable {
     }
 
     // 一次性反馈（应用本地规则结果、规则更新提示）：随本次快照下发后清除。
-    const feedback = state.feedback;
+    let feedback = state.feedback;
     state.feedback = undefined;
+    // v0.0.9 §4：替换后“撤销替换”入口必须持续可用——只要仍持有替换前
+    // 备份，就在每次快照追加撤销提示（不覆盖其他一次性反馈）。
+    if (state.messageSuggestionReplaceBackup) {
+      const undoText = "已用建议替换提交说明；可撤销替换恢复原内容。";
+      feedback = feedback
+        ? { ...feedback, message: `${undoText} ${feedback.message}` }
+        : { tone: "success", message: undoText };
+    }
+
+    // v0.0.9 §4 建议草稿过期判定：复用 AI 结果失效机制——binding 与当前
+    // 范围/候选哈希不匹配时标记 stale，只能查看或重新生成，不能采用；
+    // 用户草稿 message 保持不变。
+    let messageSuggestion = state.messageSuggestion;
+    if (
+      messageSuggestion &&
+      this.isCommitMessageSuggestionStale(
+        session,
+        messageSuggestion,
+        candidates,
+      )
+    ) {
+      messageSuggestion = { ...messageSuggestion, stale: true };
+    }
 
     return {
       kind: "commit",
@@ -5620,6 +5857,7 @@ export class WorkbenchController implements vscode.Disposable {
       },
       feedback,
       ai,
+      messageSuggestion,
       aiPrivacy: [
         {
           scenario: "selection",
@@ -5927,6 +6165,8 @@ export class WorkbenchController implements vscode.Disposable {
     state.selectedPaths = undefined;
     state.message = "";
     state.ai = undefined;
+    state.messageSuggestion = undefined;
+    state.messageSuggestionReplaceBackup = undefined;
     await this.post({
       protocolVersion: WORKBENCH_PROTOCOL_VERSION,
       type: "operation/result",

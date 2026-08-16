@@ -543,4 +543,36 @@ describe("SettingsModule 提交选择规则", () => {
     await fireEvent.keyDown(patternInput, { key: "Enter" });
     expect(saveCalls(onAction)).toHaveLength(0);
   });
+
+  it("AI 页模型场景列表使用收敛后的读屏标签（v0.0.9 缺陷修复）", async () => {
+    const onAction = vi.fn();
+    render(SettingsModule, {
+      snapshot: {
+        ...snapshot,
+        ai: {
+          ...snapshot.ai,
+          scenarios: [
+            {
+              id: "commitMessage",
+              label: "提交说明",
+              description: "生成提交说明建议草稿",
+            },
+            {
+              id: "conflictAdvice",
+              label: "冲突处理",
+              description: "冲突处理建议",
+            },
+          ],
+        },
+      },
+      onAction,
+    });
+    // 读屏可辨识的滚动区名称统一为“模型场景列表”，不残留“AI 场景”表述。
+    expect(
+      screen.getByRole("region", { name: "模型场景列表" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("region", { name: "AI 场景模型列表" }),
+    ).not.toBeInTheDocument();
+  });
 });

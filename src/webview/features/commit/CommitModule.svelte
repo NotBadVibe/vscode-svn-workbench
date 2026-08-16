@@ -19,6 +19,10 @@
     sourceLabels,
   } from "../../i18n/terminology";
   import {
+    diffDraftAgainstSuggestion,
+    insertSuggestionBlankFields,
+  } from "../../../commit/commitMessageSuggestion";
+  import {
     computeTriState,
     toggleActionable,
     selectActionable,
@@ -97,6 +101,10 @@
   let scrollTop = $state(0);
   let viewportHeight = $state(500);
   let density = $state<ListDensity>("comfortable");
+  /** v0.0.9 §4：替换前确认态（展示字符数，等待用户确认）。 */
+  let replaceConfirmOpen = $state(false);
+  /** 替换确认对应的目标字符数（打开时计算）。 */
+  let replaceTargetLength = $state(0);
 
   const savedPreferences = loadListPreferences("commit");
   sortField = savedPreferences.sortField;
@@ -378,6 +386,61 @@
 
   function updateDraft(): void {
     onAction("commit/update-draft", { message });
+  }
+
+  /*
+   * v0.0.9 §4 建议草稿：快照中的建议只在本地计算差异对比；
+   * message 本地状态不被建议覆盖（不覆盖回归保护在 Host 侧强制）。
+   */
+  const suggestion = $derived(snapshot.messageSuggestion);
+  const suggestionDiff = $derived.by(() => {
+    if (!suggestion) return undefined;
+    return diffDraftAgainstSuggestion(message, suggestion.message);
+  });
+  const suggestionCharacterCount = $derived(suggestion?.message.length ?? 0);
+
+  function requestInsertBlankFields(): void {
+    if (!suggestion) return;
+    // 本地先行插入（保留用户已填字段），同时把结果同步给 Host 作为权威。
+    const outcome = insertSuggestionBlankFields(message, suggestion.message);
+    message = outcome.message;
+    onAction("commit/adopt-suggestion", {
+      token: suggestion.token,
+      mode: "insert-blank-fields",
+      currentMessage: message,
+    });
+  }
+
+  function openReplaceConfirm(): void {
+    if (!suggestion) return;
+    replaceTargetLength = suggestion.message.trim().length;
+    replaceConfirmOpen = true;
+  }
+
+  function confirmReplace(): void {
+    if (!suggestion) return;
+    const previousMessage = message;
+    replaceConfirmOpen = false;
+    message = suggestion.message.trim();
+    onAction("commit/adopt-suggestion", {
+      token: suggestion.token,
+      mode: "replace",
+      currentMessage: previousMessage,
+    });
+  }
+
+  function copySuggestion(): void {
+    if (!suggestion) return;
+    onAction("copy-text", { text: suggestion.message });
+  }
+
+  function discardSuggestion(): void {
+    if (!suggestion) return;
+    onAction("commit/discard-suggestion", { token: suggestion.token });
+  }
+
+  function undoSuggestionReplace(): void {
+    onAction("commit/undo-suggestion-replace");
   }
 
   function handleMessageKeydown(event: KeyboardEvent): void {
@@ -784,7 +847,7 @@
             })}
         >
           <span class="codicon codicon-sparkle" aria-hidden="true"></span>
-          AI 生成说明
+          生成建议草稿
         </button>
       </div>
       {#if messagePrivacy}<div class="privacy-note">
@@ -830,6 +893,134 @@
           {/each}
         </div>
       {/if}
+      {#if suggestion}
+        <div
+          class="commit-suggestion"
+          class:commit-suggestion--stale={suggestion.stale}
+          role="region"
+          aria-label="提交说明建议草稿"
+        >
+          <div class="commit-suggestion__head">
+            <span class="codicon codicon-sparkle" aria-hidden="true"></span>
+            <strong>建议草稿（不覆盖当前提交说明）</strong>
+            {#if suggestion.stale}<span
+                class="commit-suggestion__stale"
+                role="status">已过期</span
+              >{/if}
+          </div>
+          <small>
+            来源：{sourceLabels[suggestion.source]} · 生成输入仅包含文件信息与差异统计，不能证明具体行为
+            {#if suggestion.model}· 模型 {suggestion.model}{/if}
+          </small>
+          {#if suggestion.metadataOnly}<small class="commit-suggestion__note"
+              >基于文件信息生成，未读取差异正文；请结合实际改动确认。</small
+            >{/if}
+          {#if suggestion.stale}<p class="commit-suggestion__note">
+              范围或候选已变化，该建议只能查看，不能直接采用；当前提交说明保持不变。
+            </p>{/if}
+          <pre class="commit-suggestion__body">{suggestion.message}</pre>
+          {#if !suggestion.stale && suggestionDiff}
+            <details class="commit-suggestion__diff" open>
+              <summary>与当前草稿的差异</summary>
+              {#if suggestionDiff.removed.length > 0}<div
+                  class="commit-suggestion__diffgroup"
+                >
+                  <span class="commit-suggestion__removed-label"
+                    >替换将移除（{suggestionDiff.removed.length} 行）</span
+                  >
+                  {#each suggestionDiff.removed as line, lineIndex (lineIndex)}<code
+                      class="commit-suggestion__removed"
+                      >{line || "（空行）"}</code
+                    >{/each}
+                </div>{/if}
+              {#if suggestionDiff.added.length > 0}<div
+                  class="commit-suggestion__diffgroup"
+                >
+                  <span class="commit-suggestion__added-label"
+                    >建议新增（{suggestionDiff.added.length} 行）</span
+                  >
+                  {#each suggestionDiff.added as line, lineIndex (lineIndex)}<code
+                      class="commit-suggestion__added"
+                      >{line || "（空行）"}</code
+                    >{/each}
+                </div>{/if}
+              {#if suggestionDiff.added.length === 0 && suggestionDiff.removed.length === 0}
+                <p class="commit-suggestion__note">建议与当前草稿内容相同。</p>
+              {/if}
+            </details>
+          {/if}
+          <div class="commit-suggestion__actions">
+            <button
+              type="button"
+              class="button button--secondary"
+              disabled={suggestion.stale}
+              onclick={requestInsertBlankFields}>插入空白字段</button
+            >
+            <button
+              type="button"
+              class="button button--secondary"
+              disabled={suggestion.stale}
+              onclick={openReplaceConfirm}
+              >替换草稿（{suggestionCharacterCount} 字符）</button
+            >
+            <button
+              type="button"
+              class="button button--secondary"
+              onclick={copySuggestion}>复制建议</button
+            >
+            <button
+              type="button"
+              class="button button--secondary"
+              onclick={discardSuggestion}>放弃</button
+            >
+          </div>
+          {#if suggestion.warnings.length > 0}
+            {#each suggestion.warnings as warning, warningIndex (warningIndex)}<p
+                class="commit-suggestion__note"
+              >
+                {warning}
+              </p>{/each}
+          {/if}
+        </div>
+      {/if}
+      {#if replaceConfirmOpen && suggestion}
+        <div
+          class="commit-suggestion__confirm"
+          role="alertdialog"
+          aria-modal="false"
+          aria-label="确认替换提交说明"
+        >
+          <strong
+            >将用建议替换当前提交说明：当前 {message.length} 字符 → 建议
+            {replaceTargetLength} 字符。</strong
+          >
+          <p class="commit-suggestion__note">
+            替换后可用“撤销替换”恢复原内容；当前选择与范围不受影响。
+          </p>
+          <div class="commit-suggestion__actions">
+            <button
+              type="button"
+              class="button button--primary"
+              onclick={confirmReplace}
+              >确认替换（{replaceTargetLength} 字符）</button
+            >
+            <button
+              type="button"
+              class="button button--secondary"
+              onclick={() => (replaceConfirmOpen = false)}>不替换</button
+            >
+          </div>
+        </div>
+      {/if}
+      {#if snapshot.feedback?.message.includes("已用建议替换提交说明")}
+        <div class="commit-suggestion__undo">
+          <button
+            type="button"
+            class="button button--secondary"
+            onclick={undoSuggestionReplace}>撤销替换</button
+          >
+        </div>
+      {/if}
       {#if snapshot.ai}
         <div class="ai-summary">
           <span class="codicon codicon-sparkle" aria-hidden="true"></span>
@@ -850,10 +1041,9 @@
             {:else}
               <strong>{snapshot.ai.summary}</strong>
               <small
-                >来源：{sourceLabels[snapshot.ai.source]}{snapshot.ai.source ===
-                "local-rule-fallback"
-                  ? " · 模型暂时不可用"
-                  : ""}{#if snapshot.ai.source === "configured-model" && snapshot.ai.binding}
+                >来源：{sourceLabels[
+                  snapshot.ai.source
+                ]}{#if snapshot.ai.source === "configured-model" && snapshot.ai.binding}
                   · 模型 {snapshot.ai.binding.model ?? "已配置模型"} · {formatZhDateTime(
                     snapshot.ai.binding.generatedAt,
                   )}{/if}{#if snapshot.ai.stale}

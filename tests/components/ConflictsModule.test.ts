@@ -64,4 +64,46 @@ describe("ConflictsModule", () => {
       content: "remote\n",
     });
   });
+
+  it("未配置外部模型时按钮与隐私文案如实指向本地建议（v0.0.9）", async () => {
+    const onAction = vi.fn();
+    const unconfigured: ConflictSnapshot = {
+      ...snapshot,
+      aiPrivacy: {
+        model: "本地规则（未配置外部模型）",
+        characters: 86,
+        maxCharacters: 32000,
+        data: "基础版本、我的版本、对方版本、工作副本的截断文本与修订元数据",
+        historyIncluded: false,
+      },
+    };
+    render(ConflictsModule, { snapshot: unconfigured, onAction });
+    // 不标“AI”，如实指向本地建议（AI09-TRUTH-01）。
+    expect(
+      screen.getByRole("button", { name: "本地建议" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "AI 分析" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText(/不会外发/)).toBeInTheDocument();
+  });
+
+  it("配置外部模型时按钮保留“AI 分析”（AI09-TRUTH-01）", async () => {
+    const onAction = vi.fn();
+    const configured: ConflictSnapshot = {
+      ...snapshot,
+      aiPrivacy: {
+        model: "deepseek-v4-flash",
+        characters: 86,
+        maxCharacters: 32000,
+        data: "基础版本、我的版本、对方版本、工作副本的截断文本与修订元数据",
+        historyIncluded: false,
+      },
+    };
+    render(ConflictsModule, { snapshot: configured, onAction });
+    expect(screen.getByRole("button", { name: "AI 分析" })).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "本地建议" }),
+    ).not.toBeInTheDocument();
+  });
 });

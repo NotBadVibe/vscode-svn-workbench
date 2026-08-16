@@ -251,7 +251,7 @@ describe("CommitModule", () => {
       },
     });
 
-    expect(screen.getByText(/来源：已配置模型/)).toBeInTheDocument();
+    expect(screen.getByText(/来源：模型建议/)).toBeInTheDocument();
     expect(screen.getByText(/模型 deepseek-v4-flash/)).toBeInTheDocument();
     expect(screen.getByText(/2026-07-30 18:00/)).toBeInTheDocument();
   });
@@ -291,5 +291,161 @@ describe("CommitModule", () => {
     expect(screen.getByRole("status")).toHaveTextContent(
       "提交选择规则已更新，候选分类已按新规则刷新；可点击“应用本地规则”重新计算推荐选择。",
     );
+  });
+});
+
+describe("CommitModule 提交说明建议草稿（v0.0.9 §4）", () => {
+  const suggestion = {
+    token: "suggestion-token-1",
+    message: "feat(core): update flow\n\n影响：涉及核心流程\n风险：低",
+    source: "configured-model" as const,
+    model: "deepseek-v4-flash",
+    metadataOnly: false,
+    warnings: [],
+    binding: {
+      repositoryUuid: "uuid-1",
+      scopeHash: "scope-1",
+      candidateHash: "candidates-1",
+      generatedAt: "2026-07-30T10:00:00.000Z",
+      model: "deepseek-v4-flash",
+    },
+  };
+
+  function renderWithSuggestion(overrides: Partial<CommitSnapshot> = {}) {
+    return renderCommit({ messageSuggestion: suggestion, ...overrides });
+  }
+
+  it("建议草稿只展示在建议区，不覆盖主草稿输入框", () => {
+    renderWithSuggestion();
+    expect(
+      screen.getByRole("region", { name: "提交说明建议草稿" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("建议草稿（不覆盖当前提交说明）"),
+    ).toBeInTheDocument();
+    // 主草稿仍是用户已填内容，未被建议替换。
+    expect(screen.getByLabelText("提交说明")).toHaveValue("feat(core): update");
+    // 来源与“仅文件信息”声明可见。
+    expect(screen.getByText(/来源：模型建议/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/生成输入仅包含文件信息与差异统计，不能证明具体行为/),
+    ).toBeInTheDocument();
+  });
+
+  it("展示与当前草稿的行级差异", () => {
+    renderWithSuggestion();
+    expect(screen.getByText("与当前草稿的差异")).toBeInTheDocument();
+    expect(screen.getByText("建议新增（4 行）")).toBeInTheDocument();
+    expect(screen.getByText("替换将移除（1 行）")).toBeInTheDocument();
+  });
+
+  it("插入空白字段：本地合并后发送 adopt-suggestion（insert-blank-fields）", async () => {
+    const onAction = renderWithSuggestion();
+    await fireEvent.click(screen.getByRole("button", { name: "插入空白字段" }));
+    expect(onAction).toHaveBeenCalledWith("commit/adopt-suggestion", {
+      token: "suggestion-token-1",
+      mode: "insert-blank-fields",
+      currentMessage: expect.any(String),
+    });
+  });
+
+  it("替换草稿：按钮显示字符数，确认框写明前后字符数", async () => {
+    const onAction = renderWithSuggestion();
+    await fireEvent.click(
+      screen.getByRole("button", { name: "替换草稿（39 字符）" }),
+    );
+    const dialog = screen.getByRole("alertdialog", {
+      name: "确认替换提交说明",
+    });
+    expect(dialog).toBeInTheDocument();
+    const confirmText = dialog.querySelector("strong")?.textContent ?? "";
+    expect(confirmText).toContain("当前 18 字符");
+    expect(confirmText).toContain("39 字符");
+    await fireEvent.click(
+      screen.getByRole("button", { name: "确认替换（39 字符）" }),
+    );
+    expect(onAction).toHaveBeenCalledWith("commit/adopt-suggestion", {
+      token: "suggestion-token-1",
+      mode: "replace",
+      currentMessage: "feat(core): update",
+    });
+  });
+
+  it("确认框“不替换”关闭且不发送采用动作", async () => {
+    const onAction = renderWithSuggestion();
+    await fireEvent.click(
+      screen.getByRole("button", { name: "替换草稿（39 字符）" }),
+    );
+    await fireEvent.click(screen.getByRole("button", { name: "不替换" }));
+    expect(
+      screen.queryByRole("alertdialog", { name: "确认替换提交说明" }),
+    ).not.toBeInTheDocument();
+    expect(onAction).not.toHaveBeenCalledWith(
+      "commit/adopt-suggestion",
+      expect.anything(),
+    );
+  });
+
+  it("复制建议与放弃分别发送对应动作", async () => {
+    const onAction = renderWithSuggestion();
+    await fireEvent.click(screen.getByRole("button", { name: "复制建议" }));
+    expect(onAction).toHaveBeenCalledWith("copy-text", {
+      text: suggestion.message,
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "放弃" }));
+    expect(onAction).toHaveBeenCalledWith("commit/discard-suggestion", {
+      token: "suggestion-token-1",
+    });
+  });
+
+  it("过期建议只读：插入与替换禁用，仍可复制与放弃", async () => {
+    const onAction = renderWithSuggestion({
+      messageSuggestion: { ...suggestion, stale: true },
+    });
+    expect(screen.getByText("已过期")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /范围或候选已变化，该建议只能查看，不能直接采用；当前提交说明保持不变/,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "插入空白字段" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "替换草稿（39 字符）" }),
+    ).toBeDisabled();
+    await fireEvent.click(screen.getByRole("button", { name: "复制建议" }));
+    expect(onAction).toHaveBeenCalledWith("copy-text", {
+      text: suggestion.message,
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "放弃" }));
+    expect(onAction).toHaveBeenCalledWith("commit/discard-suggestion", {
+      token: "suggestion-token-1",
+    });
+  });
+
+  it("替换后反馈包含“已用建议替换提交说明”时提供撤销替换入口", async () => {
+    const onAction = renderWithSuggestion({
+      feedback: {
+        tone: "success",
+        message: "已用建议替换提交说明；可撤销替换恢复原内容。",
+      },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "撤销替换" }));
+    expect(onAction).toHaveBeenCalledWith("commit/undo-suggestion-replace");
+  });
+
+  it("本地回退建议标记“基于文件信息”占位", () => {
+    renderWithSuggestion({
+      messageSuggestion: {
+        ...suggestion,
+        source: "local-rule-fallback",
+        metadataOnly: true,
+      },
+    });
+    expect(
+      screen.getByText(/基于文件信息生成，未读取差异正文/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/来源：模型不可用，已保留本地结果/),
+    ).toBeInTheDocument();
   });
 });

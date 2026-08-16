@@ -151,8 +151,8 @@ test("SCR-06：变更集三栏拥有独立滚动归属且选择不丢失", async
   await openModule(page, "变更集");
   const current = page.getByRole("region", { name: "现有 SVN 变更集" });
   await assertScrollable(current, current.locator(".compact-file-list").last());
-  await page.getByRole("button", { name: "生成拆分建议" }).click();
-  const suggestions = page.getByRole("region", { name: "AI 拆分候选" });
+  await page.getByRole("button", { name: "生成分组建议" }).click();
+  const suggestions = page.getByRole("region", { name: "分组建议" });
   await assertScrollable(
     suggestions,
     suggestions.locator(".split-card").last(),
@@ -238,7 +238,7 @@ test("SCR-08：设置和诊断长列表具有明确滚动区", async ({ page }) 
   await page.setViewportSize({ width: 1024, height: 600 });
   await page.goto("/?dataset=scroll");
   await openModule(page, "设置");
-  const scenarios = page.getByRole("region", { name: "AI 场景模型列表" });
+  const scenarios = page.getByRole("region", { name: "模型场景列表" });
   await assertScrollable(scenarios, scenarios.locator(".scenario-row").last());
   await page.getByRole("tab", { name: "团队提交规范" }).click();
   const memory = page.getByRole("list", { name: "最近团队记忆" });

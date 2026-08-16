@@ -4,7 +4,11 @@
     WebviewAction,
   } from "@protocol/workbenchProtocol";
   import ScrollArea from "../../components/ui/ScrollArea.svelte";
-  import { riskLabels, sourceLabels } from "../../i18n/terminology";
+  import {
+    localPurposeHeading,
+    riskLabels,
+    sourceLabels,
+  } from "../../i18n/terminology";
   let {
     snapshot,
     onAction,
@@ -17,10 +21,16 @@
 <section class="intelligence-page">
   <header class="page-heading page-heading--actions">
     <div>
-      <span class="eyebrow">变更智能分析</span>
-      <h1>影响与测试建议</h1>
+      <span class="eyebrow">按路径与本地规则生成的建议</span>
+      <h1>{localPurposeHeading.impact}</h1>
       <p>
-        {snapshot.changedFiles} 个变更文件 · {sourceLabels[snapshot.source]}
+        本页依据变更文件路径、数量与本地规则生成固定建议，不进行依赖关系分析，也不调用外部模型。当前来源：{sourceLabels[
+          snapshot.source
+        ]}
+      </p>
+      <p class="purpose-note">
+        适用：当前项目与右键范围（{snapshot.changedFiles} 个变更文件）。使用的数据类型：文件相对路径与文件类型。得到结果后下一步：人工核对这些建议并决定验证命令。本页不修改文件，也不执行
+        SVN 写操作。
       </p>
     </div>
     <button

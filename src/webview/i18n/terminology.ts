@@ -26,10 +26,26 @@ export const fileStatusLabels: Record<WorkbenchFileStatus, string> = {
   unknown: "未知状态",
 };
 
+/**
+ * 结果来源统一文案（v0.0.9 §3.1）：
+ * - local-rule：未外发、可重复验证的本地规则，统一称“本地检查”；
+ * - configured-model：基于明确回执中的数据生成，称“模型建议”；
+ * - local-rule-fallback：模型不可用时保留本地结果，必须完整标注，不得简称“AI 分析”。
+ */
 export const sourceLabels = {
-  "local-rule": "本地规则",
-  "configured-model": "已配置模型",
-  "local-rule-fallback": "本地规则降级",
+  "local-rule": "本地检查",
+  "configured-model": "模型建议",
+  "local-rule-fallback": "模型不可用，已保留本地结果",
+} as const;
+
+/** v0.0.9 §5：页面首屏“运行本地规则还是外部模型”的统一说明。 */
+export const localOnlyEngineLabel = "本地规则引擎";
+
+/** v0.0.9 §5：纯本地能力不得表述为“AI 已审查 / 智能分析”。 */
+export const localPurposeHeading = {
+  review: "本地变更检查",
+  impact: "影响与测试建议",
+  split: "按目录和文件类型分组",
 } as const;
 
 export const confidenceLabels = {
@@ -59,9 +75,9 @@ export const taskLabels: Record<WorkbenchTaskId, string> = {
   "history/revisions": "查看历史记录",
   "conflicts/resolve": "处理文件冲突",
   "changelists/manage": "管理变更集",
-  "ai-review/review": "AI 变更审查",
-  "impact/analyze": "分析影响与测试",
-  "agent/plan": "受控 AI 任务代理",
+  "ai-review/review": "本地变更检查",
+  "impact/analyze": "影响与测试建议",
+  "agent/plan": "本地检查流水线",
   "repository/update": "更新当前范围",
   "repository/recovery": "清理与恢复工作副本",
   "repository/browse": "浏览 SVN 仓库",

@@ -1,14 +1,31 @@
 {
   "schemaVersion": 1,
   "version": "0.0.9",
-  "status": "draft",
+  "status": "released",
   "baseVersion": "0.0.8",
-  "releaseDate": null,
-  "gitTag": null,
-  "gitCommit": null,
-  "sourceState": "未形成 v0.0.9 候选源码；当前仅有 AI 真实性、入口命名与用户草稿保护规划，前序依赖尚未形成候选版本",
-  "vsix": null,
-  "tests": null,
-  "acceptedEvidenceRun": null,
-  "evidencePath": null
+  "releaseDate": "2026-08-16",
+  "gitTag": "v0.0.9",
+  "gitCommit": "f3d1c5db345f487c61d890a483b52976f42fef6c",
+  "sourceState": "clean",
+  "vsix": {
+    "fileName": "svn-workbench-0.0.9.vsix",
+    "sizeBytes": 8555216,
+    "sha256": "D31DC6EF5354C166C647969AE18594CAA0CBDFE0CBD67BF284EEE435A875C7D2"
+  },
+  "tests": {
+    "unit": 1024,
+    "lineCoverage": "93.87%",
+    "webview": 69,
+    "extensionHost": "passed",
+    "performance": "passed",
+    "toolchain": {
+      "node": "26.0.0",
+      "npm": "12.0.2",
+      "vscode": "1.133.0",
+      "platform": "macOS 26.6 arm64"
+    }
+  },
+  "acceptedEvidenceRun": "2026-08-16T10-56-42-405Z-4f598cbf",
+  "evidencePath": "artifacts/2026-08-16T10-56-42-405Z-4f598cbf",
+  "evidenceTreeSha256": "9212A648160B8D932D2FC510FED29626B5B3EFB4535AFC2723E941D45A41AB5F"
 }

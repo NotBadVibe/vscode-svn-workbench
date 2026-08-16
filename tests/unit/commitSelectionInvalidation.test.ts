@@ -3,7 +3,7 @@
  * 失效事件命中当前会话仓库时，清除旧提交预览与 AI 选择结果缓存，
  * 但不触碰用户已手动确认的提交篮选择状态；不匹配的事件不影响会话。
  * 阶段 4 补充：命中时写入提交页“规则已更新”一次性反馈，
- * 并清除基于旧分类的 Changelist 拆分建议与预览。
+ * 并清除基于旧分类的 Changelist 分组建议与预览。
  */
 import { describe, expect, it } from "vitest";
 import { applyCommitSelectionRulesInvalidation } from "../../src/extension/workbench/commitSelectionInvalidation";
@@ -50,7 +50,7 @@ function createSession(repositoryRoot: string): WorkbenchSession {
       suggestions: [
         {
           id: "split-1",
-          title: "基于旧分类的拆分建议",
+          title: "基于旧分类的分组建议",
           summary: "summary",
           message: "feat: split",
           paths: ["src/a.ts"],
@@ -96,7 +96,7 @@ describe("applyCommitSelectionRulesInvalidation", () => {
     });
   });
 
-  it("命中时清除基于旧分类的 Changelist 拆分建议与预览", () => {
+  it("命中时清除基于旧分类的 Changelist 分组建议与预览", () => {
     const session = createSession("/repo-a");
 
     applyCommitSelectionRulesInvalidation(session, "/repo-a");

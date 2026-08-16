@@ -3,6 +3,7 @@ import {
   isWorkbenchModuleId,
   isWorkbenchTaskForModule,
   WORKBENCH_PROTOCOL_VERSION,
+  type CommitMessageSuggestion,
   type CommitSelectionPreviewItem,
   type CommitSelectionSettingsLayerView,
   type CommitSelectionSettingsSection,
@@ -689,14 +690,89 @@ export function startMockWorkbench(): void {
       );
     }
     if (action === "commit/generate-message") {
+      // v0.0.9 §4：生成建议草稿，不覆盖当前提交说明（message 保持不变）。
+      const commitMessageScenario = new URLSearchParams(
+        window.location.search,
+      ).get("commitMessage");
+      const suggestion: CommitMessageSuggestion = {
+        token: "mock-suggestion-token",
+        message:
+          "feat(workbench): 迁移统一 Svelte UI\n\n范围：当前提交范围\n影响：涉及工作台模块，提交前请确认",
+        source: "configured-model" as const,
+        model: "deepseek-v4-flash",
+        metadataOnly: false,
+        warnings: [],
+        stale: commitMessageScenario === "stale" ? true : undefined,
+        binding: {
+          repositoryUuid: "mock-repository-uuid",
+          scopeHash: "mock-scope-hash",
+          candidateHash: "mock-candidate-hash",
+          generatedAt: "2026-08-04T09:30:00.000Z",
+          model: "deepseek-v4-flash",
+        },
+      };
+      // 跨 action 保持：生成后 preview/adopt/undo 快照仍携带建议区。
+      mockCommitSuggestion = suggestion;
       injectSnapshot(
         "commit",
         commitSnapshot({
-          message: "feat(workbench): 迁移统一 Svelte UI",
-          ai: {
-            source: "local-rule",
-            summary: "已基于 2 个文件生成提交说明。",
-            warnings: [],
+          messageSuggestion: suggestion,
+          feedback:
+            commitMessageScenario === "stale"
+              ? undefined
+              : {
+                  tone: "success" as const,
+                  message: "已生成建议草稿；当前提交说明保持不变。",
+                },
+        }),
+      );
+    }
+    if (action === "commit/adopt-suggestion") {
+      const mode = (data && data.mode) || "replace";
+      const suggestion = commitMessageMockSuggestion();
+      injectSnapshot(
+        "commit",
+        commitSnapshot(
+          mode === "replace"
+            ? {
+                message: suggestion.message,
+                feedback: {
+                  tone: "success",
+                  message: "已用建议替换提交说明；可撤销替换恢复原内容。",
+                },
+              }
+            : {
+                message: "需求: \n\n范围: \n影响: ",
+                feedback: {
+                  tone: "success",
+                  message: "已插入 3 个空白字段，用户已填内容保持不变。",
+                },
+              },
+        ),
+      );
+    }
+    if (action === "commit/undo-suggestion-replace") {
+      injectSnapshot(
+        "commit",
+        commitSnapshot({
+          message: "",
+          messageSuggestion: commitMessageMockSuggestion(),
+          feedback: {
+            tone: "success",
+            message: "已撤销建议替换，已恢复原提交说明。",
+          },
+        }),
+      );
+    }
+    if (action === "commit/discard-suggestion") {
+      // 与真实 Host 一致：放弃后清除建议草稿（含跨 action 状态）。
+      mockCommitSuggestion = undefined;
+      injectSnapshot(
+        "commit",
+        commitSnapshot({
+          feedback: {
+            tone: "success",
+            message: "已放弃建议草稿；当前提交说明保持不变。",
           },
         }),
       );
@@ -1471,6 +1547,26 @@ function changesSnapshot(
   } as WorkbenchModuleSnapshot;
 }
 
+/** 提交说明建议草稿 Mock（v0.0.9 §4）。 */
+function commitMessageMockSuggestion() {
+  return {
+    token: "mock-suggestion-token",
+    message:
+      "feat(workbench): 迁移统一 Svelte UI\n\n范围：当前提交范围\n影响：涉及工作台模块，提交前请确认",
+    source: "configured-model" as const,
+    model: "deepseek-v4-flash",
+    metadataOnly: false,
+    warnings: [],
+    binding: {
+      repositoryUuid: "mock-repository-uuid",
+      scopeHash: "mock-scope-hash",
+      candidateHash: "mock-candidate-hash",
+      generatedAt: "2026-08-04T09:30:00.000Z",
+      model: "deepseek-v4-flash",
+    },
+  };
+}
+
 function commitSnapshot(
   overrides: Record<string, unknown> = {},
 ): WorkbenchModuleSnapshot {
@@ -1545,6 +1641,9 @@ function commitSnapshot(
       { id: "feature", label: "需求开发", body: "需求: \n\n范围: \n影响: " },
       { id: "bugfix", label: "问题修复", body: "修复: \n\n原因: \n影响: " },
     ],
+    // v0.0.9 §4：跨 action 保持建议草稿——生成后预览等后续快照仍展示建议区，
+    // 与真实 Host（快照构建始终携带 messageSuggestion）一致。
+    messageSuggestion: mockCommitSuggestion,
     ...overrides,
   } as WorkbenchModuleSnapshot;
 }
@@ -1784,6 +1883,9 @@ function initialMockSelectionState(): MockSelectionState {
 }
 
 let mockSelectionState: MockSelectionState = initialMockSelectionState();
+/** v0.0.9 §4：Mock 跨 action 保持提交说明建议草稿，与真实 Host 一致
+ * （生成后经 preview/adopt/undo 等快照重建仍保留，discard/commit 后清除）。 */
+let mockCommitSuggestion: CommitMessageSuggestion | undefined;
 
 function mockSelectionCandidateInputs(): Array<{
   relativePath: string;
@@ -1980,7 +2082,7 @@ function settingsSnapshot(
           ...settingsSnapshotValue.ai,
           scenarios: Array.from({ length: 32 }, (_, index) => ({
             id: `scenario-${index}`,
-            label: `AI 场景 ${index + 1}`,
+            label: `模型场景 ${index + 1}`,
             description: `第 ${index + 1} 个场景的中文用途说明。`,
           })),
         },
@@ -2277,16 +2379,16 @@ function changelistSuggestions() {
     summary: `${paths.length} 个界面文件`,
     message: "feat(workbench): 更新界面",
     paths,
-    reason: "按业务模块聚合。",
+    reason: "按目录聚合。",
     risks: [],
   };
   return isScrollDataset()
     ? Array.from({ length: 24 }, (_, index) => ({
         ...base,
         id: `split-${index + 1}`,
-        title: `拆分建议 ${index + 1}：工作台模块`,
+        title: `分组建议 ${index + 1}：工作台模块`,
       }))
-    : [{ ...base, id: "split-1", title: "拆分 1：webview" }];
+    : [{ ...base, id: "split-1", title: "分组 1：webview" }];
 }
 
 function changelistsSnapshot(
@@ -2336,7 +2438,7 @@ function agentSnapshot(
       steps: [],
       guardrails: [
         "只访问当前右键范围",
-        "每一步都需要显式批准",
+        "只执行只读采集与本地分析",
         "不自动修改文件、不自动提交",
       ],
     };
@@ -2349,7 +2451,7 @@ function agentSnapshot(
     ],
     [
       "review",
-      "执行证据审查",
+      "执行本地证据检查",
       "local-analysis",
       "发现 1 个高风险、1 个提醒、1 个建议。",
     ],
@@ -2364,7 +2466,7 @@ function agentSnapshot(
   const steps = definitions.map(([id, title, capability, output], index) => ({
     id,
     title,
-    detail: `${title}的受控步骤。`,
+    detail: `${title}的固定只读步骤。`,
     capability,
     command: id === "status" ? "svn status --xml <current-scope>" : undefined,
     scope: "当前右键范围",
@@ -2388,7 +2490,7 @@ function agentSnapshot(
     objective,
     guardrails: [
       "只访问当前右键范围",
-      "每一步都需要显式批准",
+      "只执行只读采集与本地分析",
       "不自动修改文件、不自动提交",
     ],
     steps,
@@ -2396,7 +2498,7 @@ function agentSnapshot(
       cancelled || completed >= steps.length ? undefined : steps[completed].id,
     message:
       completed >= steps.length
-        ? "受控分析计划已完成，可以进入审查、影响或提交模块继续操作。"
+        ? "只读流水线已完成，可以进入本地检查、影响或提交模块继续操作。"
         : undefined,
   };
 }

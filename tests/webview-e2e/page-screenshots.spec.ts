@@ -130,7 +130,7 @@ test("保存每个 Svelte 功能页面的验收截图", async ({ page }) => {
 
   await test.step("Commit", async () => {
     await openModule(page, "提交");
-    await page.getByRole("button", { name: "AI 生成说明" }).click();
+    await page.getByRole("button", { name: "生成建议草稿" }).click();
     await page.getByRole("button", { name: /生成提交预览/ }).click();
     await expect(page.getByText("范围、状态和远端检查已通过")).toBeVisible();
     await capture(page, "03-commit");
@@ -156,7 +156,7 @@ test("保存每个 Svelte 功能页面的验收截图", async ({ page }) => {
 
   await test.step("Changelists", async () => {
     await openModule(page, "变更集");
-    await page.getByRole("button", { name: "生成拆分建议" }).click();
+    await page.getByRole("button", { name: "生成分组建议" }).click();
     await page.getByRole("button", { name: "套用并调整" }).click();
     await page.getByRole("button", { name: "生成应用预览" }).click();
     await expect(page.getByText('svn changelist "webview" …')).toBeVisible();
@@ -166,7 +166,7 @@ test("保存每个 Svelte 功能页面的验收截图", async ({ page }) => {
   await test.step("AI Review", async () => {
     await openModule(page, "AI 审查");
     await expect(
-      page.getByRole("heading", { name: "AI 变更审查" }).last(),
+      page.getByRole("heading", { name: "本地变更检查" }).last(),
     ).toBeVisible();
     await capture(page, "07-ai-review");
   });
@@ -174,7 +174,9 @@ test("保存每个 Svelte 功能页面的验收截图", async ({ page }) => {
   await test.step("Impact", async () => {
     await openModule(page, "影响分析");
     await expect(
-      page.getByRole("heading", { name: "影响与测试建议" }),
+      page
+        .locator(".intelligence-page")
+        .getByRole("heading", { name: "影响与测试建议" }),
     ).toBeVisible();
     await capture(page, "08-impact");
   });
@@ -184,7 +186,7 @@ test("保存每个 Svelte 功能页面的验收截图", async ({ page }) => {
     await page
       .getByRole("textbox", { name: "任务目标" })
       .fill("检查当前范围并形成测试建议");
-    await page.getByRole("button", { name: "生成受控计划" }).click();
+    await page.getByRole("button", { name: "运行固定流水线" }).click();
     await expect(
       page.getByText("重新采集 SVN 状态", { exact: true }),
     ).toBeVisible();

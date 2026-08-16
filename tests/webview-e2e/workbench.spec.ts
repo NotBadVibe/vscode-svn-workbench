@@ -41,13 +41,49 @@ test("previews a commit before enabling execution", async ({ page }) => {
   ).toBeVisible();
   await expect(page.getByText("外发预览").first()).toBeVisible();
   await expect(page.getByText(/不发送文件正文/).first()).toBeVisible();
-  await page.getByRole("button", { name: "AI 生成说明" }).click();
-  await expect(page.getByRole("textbox", { name: "提交说明" })).toHaveValue(
-    "feat(workbench): 迁移统一 Svelte UI",
-  );
+  await page.getByRole("button", { name: "生成建议草稿" }).click();
+  // v0.0.9 §4：建议只进入建议区，不覆盖用户已填提交说明。
+  await expect(
+    page.getByRole("region", { name: "提交说明建议草稿" }),
+  ).toBeVisible();
+  await expect(page.getByText("建议草稿（不覆盖当前提交说明）")).toBeVisible();
+  await expect(page.getByRole("textbox", { name: "提交说明" })).toHaveValue("");
   await page.getByRole("button", { name: /生成提交预览/ }).click();
   await expect(page.getByText("范围、状态和远端检查已通过")).toBeVisible();
   await expect(page.getByRole("button", { name: /确认提交/ })).toBeEnabled();
+});
+
+test("suggestion draft replace flow shows char count and undoes (v0.0.9 §4)", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await openModule(page, "提交");
+  await page.getByRole("button", { name: "生成建议草稿" }).click();
+  const suggestionRegion = page.getByRole("region", {
+    name: "提交说明建议草稿",
+  });
+  await expect(suggestionRegion).toBeVisible();
+  await expect(
+    suggestionRegion.getByText(/生成输入仅包含文件信息与差异统计/),
+  ).toBeVisible();
+
+  // 替换按钮显示建议字符数；确认框写明前后字符数后确认替换。
+  await suggestionRegion
+    .getByRole("button", { name: /替换草稿（\d+ 字符）/ })
+    .click();
+  const confirm = page.getByRole("alertdialog", {
+    name: "确认替换提交说明",
+  });
+  await expect(confirm.getByText(/当前 0 字符/)).toBeVisible();
+  await confirm.getByRole("button", { name: /确认替换（\d+ 字符）/ }).click();
+  await expect(page.getByRole("textbox", { name: "提交说明" })).not.toHaveValue(
+    "",
+  );
+  await expect(page.getByRole("button", { name: "撤销替换" })).toBeVisible();
+
+  // 撤销替换恢复原草稿（空）。
+  await page.getByRole("button", { name: "撤销替换" }).click();
+  await expect(page.getByRole("textbox", { name: "提交说明" })).toHaveValue("");
 });
 
 test("keeps AI file selection advisory and user-editable", async ({ page }) => {
@@ -57,7 +93,7 @@ test("keeps AI file selection advisory and user-editable", async ({ page }) => {
   await expect(
     page.getByText("建议选择 1 个文件；1 个需要人工确认，1 个建议排除。"),
   ).toBeVisible();
-  await expect(page.getByText(/来源：已配置模型/)).toBeVisible();
+  await expect(page.getByText(/来源：模型建议/)).toBeVisible();
   await expect(page.getByLabel("选择 src/extension.ts")).toBeChecked();
   await expect(
     page.getByLabel("选择 src/webview/App.svelte"),
@@ -228,7 +264,7 @@ test("shows review evidence without rendering sensitive values", async ({
   await expect(
     page
       .locator(".intelligence-page")
-      .getByRole("heading", { name: "AI 变更审查" }),
+      .getByRole("heading", { name: "本地变更检查" }),
   ).toBeVisible();
   await expect(page.getByText("src/config.ts:8")).toBeVisible();
   await expect(page.getByText("检测到疑似凭据，具体值已隐藏。")).toBeVisible();
@@ -238,17 +274,19 @@ test("links impact areas to concrete test commands", async ({ page }) => {
   await page.goto("/");
   await openModule(page, "影响分析");
   await expect(
-    page.getByRole("heading", { name: "影响与测试建议" }),
+    page
+      .locator(".intelligence-page")
+      .getByRole("heading", { name: "影响与测试建议" }),
   ).toBeVisible();
   await expect(page.getByText("npm run test:webview")).toBeVisible();
 });
 
-test("turns a split suggestion into a previewed SVN changelist", async ({
+test("turns a grouping suggestion into a previewed SVN changelist", async ({
   page,
 }) => {
   await page.goto("/");
   await openModule(page, "变更集");
-  await page.getByRole("button", { name: "生成拆分建议" }).click();
+  await page.getByRole("button", { name: "生成分组建议" }).click();
   await page.getByRole("button", { name: "套用并调整" }).click();
   await page.getByRole("button", { name: "生成应用预览" }).click();
   await expect(page.getByText('svn changelist "webview" …')).toBeVisible();
@@ -256,20 +294,18 @@ test("turns a split suggestion into a previewed SVN changelist", async ({
   await expect(page.getByText("文件已加入 webview。")).toBeVisible();
 });
 
-test("runs the agent plan only through explicit step approvals", async ({
-  page,
-}) => {
+test("runs the fixed read-only pipeline step by step", async ({ page }) => {
   await page.goto("/");
   await openModule(page, "任务代理");
   await page
     .getByRole("textbox", { name: "任务目标" })
     .fill("检查当前范围并形成测试建议");
-  await page.getByRole("button", { name: "生成受控计划" }).click();
+  await page.getByRole("button", { name: "运行固定流水线" }).click();
   for (let index = 0; index < 3; index += 1)
-    await page.getByRole("button", { name: "批准此步" }).first().click();
+    await page.getByRole("button", { name: "执行此步" }).first().click();
   await expect(
     page.getByText(
-      "受控分析计划已完成，可以进入审查、影响或提交模块继续操作。",
+      "只读流水线已完成，可以进入本地检查、影响或提交模块继续操作。",
     ),
   ).toBeVisible();
 });

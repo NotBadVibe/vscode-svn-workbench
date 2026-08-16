@@ -273,6 +273,43 @@ export interface CommitPlanView {
   createdAt: string;
 }
 
+/**
+ * v0.0.9 §4 提交说明建议草稿：生成（模型或本地回退）、失败、超时、取消、
+ * 降级、过期均不直接覆盖用户已填写的提交说明（CommitSnapshot.message）；
+ * 采用必须显式（commit/adopt-suggestion 的 insert-blank-fields / replace），
+ * 替换前由 Webview 展示字符数并允许撤销。
+ */
+export interface CommitMessageSuggestion {
+  /** 采用/放弃建议的一次性标识（与 session 绑定，Host 校验）。 */
+  token: string;
+  /** 建议正文；未采用前不写入 CommitSnapshot.message。 */
+  message: string;
+  /** 结果来源（v0.0.9 §3.1 统一文案）。 */
+  source: "local-rule" | "configured-model" | "local-rule-fallback";
+  /** 使用的模型（configured-model 时提供）。 */
+  model?: string;
+  /**
+   * 生成输入仅包含文件信息与差异统计（未读取差异正文）：
+   * 界面据此标记“基于文件信息”，不得声称理解具体行为。
+   */
+  metadataOnly: boolean;
+  /** 生成/降级过程中的提醒（如文件过多、团队规范提示、降级原因）。 */
+  warnings: string[];
+  /**
+   * binding 与当前范围/候选哈希不匹配（规划 6.3）：建议已过期，
+   * 只能查看或重新生成，不能采用；用户草稿保持不变。
+   */
+  stale?: boolean;
+  /** 建议绑定信息：仓库、范围、候选状态、生成时间与模型。 */
+  binding?: {
+    repositoryUuid: string;
+    scopeHash: string;
+    candidateHash: string;
+    generatedAt: string;
+    model?: string;
+  };
+}
+
 export interface CommitSnapshot {
   kind: "commit";
   files: WorkbenchFileView[];
@@ -302,6 +339,8 @@ export interface CommitSnapshot {
    * Host 在下发后的下一次快照构建时清除。
    */
   feedback?: { tone: "success" | "warning" | "error"; message: string };
+  /** v0.0.9 §4：建议草稿；展示在旁侧/建议区，不写回主草稿。 */
+  messageSuggestion?: CommitMessageSuggestion;
   ai?: {
     source: "local-rule" | "configured-model" | "local-rule-fallback";
     summary: string;
@@ -1022,6 +1061,9 @@ export type WebviewAction =
   | "commit/ai-select"
   | "commit/apply-template"
   | "commit/generate-message"
+  | "commit/adopt-suggestion"
+  | "commit/undo-suggestion-replace"
+  | "commit/discard-suggestion"
   | "commit/preview"
   | "commit/execute"
   | "history/select"
@@ -1133,6 +1175,9 @@ export const webviewActions = [
   "commit/ai-select",
   "commit/apply-template",
   "commit/generate-message",
+  "commit/adopt-suggestion",
+  "commit/undo-suggestion-replace",
+  "commit/discard-suggestion",
   "commit/preview",
   "commit/execute",
   "history/select",

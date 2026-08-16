@@ -14,6 +14,7 @@ import {
 import {
   AI_PROVIDER_PRESETS,
   AI_USAGE_SCENARIOS,
+  AI_VISIBLE_USAGE_SCENARIOS,
   getAiProviderPreset,
   getScenarioModel,
   normalizeAiBaseUrl,
@@ -4411,6 +4412,12 @@ async function testAiProviderPresets(): Promise<void> {
       "teamRules",
       "conflictMerge",
     ],
+  );
+  // v0.0.9 §6：设置页只展示有真实调用链的场景，伪场景（conflictMerge）不进入可见列表。
+  assert.ok(
+    AI_VISIBLE_USAGE_SCENARIOS.every(
+      (scenario) => scenario.id !== "conflictMerge",
+    ),
   );
   assert.equal(getAiProviderPreset("missing").id, "deepseek");
   assert.equal(

@@ -25,7 +25,7 @@
   function sanitizeName(value: string): string {
     return (
       value
-        .replace(/^拆分\s*\d+\s*[:：]\s*/, "")
+        .replace(/^(?:拆分|分组)\s*\d+\s*[:：]\s*/, "")
         .replace(/\s+/g, "-")
         .slice(0, 60) || "workbench-change"
     );
@@ -36,14 +36,16 @@
   <header class="page-heading page-heading--actions">
     <div>
       <span class="eyebrow">SVN 变更集</span>
-      <h1>变更集与智能拆分</h1>
-      <p>AI 只生成候选分组；应用前仍由扩展主机校验范围与最新工作副本状态。</p>
+      <h1>变更集管理</h1>
+      <p>
+        建议分组按目录和文件类型生成，不表示语义或依赖关系分析。模型可用时来源为“模型建议”，否则为本地检查；应用前仍由扩展主机校验范围与最新工作副本状态。
+      </p>
     </div>
     <button
       class="button button--primary"
       onclick={() => onAction("changelist/suggest")}
       ><span class="codicon codicon-sparkle" aria-hidden="true"
-      ></span>生成拆分建议</button
+      ></span>生成分组建议</button
     >
   </header>
   {#if snapshot.feedback}<div class="notice notice--success" role="status">
@@ -52,14 +54,11 @@
   <div class="privacy-note">
     <strong>外发预览</strong><span
       >{snapshot.aiPrivacy.data}；最多 {snapshot.aiPrivacy.fileLimit} 个文件；模型
-      {snapshot.aiPrivacy.model}；不含历史。点击“生成拆分建议”才会发送。</span
+      {snapshot.aiPrivacy.model}；不含历史。点击“生成分组建议”才会发送。</span
     >
   </div>
   {#if snapshot.suggestions.length > 0}<div class="ai-source">
-      建议来源：{sourceLabels[snapshot.source]}{snapshot.source ===
-      "local-rule-fallback"
-        ? " · 模型暂时不可用"
-        : ""}
+      建议来源：{sourceLabels[snapshot.source]}
     </div>{/if}
   {#if snapshot.fallbackReason}<div class="notice notice--warning">
       降级原因：{snapshot.fallbackReason}
@@ -120,17 +119,17 @@
 
     <ScrollArea
       class="changelist-column changelist-column--suggestions"
-      label="AI 拆分候选"
+      label="分组建议"
     >
       <div class="section-heading">
         <div>
-          <span class="eyebrow">AI 智能拆分</span>
-          <h2>拆分候选</h2>
+          <span class="eyebrow">按目录和文件类型分组</span>
+          <h2>分组候选</h2>
         </div>
       </div>
       {#if snapshot.suggestions.length === 0}<div class="preview-empty">
           <span class="codicon codicon-sparkle" aria-hidden="true"></span>
-          <p>按模块与文件类型生成可调整的本地建议。</p>
+          <p>按目录与文件类型生成可调整的本地建议，不表示语义拆分。</p>
         </div>{/if}
       {#each snapshot.suggestions as suggestion (suggestion.id)}
         <article class="split-card">

@@ -17,8 +17,8 @@
     if (snapshot.objective) objective = snapshot.objective;
   });
   const statusLabels = {
-    idle: "待规划",
-    planned: "等待批准",
+    idle: "待运行",
+    planned: "等待运行",
     running: "执行中",
     completed: "已完成",
     cancelled: "已取消",
@@ -43,10 +43,12 @@
 <section class="agent-page">
   <header class="page-heading">
     <div>
-      <span class="eyebrow">受控任务计划</span>
-      <h1>受控 AI 任务代理</h1>
+      <span class="eyebrow">固定只读流水线</span>
+      <h1>本地检查流水线</h1>
       <p>
-        先展示计划、能力和命令；每一步单独批准，任何状态变化都会使计划失效。
+        本页按固定顺序运行三步只读检查：重新采集 SVN
+        状态、本地证据检查、影响与测试计划。步骤不根据输入目标改变，也不调用外部模型；任何步骤都不修改文件或执行
+        SVN 写操作。
       </p>
     </div>
   </header>
@@ -69,7 +71,7 @@
           class="button button--primary"
           disabled={!objective.trim() || snapshot.status === "running"}
           onclick={() => onAction("agent/create-plan", { objective })}
-          >生成受控计划</button
+          >运行固定流水线</button
         >
       </div>
       {#if snapshot.message}<div
@@ -92,10 +94,12 @@
       {#if snapshot.steps.length === 0}
         <div class="preview-empty">
           <span class="codicon codicon-hubot" aria-hidden="true"></span>
-          <p>代理不会自行扩大范围或静默执行写操作。描述目标后先审阅计划。</p>
+          <p>
+            固定只读流水线不会扩大范围或执行写操作。输入目标后运行，步骤按序执行。
+          </p>
         </div>
       {:else}
-        <ScrollArea class="agent-steps" label="AI 任务计划步骤">
+        <ScrollArea class="agent-steps" label="本地检查流水线步骤">
           {#each snapshot.steps as step, index (step.id)}
             <article class={`agent-step agent-step--${step.status}`}>
               <div class="agent-step-index">
@@ -137,7 +141,7 @@
                   ? "已完成"
                   : step.status === "running"
                     ? "执行中"
-                    : "批准此步"}</button
+                    : "执行此步"}</button
               >
             </article>
           {/each}
@@ -171,7 +175,7 @@
       {/if}
     </section>
 
-    <ScrollArea class="agent-guardrails" label="AI 代理执行边界">
+    <ScrollArea class="agent-guardrails" label="本地检查流水线执行边界">
       <div class="section-heading">
         <div>
           <span class="eyebrow">安全边界</span>
@@ -186,7 +190,7 @@
       </ul>
       <div class="notice">
         <span class="codicon codicon-lock" aria-hidden="true"></span><span
-          >当前计划只允许 SVN
+          >本流水线只执行 SVN
           只读采集和本地分析。提交、标记冲突已解决、更新等写操作必须回到对应模块重新预览确认。</span
         >
       </div>
