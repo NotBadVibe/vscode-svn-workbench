@@ -15,14 +15,17 @@ const port = 41732;
 const baseUrl = `http://127.0.0.1:${port}`;
 
 async function waitForServer() {
-  for (let attempt = 0; attempt < 80; attempt += 1) {
+  // v0.0.9 发布修复：CI 慢 runner 上 vite preview 冷启动可能超过 8s（build
+  // 3s+ 已占用大部窗口），把就绪窗口放宽到 60s。本函数只等 server 就绪，
+  // 不参与交互/列表测量，放宽不影响任何预算数据。
+  for (let attempt = 0; attempt < 300; attempt += 1) {
     try {
       const response = await fetch(baseUrl);
       if (response.ok) return;
     } catch {
       // 未安装的浏览器不影响静态包体预算采集。
     }
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await new Promise((resolve) => setTimeout(resolve, 200));
   }
   throw new Error("Vite preview did not start.");
 }
