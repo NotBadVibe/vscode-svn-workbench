@@ -12,7 +12,9 @@ SVN Workbench 是面向 VS Code 的 AI-first Subversion 工作台。正式业务
 - 提交、更新、Cleanup、属性修改、冲突解决和历史恢复均先预览，再通过范围快照与确认令牌执行。
 - 支持 Working 与 BASE Diff、修订比较、Changed Paths、Blame、三方块级冲突合并和从修订恢复到工作副本。
 - Repository 模块提供 Branch、Tag、Switch、Relocate、Merge、仓库浏览、Patch、本地 Shelf 和发布说明，并对危险操作二次确认。
-- 支持 AI 智能选择、提交说明、变更审查、智能拆分、冲突建议、影响分析和逐步审批代理。
+- 支持 AI 智能选择、提交说明、变更审查（未配置模型时为本地变更检查）、智能拆分（按目录与文件类型分组）、冲突建议、影响分析和本地检查流水线。
+- 提交说明生成只产生建议草稿，不覆盖用户已填内容；替换前展示字符数并可撤销，范围或候选变化后建议只读。
+
 - AI Provider、模型和场景路由可配置；API Key 仅保存在 VS Code SecretStorage，提交历史默认不外发且受条数预算限制。
 - 通过 `.svn-workbench.json` 配置团队提交规则；AI 不可用时保留本地规则和完整 SVN 手动流程。
 - 提供安全认证输入、证书指纹核对、代理入口、工作副本恢复、环境诊断、严格 CSP、敏感信息裁剪和任务取消。
@@ -39,10 +41,10 @@ SVN Workbench 是面向 VS Code 的 AI-first Subversion 工作台。正式业务
 - `SVN：打开差异对比`
 - `SVN：查看历史`
 - `SVN：打开冲突中心`
-- `SVN：变更集与智能拆分`
-- `SVN：AI 变更审查`
-- `SVN：分析影响与测试`
-- `SVN：受控 AI 任务代理`
+- `SVN：变更集管理`
+- `SVN：本地变更检查`
+- `SVN：分析影响与测试建议`
+- `SVN：本地检查流水线`
 - `SVN：AI 配置模型`
 - `SVN：检查环境`
 

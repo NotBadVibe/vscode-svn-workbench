@@ -27,6 +27,7 @@ describe("项目切换未完成内容检查（v0.0.7 §8）", () => {
       commitMessage: "feat: x",
       hasManualSelection: true,
       hasCommitAiResult: true,
+      hasCommitMessageSuggestion: true,
       hasCommitPreview: true,
       hasChangesPreview: true,
       hasHistoryRestorePreview: true,
@@ -39,6 +40,7 @@ describe("项目切换未完成内容检查（v0.0.7 §8）", () => {
       "提交说明草稿",
       "手动文件选择",
       "提交选择 AI 结果",
+      "未处理的提交说明建议草稿",
       "待确认的提交预览",
       "待确认的文件操作预览",
       "待确认的历史恢复预览",
@@ -46,6 +48,14 @@ describe("项目切换未完成内容检查（v0.0.7 §8）", () => {
       "冲突 AI 建议",
       "Diff 编辑草稿",
     ]);
+  });
+
+  it("未处理的提交说明建议草稿单独触发拦截", () => {
+    const result = collectUnfinishedContent({
+      hasCommitMessageSuggestion: true,
+    });
+    expect(result.hasContent).toBe(true);
+    expect(result.reasons).toEqual(["未处理的提交说明建议草稿"]);
   });
 
   it("三选一决定解析：取消按留在当前项目处理", () => {

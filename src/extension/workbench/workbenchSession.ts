@@ -6,6 +6,7 @@ import type {
   AgentSnapshot,
   ChangesSnapshot,
   ChangelistsSnapshot,
+  CommitMessageSuggestion,
   CommitPlanView,
   CommitSnapshot,
   HistorySnapshot,
@@ -210,6 +211,16 @@ export interface CommitSessionState {
     view: CommitPlanView;
   };
   ai?: CommitSnapshot["ai"];
+  /**
+   * v0.0.9 §4：提交说明建议草稿。生成、失败、超时、取消、降级、过期均
+   * 不写入 message；采用必须经 commit/adopt-suggestion 显式执行。
+   */
+  messageSuggestion?: CommitMessageSuggestion;
+  /**
+   * v0.0.9 §4：替换草稿前的备份，供 commit/undo-suggestion-replace 恢复；
+   * 用户后续编辑、再次采用或放弃建议后清除。
+   */
+  messageSuggestionReplaceBackup?: { previous: string };
   /**
    * 提交页一次性反馈（应用本地规则结果、规则更新提示）；
    * 下次构建提交快照时消费并清除。

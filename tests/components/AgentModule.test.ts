@@ -4,7 +4,7 @@ import AgentModule from "../../src/webview/features/agent/AgentModule.svelte";
 import type { AgentSnapshot } from "../../src/protocol/workbenchProtocol";
 
 describe("AgentModule", () => {
-  it("只允许批准 Host 标记的下一步", async () => {
+  it("只允许执行 Host 标记的下一步", async () => {
     const onAction = vi.fn();
     const snapshot: AgentSnapshot = {
       kind: "agent",
@@ -38,7 +38,7 @@ describe("AgentModule", () => {
       ],
     };
     render(AgentModule, { snapshot, onAction });
-    const buttons = screen.getAllByRole("button", { name: "批准此步" });
+    const buttons = screen.getAllByRole("button", { name: "执行此步" });
     expect(buttons[0]).toBeEnabled();
     expect(buttons[1]).toBeDisabled();
     await fireEvent.click(buttons[0]);

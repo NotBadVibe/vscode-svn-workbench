@@ -5,7 +5,7 @@
  * 预览与 AI 选择结果基于旧规则得出，必须清除；用户已手动确认的提交篮选择
  * （selectedPaths）不被动静（规划 7.4：不能静默重置用户已手动确认的提交篮）。
  * 阶段 4 补充：提交页给出“规则已更新，可应用本地规则重新计算”的一次性反馈；
- * 基于旧分类的 AI 拆分建议（Changelist 建议缓存）同步失效，避免模块快照继续
+ * 基于旧分类的分组建议（Changelist 建议缓存）同步失效，避免模块快照继续
  * 展示旧分类结果。本模块是不依赖 VS Code 的纯逻辑，便于单元测试；快照重建由
  * WorkbenchController 在调用本函数后负责。
  */
@@ -42,7 +42,7 @@ export function applyCommitSelectionRulesInvalidation(
     session.changelistState.suggestions = [];
     session.changelistState.preview = undefined;
     session.changelistState.feedback =
-      "提交选择规则已更新，基于旧分类的拆分建议已失效，请重新获取拆分建议。";
+      "提交选择规则已更新，基于旧分类的分组建议已失效，请重新获取分组建议。";
   }
   return true;
 }

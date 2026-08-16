@@ -22,6 +22,11 @@
   } = $props();
 
   let activePane = $state<"mine" | "theirs" | "base" | "working">("working");
+  /** v0.0.9：模型未配置时按钮不标“AI”，如实指向本地建议（AI09-TRUTH-01）。 */
+  const conflictAdviceConfigured = $derived(
+    snapshot.aiPrivacy?.model !== undefined &&
+      !snapshot.aiPrivacy.model.includes("未配置"),
+  );
   let editorHost = $state<HTMLDivElement>();
   let editorView = $state<EditorView>();
   let editorToken = $state("");
@@ -194,7 +199,9 @@
             onclick={() =>
               onAction("conflict/advise", {
                 relativePath: snapshot.selected?.relativePath,
-              })}><span class="codicon codicon-sparkle"></span>AI 分析</button
+              })}
+            ><span class="codicon codicon-sparkle"
+            ></span>{conflictAdviceConfigured ? "AI 分析" : "本地建议"}</button
           >
           <button
             class="button button--secondary"
@@ -323,7 +330,7 @@
         <section class="conflict-advice">
           <div class="section-heading">
             <div>
-              <span class="eyebrow">AI 证据分析</span>
+              <span class="eyebrow">冲突建议来源</span>
               <h2>合并建议</h2>
             </div>
             {#if snapshot.advice}<span
@@ -335,7 +342,9 @@
               <strong>外发预览</strong><span
                 >{snapshot.aiPrivacy.data}；{snapshot.aiPrivacy
                   .characters}/{snapshot.aiPrivacy.maxCharacters} 个字符；模型 {snapshot
-                  .aiPrivacy.model}；不含历史。点击“AI 分析”后才会发送。</span
+                  .aiPrivacy.model}；不含历史。{conflictAdviceConfigured
+                  ? "点击“AI 分析”后才会发送。"
+                  : "未配置外部模型，将运行本地规则，不会外发。"}</span
               >
             </div>{/if}
           {#if snapshot.advice}
@@ -343,10 +352,7 @@
               >{recommendationLabels[snapshot.advice.recommendation]}</strong
             >
             <small class="ai-source"
-              >{sourceLabels[snapshot.advice.source]}{snapshot.advice.source ===
-              "local-rule-fallback"
-                ? " · 模型暂时不可用"
-                : ""}</small
+              >{sourceLabels[snapshot.advice.source]}</small
             >
             <p>{snapshot.advice.summary}</p>
             {#if snapshot.advice.fallbackReason}<div

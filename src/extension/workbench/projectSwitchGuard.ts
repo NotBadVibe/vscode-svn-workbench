@@ -11,6 +11,8 @@ export interface UnfinishedContentInput {
   hasManualSelection?: boolean;
   /** 提交选择 AI 结果。 */
   hasCommitAiResult?: boolean;
+  /** v0.0.9 §4：待处理的提交说明建议草稿（未放弃且未采用）。 */
+  hasCommitMessageSuggestion?: boolean;
   /** 待确认的提交预览。 */
   hasCommitPreview?: boolean;
   /** 待确认的文件操作预览。 */
@@ -40,6 +42,8 @@ export function collectUnfinishedContent(
   }
   if (input.hasManualSelection) reasons.push("手动文件选择");
   if (input.hasCommitAiResult) reasons.push("提交选择 AI 结果");
+  if (input.hasCommitMessageSuggestion)
+    reasons.push("未处理的提交说明建议草稿");
   if (input.hasCommitPreview) reasons.push("待确认的提交预览");
   if (input.hasChangesPreview) reasons.push("待确认的文件操作预览");
   if (input.hasHistoryRestorePreview) reasons.push("待确认的历史恢复预览");

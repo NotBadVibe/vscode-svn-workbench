@@ -138,6 +138,15 @@ export const AI_USAGE_SCENARIOS: Array<{
   },
 ];
 
+/**
+ * v0.0.9 §6：设置页只列出有真实模型调用链的场景。
+ * `conflictMerge` 目前没有真实调用链（内嵌编辑器不调用外部模型），
+ * 不在设置页展示；完整注册表仍保留以维持配置兼容。
+ */
+export const AI_VISIBLE_USAGE_SCENARIOS = AI_USAGE_SCENARIOS.filter(
+  (scenario) => scenario.id !== "conflictMerge",
+);
+
 export function getAiProviderPreset(id: string | undefined): AiProviderPreset {
   return (
     AI_PROVIDER_PRESETS.find((preset) => preset.id === id) ??

@@ -187,7 +187,7 @@ function createLocalSplitSuggestion(
       files,
     ),
     paths: files.map((file) => file.path),
-    reason: `按 ${moduleGroup === "repository-root" ? "文件预设" : "业务模块"} 聚合，便于提交说明聚焦。`,
+    reason: `按 ${moduleGroup === "repository-root" ? "文件预设" : "目录"} 聚合，便于提交说明聚焦。`,
     risks,
   };
 }

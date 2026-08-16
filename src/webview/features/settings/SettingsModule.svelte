@@ -110,7 +110,11 @@
     <div>
       <span class="eyebrow">工作台设置</span>
       <h1>设置与团队规范</h1>
-      <p>模型密钥仅保存在 VS Code 安全存储中，不会发送到页面快照。</p>
+      <p>
+        模型密钥仅保存在 VS Code
+        安全存储中，不会发送到页面快照。本页只列出有真实模型调用链的场景；未配置模型时，本地检查与人工
+        SVN 流程不受影响。
+      </p>
     </div>
   </header>
 
@@ -157,6 +161,10 @@
             >{snapshot.ai.hasApiKey ? "密钥已配置" : "尚未配置密钥"}</span
           >
         </div>
+        <p class="muted">
+          本页配置外部模型连接与逐场景模型。未配置或调用失败时，本地检查与人工
+          SVN 流程仍然可用。下方“按场景选择模型”只列出有真实调用链的场景。
+        </p>
         <label class="field"
           ><span>服务商预设</span><select
             bind:value={providerPreset}
@@ -251,8 +259,10 @@
             <h2>按场景选择模型</h2>
           </div>
         </div>
-        <p class="muted">留空时继承默认模型；高成本任务可单独选择更强模型。</p>
-        <ScrollArea class="scenario-list" label="AI 场景模型列表">
+        <p class="muted">
+          留空时继承默认模型；每个场景只有在对应任务真实调用外部模型时才会生效。
+        </p>
+        <ScrollArea class="scenario-list" label="模型场景列表">
           {#each snapshot.ai.scenarios as scenario (scenario.id)}
             <label class="scenario-row">
               <span

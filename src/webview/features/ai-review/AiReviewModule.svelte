@@ -8,6 +8,7 @@
   import {
     confidenceLabels,
     findingCategoryLabels,
+    localPurposeHeading,
     sourceLabels,
   } from "../../i18n/terminology";
   let {
@@ -29,17 +30,23 @@
 <section class="intelligence-page">
   <header class="page-heading page-heading--actions">
     <div>
-      <span class="eyebrow">基于证据的审查</span>
-      <h1>AI 变更审查</h1>
+      <span class="eyebrow">基于本地规则的检查</span>
+      <h1>{localPurposeHeading.review}</h1>
       <p>
-        结论必须关联文件、位置和证据；当前来源：{sourceLabels[snapshot.source]}
+        本页运行未外发的本地规则（敏感信息、调试残留、生成物与缺少测试文件），不调用外部模型。结论关联文件、位置和证据；当前来源：{sourceLabels[
+          snapshot.source
+        ]}
+      </p>
+      <p class="purpose-note">
+        适用：当前项目与右键范围。使用的数据类型：候选文件内容与文件类型规则。得到结果后下一步：根据证据决定是否调整提交范围，或进入提交前检查。本页不修改文件，也不执行
+        SVN 写操作。
       </p>
     </div>
     <button
       class="button button--primary"
       onclick={() => onAction("ai-review/run")}
       ><span class="codicon codicon-sparkle" aria-hidden="true"
-      ></span>重新审查</button
+      ></span>重新检查</button
     >
   </header>
 
@@ -82,11 +89,13 @@
       <span class="codicon codicon-pass-filled" aria-hidden="true"></span>
       <div>
         <strong>当前筛选没有发现项</strong>
-        <p>本地规则未发现确定问题；这不等于代码已经完成全部验证。</p>
+        <p>
+          本地检查未命中规则，没有发现确定问题；这不等于代码已经完成全部验证。
+        </p>
       </div>
     </div>
   {:else}
-    <ScrollArea class="finding-list" label="AI 审查发现">
+    <ScrollArea class="finding-list" label="本地检查发现">
       {#each visible as finding (finding.id)}
         <article class={`finding-card finding-card--${finding.severity}`}>
           <div class="finding-heading">
