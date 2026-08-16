@@ -1,14 +1,31 @@
 {
   "schemaVersion": 1,
   "version": "0.0.10",
-  "status": "draft",
+  "status": "released",
   "baseVersion": "0.0.9",
-  "releaseDate": null,
-  "gitTag": null,
-  "gitCommit": null,
-  "sourceState": "开发中：共享列表底座固化与 Changelists/History/Conflicts/Repository Browser/Properties/写操作预览清单/Settings 规则预览/Diagnostics/Review/Impact/Diff 迁移已落地（组件测试通过、npm run check 通过）；完整 npm run verify 候选门禁、视觉基线更新与人工主路径验收待执行",
-  "vsix": null,
-  "tests": null,
-  "acceptedEvidenceRun": null,
-  "evidencePath": null
+  "releaseDate": "2026-08-16",
+  "gitTag": "v0.0.10",
+  "gitCommit": "4ad53d10536e5aee5ef4cc64f01de16e800714e2",
+  "sourceState": "clean",
+  "vsix": {
+    "fileName": "svn-workbench-0.0.10.vsix",
+    "sizeBytes": 8588323,
+    "sha256": "F4B54EA32239ED23807B8DDCB150046AAC9DFAEBE3F7E1C147DA8AA061A44668"
+  },
+  "tests": {
+    "unit": 1070,
+    "lineCoverage": "94.02%",
+    "webview": 69,
+    "extensionHost": "passed",
+    "performance": "passed",
+    "toolchain": {
+      "node": "26.0.0",
+      "npm": "12.0.2",
+      "vscode": "1.133.0",
+      "platform": "macOS 26.6 arm64"
+    }
+  },
+  "acceptedEvidenceRun": "2026-08-16T16-11-55-461Z-01b751fc",
+  "evidencePath": "artifacts/2026-08-16T16-11-55-461Z-01b751fc",
+  "evidenceTreeSha256": "9B4D4CFA230579B4188CB42F5EE3640D833F3133402A56540F41C79885062C93"
 }

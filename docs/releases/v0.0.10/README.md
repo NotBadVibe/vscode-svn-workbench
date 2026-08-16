@@ -1,8 +1,8 @@
-# SVN Workbench v0.0.10 规划：跨模块列表与路径一致性
+# SVN Workbench v0.0.10：跨模块列表与路径一致性
 
-> 文档身份：`planned-version-specification`
+> 文档身份：`released-version-record`
 >
-> 状态：候选（candidate）。七个实施批次已全部落地并通过本地完整门禁（`npm run verify` 全链路）；候选源码提交、发布 evidence 与 VSIX 指纹见 [`manifest.json`](./manifest.json)。真实读屏 / 200% 目视 / 真实 SVN 人工主路径与三平台 CI 保留为非阻断观察项。
+> 状态：已发布。源码提交 `4ad53d10536e5aee5ef4cc64f01de16e800714e2`、标签 `v0.0.10`、VSIX 指纹、本地完整门禁、发布 evidence 已绑定；真实读屏 / 200% 目视 / 真实 SVN 人工主路径与三平台 CI 保留为非阻断观察项。
 >
 > 规划基线：[`v0.0.9`](../v0.0.9/)。v0.0.9 已于 2026-08-16 正式发布；当前开发事实继续以源码、测试和 [`../../current/`](../../current/) 为准。
 >
