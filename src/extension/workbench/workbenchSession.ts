@@ -80,6 +80,8 @@ export interface WorkbenchSession extends OpenWorkbenchRequest {
   };
   conflictState?: {
     selectedPath?: string;
+    /** v0.0.10：会话内首次冲突总数（处理进度基线）。 */
+    initialCount?: number;
     advice?: import("../../protocol/workbenchProtocol").ConflictSnapshot["advice"];
     resolvePreview?: {
       token: string;

@@ -24,3 +24,6 @@ test-results/
 # OS files
 .DS_Store
 Thumbs.db
+
+# 本地 AI 会话工具目录
+.zcode/

@@ -107,3 +107,129 @@ describe("ConflictsModule", () => {
     ).not.toBeInTheDocument();
   });
 });
+
+describe("ConflictsModule 列表迁移（v0.0.10）", () => {
+  const multiSnapshot: ConflictSnapshot = {
+    kind: "conflicts",
+    conflicts: [
+      { relativePath: "api/b.ts", type: "tree", operation: "merge" },
+      { relativePath: "src/a.ts", type: "text", operation: "update" },
+      { relativePath: "docs/c.md", type: "text", operation: "update" },
+    ],
+    progress: { initialCount: 5, remaining: 3, resolvedCount: 2 },
+    selected: {
+      relativePath: "src/a.ts",
+      contents: {
+        working: { content: "merged", truncated: false },
+      },
+      mergeEditor: { token: "edit-1", editable: true, issues: [] },
+    },
+  };
+
+  it("显示处理进度并支持路径搜索与清除", async () => {
+    render(ConflictsModule, { snapshot: multiSnapshot, onAction: vi.fn() });
+    expect(screen.getByText(/剩余 3 个，已处理 2 \/ 5/)).toBeInTheDocument();
+    expect(screen.getByText("3 个冲突")).toBeInTheDocument();
+    const input = screen.getByRole("textbox", { name: "筛选冲突文件" });
+    await fireEvent.input(input, { target: { value: "docs" } });
+    expect(screen.getByText("1 个冲突")).toBeInTheDocument();
+    // 筛选只作用于列表；右侧详情头部仍显示当前选中冲突。
+    const listRows = Array.from(document.querySelectorAll(".conflict-row"));
+    expect(listRows.length).toBe(1);
+    expect(listRows[0]).toHaveTextContent("docs/c.md");
+    await fireEvent.click(screen.getByRole("button", { name: "清除筛选" }));
+    expect(screen.getByText("3 个冲突")).toBeInTheDocument();
+  });
+
+  it("冲突类型与产生操作筛选组合生效", async () => {
+    render(ConflictsModule, { snapshot: multiSnapshot, onAction: vi.fn() });
+    const typeMenu = screen.getByRole("combobox", {
+      name: "冲突类型筛选",
+    }) as HTMLSelectElement;
+    await fireEvent.change(typeMenu, { target: { value: "tree" } });
+    expect(screen.getByText("1 个冲突")).toBeInTheDocument();
+    expect(screen.getByText("api/b.ts")).toBeInTheDocument();
+    const operationMenu = screen.getByRole("combobox", {
+      name: "产生操作筛选",
+    }) as HTMLSelectElement;
+    // 树冲突来自 merge；再筛 update 应为空并给出恢复指引。
+    await fireEvent.change(operationMenu, { target: { value: "update" } });
+    expect(screen.getByText("0 个冲突")).toBeInTheDocument();
+    expect(screen.getByText(/没有匹配的冲突/)).toBeInTheDocument();
+    await fireEvent.change(typeMenu, { target: { value: "all" } });
+    expect(screen.getByText("2 个冲突")).toBeInTheDocument();
+  });
+
+  it("按路径自然排序且可按冲突类型排序", async () => {
+    render(ConflictsModule, { snapshot: multiSnapshot, onAction: vi.fn() });
+    let rows = Array.from(document.querySelectorAll(".conflict-row"));
+    expect(rows[0]).toHaveTextContent("api/b.ts");
+    const sortMenu = screen.getByRole("combobox", {
+      name: "冲突排序",
+    }) as HTMLSelectElement;
+    await fireEvent.change(sortMenu, { target: { value: "type" } });
+    rows = Array.from(document.querySelectorAll(".conflict-row"));
+    // text 类型在前（docs/c.md、src/a.ts 按路径稳定兜底），tree 随后。
+    expect(rows[0]).toHaveTextContent("docs/c.md");
+    expect(rows[1]).toHaveTextContent("src/a.ts");
+    expect(rows[2]).toHaveTextContent("api/b.ts");
+  });
+
+  it("上一个/下一个在未解决冲突之间切换并播报", async () => {
+    const onAction = vi.fn();
+    render(ConflictsModule, { snapshot: multiSnapshot, onAction });
+    // 路径排序后顺序为 api/b.ts、docs/c.md、src/a.ts；当前选中 src/a.ts。
+    await fireEvent.click(screen.getByRole("button", { name: "下一个未解决" }));
+    expect(onAction).toHaveBeenCalledWith("conflict/select", {
+      relativePath: "api/b.ts",
+    });
+    expect(
+      screen.getByText(/已切换到 api\/b\.ts（剩余 3 个未解决冲突）/),
+    ).toBeInTheDocument();
+  });
+
+  it("上一个从排序末尾的选中冲突回退", async () => {
+    const onAction = vi.fn();
+    render(ConflictsModule, {
+      snapshot: {
+        ...multiSnapshot,
+        selected: { ...multiSnapshot.selected!, relativePath: "src/a.ts" },
+      },
+      onAction,
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "上一个未解决" }));
+    expect(onAction).toHaveBeenCalledWith("conflict/select", {
+      relativePath: "docs/c.md",
+    });
+  });
+
+  it("行内路径详情与仓库定位复用共享 Host 动作", async () => {
+    const onAction = vi.fn();
+    render(ConflictsModule, { snapshot: multiSnapshot, onAction });
+    await fireEvent.click(
+      screen.getByRole("button", { name: "查看 src/a.ts 路径详情" }),
+    );
+    expect(onAction).toHaveBeenCalledWith("file/path-detail", {
+      relativePath: "src/a.ts",
+    });
+    await fireEvent.click(
+      screen.getByRole("button", {
+        name: "在仓库浏览器中显示 src/a.ts",
+      }),
+    );
+    expect(onAction).toHaveBeenCalledWith("changes/show-in-repository", {
+      relativePath: "src/a.ts",
+    });
+  });
+
+  it("不提供批量 Resolve；解决仍逐文件预览确认", () => {
+    render(ConflictsModule, { snapshot: multiSnapshot, onAction: vi.fn() });
+    // 列表为单选导航，不存在批量选择或批量解决入口。
+    expect(
+      screen.queryByRole("checkbox", { name: /选择/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /批量|全部解决/ }),
+    ).not.toBeInTheDocument();
+  });
+});

@@ -288,9 +288,16 @@ describe("CommitModule", () => {
       },
     });
 
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "提交选择规则已更新，候选分类已按新规则刷新；可点击“应用本地规则”重新计算推荐选择。",
-    );
+    // v0.0.10：列表结果数量也是 role=status，反馈断言改为按文本定位。
+    expect(
+      screen
+        .getAllByRole("status")
+        .some((node) =>
+          node.textContent?.includes(
+            "提交选择规则已更新，候选分类已按新规则刷新；可点击“应用本地规则”重新计算推荐选择。",
+          ),
+        ),
+    ).toBe(true);
   });
 });
 

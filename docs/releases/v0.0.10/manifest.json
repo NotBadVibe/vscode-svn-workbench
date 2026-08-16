@@ -6,7 +6,7 @@
   "releaseDate": null,
   "gitTag": null,
   "gitCommit": null,
-  "sourceState": "未形成 v0.0.10 候选源码；当前仅有跨模块列表、路径和可访问性交互一致性规划，前序依赖尚未形成候选版本",
+  "sourceState": "开发中：共享列表底座固化与 Changelists/History/Conflicts/Repository Browser/Properties/写操作预览清单/Settings 规则预览/Diagnostics/Review/Impact/Diff 迁移已落地（组件测试通过、npm run check 通过）；完整 npm run verify 候选门禁、视觉基线更新与人工主路径验收待执行",
   "vsix": null,
   "tests": null,
   "acceptedEvidenceRun": null,

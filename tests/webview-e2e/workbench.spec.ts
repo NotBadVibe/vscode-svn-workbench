@@ -190,7 +190,7 @@ test("compares two revisions inside the unified workbench", async ({
   await expect(page.getByRole("heading", { name: "修订历史" })).toBeVisible();
   await page.getByLabel("选择修订 42 进行比较").click();
   await page.getByLabel("选择修订 41 进行比较").click();
-  await page.getByRole("button", { name: "比较修订" }).click();
+  await page.getByRole("button", { name: "比较所选修订" }).click();
   await expect(page.getByText("修订比较 r41 → r42")).toBeVisible();
 });
 
@@ -366,7 +366,10 @@ test("previews SVN property changes before applying them", async ({ page }) => {
   await page.goto("/");
   await openModule(page, "仓库操作");
   await page.getByRole("button", { name: "SVN 属性", exact: true }).click();
-  await page.getByRole("button", { name: /svn:ignore/ }).click();
+  // v0.0.10：属性行含选择按钮与行内复制按钮，用行定位选择入口。
+  await page
+    .locator(".property-item__select", { hasText: "svn:ignore" })
+    .click();
   await page.getByRole("button", { name: "预览设置" }).click();
   await expect(
     page.getByText('svn propset "svn:ignore" <value> "."'),

@@ -63,16 +63,17 @@
       {diffSaveResult}
       {draftAck}
       {targetSwitchRequest}
+      {pathDetail}
     />{/await}
 {:else if snapshot.kind === "commit"}
   {#await import("../features/commit/CommitModule.svelte")}{@render loadingModule()}{:then module}{@const Feature =
       module.default}<Feature {snapshot} {onAction} {pathDetail} />{/await}
 {:else if snapshot.kind === "history"}
   {#await import("../features/history/HistoryModule.svelte")}{@render loadingModule()}{:then module}{@const Feature =
-      module.default}<Feature {snapshot} {onAction} />{/await}
+      module.default}<Feature {snapshot} {onAction} {pathDetail} />{/await}
 {:else if snapshot.kind === "conflicts"}
   {#await import("../features/conflicts/ConflictsModule.svelte")}{@render loadingModule()}{:then module}{@const Feature =
-      module.default}<Feature {snapshot} {onAction} />{/await}
+      module.default}<Feature {snapshot} {onAction} {pathDetail} />{/await}
 {:else if snapshot.kind === "settings"}
   {#await import("../features/settings/SettingsModule.svelte")}{@render loadingModule()}{:then module}{@const Feature =
       module.default}<Feature {snapshot} {taskId} {onAction} />{/await}
@@ -81,16 +82,21 @@
       module.default}<Feature {snapshot} {taskId} {onAction} />{/await}
 {:else if snapshot.kind === "repository"}
   {#await import("../features/repository/RepositoryModule.svelte")}{@render loadingModule()}{:then module}{@const Feature =
-      module.default}<Feature {snapshot} {taskId} {onAction} />{/await}
+      module.default}<Feature
+      {snapshot}
+      {taskId}
+      {onAction}
+      {pathDetail}
+    />{/await}
 {:else if snapshot.kind === "ai-review"}
   {#await import("../features/ai-review/AiReviewModule.svelte")}{@render loadingModule()}{:then module}{@const Feature =
       module.default}<Feature {snapshot} {onAction} />{/await}
 {:else if snapshot.kind === "impact"}
   {#await import("../features/impact/ImpactModule.svelte")}{@render loadingModule()}{:then module}{@const Feature =
-      module.default}<Feature {snapshot} {onAction} />{/await}
+      module.default}<Feature {snapshot} {onAction} {pathDetail} />{/await}
 {:else if snapshot.kind === "changelists"}
   {#await import("../features/changelists/ChangelistsModule.svelte")}{@render loadingModule()}{:then module}{@const Feature =
-      module.default}<Feature {snapshot} {onAction} />{/await}
+      module.default}<Feature {snapshot} {onAction} {pathDetail} />{/await}
 {:else if snapshot.kind === "agent"}
   {#await import("../features/agent/AgentModule.svelte")}{@render loadingModule()}{:then module}{@const Feature =
       module.default}<Feature {snapshot} {onAction} />{/await}

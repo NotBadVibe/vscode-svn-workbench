@@ -4,7 +4,10 @@
  * 状态优先级表、筛选匹配、中部省略、键盘导航等纯函数。
  */
 
-import type { WorkbenchFileView } from "@protocol/workbenchProtocol";
+import type {
+  WorkbenchFileStatus,
+  WorkbenchFileView,
+} from "@protocol/workbenchProtocol";
 import {
   sortSelectionItems,
   type SortDirection,
@@ -36,9 +39,22 @@ export function displayPathOf(file: WorkbenchFileView): string {
   return file.projectRelativePath ?? file.relativePath;
 }
 
+/**
+ * v0.0.10：搜索匹配的结构化输入。WorkbenchFileView 结构性满足该形状；
+ * 变更集条目、冲突条目等富化视图（状态等字段可选）同样适用。
+ */
+export interface FileQuerySource {
+  relativePath: string;
+  projectRelativePath?: string;
+  projectName?: string;
+  repositoryName?: string;
+  reason?: string;
+  status?: WorkbenchFileStatus;
+}
+
 /** 搜索匹配：项目内路径、仓库内路径、文件名、状态、建议原因、项目与仓库名。 */
 export function matchesFileQuery(
-  file: WorkbenchFileView,
+  file: FileQuerySource,
   query: string,
 ): boolean {
   const needle = query.trim().toLowerCase();
@@ -49,8 +65,8 @@ export function matchesFileQuery(
     file.reason ?? "",
     file.projectName ?? "",
     file.repositoryName ?? "",
-    fileStatusLabels[file.status] ?? "",
-    file.status,
+    file.status ? (fileStatusLabels[file.status] ?? "") : "",
+    file.status ?? "",
   ];
   return haystacks.some((value) => value.toLowerCase().includes(needle));
 }

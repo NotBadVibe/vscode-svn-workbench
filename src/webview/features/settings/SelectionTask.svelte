@@ -16,6 +16,9 @@
     WebviewAction,
   } from "@protocol/workbenchProtocol";
   import ScrollArea from "../../components/ui/ScrollArea.svelte";
+  import SearchInput from "../../components/list/SearchInput.svelte";
+  import ResultCount from "../../components/list/ResultCount.svelte";
+  import { naturalCompare } from "../../../selection/selectionSort";
   import {
     commitSelectionDecisionLabels,
     commitSelectionReasonKeyLabels,
@@ -237,6 +240,57 @@
       counts[row.evaluation.decision] += 1;
     }
     return counts;
+  });
+
+  // ---- v0.0.10 预览筛选：路径搜索 + 决策/状态/来源筛选 + 稳定排序 ----
+
+  type PreviewDecisionFilter =
+    "all" | "recommended" | "needsReview" | "excluded" | "blocked";
+  let previewQuery = $state("");
+  let previewDecisionFilter = $state<PreviewDecisionFilter>("all");
+  let previewStatusFilter = $state<string>("all");
+  let previewSourceFilter = $state<string>("all");
+  let previewSort = $state<"default" | "pathAsc" | "pathDesc">("default");
+
+  /** 筛选选项从当前预览数据推导，不虚构不存在的状态或来源。 */
+  const previewStatusOptions = $derived([
+    ...new Set(previewRows.map((row) => row.status)),
+  ]);
+  const previewSourceOptions = $derived([
+    ...new Set(previewRows.map((row) => ruleSourceText(row))),
+  ]);
+
+  const visiblePreviewRows = $derived.by(() => {
+    const needle = previewQuery.trim().toLowerCase();
+    const filtered = previewRows.filter((row) => {
+      if (
+        previewDecisionFilter !== "all" &&
+        row.evaluation.decision !== previewDecisionFilter
+      ) {
+        return false;
+      }
+      if (previewStatusFilter !== "all" && row.status !== previewStatusFilter) {
+        return false;
+      }
+      if (
+        previewSourceFilter !== "all" &&
+        ruleSourceText(row) !== previewSourceFilter
+      ) {
+        return false;
+      }
+      if (!needle) return true;
+      return (
+        row.relativePath.toLowerCase().includes(needle) ||
+        previewStatusText(row).toLowerCase().includes(needle) ||
+        hitRuleText(row).toLowerCase().includes(needle)
+      );
+    });
+    // 排序只作用于预览展示，不改变规则优先级（上移/下移仍是唯一途径）。
+    if (previewSort === "default") return filtered;
+    return [...filtered].sort((left, right) => {
+      const cmp = naturalCompare(left.relativePath, right.relativePath);
+      return previewSort === "pathAsc" ? cmp : -cmp;
+    });
   });
 
   // ---- 路径规则表格行模型：草稿自定义规则 → 下层自定义规则 → 内置槽位 ----
@@ -889,13 +943,89 @@
           >{previewSummary.blocked} 个</span
         >
       </div>
+      <div class="selection-preview-toolbar" aria-label="预览筛选">
+        <SearchInput
+          bind:value={previewQuery}
+          ariaLabel="筛选预览路径"
+          placeholder="路径、状态、规则…"
+          compact
+        />
+        <ResultCount count={visiblePreviewRows.length} suffix="条结果" />
+        <select
+          class="sort-menu"
+          aria-label="决策筛选"
+          value={previewDecisionFilter}
+          onchange={(event) => {
+            const value = (event.currentTarget as HTMLSelectElement).value;
+            previewDecisionFilter = (
+              value === "recommended" ||
+              value === "needsReview" ||
+              value === "excluded" ||
+              value === "blocked"
+                ? value
+                : "all"
+            ) as PreviewDecisionFilter;
+          }}
+        >
+          <option value="all">全部决策</option>
+          <option value="recommended">推荐提交</option>
+          <option value="needsReview">需要确认</option>
+          <option value="excluded">排除</option>
+          <option value="blocked">阻止提交</option>
+        </select>
+        <select
+          class="sort-menu"
+          aria-label="SVN 状态筛选"
+          value={previewStatusFilter}
+          onchange={(event) =>
+            (previewStatusFilter = (event.currentTarget as HTMLSelectElement)
+              .value)}
+        >
+          <option value="all">全部状态</option>
+          {#each previewStatusOptions as status (status)}
+            <option value={status}>{fileStatusLabels[status]}</option>
+          {/each}
+        </select>
+        <select
+          class="sort-menu"
+          aria-label="规则来源筛选"
+          value={previewSourceFilter}
+          onchange={(event) =>
+            (previewSourceFilter = (event.currentTarget as HTMLSelectElement)
+              .value)}
+        >
+          <option value="all">全部来源</option>
+          {#each previewSourceOptions as source (source)}
+            <option value={source}>{source}</option>
+          {/each}
+        </select>
+        <select
+          class="sort-menu"
+          aria-label="预览排序"
+          value={previewSort}
+          onchange={(event) => {
+            const value = (event.currentTarget as HTMLSelectElement).value;
+            previewSort =
+              value === "pathAsc" || value === "pathDesc" ? value : "default";
+          }}
+        >
+          <option value="default">默认顺序</option>
+          <option value="pathAsc">按路径 A→Z</option>
+          <option value="pathDesc">按路径 Z→A</option>
+        </select>
+      </div>
       <ScrollArea class="selection-preview-list" label="提交选择规则预览结果">
         <div class="selection-preview-header" aria-hidden="true">
           <span>文件</span><span>SVN 状态</span><span>命中规则</span><span
             >规则来源</span
           ><span>最终决策</span>
         </div>
-        {#each previewRows as row (row.relativePath)}
+        {#if visiblePreviewRows.length === 0}
+          <div class="mini-empty">
+            没有匹配的候选；调整搜索词或筛选条件后重试。
+          </div>
+        {/if}
+        {#each visiblePreviewRows as row (row.relativePath)}
           <div class="selection-preview-row">
             <span class="selection-preview-path" title={row.relativePath}
               >{row.relativePath}</span

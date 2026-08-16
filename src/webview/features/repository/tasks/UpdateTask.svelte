@@ -1,16 +1,24 @@
 <script lang="ts">
   import type {
+    HostToWebviewMessage,
     RepositorySnapshot,
     WebviewAction,
   } from "@protocol/workbenchProtocol";
+  import PreviewPathList from "../../../components/list/PreviewPathList.svelte";
   import { riskLabels } from "../../../i18n/terminology";
 
   let {
     snapshot,
     onAction,
+    pathDetail,
   }: {
     snapshot: RepositorySnapshot;
     onAction: (action: WebviewAction, data?: Record<string, unknown>) => void;
+    /** v0.0.10：路径详情结果（Host 一次性下发）。 */
+    pathDetail?: Extract<
+      HostToWebviewMessage,
+      { type: "file/path-detail-result" }
+    >["payload"];
   } = $props();
 </script>
 
@@ -54,14 +62,15 @@
     {#if snapshot.update.error}<div class="notice notice--error">
         {snapshot.update.error}
       </div>{/if}
-    {#if snapshot.update.overlapPaths.length}<details>
-        <summary>查看重叠路径</summary>
-        <ul>
-          {#each snapshot.update.overlapPaths as item (item)}<li>
-              {item}
-            </li>{/each}
-        </ul>
-      </details>{/if}
+    {#if snapshot.update.overlapPaths.length}
+      <!-- v0.0.10：重叠路径可搜索、复制清单与查看路径详情。 -->
+      <PreviewPathList
+        paths={snapshot.update.overlapPaths}
+        label="重叠路径清单"
+        {onAction}
+        {pathDetail}
+      />
+    {/if}
     <details class="command-preview">
       <summary>查看命令预览</summary
       >{#each snapshot.update.commands as command, commandIndex (commandIndex)}<code

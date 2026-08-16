@@ -10,6 +10,9 @@
   import PathCell from "../../components/list/PathCell.svelte";
   import SortHeader from "../../components/list/SortHeader.svelte";
   import SelectionSummary from "../../components/list/SelectionSummary.svelte";
+  import SearchInput from "../../components/list/SearchInput.svelte";
+  import ResultCount from "../../components/list/ResultCount.svelte";
+  import { useFileList } from "../../components/list/useFileList.svelte";
   import { isExplicitSubmitShortcut } from "../../i18n/keyboard";
   import { formatZhDateTime } from "../../i18n/formatters";
   import {
@@ -50,13 +53,8 @@
   import {
     displayPathOf,
     matchesFileQuery,
-    moveActiveIndex,
-    edgeActiveIndex,
-    pageSizeOf,
     rangeItems,
-    shouldHandleListKeydown,
     sortFileViews,
-    windowedRows,
   } from "../../components/list/listModel";
   import {
     loadListPreferences,
@@ -87,19 +85,12 @@
   let filter = $state<CommitFilter>("all");
   let onlySelected = $state(false);
   let message = $state("");
-  let pathDetailOpen = $state(false);
-  let pathDetailTrigger = $state<HTMLButtonElement | null>(null);
   let selected = $state<ReadonlySet<SelectionKey>>(emptySelection());
   /** 回声防护：最后一次发给 Host 的选择签名；未匹配前忽略快照回声。 */
   let pendingEcho = $state<string | undefined>();
   let sortField = $state<SortField | undefined>();
   let sortDirection = $state<SortDirection>("asc");
   let announcement = $state("");
-  let activeIndex = $state(-1);
-  let anchorIndex = $state(-1);
-  let fileList = $state<HTMLDivElement>();
-  let scrollTop = $state(0);
-  let viewportHeight = $state(500);
   let density = $state<ListDensity>("comfortable");
   /** v0.0.9 §4：替换前确认态（展示字符数，等待用户确认）。 */
   let replaceConfirmOpen = $state(false);
@@ -113,7 +104,33 @@
 
   const rowHeight = $derived(density === "compact" ? 36 : 48);
   const virtualizeAfter = 300;
-  const overscan = 8;
+
+  /*
+   * v0.0.10 共享列表行控制器：键盘导航、活动行焦点、窗口化与路径详情
+   * 开合使用统一实现；Commit 的选择变化经 setSelected 同步 Host。
+   */
+  const list = useFileList<WorkbenchFileView>({
+    rows: () => sortedFiles,
+    rowHeight: () => rowHeight,
+    virtualizeAfter,
+    onPathDetailRequest: (relativePath) =>
+      onAction("file/path-detail", { relativePath }),
+    onActivate: (file) =>
+      onAction("open-diff", { relativePath: file.relativePath }),
+    onSelectAll: () =>
+      setSelected(selectActionable(filteredSelectable, selected)),
+    onSelectRange: (range) => {
+      const next = cloneSelection(selected);
+      for (const file of range) {
+        if (isActionableForMode(file, MODE)) next.add(file.selectionKey);
+      }
+      setSelected(next);
+    },
+    onToggleActive: (file) => {
+      // Commit：excluded/blocked 不可提交，不能勾选。
+      if (canSelectIndividually(file, MODE)) toggleKey(file.selectionKey);
+    },
+  });
   const filteredFiles = $derived(
     snapshot.files.filter((file) => {
       if (filter === "selected" && !selected.has(file.selectionKey)) {
@@ -140,22 +157,6 @@
           includeRuleSource: true,
         })
       : filteredFiles,
-  );
-
-  const visibleWindow = $derived(
-    windowedRows({
-      total: sortedFiles.length,
-      scrollTop,
-      viewportHeight,
-      rowHeight,
-      overscan,
-      virtualizeAfter,
-    }),
-  );
-  const visibleRows = $derived(
-    sortedFiles
-      .slice(visibleWindow.start, visibleWindow.end)
-      .map((file, offset) => ({ file, index: visibleWindow.start + offset })),
   );
 
   const keyToPath = $derived(buildKeyPathMap(snapshot.files));
@@ -297,53 +298,9 @@
     saveListPreferences("commit", { sortField, sortDirection, density });
   }
 
-  function handleScroll(event: Event): void {
-    const target = event.currentTarget as HTMLDivElement;
-    scrollTop = target.scrollTop;
-    viewportHeight = target.clientHeight || viewportHeight;
-  }
-
-  function setActiveRow(index: number): void {
-    activeIndex = index;
-    // 窗口化下先把活动行滚动进可视区，再聚焦已挂载行。
-    if (fileList) {
-      const top = index * rowHeight;
-      const bottom = top + rowHeight;
-      let nextScrollTop: number | undefined;
-      if (top < fileList.scrollTop) nextScrollTop = top;
-      if (bottom > fileList.scrollTop + fileList.clientHeight) {
-        nextScrollTop = bottom - fileList.clientHeight;
-      }
-      if (nextScrollTop !== undefined) {
-        fileList.scrollTop = nextScrollTop;
-        // 同步组件滚动状态：真实浏览器经 scroll 事件更新；程序化滚动
-        // （键盘导航）直接同步，窗口立即重算。
-        scrollTop = nextScrollTop;
-      }
-    }
-    requestAnimationFrame(() => {
-      fileList
-        ?.querySelector<HTMLElement>(`[data-row-index="${index}"]`)
-        ?.focus();
-    });
-  }
-
-  function openDetail(
-    file: WorkbenchFileView,
-    trigger: HTMLButtonElement,
-  ): void {
-    pathDetailTrigger = trigger;
-    onAction("file/path-detail", { relativePath: file.relativePath });
-  }
-
-  function closeDetail(): void {
-    pathDetailOpen = false;
-    pathDetailTrigger?.focus();
-  }
-
   // 新的路径详情结果到达时自动展开；用户可手动关闭。
   $effect(() => {
-    if (pathDetail) pathDetailOpen = true;
+    if (pathDetail) list.markPathDetailArrived();
   });
 
   // v0.0.7 §7.2：跨项目 scope 的提交预览按项目分组；单项目不分组。
@@ -452,78 +409,6 @@
     });
   }
 
-  function handleListKeydown(event: KeyboardEvent): void {
-    if (!shouldHandleListKeydown(event)) return;
-    // Escape 必须先于空列表早退处理：详情响应到达后候选刷新为空时仍可关闭。
-    if (event.key === "Escape") {
-      // Escape 关闭路径详情并恢复触发点焦点，滚动位置不变（规格 §6/§9）。
-      if (pathDetailOpen) {
-        event.preventDefault();
-        closeDetail();
-      }
-      return;
-    }
-    const count = sortedFiles.length;
-    if (count === 0) return;
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a") {
-      // 幂等“选择当前筛选可操作项”：已全选时连按不反向清空。
-      event.preventDefault();
-      setSelected(selectActionable(filteredSelectable, selected));
-      return;
-    }
-    let nextIndex: number | undefined;
-    if (event.key === "ArrowDown") {
-      nextIndex = moveActiveIndex(activeIndex, 1, count);
-    } else if (event.key === "ArrowUp") {
-      nextIndex = moveActiveIndex(activeIndex, -1, count);
-    } else if (event.key === "PageDown" || event.key === "PageUp") {
-      // 无活动行时保留原生区域滚动（局部滚动验收）；有活动行时按一页
-      // 可见行数分页导航并滚动到目标行。
-      if (activeIndex < 0) return;
-      event.preventDefault();
-      const page = pageSizeOf(viewportHeight, rowHeight);
-      const direction = event.key === "PageDown" ? page : -page;
-      nextIndex = moveActiveIndex(activeIndex, direction, count);
-      setActiveRow(nextIndex);
-      return;
-    } else if (event.key === "Home") {
-      nextIndex = edgeActiveIndex("home", count);
-    } else if (event.key === "End") {
-      nextIndex = edgeActiveIndex("end", count);
-    }
-    if (nextIndex !== undefined) {
-      event.preventDefault();
-      if (event.shiftKey) {
-        const anchor = anchorIndex < 0 ? activeIndex : anchorIndex;
-        const range = rangeItems(sortedFiles, anchor, nextIndex);
-        const next = cloneSelection(selected);
-        for (const file of range) {
-          if (isActionableForMode(file, MODE)) next.add(file.selectionKey);
-        }
-        setSelected(next);
-      } else {
-        anchorIndex = nextIndex;
-      }
-      setActiveRow(nextIndex);
-      return;
-    }
-    if (event.key === " " && activeIndex >= 0) {
-      event.preventDefault();
-      const file = sortedFiles[activeIndex];
-      // Commit：excluded/blocked 不可提交，不能勾选。
-      if (canSelectIndividually(file, MODE)) {
-        toggleKey(file.selectionKey);
-      }
-      return;
-    }
-    if (event.key === "Enter" && activeIndex >= 0) {
-      event.preventDefault();
-      onAction("open-diff", {
-        relativePath: sortedFiles[activeIndex].relativePath,
-      });
-    }
-  }
-
   const filterLabels: Record<CommitFilter, string> = {
     all: "全部",
     selected: "已选",
@@ -546,23 +431,13 @@
             : ""}
         </p>
       </div>
-      <div class="search-field search-field--compact">
-        <span class="codicon codicon-search" aria-hidden="true"></span>
-        <input
-          bind:value={query}
-          aria-label="筛选提交文件"
-          placeholder="筛选文件…"
-        />
-        {#if query}
-          <button
-            class="icon-button icon-button--small"
-            aria-label="清除筛选"
-            onclick={() => (query = "")}
-            ><span class="codicon codicon-close" aria-hidden="true"
-            ></span></button
-          >
-        {/if}
-      </div>
+      <SearchInput
+        bind:value={query}
+        ariaLabel="筛选提交文件"
+        placeholder="筛选文件…"
+        compact
+      />
+      <ResultCount count={filteredFiles.length} />
       <div class="toolbar-actions">
         <select
           class="sort-menu"
@@ -727,15 +602,15 @@
       class="commit-file-list"
       role="list"
       label="提交候选文件"
-      bind:element={fileList}
-      onScroll={handleScroll}
-      onKeydown={handleListKeydown}
+      bind:element={list.element}
+      onScroll={list.handleScroll}
+      onKeydown={list.handleKeydown}
     >
-      {#if visibleWindow.start > 0}<div
-          style:height={`${visibleWindow.start * rowHeight}px`}
+      {#if list.visibleWindow.start > 0}<div
+          style:height={`${list.visibleWindow.start * rowHeight}px`}
           aria-hidden="true"
         ></div>{/if}
-      {#if pathDetail && pathDetailOpen}
+      {#if pathDetail && list.detailOpen}
         <div class="path-detail-host">
           <div class="path-detail-host__bar">
             <span class="path-detail-host__target"
@@ -744,7 +619,7 @@
             <button
               class="icon-button icon-button--small"
               aria-label="关闭路径详情"
-              onclick={closeDetail}
+              onclick={list.closePathDetail}
               ><span class="codicon codicon-close" aria-hidden="true"
               ></span></button
             >
@@ -758,20 +633,17 @@
           />
         </div>
       {/if}
-      {#each visibleRows as { file, index: rowIndex } (file.selectionKey)}
+      {#each list.visibleRows as { row: file, index: rowIndex } (file.selectionKey)}
         <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -- 行点击只设置活动行；键盘操作由列表容器统一处理。 -->
         <div
           class="commit-file-row"
           class:commit-file-row--blocked={file.selection === "blocked"}
           class:commit-file-row--selected={selected.has(file.selectionKey)}
-          class:commit-file-row--active={activeIndex === rowIndex}
+          class:commit-file-row--active={list.activeIndex === rowIndex}
           role="listitem"
           tabindex="-1"
           data-row-index={rowIndex}
-          onclick={() => {
-            activeIndex = rowIndex;
-            anchorIndex = rowIndex;
-          }}
+          onclick={() => list.markActive(rowIndex)}
         >
           <input
             type="checkbox"
@@ -780,8 +652,12 @@
             disabled={!canSelectIndividually(file, MODE)}
             onclick={(event) => {
               event.stopPropagation();
-              if (event.shiftKey && anchorIndex >= 0) {
-                const range = rangeItems(sortedFiles, anchorIndex, rowIndex);
+              if (event.shiftKey && list.anchorIndex >= 0) {
+                const range = rangeItems(
+                  sortedFiles,
+                  list.anchorIndex,
+                  rowIndex,
+                );
                 const next = cloneSelection(selected);
                 for (const item of range) {
                   if (isActionableForMode(item, MODE)) {
@@ -792,8 +668,7 @@
               } else {
                 toggleKey(file.selectionKey);
               }
-              activeIndex = rowIndex;
-              anchorIndex = rowIndex;
+              list.markActive(rowIndex);
             }}
           />
           <PathCell
@@ -801,7 +676,8 @@
             selected={selected.has(file.selectionKey)}
             onOpenDiff={() =>
               onAction("open-diff", { relativePath: file.relativePath })}
-            onOpenDetail={(trigger) => openDetail(file, trigger)}
+            onOpenDetail={(trigger) =>
+              list.requestPathDetail(file.relativePath, trigger)}
           />
           {#if file.evaluation}<span
               class="commit-file-decision"
@@ -824,8 +700,8 @@
           </button>
         </div>
       {/each}
-      {#if visibleWindow.end < sortedFiles.length}<div
-          style:height={`${(sortedFiles.length - visibleWindow.end) * rowHeight}px`}
+      {#if list.visibleWindow.end < sortedFiles.length}<div
+          style:height={`${(sortedFiles.length - list.visibleWindow.end) * rowHeight}px`}
           aria-hidden="true"
         ></div>{/if}
     </ScrollArea>

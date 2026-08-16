@@ -54,9 +54,12 @@ describe("RepositoryModule", () => {
       taskId: "repository/properties",
       onAction,
     });
-    await fireEvent.click(
-      await screen.findByRole("button", { name: /svn:ignore/ }),
-    );
+    // v0.0.10：行是“属性名 + 值”按钮（读屏名无分隔拼接），另有行内
+    // 复制按钮；用属性名文本定位所在行按钮避免歧义。
+    const propertyNameText = await screen.findByText("svn:ignore");
+    const itemButton = propertyNameText.closest("button");
+    expect(itemButton).not.toBeNull();
+    await fireEvent.click(itemButton!);
     await fireEvent.click(screen.getByRole("button", { name: "预览设置" }));
     expect(onAction).toHaveBeenCalledWith("repository/preview-property", {
       name: "svn:ignore",
@@ -152,9 +155,79 @@ describe("RepositoryModule", () => {
       taskId: "repository/browse",
       onAction,
     });
-    await fireEvent.click(await screen.findByRole("button", { name: /src/ }));
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "打开目录" }),
+    );
     expect(onAction).toHaveBeenCalledWith("repository/browse", {
       url: "file:///repo/trunk/src",
     });
+  });
+
+  it("面包屑区分仓库根与项目根并可点击导航（v0.0.10）", async () => {
+    const onAction = vi.fn();
+    const snapshot: RepositorySnapshot = {
+      kind: "repository",
+      info: {
+        name: "repo",
+        url: "file:///repo/trunk/app",
+        repositoryRoot: "file:///repo",
+        revision: "5",
+      },
+      properties: { available: true, target: ".", items: [] },
+      cleanup: { available: true, target: "." },
+      advanced: {
+        browser: {
+          url: "file:///repo/trunk/app/src",
+          entries: [],
+        },
+      },
+    };
+    render(RepositoryModule, {
+      snapshot,
+      taskId: "repository/browse",
+      onAction,
+    });
+    // 仓库根与项目根都有文字标记，不只靠位置。
+    expect(await screen.findByText("仓库根")).toBeInTheDocument();
+    expect(screen.getByText("项目根")).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: /项目根/ }));
+    expect(onAction).toHaveBeenCalledWith("repository/browse", {
+      url: "file:///repo/trunk/app",
+    });
+  });
+
+  it("仓库条目支持名称筛选与目录优先排序（v0.0.10）", async () => {
+    const onAction = vi.fn();
+    const snapshot: RepositorySnapshot = {
+      kind: "repository",
+      info: { name: "repo", url: "file:///repo/trunk", revision: "5" },
+      properties: { available: true, target: ".", items: [] },
+      cleanup: { available: true, target: "." },
+      advanced: {
+        browser: {
+          url: "file:///repo/trunk",
+          entries: [
+            { name: "zeta.ts", kind: "file", size: 12, revision: "9" },
+            { name: "alpha", kind: "dir", revision: "8" },
+            { name: "beta.ts", kind: "file", size: 40, revision: "7" },
+          ],
+        },
+      },
+    };
+    render(RepositoryModule, {
+      snapshot,
+      taskId: "repository/browse",
+      onAction,
+    });
+    expect(await screen.findByText("3 个条目")).toBeInTheDocument();
+    // 目录优先：目录排在文件前。
+    const firstRow = document.querySelector(".browser-entry");
+    expect(firstRow).toHaveTextContent("alpha");
+    const input = screen.getByRole("textbox", { name: "筛选仓库条目" });
+    await fireEvent.input(input, { target: { value: "ts" } });
+    expect(screen.getByText("2 个条目")).toBeInTheDocument();
+    expect(screen.queryByText("alpha")).toBeNull();
+    await fireEvent.click(screen.getByRole("button", { name: "清除筛选" }));
+    expect(screen.getByText("3 个条目")).toBeInTheDocument();
   });
 });
