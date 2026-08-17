@@ -14,6 +14,10 @@
   import SortHeader from "../../components/list/SortHeader.svelte";
   import SelectionSummary from "../../components/list/SelectionSummary.svelte";
   import BulkActionBar from "../../components/list/BulkActionBar.svelte";
+  import SearchInput from "../../components/list/SearchInput.svelte";
+  import ResultCount from "../../components/list/ResultCount.svelte";
+  import PreviewPathList from "../../components/list/PreviewPathList.svelte";
+  import { useFileList } from "../../components/list/useFileList.svelte";
   import {
     computeTriState,
     toggleActionable,
@@ -41,13 +45,8 @@
   import {
     displayPathOf,
     matchesFileQuery,
-    moveActiveIndex,
-    edgeActiveIndex,
-    pageSizeOf,
     rangeItems,
-    shouldHandleListKeydown,
     sortFileViews,
-    windowedRows,
   } from "../../components/list/listModel";
   import {
     loadListPreferences,
@@ -79,21 +78,14 @@
   let sortDirection = $state<SortDirection>("asc");
   let density = $state<ListDensity>("comfortable");
   let announcement = $state("");
-  let activeIndex = $state(-1);
-  let anchorIndex = $state(-1);
   let contextFile = $state<WorkbenchFileView | undefined>();
   /** 行菜单受控打开状态（Shift+F10 / Menu 键由键盘导航触发）。 */
   let rowMenuOpen = $state(false);
-  let fileList = $state<HTMLDivElement>();
-  let scrollTop = $state(0);
-  let viewportHeight = $state(500);
   let commitDraft = $state("");
   let synchronizedCommitDraft = $state("");
   let draftExpanded = $state(false);
   let destructiveConfirmed = $state(false);
   let operationPreviewToken = $state<string | undefined>();
-  let pathDetailOpen = $state(false);
-  let pathDetailTrigger = $state<HTMLButtonElement | null>(null);
 
   // 列表偏好按模块本地保存（workspace 容器 + module），不跨模块串用。
   const savedPreferences = loadListPreferences("changes");
@@ -103,7 +95,6 @@
 
   const rowHeight = $derived(density === "compact" ? 36 : 48);
   const virtualizeAfter = 300;
-  const overscan = 8;
 
   const keyToPath = $derived(buildKeyPathMap(snapshot.files));
   const fileByKey = $derived(
@@ -179,30 +170,42 @@
     }
   });
 
-  const visibleWindow = $derived(
-    windowedRows({
-      total: sortedFiles.length,
-      scrollTop,
-      viewportHeight,
-      rowHeight,
-      overscan,
-      virtualizeAfter,
-    }),
-  );
-  const isVirtualized = $derived(sortedFiles.length > virtualizeAfter);
-  const visibleFiles = $derived(
-    sortedFiles
-      .slice(visibleWindow.start, visibleWindow.end)
-      .map((file, offset) => ({ file, index: visibleWindow.start + offset })),
-  );
+  /*
+   * v0.0.10 共享列表行控制器：键盘导航、活动行焦点、窗口化与路径详情
+   * 开合使用统一实现；选择语义经回调接回本模块的 selectionCore 运算。
+   */
+  const list = useFileList<WorkbenchFileView>({
+    rows: () => sortedFiles,
+    rowHeight: () => rowHeight,
+    virtualizeAfter,
+    onPathDetailRequest: (relativePath) =>
+      onAction("file/path-detail", { relativePath }),
+    onActivate: (file) =>
+      onAction("open-diff", { relativePath: file.relativePath }),
+    onSelectAll: () =>
+      (selected = selectActionable(filteredSelectable, selected)),
+    onSelectRange: (range) => {
+      const next = cloneSelection(selected);
+      for (const file of range) {
+        if (isActionableForMode(file, MODE)) next.add(file.selectionKey);
+      }
+      selected = next;
+    },
+    onToggleActive: (file) => {
+      if (file.selection !== "blocked") toggleKey(file.selectionKey);
+    },
+    onOpenRowMenu: (file) => {
+      contextFile = file;
+      rowMenuOpen = true;
+      return true;
+    },
+  });
 
   $effect(() => {
     query;
     activeStatus;
     onlySelected;
-    scrollTop = 0;
-    activeIndex = -1;
-    if (fileList) fileList.scrollTop = 0;
+    list.resetNavigation();
   });
 
   $effect(() => {
@@ -223,7 +226,7 @@
 
   // 新的路径详情结果到达时自动展开；关闭后恢复触发按钮焦点。
   $effect(() => {
-    if (pathDetail) pathDetailOpen = true;
+    if (pathDetail) list.markPathDetailArrived();
   });
 
   const selectionLabels = {
@@ -299,30 +302,10 @@
     saveListPreferences("changes", { sortField, sortDirection, density });
   }
 
-  function openDetail(
-    file: WorkbenchFileView,
-    trigger?: HTMLButtonElement,
-  ): void {
-    pathDetailTrigger = trigger ?? null;
-    onAction("file/path-detail", { relativePath: file.relativePath });
-  }
-
-  function closeDetail(): void {
-    pathDetailOpen = false;
-    // 关闭详情后恢复触发按钮焦点，列表滚动位置不变。
-    pathDetailTrigger?.focus();
-  }
-
   function operationPaths(file: WorkbenchFileView): string[] {
     return selected.has(file.selectionKey) && selected.size > 0
       ? selectedPaths()
       : [file.relativePath];
-  }
-
-  function handleScroll(event: Event): void {
-    const target = event.currentTarget as HTMLDivElement;
-    scrollTop = target.scrollTop;
-    viewportHeight = target.clientHeight || viewportHeight;
   }
 
   function afterContextMenuClose(callback: () => void): void {
@@ -349,139 +332,16 @@
     unlock: "解锁文件",
     ignore: "添加到忽略列表",
   };
-
-  /** 键盘：活动行与选择分离；Shift 连续选择；Ctrl/⌘+A 只选当前筛选可操作项。 */
-  function handleListKeydown(event: KeyboardEvent): void {
-    if (!shouldHandleListKeydown(event)) return;
-    // Escape 必须先于空列表早退处理：详情响应到达后候选刷新为空时仍可关闭。
-    if (event.key === "Escape") {
-      // Escape 关闭路径详情并恢复触发点焦点，滚动位置不变（规格 §6/§9）。
-      if (pathDetailOpen) {
-        event.preventDefault();
-        closeDetail();
-      }
-      return;
-    }
-    const count = sortedFiles.length;
-    if (count === 0) return;
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a") {
-      // 幂等“选择当前筛选可操作项”：已全选时连按不反向清空。
-      event.preventDefault();
-      selected = selectActionable(filteredSelectable, selected);
-      return;
-    }
-    let nextIndex: number | undefined;
-    if (event.key === "ArrowDown") {
-      nextIndex = moveActiveIndex(activeIndex, 1, count);
-    } else if (event.key === "ArrowUp") {
-      nextIndex = moveActiveIndex(activeIndex, -1, count);
-    } else if (event.key === "PageDown" || event.key === "PageUp") {
-      // 无活动行时保留原生区域滚动（局部滚动验收）；有活动行时按一页
-      // 可见行数分页导航并滚动到目标行。
-      if (activeIndex < 0) return;
-      event.preventDefault();
-      const page = pageSizeOf(viewportHeight, rowHeight);
-      const direction = event.key === "PageDown" ? page : -page;
-      nextIndex = moveActiveIndex(activeIndex, direction, count);
-      setActiveRow(nextIndex);
-      return;
-    } else if (event.key === "Home") {
-      nextIndex = edgeActiveIndex("home", count);
-    } else if (event.key === "End") {
-      nextIndex = edgeActiveIndex("end", count);
-    }
-    if (nextIndex !== undefined) {
-      event.preventDefault();
-      if (event.shiftKey) {
-        const anchor = anchorIndex < 0 ? activeIndex : anchorIndex;
-        const range = rangeItems(sortedFiles, anchor, nextIndex);
-        const next = cloneSelection(selected);
-        for (const file of range) {
-          if (isActionableForMode(file, MODE)) next.add(file.selectionKey);
-        }
-        selected = next;
-      } else {
-        anchorIndex = nextIndex;
-      }
-      setActiveRow(nextIndex);
-      return;
-    }
-    if (event.key === " " && activeIndex >= 0) {
-      event.preventDefault();
-      const file = sortedFiles[activeIndex];
-      if (file.selection !== "blocked") toggleKey(file.selectionKey);
-      return;
-    }
-    if (
-      (event.key === "F10" && event.shiftKey) ||
-      event.key === "ContextMenu"
-    ) {
-      // Shift+F10 / Menu：打开活动行的操作菜单（规格 §9）。
-      // 仅当找到活动行并实际打开菜单时才阻止默认（无活动行放行原行为）。
-      const file = sortedFiles[activeIndex];
-      if (file) {
-        event.preventDefault();
-        contextFile = file;
-        rowMenuOpen = true;
-      }
-      return;
-    }
-    if (event.key === "Enter" && activeIndex >= 0) {
-      event.preventDefault();
-      onAction("open-diff", {
-        relativePath: sortedFiles[activeIndex].relativePath,
-      });
-    }
-  }
-
-  function setActiveRow(index: number): void {
-    activeIndex = index;
-    // 虚拟化下先把活动行滚动进可视区，再聚焦已挂载行。
-    if (fileList) {
-      const top = index * rowHeight;
-      const bottom = top + rowHeight;
-      let nextScrollTop: number | undefined;
-      if (top < fileList.scrollTop) nextScrollTop = top;
-      if (bottom > fileList.scrollTop + fileList.clientHeight) {
-        nextScrollTop = bottom - fileList.clientHeight;
-      }
-      if (nextScrollTop !== undefined) {
-        fileList.scrollTop = nextScrollTop;
-        // 同步组件滚动状态：真实浏览器经 scroll 事件更新；程序化滚动
-        // （键盘导航）直接同步，窗口立即重算。
-        scrollTop = nextScrollTop;
-      }
-    }
-    requestAnimationFrame(() => {
-      fileList
-        ?.querySelector<HTMLElement>(`[data-row-index="${index}"]`)
-        ?.focus();
-    });
-  }
 </script>
 
 <section class="feature-layout">
   <div class="feature-toolbar">
-    <div class="search-field">
-      <span class="codicon codicon-search" aria-hidden="true"></span>
-      <input
-        bind:value={query}
-        aria-label="筛选变更文件"
-        placeholder="筛选文件…"
-      />
-      {#if query}
-        <button
-          class="icon-button icon-button--small"
-          aria-label="清除筛选"
-          onclick={() => (query = "")}
-          ><span class="codicon codicon-close" aria-hidden="true"
-          ></span></button
-        >
-      {/if}
-    </div>
-    <span class="toolbar-count" role="status"
-      >{filteredFiles.length} 个结果</span
-    >
+    <SearchInput
+      bind:value={query}
+      ariaLabel="筛选变更文件"
+      placeholder="筛选文件…"
+    />
+    <ResultCount count={filteredFiles.length} />
     <div class="toolbar-actions">
       <select
         class="sort-menu"
@@ -583,7 +443,7 @@
   />
 
   <div class="table-card">
-    {#if pathDetail && pathDetailOpen}
+    {#if pathDetail && list.detailOpen}
       <div class="path-detail-host">
         <div class="path-detail-host__bar">
           <span class="path-detail-host__target">{pathDetail.relativePath}</span
@@ -591,7 +451,7 @@
           <button
             class="icon-button icon-button--small"
             aria-label="关闭路径详情"
-            onclick={closeDetail}
+            onclick={list.closePathDetail}
             ><span class="codicon codicon-close" aria-hidden="true"
             ></span></button
           >
@@ -680,60 +540,57 @@
             <div
               {...props}
               class="file-list scroll-region"
-              class:file-list--virtual={isVirtualized}
+              class:file-list--virtual={list.isVirtualized}
               class:file-list--compact={density === "compact"}
               role="list"
               aria-label="SVN 变更文件"
               tabindex="0"
               data-scroll-region
-              bind:this={fileList}
-              onscroll={handleScroll}
-              onkeydown={handleListKeydown}
+              bind:this={list.element}
+              onscroll={list.handleScroll}
+              onkeydown={list.handleKeydown}
             >
               <div
-                class:file-list-inner--virtual={isVirtualized}
-                style:height={isVirtualized
+                class:file-list-inner--virtual={list.isVirtualized}
+                style:height={list.isVirtualized
                   ? `${sortedFiles.length * rowHeight}px`
                   : undefined}
               >
-                {#each visibleFiles as row (row.file.selectionKey)}
+                {#each list.visibleRows as { row: file, index } (file.selectionKey)}
                   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -- 行点击只设置活动行；键盘操作由列表容器统一处理。 -->
                   <div
                     class="file-row"
-                    class:file-row--virtual={isVirtualized}
-                    class:file-row--blocked={row.file.selection === "blocked"}
-                    class:file-row--selected={selected.has(
-                      row.file.selectionKey,
-                    )}
-                    class:file-row--active={activeIndex === row.index}
-                    style:transform={isVirtualized
-                      ? `translateY(${row.index * rowHeight}px)`
+                    class:file-row--virtual={list.isVirtualized}
+                    class:file-row--blocked={file.selection === "blocked"}
+                    class:file-row--selected={selected.has(file.selectionKey)}
+                    class:file-row--active={list.activeIndex === index}
+                    style:transform={list.isVirtualized
+                      ? `translateY(${index * rowHeight}px)`
                       : undefined}
-                    style:height={isVirtualized ? `${rowHeight}px` : undefined}
+                    style:height={list.isVirtualized
+                      ? `${rowHeight}px`
+                      : undefined}
                     role="listitem"
-                    aria-posinset={row.index + 1}
+                    aria-posinset={index + 1}
                     aria-setsize={sortedFiles.length}
-                    data-row-index={row.index}
+                    data-row-index={index}
                     tabindex="-1"
-                    oncontextmenu={() => (contextFile = row.file)}
-                    onclick={() => {
-                      activeIndex = row.index;
-                      anchorIndex = row.index;
-                    }}
+                    oncontextmenu={() => (contextFile = file)}
+                    onclick={() => list.markActive(index)}
                   >
                     <input
                       type="checkbox"
-                      aria-label={`选择 ${displayPathOf(row.file)}`}
-                      checked={selected.has(row.file.selectionKey)}
-                      disabled={!canSelectIndividually(row.file, MODE)}
+                      aria-label={`选择 ${displayPathOf(file)}`}
+                      checked={selected.has(file.selectionKey)}
+                      disabled={!canSelectIndividually(file, MODE)}
                       onclick={(event) => {
                         event.stopPropagation();
                         // Shift+Click 连续选择（只加入可操作项）。
-                        if (event.shiftKey && anchorIndex >= 0) {
+                        if (event.shiftKey && list.anchorIndex >= 0) {
                           const range = rangeItems(
                             sortedFiles,
-                            anchorIndex,
-                            row.index,
+                            list.anchorIndex,
+                            index,
                           );
                           const next = cloneSelection(selected);
                           for (const item of range) {
@@ -743,45 +600,41 @@
                           }
                           selected = next;
                         } else {
-                          toggleKey(row.file.selectionKey);
+                          toggleKey(file.selectionKey);
                         }
-                        activeIndex = row.index;
-                        anchorIndex = row.index;
+                        list.markActive(index);
                       }}
                     />
-                    <span class="file-path" title={row.file.relativePath}>
+                    <span class="file-path" title={file.relativePath}>
                       <PathCell
-                        file={row.file}
-                        selected={selected.has(row.file.selectionKey)}
+                        {file}
+                        selected={selected.has(file.selectionKey)}
                         onOpenDiff={() =>
                           onAction("open-diff", {
-                            relativePath: row.file.relativePath,
+                            relativePath: file.relativePath,
                           })}
                         onOpenDetail={(trigger) =>
-                          openDetail(row.file, trigger)}
+                          list.requestPathDetail(file.relativePath, trigger)}
                       />
                     </span>
-                    <span
-                      class={`status-badge status-badge--${row.file.status}`}
-                      >{fileStatusLabels[row.file.status]}</span
+                    <span class={`status-badge status-badge--${file.status}`}
+                      >{fileStatusLabels[file.status]}</span
                     >
-                    <span class="selection-note" title={row.file.reason}
-                      >{row.file.reason ??
-                        (row.file.selection
-                          ? selectionLabels[row.file.selection]
+                    <span class="selection-note" title={file.reason}
+                      >{file.reason ??
+                        (file.selection
+                          ? selectionLabels[file.selection]
                           : "—")}</span
                     >
                     <span class="file-row__ownership"
-                      >{row.file.projectName ??
-                        row.file.repositoryName ??
-                        "—"}</span
+                      >{file.projectName ?? file.repositoryName ?? "—"}</span
                     >
                     <button
                       class="icon-button icon-button--small"
-                      aria-label={`查看 ${row.file.relativePath} 差异`}
+                      aria-label={`查看 ${file.relativePath} 差异`}
                       onclick={() =>
                         onAction("open-diff", {
-                          relativePath: row.file.relativePath,
+                          relativePath: file.relativePath,
                         })}
                       ><span class="codicon codicon-diff" aria-hidden="true"
                       ></span></button
@@ -1012,11 +865,13 @@
       </div>
       <details>
         <summary>查看文件与命令</summary>
-        <ul>
-          {#each snapshot.operationPreview.paths as item (item)}<li>
-              {item}
-            </li>{/each}
-        </ul>
+        <!-- v0.0.10：预览路径可搜索、复制与查看详情；不可勾选改范围。 -->
+        <PreviewPathList
+          paths={snapshot.operationPreview.paths}
+          label="操作文件清单"
+          {onAction}
+          {pathDetail}
+        />
         <code>{snapshot.operationPreview.command}</code>
       </details>
       {#each snapshot.operationPreview.issues as issue, issueIndex (issueIndex)}<div

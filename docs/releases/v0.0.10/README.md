@@ -1,10 +1,10 @@
-# SVN Workbench v0.0.10 规划：跨模块列表与路径一致性
+# SVN Workbench v0.0.10：跨模块列表与路径一致性
 
-> 文档身份：`planned-version-specification`
+> 文档身份：`released-version-record`
 >
-> 状态：规划中（draft）。本文只定义 v0.0.10 的目标、应用矩阵和候选验收，不表示功能已经实现、测试通过或可以发布。
+> 状态：已发布。源码提交 `4ad53d10536e5aee5ef4cc64f01de16e800714e2`、标签 `v0.0.10`、VSIX 指纹、本地完整门禁、发布 evidence 已绑定；真实读屏 / 200% 目视 / 真实 SVN 人工主路径与三平台 CI 保留为非阻断观察项。
 >
-> 规划基线：[`v0.0.9`](../v0.0.9/)。前序依赖尚未形成候选版本；当前事实以源码、测试和 [`../../current/`](../../current/) 为准。
+> 规划基线：[`v0.0.9`](../v0.0.9/)。v0.0.9 已于 2026-08-16 正式发布；当前开发事实继续以源码、测试和 [`../../current/`](../../current/) 为准。
 >
 > 优先级：P1，复用 v0.0.8 已验证的共享交互。
 >
@@ -15,6 +15,21 @@
 v0.0.8 只在 Changes 与 Commit 建立高效列表。本版本将成熟的路径详情、搜索、排序、选择摘要、键盘和小屏模式推广到其他真正需要的模块，消除同一手势在不同页面结果不同的问题。
 
 推广不是“所有页面都套表格”：History 修订只能选择两条，Conflict 不能批量 Resolve，Agent 步骤和规则优先级不能任意排序，写操作预览不能在确认页重新勾选范围。
+
+## 1.1 实施状态（2026-08-16）
+
+- 已完成（源码 + 组件测试，详见 `docs/current/实现与代码映射.md` §8.7）：
+  - §10.1 共享底座固化（`useFileList`/`SearchInput`/`ResultCount`/`PreviewPathList`，Changes/Commit 重构复用）；
+  - §10.2 Changelists、History、Conflicts 迁移；
+  - §10.3 Repository Browser、Properties 与写操作预览清单（Update overlap、高级操作影响清单）；
+  - §10.4 Settings 规则预览与 Diagnostics；
+  - §10.5 Review、Impact、Diff 的只读过渡复用；
+  - §10.6 只依赖 `title` 的交互入口清理（FilePathDetail 复制按钮补充含路径值的 `aria-label`）；
+  - §10.7 候选验证：`npm run verify` 全链路通过（静态检查、双平台契约、覆盖率门禁 1070 项单元/组件测试、69 项 Webview/视觉/无障碍 E2E、性能预算、110 项 Extension Host 真实 SVN 验收），并同步 `docs/current/`。
+- 非阻断观察项（沿用 v0.0.9 惯例）：
+  - §9 中依赖真实设备的读屏、200% 缩放与 High Contrast 目视复验；
+  - §11 人工主路径验收记录；
+  - 三平台 CI 在标签推送后运行。
 
 ## 2. 共享契约
 

@@ -4,6 +4,14 @@
     WebviewAction,
   } from "@protocol/workbenchProtocol";
   import ScrollArea from "../../../components/ui/ScrollArea.svelte";
+  import SearchInput from "../../../components/list/SearchInput.svelte";
+  import ResultCount from "../../../components/list/ResultCount.svelte";
+  import { naturalCompare } from "../../../../selection/selectionSort";
+
+  /*
+   * v0.0.10 跨模块列表迁移：属性列表复用共享搜索与排序；属性名/值/
+   * 完整目标路径可复制。属性编辑保持单项预览确认，不提供批量删除。
+   */
 
   let {
     snapshot,
@@ -15,11 +23,27 @@
 
   let propertyName = $state("");
   let propertyValue = $state("");
+  let query = $state("");
+  /** 名称排序：默认 A→Z；可切换 Z→A。 */
+  let sortDirection = $state<"asc" | "desc">("asc");
 
   function selectProperty(name: string, value: string): void {
     propertyName = name;
     propertyValue = value;
   }
+
+  const filteredProperties = $derived.by(() => {
+    const needle = query.trim().toLowerCase();
+    const matched = needle
+      ? snapshot.properties.items.filter((item) =>
+          item.name.toLowerCase().includes(needle),
+        )
+      : snapshot.properties.items;
+    return [...matched].sort((left, right) => {
+      const cmp = naturalCompare(left.name, right.name);
+      return sortDirection === "asc" ? cmp : -cmp;
+    });
+  });
 </script>
 
 <section class="operation-card operation-card--wide repository-task-card">
@@ -28,7 +52,19 @@
       <span class="eyebrow">版本控制属性</span>
       <h2>SVN 属性</h2>
     </div>
-    <span class="status-badge">{snapshot.properties.target}</span>
+    <div class="toolbar-actions">
+      <button
+        class="icon-button icon-button--small"
+        aria-label="复制完整目标路径"
+        title="复制完整目标路径"
+        onclick={() =>
+          onAction("file/copy-path", {
+            relativePath: snapshot.properties.target,
+          })}
+        ><span class="codicon codicon-copy" aria-hidden="true"></span></button
+      >
+      <span class="status-badge">{snapshot.properties.target}</span>
+    </div>
   </div>
   {#if snapshot.properties.feedback}<div
       class="notice notice--success"
@@ -41,16 +77,72 @@
       {snapshot.properties.error}
     </div>{/if}
   <div class="property-layout">
-    <ScrollArea class="property-list" label="当前 SVN 属性"
-      >{#if snapshot.properties.items.length === 0}<div class="mini-empty">
-          当前目标没有显式属性。
-        </div>{/if}{#each snapshot.properties.items as item (item.name)}<button
-          class:active={propertyName === item.name}
-          onclick={() => selectProperty(item.name, item.value)}
-          ><strong>{item.name}</strong><small>{item.value || "（空值）"}</small
-          ></button
-        >{/each}</ScrollArea
-    >
+    <div class="property-list-pane">
+      <div class="property-filter-bar">
+        <SearchInput
+          bind:value={query}
+          ariaLabel="筛选属性名"
+          placeholder="属性名…"
+          compact
+        />
+        <ResultCount count={filteredProperties.length} suffix="条属性" />
+        <select
+          class="sort-menu"
+          aria-label="属性排序"
+          value={sortDirection}
+          onchange={(event) => {
+            sortDirection =
+              (event.currentTarget as HTMLSelectElement).value === "desc"
+                ? "desc"
+                : "asc";
+          }}
+        >
+          <option value="asc">名称 A→Z</option>
+          <option value="desc">名称 Z→A</option>
+        </select>
+      </div>
+      <ScrollArea class="property-list" label="当前 SVN 属性"
+        >{#if filteredProperties.length === 0}<div class="mini-empty">
+            {snapshot.properties.items.length === 0
+              ? "当前目标没有显式属性。"
+              : "没有匹配的属性；调整属性名筛选后重试。"}
+          </div>{/if}{#each filteredProperties as item (item.name)}<div
+            class:property-item--active={propertyName === item.name}
+            class="property-item"
+          >
+            <button
+              type="button"
+              class="property-item__select"
+              onclick={() => selectProperty(item.name, item.value)}
+            >
+              <strong>{item.name}</strong><small
+                >{item.value || "（空值）"}</small
+              >
+            </button>
+            <span class="property-item__actions">
+              <button
+                type="button"
+                class="icon-button icon-button--small"
+                aria-label={`复制属性名 ${item.name}`}
+                title="复制属性名"
+                onclick={() => onAction("copy-text", { text: item.name })}
+                ><span class="codicon codicon-copy" aria-hidden="true"
+                ></span></button
+              >
+              <button
+                type="button"
+                class="icon-button icon-button--small"
+                aria-label={`复制属性值 ${item.name}`}
+                title="复制属性值"
+                disabled={!item.value}
+                onclick={() => onAction("copy-text", { text: item.value })}
+                ><span class="codicon codicon-clippy" aria-hidden="true"
+                ></span></button
+              >
+            </span>
+          </div>{/each}</ScrollArea
+      >
+    </div>
     <div class="property-editor">
       <label class="field"
         ><span>属性名</span><input

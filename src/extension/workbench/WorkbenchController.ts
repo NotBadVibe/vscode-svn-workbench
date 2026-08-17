@@ -3960,7 +3960,13 @@ export class WorkbenchController implements vscode.Disposable {
       providedConflicts ??
       (await collectConflictItems(session.svnPath, session.scope));
     if (!session.conflictState) {
-      session.conflictState = { selectedPath: conflicts[0]?.relativePath };
+      session.conflictState = {
+        selectedPath: conflicts[0]?.relativePath,
+        // v0.0.10：会话内首次冲突总数作为处理进度基线。
+        initialCount: conflicts.length,
+      };
+    } else if (session.conflictState.initialCount === undefined) {
+      session.conflictState.initialCount = conflicts.length;
     }
     if (
       session.conflictState.selectedPath &&
@@ -3968,7 +3974,11 @@ export class WorkbenchController implements vscode.Disposable {
         (item) => item.relativePath === session.conflictState!.selectedPath,
       )
     ) {
-      session.conflictState = { selectedPath: conflicts[0]?.relativePath };
+      // 选择失效时重置建议与预览，但保留进度基线。
+      session.conflictState = {
+        selectedPath: conflicts[0]?.relativePath,
+        initialCount: session.conflictState.initialCount,
+      };
     }
     const selected = conflicts.find(
       (item) => item.relativePath === session.conflictState?.selectedPath,
@@ -4006,6 +4016,15 @@ export class WorkbenchController implements vscode.Disposable {
         sourceLeftRevision: item.sourceLeftRevision,
         sourceRightRevision: item.sourceRightRevision,
       })),
+      progress: {
+        initialCount: session.conflictState.initialCount ?? conflicts.length,
+        remaining: conflicts.length,
+        resolvedCount: Math.max(
+          0,
+          (session.conflictState.initialCount ?? conflicts.length) -
+            conflicts.length,
+        ),
+      },
       selected:
         selected && request
           ? {
@@ -5469,8 +5488,39 @@ export class WorkbenchController implements vscode.Disposable {
   ) {
     const candidates =
       providedCandidates ?? (await this.collectScopeCandidates(session));
-    const groups = await collectSvnChangelists(session.svnPath, session.scope);
-    const assigned = new Set(groups.flatMap((group) => group.paths));
+    // v0.0.10：变更集文件用当前候选富化（状态/类型/决策/身份键），
+    // 候选缺失或无法建立身份键的文件仍展示，只是不可进入选择。
+    const rawGroups = await collectSvnChangelists(
+      session.svnPath,
+      session.scope,
+    );
+    const candidateByPath = new Map(
+      candidates.map((item) => [item.relativePath, item]),
+    );
+    const groups = rawGroups.map((group) => ({
+      name: group.name,
+      files: group.paths.map((relativePath) => {
+        const candidate = candidateByPath.get(relativePath);
+        if (!candidate) return { relativePath };
+        const selectionKey = createScopedFileKey(
+          session.scope.repositoryRoot,
+          candidate.absolutePath,
+          nativePathSemantics,
+        );
+        return {
+          relativePath,
+          selectionKey,
+          status: candidate.status,
+          propStatus: candidate.propStatus,
+          fileType: candidate.fileType,
+          selection: candidate.selection,
+          reason: candidate.reason,
+        };
+      }),
+    }));
+    const assigned = new Set(
+      groups.flatMap((group) => group.files.map((file) => file.relativePath)),
+    );
     const state = session.changelistState ?? {
       suggestions: [],
       warnings: [],

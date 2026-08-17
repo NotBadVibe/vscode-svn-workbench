@@ -1,11 +1,13 @@
 <script lang="ts">
   import type { Component } from "svelte";
   import type {
+    HostToWebviewMessage,
     RepositorySnapshot,
     WebviewAction,
     WorkbenchTaskId,
   } from "@protocol/workbenchProtocol";
   import ScrollArea from "../../components/ui/ScrollArea.svelte";
+  import PreviewPathList from "../../components/list/PreviewPathList.svelte";
   import { taskLabels } from "../../i18n/terminology";
 
   type RepositoryTaskId = Extract<WorkbenchTaskId, `repository/${string}`>;
@@ -14,6 +16,10 @@
       snapshot: RepositorySnapshot;
       taskId: WorkbenchTaskId;
       onAction: (action: WebviewAction, data?: Record<string, unknown>) => void;
+      pathDetail?: Extract<
+        HostToWebviewMessage,
+        { type: "file/path-detail-result" }
+      >["payload"];
     }>;
   };
 
@@ -21,10 +27,16 @@
     snapshot,
     taskId = "repository/update",
     onAction,
+    pathDetail,
   }: {
     snapshot: RepositorySnapshot;
     taskId: WorkbenchTaskId;
     onAction: (action: WebviewAction, data?: Record<string, unknown>) => void;
+    /** v0.0.10：路径详情结果（Host 一次性下发），透传给任务组件。 */
+    pathDetail?: Extract<
+      HostToWebviewMessage,
+      { type: "file/path-detail-result" }
+    >["payload"];
   } = $props();
 
   const taskNavigation: Array<{ id: RepositoryTaskId; label: string }> = [
@@ -172,7 +184,7 @@
     </div>
   {:then taskModule}
     {@const Task = taskModule.default}
-    <Task {snapshot} {taskId} {onAction} />
+    <Task {snapshot} {taskId} {onAction} {pathDetail} />
   {:catch}
     <div class="notice notice--error" role="alert">
       仓库任务加载失败。请重新打开此任务；如果问题持续存在，请运行环境诊断。
@@ -209,12 +221,14 @@
         </div>
         <div>
           <strong>影响</strong>
-          <ul>
-            {#each snapshot.advanced.preview.details as detail, detailIndex (detailIndex)}<li
-              >
-                {detail}
-              </li>{/each}
-          </ul>
+          <!-- v0.0.10：预览路径清单可搜索、复制与查看详情；不可勾选改范围。 -->
+          <PreviewPathList
+            paths={snapshot.advanced.preview.details}
+            label="预览影响清单"
+            emptyHint="此操作没有附加影响清单。"
+            {onAction}
+            {pathDetail}
+          />
         </div>
       </div>
       {#each snapshot.advanced.preview.issues as issue, issueIndex (issueIndex)}<div

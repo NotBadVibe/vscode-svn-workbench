@@ -430,6 +430,15 @@ export interface ConflictSnapshot {
     sourceLeftRevision?: string;
     sourceRightRevision?: string;
   }>;
+  /**
+   * v0.0.10：处理进度——会话内首次采集的冲突总数、当前剩余与已处理
+   * 数量。不跨会话累计；工作副本重新采集后以新会话为准。
+   */
+  progress?: {
+    initialCount: number;
+    remaining: number;
+    resolvedCount: number;
+  };
   selected?: {
     relativePath: string;
     operation?: string;
@@ -793,6 +802,26 @@ export interface ImpactSnapshot {
   warnings: string[];
 }
 
+/**
+ * v0.0.10：变更集内文件视图。由 Host 用当前候选富化（状态、类型、
+ * 决策）；无法建立身份键或候选缺失的文件仍展示（不可进入选择与
+ * 批量动作），不得从变更集中消失。
+ */
+export interface ChangelistGroupFileView {
+  relativePath: string;
+  /** Host 身份键；缺失时该行只展示，不可选择。 */
+  selectionKey?: SelectionKey;
+  status?: WorkbenchFileStatus;
+  propStatus?: WorkbenchFileStatus;
+  fileType?: string;
+  selection?: "selected" | "needsReview" | "excluded" | "blocked";
+  reason?: string;
+  projectRelativePath?: DisplayPath;
+  projectName?: string;
+  repositoryName?: string;
+  ownership?: "current" | "external" | "nested";
+}
+
 export interface ChangelistsSnapshot {
   kind: "changelists";
   source: "local-rule" | "configured-model" | "local-rule-fallback";
@@ -803,7 +832,7 @@ export interface ChangelistsSnapshot {
     data: string;
     historyIncluded: false;
   };
-  groups: Array<{ name: string; paths: string[] }>;
+  groups: Array<{ name: string; files: ChangelistGroupFileView[] }>;
   unassigned: WorkbenchFileView[];
   suggestions: Array<{
     id: string;

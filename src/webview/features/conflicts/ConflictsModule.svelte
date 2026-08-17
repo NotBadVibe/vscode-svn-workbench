@@ -4,6 +4,7 @@
   import { untrack } from "svelte";
   import type {
     ConflictSnapshot,
+    HostToWebviewMessage,
     WebviewAction,
   } from "@protocol/workbenchProtocol";
   import {
@@ -11,17 +12,39 @@
     parseTextConflictBlocks,
   } from "../../../conflict/conflictMerge";
   import ScrollArea from "../../components/ui/ScrollArea.svelte";
+  import SearchInput from "../../components/list/SearchInput.svelte";
+  import ResultCount from "../../components/list/ResultCount.svelte";
+  import FilePathDetail from "../../components/svn/FilePathDetail.svelte";
+  import { useFileList } from "../../components/list/useFileList.svelte";
+  import { naturalCompare } from "../../../selection/selectionSort";
   import { confidenceLabels, sourceLabels } from "../../i18n/terminology";
+
+  /*
+   * v0.0.10 跨模块列表迁移：冲突列表复用共享搜索、排序、键盘导航与
+   * 路径详情；提供上一个/下一个未解决冲突导航与处理进度。Conflict
+   * 不提供批量 Resolve——每个 Resolve 仍单独预览、确认与复验。
+   */
 
   let {
     snapshot,
     onAction,
+    pathDetail,
   }: {
     snapshot: ConflictSnapshot;
     onAction: (action: WebviewAction, data?: Record<string, unknown>) => void;
+    /** v0.0.10：路径详情结果（Host 一次性下发）。 */
+    pathDetail?: Extract<
+      HostToWebviewMessage,
+      { type: "file/path-detail-result" }
+    >["payload"];
   } = $props();
 
   let activePane = $state<"mine" | "theirs" | "base" | "working">("working");
+  let query = $state("");
+  let typeFilter = $state("all");
+  let operationFilter = $state("all");
+  let sortField = $state<"path" | "type" | "operation">("path");
+  let navAnnouncement = $state("");
   /** v0.0.9：模型未配置时按钮不标“AI”，如实指向本地建议（AI09-TRUTH-01）。 */
   const conflictAdviceConfigured = $derived(
     snapshot.aiPrivacy?.model !== undefined &&
@@ -60,6 +83,97 @@
     switch: "切换产生",
     unknown: "来源未知",
   };
+
+  /** 类型与产生操作的排序优先级（未知值恒排末尾）。 */
+  const CONFLICT_TYPE_ORDER = ["text", "tree", "property", "unknown"];
+  const CONFLICT_OPERATION_ORDER = ["update", "merge", "switch", "unknown"];
+
+  const filteredConflicts = $derived(
+    snapshot.conflicts.filter((conflict) => {
+      if (typeFilter !== "all" && (conflict.type ?? "unknown") !== typeFilter) {
+        return false;
+      }
+      if (
+        operationFilter !== "all" &&
+        (conflict.operation ?? "unknown") !== operationFilter
+      ) {
+        return false;
+      }
+      const needle = query.trim().toLowerCase();
+      if (!needle) return true;
+      const haystacks = [
+        conflict.relativePath,
+        conflictTypeLabels[conflict.type ?? "unknown"] ?? "",
+        conflict.type ?? "",
+        conflictOperationLabels[conflict.operation ?? "unknown"] ?? "",
+        conflict.operation ?? "",
+      ];
+      return haystacks.some((value) => value.toLowerCase().includes(needle));
+    }),
+  );
+
+  const orderedConflicts = $derived.by(() => {
+    if (sortField === "path") {
+      return [...filteredConflicts].sort((left, right) =>
+        naturalCompare(left.relativePath, right.relativePath),
+      );
+    }
+    const order =
+      sortField === "type" ? CONFLICT_TYPE_ORDER : CONFLICT_OPERATION_ORDER;
+    const keyOf = (conflict: (typeof snapshot.conflicts)[number]) =>
+      sortField === "type"
+        ? (conflict.type ?? "unknown")
+        : (conflict.operation ?? "unknown");
+    return [...filteredConflicts].sort((left, right) => {
+      const leftOrder = order.indexOf(keyOf(left));
+      const rightOrder = order.indexOf(keyOf(right));
+      const leftRank = leftOrder < 0 ? order.length : leftOrder;
+      const rightRank = rightOrder < 0 ? order.length : rightOrder;
+      if (leftRank !== rightRank) return leftRank - rightRank;
+      return naturalCompare(left.relativePath, right.relativePath);
+    });
+  });
+
+  const selectedIndexInOrder = $derived(
+    orderedConflicts.findIndex(
+      (conflict) => conflict.relativePath === snapshot.selected?.relativePath,
+    ),
+  );
+
+  const list = useFileList<(typeof snapshot.conflicts)[number]>({
+    rows: () => orderedConflicts,
+    rowHeight: () => 56,
+    onPathDetailRequest: (relativePath) =>
+      onAction("file/path-detail", { relativePath }),
+    onActivate: (conflict) => selectConflict(conflict.relativePath),
+  });
+
+  $effect(() => {
+    query;
+    typeFilter;
+    operationFilter;
+    list.resetNavigation();
+  });
+
+  // 新的路径详情结果到达时自动展开；关闭后恢复触发按钮焦点。
+  $effect(() => {
+    if (pathDetail) list.markPathDetailArrived();
+  });
+
+  function selectConflict(relativePath: string): void {
+    onAction("conflict/select", { relativePath });
+  }
+
+  function moveToConflict(delta: -1 | 1): void {
+    const next =
+      delta === 1
+        ? (orderedConflicts[selectedIndexInOrder + 1] ?? orderedConflicts[0])
+        : (orderedConflicts[selectedIndexInOrder - 1] ??
+          orderedConflicts[orderedConflicts.length - 1]);
+    if (!next) return;
+    selectConflict(next.relativePath);
+    navAnnouncement = `已切换到 ${next.relativePath}（剩余 ${snapshot.progress?.remaining ?? orderedConflicts.length} 个未解决冲突）`;
+  }
 
   $effect(() => {
     const token = snapshot.selected?.mergeEditor.token ?? "";
@@ -138,10 +252,102 @@
     <div class="feature-toolbar feature-toolbar--compact">
       <div>
         <h2>待处理冲突</h2>
-        <p>{snapshot.conflicts.length} 个文件</p>
+        <p>
+          剩余 {snapshot.conflicts.length} 个{snapshot.progress
+            ? `，已处理 ${snapshot.progress.resolvedCount} / ${snapshot.progress.initialCount}`
+            : ""}
+        </p>
       </div>
       <span class="status-badge status-badge--conflicted">阻断提交</span>
     </div>
+    <div class="conflict-filter-bar">
+      <SearchInput
+        bind:value={query}
+        ariaLabel="筛选冲突文件"
+        placeholder="路径、类型…"
+        compact
+      />
+      <select
+        class="sort-menu"
+        aria-label="冲突类型筛选"
+        value={typeFilter}
+        onchange={(event) => {
+          typeFilter = (event.currentTarget as HTMLSelectElement).value;
+        }}
+      >
+        <option value="all">全部类型</option>
+        <option value="text">文本冲突</option>
+        <option value="tree">树冲突</option>
+        <option value="property">属性冲突</option>
+      </select>
+      <select
+        class="sort-menu"
+        aria-label="产生操作筛选"
+        value={operationFilter}
+        onchange={(event) => {
+          operationFilter = (event.currentTarget as HTMLSelectElement).value;
+        }}
+      >
+        <option value="all">全部来源</option>
+        <option value="update">更新产生</option>
+        <option value="merge">合并产生</option>
+        <option value="switch">切换产生</option>
+      </select>
+      <select
+        class="sort-menu"
+        aria-label="冲突排序"
+        value={sortField}
+        onchange={(event) => {
+          const value = (event.currentTarget as HTMLSelectElement).value;
+          sortField =
+            value === "type" || value === "operation" ? value : "path";
+        }}
+      >
+        <option value="path">按路径</option>
+        <option value="type">按冲突类型</option>
+        <option value="operation">按产生操作</option>
+      </select>
+    </div>
+    <div class="conflict-nav-bar">
+      <ResultCount count={orderedConflicts.length} suffix="个冲突" />
+      <div class="toolbar-actions">
+        <button
+          class="button button--secondary"
+          disabled={orderedConflicts.length < 2}
+          onclick={() => moveToConflict(-1)}>上一个未解决</button
+        >
+        <button
+          class="button button--secondary"
+          disabled={orderedConflicts.length < 2}
+          onclick={() => moveToConflict(1)}>下一个未解决</button
+        >
+      </div>
+    </div>
+    {#if navAnnouncement}<div class="sr-only-announcement" role="status">
+        {navAnnouncement}
+      </div>{/if}
+    {#if pathDetail && list.detailOpen}
+      <div class="path-detail-host">
+        <div class="path-detail-host__bar">
+          <span class="path-detail-host__target">{pathDetail.relativePath}</span
+          >
+          <button
+            class="icon-button icon-button--small"
+            aria-label="关闭路径详情"
+            onclick={list.closePathDetail}
+            ><span class="codicon codicon-close" aria-hidden="true"
+            ></span></button
+          >
+        </div>
+        <FilePathDetail
+          detail={pathDetail}
+          onCopyLocalPath={() =>
+            onAction("file/copy-path", {
+              relativePath: pathDetail.relativePath,
+            })}
+        />
+      </div>
+    {/if}
     {#if snapshot.conflicts.length === 0}
       <div class="empty-state">
         <span class="codicon codicon-pass-filled"></span>
@@ -150,18 +356,29 @@
           <p>当前范围可以继续提交。</p>
         </div>
       </div>
+    {:else if orderedConflicts.length === 0}
+      <div class="mini-empty">没有匹配的冲突；调整搜索词或筛选条件后重试。</div>
     {:else}
-      <ScrollArea class="conflict-list" role="list" label="冲突文件">
-        {#each snapshot.conflicts as conflict (conflict.relativePath)}
-          <div role="listitem">
+      <ScrollArea
+        class="conflict-list"
+        role="list"
+        label="冲突文件"
+        bind:element={list.element}
+        onScroll={list.handleScroll}
+        onKeydown={list.handleKeydown}
+      >
+        {#each list.visibleRows as { row: conflict, index } (conflict.relativePath)}
+          <div role="listitem" class="conflict-item">
             <button
               class:active={snapshot.selected?.relativePath ===
                 conflict.relativePath}
+              class:conflict-row--keyboard-active={list.activeIndex === index}
               class="conflict-row"
-              onclick={() =>
-                onAction("conflict/select", {
-                  relativePath: conflict.relativePath,
-                })}
+              data-row-index={index}
+              onclick={() => {
+                list.markActive(index);
+                selectConflict(conflict.relativePath);
+              }}
             >
               <span class="codicon codicon-warning" aria-hidden="true"></span>
               <span
@@ -175,6 +392,33 @@
               <span class="codicon codicon-chevron-right" aria-hidden="true"
               ></span>
             </button>
+            <div class="conflict-row-actions">
+              <button
+                type="button"
+                class="icon-button icon-button--small"
+                aria-label={`查看 ${conflict.relativePath} 路径详情`}
+                title="路径详情"
+                onclick={(event) =>
+                  list.requestPathDetail(
+                    conflict.relativePath,
+                    event.currentTarget,
+                  )}
+                ><span class="codicon codicon-info" aria-hidden="true"
+                ></span></button
+              >
+              <button
+                type="button"
+                class="icon-button icon-button--small"
+                aria-label={`在仓库浏览器中显示 ${conflict.relativePath}`}
+                title="在仓库浏览器中显示"
+                onclick={() =>
+                  onAction("changes/show-in-repository", {
+                    relativePath: conflict.relativePath,
+                  })}
+                ><span class="codicon codicon-repo" aria-hidden="true"
+                ></span></button
+              >
+            </div>
           </div>
         {/each}
       </ScrollArea>

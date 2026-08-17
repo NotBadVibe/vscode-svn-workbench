@@ -1423,7 +1423,19 @@ export function startMockWorkbench(): void {
       injectSnapshot(
         "changelists",
         changelistsSnapshot({
-          groups: [{ name: "webview", paths: ["src/webview/App.svelte"] }],
+          groups: [
+            {
+              name: "webview",
+              files: [
+                {
+                  relativePath: "src/webview/App.svelte",
+                  selectionKey: mockSelectionKey("src/webview/App.svelte"),
+                  status: "modified" as const,
+                  selection: "selected" as const,
+                },
+              ],
+            },
+          ],
           suggestions: changelistSuggestions(),
           feedback: "文件已加入 webview。",
         }),
@@ -1741,6 +1753,11 @@ function conflictSnapshot(
   return {
     kind: "conflicts",
     conflicts,
+    progress: {
+      initialCount: conflicts.length + 1,
+      remaining: conflicts.length,
+      resolvedCount: 1,
+    },
     selected: {
       relativePath: "src/conflict/example.ts",
       operation: "update",
@@ -2406,7 +2423,15 @@ function changelistsSnapshot(
   const groups = isScrollDataset()
     ? Array.from({ length: 16 }, (_, index) => ({
         name: `变更集-${index + 1}`,
-        paths: [`项目资料/已分组-${index + 1}.ts`],
+        files: [
+          {
+            relativePath: `项目资料/已分组-${index + 1}.ts`,
+            selectionKey: mockSelectionKey(`项目资料/已分组-${index + 1}.ts`),
+            status: "modified" as const,
+            selection: "selected" as const,
+            fileType: "TypeScript",
+          },
+        ],
       }))
     : [];
   return {

@@ -1,13 +1,18 @@
 <script lang="ts">
-  import type { WorkbenchFileView } from "@protocol/workbenchProtocol";
   import { fileStatusLabels } from "../../i18n/terminology";
-  import { middleEllipsis, splitPathForCell } from "./listModel";
+  import {
+    middleEllipsis,
+    splitPathForCell,
+    type FileQuerySource,
+  } from "./listModel";
 
   /*
    * v0.0.8 PathCell：第一行文件名（保留扩展名），第二行项目内父目录
    * （中部省略）；跨项目/多仓库时显示徽标；文本可选择；读屏名称包含
    * 项目名、完整项目内路径、状态与选择状态。打开差异与路径详情都同时
    * 支持鼠标、键盘与触屏。
+   * v0.0.10：输入泛化为 FileQuerySource（状态可选），WorkbenchFileView
+   * 与变更集/冲突等富化条目都可复用。
    */
 
   let {
@@ -17,7 +22,9 @@
     onOpenDiff,
     onOpenDetail,
   }: {
-    file: WorkbenchFileView;
+    file: FileQuerySource & {
+      ownership?: "current" | "external" | "nested";
+    };
     selected?: boolean;
     maxPathLength?: number;
     onOpenDiff: () => void;
@@ -26,11 +33,14 @@
 
   const displayPath = $derived(file.projectRelativePath ?? file.relativePath);
   const parts = $derived(splitPathForCell(displayPath));
+  const statusLabel = $derived(
+    file.status ? fileStatusLabels[file.status] : undefined,
+  );
   const accessibleName = $derived(
     [
       file.projectName ? `项目 ${file.projectName}` : undefined,
       displayPath,
-      fileStatusLabels[file.status],
+      statusLabel ?? "状态未知",
       selected ? "已选" : "未选",
     ]
       .filter(Boolean)

@@ -5,7 +5,13 @@
     WorkbenchTaskId,
   } from "@protocol/workbenchProtocol";
   import ScrollArea from "../../components/ui/ScrollArea.svelte";
+  import ResultCount from "../../components/list/ResultCount.svelte";
   import { formatZhDateTime } from "../../i18n/formatters";
+
+  /*
+   * v0.0.10 跨模块列表迁移：诊断列表提供“只看需要处理”、状态筛选、
+   * 结果数量与复制单项；多根归属展示与验收清单结构保持不变。
+   */
 
   let {
     snapshot,
@@ -17,7 +23,27 @@
     onAction: (action: WebviewAction, data?: Record<string, unknown>) => void;
   } = $props();
   let expanded = $state<string | undefined>();
+  let statusFilter = $state<
+    "all" | "needsAttention" | "pass" | "warn" | "fail"
+  >("all");
   const statusLabels = { pass: "通过", warn: "提醒", fail: "失败" };
+
+  const visibleChecks = $derived(
+    snapshot.checks.filter((check) => {
+      if (statusFilter === "all") return true;
+      if (statusFilter === "needsAttention") return check.status !== "pass";
+      return check.status === statusFilter;
+    }),
+  );
+
+  function copyCheck(check: (typeof snapshot.checks)[number]): void {
+    const lines = [
+      `[${statusLabels[check.status]}] ${check.label}`,
+      check.detail,
+      check.action ? `建议：${check.action}` : undefined,
+    ].filter((line): line is string => line !== undefined);
+    onAction("copy-text", { text: lines.join("\n") });
+  }
 </script>
 
 <section class="diagnostics-page">
@@ -87,8 +113,35 @@
             <h2>运行环境</h2>
           </div>
         </div>
+        <div class="diagnostic-filter-bar" aria-label="诊断状态筛选">
+          <button
+            class:active={statusFilter === "needsAttention"}
+            aria-pressed={statusFilter === "needsAttention"}
+            onclick={() =>
+              (statusFilter =
+                statusFilter === "needsAttention" ? "all" : "needsAttention")}
+            >只看需要处理</button
+          >
+          {#each ["all", "pass", "warn", "fail"] as value (value)}
+            <button
+              class:active={statusFilter === value}
+              onclick={() => (statusFilter = value as typeof statusFilter)}
+              >{value === "all"
+                ? "全部"
+                : statusLabels[value as keyof typeof statusLabels]}</button
+            >
+          {/each}
+          <ResultCount count={visibleChecks.length} suffix="项检查" />
+        </div>
         <ScrollArea class="diagnostic-list" label="环境检查项目">
-          {#each snapshot.checks as check (check.id)}
+          {#if visibleChecks.length === 0}
+            <div class="mini-empty">
+              {snapshot.checks.length === 0
+                ? "尚未运行环境检查。"
+                : "没有匹配状态的检查项；调整筛选后重试。"}
+            </div>
+          {/if}
+          {#each visibleChecks as check (check.id)}
             <article class="diagnostic-row">
               <span
                 class={`check-icon check-icon--${check.status}`}
@@ -104,6 +157,15 @@
                 <p>{check.detail}</p>
                 {#if check.action}<small>{check.action}</small>{/if}
               </div>
+              <button
+                type="button"
+                class="icon-button icon-button--small"
+                aria-label={`复制检查项 ${check.label}`}
+                title="复制此项"
+                onclick={() => copyCheck(check)}
+                ><span class="codicon codicon-copy" aria-hidden="true"
+                ></span></button
+              >
             </article>
           {/each}
         </ScrollArea>

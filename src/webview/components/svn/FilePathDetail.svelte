@@ -40,6 +40,7 @@
           <dd>
             <button
               class="path-detail__value"
+              aria-label={`复制项目内路径 ${detail.detail?.projectRelativePath ?? ""}`}
               title="点击复制项目内路径"
               onclick={() => copyText(detail.detail?.projectRelativePath ?? "")}
               >{detail.detail.projectRelativePath}</button
@@ -52,6 +53,7 @@
         <dd>
           <button
             class="path-detail__value"
+            aria-label={`复制工作副本内路径 ${detail.detail?.workingCopyRelativePath ?? ""}`}
             title="点击复制工作副本内路径"
             onclick={() =>
               copyText(detail.detail?.workingCopyRelativePath ?? "")}
@@ -65,6 +67,7 @@
           <dd>
             <button
               class="path-detail__value"
+              aria-label={`复制仓库内路径 ${detail.detail?.repositoryRelativePath ?? ""}`}
               title="点击复制仓库内路径"
               onclick={() =>
                 copyText(detail.detail?.repositoryRelativePath ?? "")}
@@ -79,6 +82,7 @@
           <dd>
             <button
               class="path-detail__value"
+              aria-label={`复制 SVN URL ${detail.detail?.svnUrl ?? ""}`}
               title="点击复制 SVN URL"
               onclick={() => copyText(detail.detail?.svnUrl ?? "")}
               >{detail.detail.svnUrl}</button

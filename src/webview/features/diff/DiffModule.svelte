@@ -10,6 +10,7 @@
     WebviewAction,
   } from "@protocol/workbenchProtocol";
   import DiffView from "./DiffView.svelte";
+  import FilePathDetail from "../../components/svn/FilePathDetail.svelte";
   import { diffFallbackNotices } from "../../i18n/terminology";
   import { computeDiffHunks } from "./diffHunks";
 
@@ -20,9 +21,15 @@
     diffSaveResult,
     draftAck,
     targetSwitchRequest,
+    pathDetail,
   }: {
     snapshot: DiffSnapshot;
     onAction: (action: WebviewAction, data?: Record<string, unknown>) => void;
+    /** v0.0.10：路径详情结果（Host 一次性下发）。 */
+    pathDetail?: Extract<
+      HostToWebviewMessage,
+      { type: "file/path-detail-result" }
+    >["payload"];
     editSession?: Extract<
       HostToWebviewMessage,
       { type: "diff/edit-opened" }
@@ -66,6 +73,16 @@
   const hasDraft = $derived(snapshot.draft !== undefined);
   let editing = $state(false);
   let dirty = $state(false);
+  /** v0.0.10：路径详情开合与触发按钮焦点恢复。 */
+  let pathDetailOpen = $state(false);
+  let pathDetailTrigger = $state<HTMLButtonElement | null>(null);
+  $effect(() => {
+    if (pathDetail) pathDetailOpen = true;
+  });
+  function closePathDetail(): void {
+    pathDetailOpen = false;
+    pathDetailTrigger?.focus();
+  }
   let savedText = $state("");
   let currentDraftRevision = $state(1);
   /** 当前编辑基准的磁盘 hash（保存成功后随 newContentHash 更新）。 */
@@ -412,6 +429,33 @@
       </div>
     </div>
     <div class="toolbar-actions">
+      <!-- v0.0.10：复用共享路径操作（复制、路径详情、仓库定位）。 -->
+      <button
+        class="icon-button icon-button--small"
+        aria-label={`复制路径 ${snapshot.relativePath}`}
+        title="复制路径"
+        onclick={() => onAction("copy-text", { text: snapshot.relativePath })}
+        ><span class="codicon codicon-copy" aria-hidden="true"></span></button
+      >
+      <button
+        class="icon-button icon-button--small"
+        aria-label={`查看 ${snapshot.relativePath} 路径详情`}
+        title="路径详情"
+        onclick={(event) => {
+          pathDetailTrigger = event.currentTarget;
+          onAction("file/path-detail", { relativePath: snapshot.relativePath });
+        }}><span class="codicon codicon-info" aria-hidden="true"></span></button
+      >
+      <button
+        class="icon-button icon-button--small"
+        aria-label={`在仓库浏览器中显示 ${snapshot.relativePath}`}
+        title="在仓库浏览器中显示"
+        onclick={() =>
+          onAction("changes/show-in-repository", {
+            relativePath: snapshot.relativePath,
+          })}
+        ><span class="codicon codicon-repo" aria-hidden="true"></span></button
+      >
       {#if canEdit}
         {#if !editing}
           {#if hasDraft}
@@ -503,6 +547,29 @@
       </button>
     </div>
   </div>
+
+  {#if pathDetail && pathDetailOpen}
+    <div class="path-detail-host">
+      <div class="path-detail-host__bar">
+        <span class="path-detail-host__target">{pathDetail.relativePath}</span>
+        <button
+          type="button"
+          class="icon-button icon-button--small"
+          aria-label="关闭路径详情"
+          onclick={closePathDetail}
+          ><span class="codicon codicon-close" aria-hidden="true"
+          ></span></button
+        >
+      </div>
+      <FilePathDetail
+        detail={pathDetail}
+        onCopyLocalPath={() =>
+          onAction("file/copy-path", {
+            relativePath: pathDetail.relativePath,
+          })}
+      />
+    </div>
+  {/if}
 
   {#if editing}
     <div class="notice" role="status">

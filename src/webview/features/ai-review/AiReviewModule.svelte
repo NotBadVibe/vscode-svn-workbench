@@ -4,6 +4,8 @@
     WebviewAction,
   } from "@protocol/workbenchProtocol";
   import ScrollArea from "../../components/ui/ScrollArea.svelte";
+  import SearchInput from "../../components/list/SearchInput.svelte";
+  import ResultCount from "../../components/list/ResultCount.svelte";
   import { formatZhNumber } from "../../i18n/formatters";
   import {
     confidenceLabels,
@@ -11,6 +13,10 @@
     localPurposeHeading,
     sourceLabels,
   } from "../../i18n/terminology";
+  /*
+   * v0.0.10 过渡迁移（只读）：标题/证据/路径搜索与严重度、分类筛选；
+   * 不为形式增加复选框或批量动作（完整合并页留给 v0.0.12）。
+   */
   let {
     snapshot,
     onAction,
@@ -19,10 +25,27 @@
     onAction: (action: WebviewAction, data?: Record<string, unknown>) => void;
   } = $props();
   let severity = $state<"all" | "critical" | "warning" | "note">("all");
+  let category = $state<
+    "all" | AiReviewSnapshot["findings"][number]["category"]
+  >("all");
+  let query = $state("");
+  /** 分类选项从当前发现推导，不虚构不存在的分类。 */
+  const availableCategories = $derived([
+    ...new Set(snapshot.findings.map((item) => item.category)),
+  ]);
   const visible = $derived(
-    snapshot.findings.filter(
-      (item) => severity === "all" || item.severity === severity,
-    ),
+    snapshot.findings.filter((item) => {
+      if (severity !== "all" && item.severity !== severity) return false;
+      if (category !== "all" && item.category !== category) return false;
+      const needle = query.trim().toLowerCase();
+      if (!needle) return true;
+      return [
+        item.title,
+        item.evidence,
+        item.relativePath ?? "",
+        item.recommendation,
+      ].some((value) => value.toLowerCase().includes(needle));
+    }),
   );
   const severityLabels = { critical: "高风险", warning: "提醒", note: "建议" };
 </script>
@@ -83,6 +106,29 @@
     >
       {warning}
     </div>{/each}
+
+  <div class="review-filter-bar" aria-label="发现筛选">
+    <SearchInput
+      bind:value={query}
+      ariaLabel="筛选检查发现"
+      placeholder="标题、证据、路径…"
+      compact
+    />
+    <ResultCount count={visible.length} suffix="条发现" />
+    <div class="status-filters" aria-label="分类筛选">
+      <button
+        class:active={category === "all"}
+        onclick={() => (category = "all")}>全部分类</button
+      >
+      {#each availableCategories as value (value)}
+        <button
+          class:active={category === value}
+          onclick={() => (category = value)}
+          >{findingCategoryLabels[value]}</button
+        >
+      {/each}
+    </div>
+  </div>
 
   {#if visible.length === 0}
     <div class="empty-state empty-state--large">

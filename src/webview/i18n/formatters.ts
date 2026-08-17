@@ -71,6 +71,20 @@ export function formatCount(
   return `${formatZhNumber(value)} ${classifiers[unit]}`;
 }
 
+/** 文件大小（设计基线 §2.4：`12.4 MB` 形式；未知大小返回 “—”）。 */
+export function formatZhFileSize(value: number | undefined): string {
+  if (value === undefined || !Number.isFinite(value) || value < 0) return "—";
+  if (value < 1024) return `${value} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let size = value;
+  let unitIndex = -1;
+  do {
+    size /= 1024;
+    unitIndex += 1;
+  } while (size >= 1024 && unitIndex < units.length - 1);
+  return `${size >= 100 ? size.toFixed(0) : size.toFixed(1)} ${units[unitIndex]}`;
+}
+
 function startOfZhCnDay(value: Date): number {
   const parts = datePartsFormatter.formatToParts(value);
   const year = Number(parts.find((part) => part.type === "year")?.value);

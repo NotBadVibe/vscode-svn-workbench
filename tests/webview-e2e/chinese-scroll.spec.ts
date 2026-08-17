@@ -149,8 +149,8 @@ test("SCR-06：变更集三栏拥有独立滚动归属且选择不丢失", async
   await page.setViewportSize({ width: 1180, height: 600 });
   await page.goto("/?dataset=scroll");
   await openModule(page, "变更集");
-  const current = page.getByRole("region", { name: "现有 SVN 变更集" });
-  await assertScrollable(current, current.locator(".compact-file-list").last());
+  const current = page.getByRole("region", { name: "变更集与未分组文件" });
+  await assertScrollable(current, current.locator(".changelist-row").last());
   await page.getByRole("button", { name: "生成分组建议" }).click();
   const suggestions = page.getByRole("region", { name: "分组建议" });
   await assertScrollable(

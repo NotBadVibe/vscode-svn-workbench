@@ -7,6 +7,7 @@ import {
 } from "@testing-library/svelte";
 import { describe, expect, it, vi } from "vitest";
 import SettingsModule from "../../src/webview/features/settings/SettingsModule.svelte";
+import { naturalCompare } from "../../src/selection/selectionSort";
 import type {
   CommitSelectionSettingsSection,
   SettingsSnapshot,
@@ -458,6 +459,59 @@ describe("SettingsModule 提交选择规则", () => {
     expect(screen.getByText(/无法生成规则预览/)).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "重新采集候选" }));
     expect(onAction).toHaveBeenCalledWith("settings/refresh-selection-preview");
+  });
+
+  it("预览支持路径搜索与决策筛选（v0.0.10）", async () => {
+    await renderSelectionTab(vi.fn());
+    const input = screen.getByRole("textbox", { name: "筛选预览路径" });
+    const count = () => screen.getByText(/\d+ 条结果/);
+    expect(count()).toBeInTheDocument();
+    await fireEvent.input(input, { target: { value: "nomatch-path" } });
+    expect(screen.getByText(/没有匹配的候选/)).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "清除筛选" }));
+    // 决策筛选：只看需要确认。
+    const decisionMenu = screen.getByRole("combobox", {
+      name: "决策筛选",
+    }) as HTMLSelectElement;
+    await fireEvent.change(decisionMenu, { target: { value: "needsReview" } });
+    const previewRegion = screen.getByRole("region", {
+      name: "提交选择规则预览结果",
+    });
+    const rows = within(previewRegion).getAllByText(/./);
+    expect(rows.length).toBeGreaterThan(0);
+    expect(within(previewRegion).queryByText("推荐提交")).toBeNull();
+    await fireEvent.change(decisionMenu, { target: { value: "all" } });
+  });
+
+  it("预览排序不改变规则优先级语义（v0.0.10）", async () => {
+    await renderSelectionTab(vi.fn());
+    const previewRegion = screen.getByRole("region", {
+      name: "提交选择规则预览结果",
+    });
+    const rowPaths = () =>
+      Array.from(
+        previewRegion.querySelectorAll(
+          ".selection-preview-row .selection-preview-path",
+        ),
+      ).map((node) => node.textContent ?? "");
+    const sortMenu = screen.getByRole("combobox", {
+      name: "预览排序",
+    }) as HTMLSelectElement;
+    const defaultOrder = rowPaths();
+    expect(defaultOrder.length).toBeGreaterThan(1);
+    await fireEvent.change(sortMenu, { target: { value: "pathAsc" } });
+    expect(rowPaths()).toEqual(
+      [...defaultOrder].sort((a, b) => naturalCompare(a, b)),
+    );
+    await fireEvent.change(sortMenu, { target: { value: "pathDesc" } });
+    expect(rowPaths()).toEqual(
+      [...defaultOrder].sort((a, b) => naturalCompare(b, a)),
+    );
+    // 恢复默认顺序回到快照顺序。
+    await fireEvent.change(sortMenu, { target: { value: "default" } });
+    expect(rowPaths()).toEqual(defaultOrder);
+    // 规则表的上移/下移入口仍在（优先级只由它改变）。
+    expect(screen.getAllByLabelText(/上移规则/).length).toBeGreaterThan(0);
   });
 
   it("展示保存反馈与结构化校验错误", async () => {
