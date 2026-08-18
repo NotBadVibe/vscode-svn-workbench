@@ -13,6 +13,7 @@
     draftAck,
     targetSwitchRequest,
     pathDetail,
+    commitReceipt,
     onAction,
   }: {
     snapshot: WorkbenchModuleSnapshot;
@@ -36,6 +37,10 @@
     pathDetail?: Extract<
       HostToWebviewMessage,
       { type: "file/path-detail-result" }
+    >["payload"];
+    commitReceipt?: Extract<
+      HostToWebviewMessage,
+      { type: "commit/receipt" }
     >["payload"];
     onAction: (action: WebviewAction, data?: Record<string, unknown>) => void;
   } = $props();
@@ -67,7 +72,12 @@
     />{/await}
 {:else if snapshot.kind === "commit"}
   {#await import("../features/commit/CommitModule.svelte")}{@render loadingModule()}{:then module}{@const Feature =
-      module.default}<Feature {snapshot} {onAction} {pathDetail} />{/await}
+      module.default}<Feature
+      {snapshot}
+      {onAction}
+      {pathDetail}
+      {commitReceipt}
+    />{/await}
 {:else if snapshot.kind === "history"}
   {#await import("../features/history/HistoryModule.svelte")}{@render loadingModule()}{:then module}{@const Feature =
       module.default}<Feature {snapshot} {onAction} {pathDetail} />{/await}

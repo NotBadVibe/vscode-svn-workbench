@@ -308,6 +308,7 @@ describe("CommitModule 提交说明建议草稿（v0.0.9 §4）", () => {
     source: "configured-model" as const,
     model: "deepseek-v4-flash",
     metadataOnly: false,
+    diffMode: "metadata-only" as const,
     warnings: [],
     binding: {
       repositoryUuid: "uuid-1",
@@ -454,5 +455,372 @@ describe("CommitModule 提交说明建议草稿（v0.0.9 §4）", () => {
     expect(
       screen.getByText(/来源：模型不可用，已保留本地结果/),
     ).toBeInTheDocument();
+  });
+});
+
+describe("CommitModule 受限差异外发回执（v0.0.11 §3）", () => {
+  const receipt = {
+    token: "receipt-token-1",
+    receipt: {
+      task: "commit-draft" as const,
+      projectId: "project-1",
+      model: "deepseek-v4-flash",
+      dataTypes: ["项目内相对路径、SVN 状态、脱敏差异片段"],
+      files: 1,
+      totalBudget: 40000,
+      perFileBudget: 6000,
+      historyIncluded: false,
+    },
+    coverage: {
+      total: 2,
+      analyzed: 1,
+      truncated: 1,
+      binary: 0,
+      readFailed: 0,
+      budgetExcluded: 0,
+    },
+    files: [
+      {
+        candidateId: "cand-a",
+        projectRelativePath: "src/a.ts" as never,
+        status: "modified",
+        state: "analyzed" as const,
+        diffHash: "deadbeef",
+        charCount: 320,
+        hunkCount: 2,
+      },
+      {
+        candidateId: "cand-b",
+        projectRelativePath: "dist/out.js" as never,
+        status: "modified",
+        state: "truncated" as const,
+        diffHash: "deadbeef",
+        charCount: 6000,
+        hunkCount: 1,
+        reason: "差异超过单文件预算，已截断",
+      },
+    ],
+    excludedCount: 1,
+    historyIncluded: false,
+    notSent: ["本地绝对路径（只发送项目内相对路径）", "范围外文件内容"],
+    retentionNote:
+      "数据保留策略由模型服务商策略决定，本插件无法证明其保留期限。",
+  };
+
+  function renderWithReceipt(overrides: Record<string, unknown> = {}) {
+    const onAction = vi.fn();
+    render(CommitModule, {
+      snapshot,
+      onAction,
+      commitReceipt: { ...receipt, ...overrides },
+    });
+    return onAction;
+  }
+
+  it("展示回执（任务/模型/预算/覆盖率/排除文件），不显示建议", () => {
+    renderWithReceipt();
+    expect(
+      screen.getByRole("region", { name: "受限差异外发回执" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("受限差异外发回执（尚未发送）"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("提交说明（commit-draft）")).toBeInTheDocument();
+    expect(screen.getByText("deepseek-v4-flash")).toBeInTheDocument();
+    expect(
+      screen.getByText(/单文件 6000 字符 \/ 总计 40000 字符/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/已分析 1 · 截断 1 · 二进制 0 · 读取失败 0 · 预算外 0/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/数据保留策略由模型服务商策略决定/),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("region", { name: "提交说明建议草稿" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("可展开包含 / 排除文件清单", async () => {
+    const onAction = renderWithReceipt();
+    expect(screen.queryByText("src/a.ts")).not.toBeInTheDocument();
+    await fireEvent.click(
+      screen.getByRole("button", { name: "展开包含 / 排除文件清单" }),
+    );
+    expect(screen.getByText("src/a.ts")).toBeInTheDocument();
+    expect(screen.getByText("dist/out.js")).toBeInTheDocument();
+    expect(onAction).not.toHaveBeenCalled();
+  });
+
+  it("“开始模型生成”携带回执 token 与受限差异模式", async () => {
+    const onAction = renderWithReceipt();
+    await fireEvent.click(screen.getByRole("button", { name: "开始模型生成" }));
+    expect(onAction).toHaveBeenCalledWith("commit/generate-message", {
+      selectedPaths: ["src/a.ts"],
+      message: "feat(core): update",
+      diffMode: "limited-diff",
+      receiptToken: "receipt-token-1",
+    });
+  });
+
+  it("“继续仅文件信息”先放弃回执再按仅文件信息生成", async () => {
+    const onAction = renderWithReceipt();
+    await fireEvent.click(
+      screen.getByRole("button", { name: "继续仅文件信息" }),
+    );
+    expect(onAction).toHaveBeenCalledWith("commit/receipt-dismiss", {
+      token: "receipt-token-1",
+    });
+    expect(onAction).toHaveBeenCalledWith("commit/generate-message", {
+      selectedPaths: ["src/a.ts"],
+      message: "feat(core): update",
+      diffMode: "metadata-only",
+    });
+  });
+
+  it("“放弃”只放弃回执，不调用模型", async () => {
+    const onAction = renderWithReceipt();
+    await fireEvent.click(screen.getByRole("button", { name: "放弃" }));
+    expect(onAction).toHaveBeenCalledWith("commit/receipt-dismiss", {
+      token: "receipt-token-1",
+    });
+    expect(onAction).not.toHaveBeenCalledWith(
+      "commit/generate-message",
+      expect.anything(),
+    );
+  });
+
+  it("选择“含差异（需确认）”后点击生成走 preview-receipt", async () => {
+    const onAction = renderCommit();
+    await fireEvent.change(screen.getByLabelText("生成输入模式"), {
+      target: { value: "limited-diff" },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "生成建议草稿" }));
+    expect(onAction).toHaveBeenCalledWith("commit/preview-receipt", {
+      selectedPaths: ["src/a.ts"],
+      message: "feat(core): update",
+    });
+  });
+
+  it("默认“仅文件信息”点击生成直接 generate-message（metadata-only）", async () => {
+    const onAction = renderCommit();
+    await fireEvent.click(screen.getByRole("button", { name: "生成建议草稿" }));
+    expect(onAction).toHaveBeenCalledWith("commit/generate-message", {
+      selectedPaths: ["src/a.ts"],
+      message: "feat(core): update",
+      diffMode: "metadata-only",
+    });
+  });
+});
+
+describe("CommitModule 有证据的提交说明（v0.0.11 §4）", () => {
+  const evidenceSuggestion = {
+    token: "suggestion-token-2",
+    message: "变更：src/a.ts 的行为调整",
+    source: "configured-model" as const,
+    model: "deepseek-v4-flash",
+    metadataOnly: false,
+    diffMode: "limited-diff" as const,
+    coverage: {
+      total: 2,
+      analyzed: 1,
+      truncated: 1,
+      binary: 0,
+      readFailed: 1,
+      budgetExcluded: 0,
+    },
+    coverageFiles: [
+      {
+        candidateId: "cand-a",
+        projectRelativePath: "src/a.ts" as never,
+        status: "modified",
+        state: "analyzed" as const,
+        diffHash: "deadbeef",
+        charCount: 320,
+        hunkCount: 2,
+      },
+      {
+        candidateId: "cand-failed",
+        projectRelativePath: "src/db.ts" as never,
+        status: "modified",
+        state: "readFailed" as const,
+        diffHash: "",
+        charCount: 0,
+        hunkCount: 0,
+        reason: "svn diff 读取失败",
+      },
+    ],
+    evidence: [
+      {
+        reference: {
+          candidateId: "cand-a",
+          hunkId: "hunk-1",
+          projectRelativePath: "src/a.ts",
+        },
+        valid: true,
+      },
+      {
+        reference: {
+          candidateId: "cand-ghost",
+          projectRelativePath: "src/ghost.ts",
+        },
+        valid: false,
+        reason: "引用了未授权或范围外文件，已丢弃",
+      },
+    ],
+    claims: [
+      {
+        text: "src/a.ts：修改了 2 处差异块，具体行为见证据。",
+        status: "confirmed" as const,
+        downgraded: false,
+        evidence: [
+          {
+            candidateId: "cand-a",
+            hunkId: "hunk-1",
+            projectRelativePath: "src/a.ts",
+          },
+        ],
+        invalidEvidence: [],
+      },
+      {
+        text: "src/db.ts 的改动无法判断具体行为。",
+        status: "toConfirm" as const,
+        downgraded: true,
+        evidence: [],
+        invalidEvidence: [
+          {
+            reference: {
+              candidateId: "cand-ghost",
+              projectRelativePath: "src/ghost.ts",
+            },
+            reason: "引用了未授权或范围外文件，已丢弃",
+          },
+        ],
+      },
+    ],
+    warnings: [],
+    binding: {
+      repositoryUuid: "uuid-1",
+      scopeHash: "scope-1",
+      candidateHash: "candidates-1",
+      generatedAt: "2026-07-30T10:00:00.000Z",
+      model: "deepseek-v4-flash",
+    },
+  };
+
+  it("展示差异覆盖率与证据引用（有效 + 无效原因）", () => {
+    renderCommit({ messageSuggestion: evidenceSuggestion });
+    expect(
+      screen.getByText(/差异覆盖率：已分析 1 · 截断 1/),
+    ).toBeInTheDocument();
+    expect(screen.getByText("证据引用（1 条有效）")).toBeInTheDocument();
+    const evidenceList = screen.getByRole("list", {
+      name: "建议证据引用",
+    });
+    expect(evidenceList.textContent).toContain("src/a.ts");
+    expect(evidenceList.textContent).toContain("差异块已验证");
+    expect(evidenceList.textContent).toContain("src/ghost.ts");
+    expect(evidenceList.textContent).toContain(
+      "引用了未授权或范围外文件，已丢弃",
+    );
+  });
+
+  it("仅文件信息建议不展示覆盖率与证据", () => {
+    renderCommit({
+      messageSuggestion: {
+        ...evidenceSuggestion,
+        diffMode: "metadata-only",
+        metadataOnly: true,
+        coverage: undefined,
+        evidence: undefined,
+      },
+    });
+    expect(screen.queryByText(/差异覆盖率：已分析/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/证据引用/)).not.toBeInTheDocument();
+  });
+
+  it("有效证据提供“打开差异”入口，发送 open-evidence", async () => {
+    const onAction = renderCommit({
+      messageSuggestion: evidenceSuggestion,
+    });
+    await fireEvent.click(
+      screen.getAllByRole("button", { name: "打开差异" })[0],
+    );
+    expect(onAction).toHaveBeenCalledWith("commit/open-evidence", {
+      token: "suggestion-token-2",
+      candidateId: "cand-a",
+      hunkId: "hunk-1",
+      projectRelativePath: "src/a.ts",
+    });
+  });
+
+  it("逐文件覆盖情况展示失败项，并提供重试失败项入口", async () => {
+    const onAction = renderCommit({
+      messageSuggestion: evidenceSuggestion,
+    });
+    await fireEvent.click(
+      screen.getByRole("button", { name: "重试失败项（1）" }),
+    );
+    expect(onAction).toHaveBeenCalledWith("commit/retry-failed-diff", {
+      token: "suggestion-token-2",
+    });
+    const coverageList = screen.getByRole("list", {
+      name: "建议逐文件覆盖情况",
+    });
+    expect(coverageList.textContent).toContain("src/a.ts");
+    expect(coverageList.textContent).toContain("src/db.ts");
+    expect(coverageList.textContent).toContain("读取失败");
+  });
+
+  it("过期建议禁用打开差异且不显示重试入口", () => {
+    renderCommit({
+      messageSuggestion: { ...evidenceSuggestion, stale: true },
+    });
+    for (const openButton of screen.getAllByRole("button", {
+      name: "打开差异",
+    })) {
+      expect(openButton).toBeDisabled();
+    }
+    expect(
+      screen.queryByRole("button", { name: "重试失败项（1）" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("逐条说明展示状态、降级标记与逐条证据（可打开差异）", async () => {
+    const onAction = renderCommit({
+      messageSuggestion: evidenceSuggestion,
+    });
+    const claimList = screen.getByRole("list", { name: "建议逐条说明" });
+    expect(claimList.textContent).toContain("已证实");
+    expect(claimList.textContent).toContain("待确认");
+    expect(claimList.textContent).toContain("已降级");
+    expect(claimList.textContent).toContain("src/a.ts");
+    // 逐条证据的“打开差异”发送 open-evidence。
+    await fireEvent.click(
+      screen.getAllByRole("button", { name: "打开差异" })[0],
+    );
+    expect(onAction).toHaveBeenCalledWith("commit/open-evidence", {
+      token: "suggestion-token-2",
+      candidateId: "cand-a",
+      hunkId: "hunk-1",
+      projectRelativePath: "src/a.ts",
+    });
+  });
+
+  it("仅文件信息建议不展示逐条说明", () => {
+    renderCommit({
+      messageSuggestion: {
+        ...evidenceSuggestion,
+        diffMode: "metadata-only",
+        metadataOnly: true,
+        coverage: undefined,
+        coverageFiles: undefined,
+        evidence: undefined,
+        claims: undefined,
+      },
+    });
+    expect(
+      screen.queryByRole("list", { name: "建议逐条说明" }),
+    ).not.toBeInTheDocument();
   });
 });

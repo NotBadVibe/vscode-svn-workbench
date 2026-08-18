@@ -158,6 +158,19 @@ import { validatePathsInScope } from "../../scope/pathBoundaryGuard";
 import { isPathInScope } from "../../scope/pathBoundaryGuard";
 import { projectRelativePath } from "../../scope/projectIdentity";
 import {
+  buildAnalysisReceipt,
+  buildCandidateId,
+  isCommitDraftEvidenceStale,
+  validateCommitMessageClaims,
+  validateEvidenceReferences,
+} from "../../commit/commitDiffEvidence";
+import {
+  collectLimitedCommitDiffs,
+  COMMIT_DIFF_PER_FILE_BUDGET,
+  COMMIT_DIFF_TOTAL_BUDGET,
+  type CommitDiffCandidateRef,
+} from "../../commit/commitDiffCollector";
+import {
   isSameOrDescendantPath,
   isSamePathIdentity,
 } from "../../scope/pathIdentity";
@@ -271,6 +284,7 @@ import {
   readFileForDiff,
   resolveRepositoryUuid,
   resolveRepositoryRootUrl,
+  resolveWorkingCopyRevision,
   resolveWorkingCopyUrl,
   toConflictContentView,
   truncateUtf8,
@@ -517,6 +531,10 @@ export class WorkbenchController implements vscode.Disposable {
       request.svnPath,
       request.scope,
     );
+    const workingCopyRevision = await resolveWorkingCopyRevision(
+      request.svnPath,
+      request.scope,
+    );
     const storedAuthentication = await readStoredSvnCredential(
       this.context.secrets,
       repositoryUuid,
@@ -529,6 +547,7 @@ export class WorkbenchController implements vscode.Disposable {
       repositoryUuid,
       repositoryRootUrl,
       workingCopyUrl,
+      workingCopyRevision,
       scopeHash: hashOperationScope(request.scope),
       aiModels: buildScenarioModelMap(storedAi),
       security: {
@@ -1243,6 +1262,267 @@ export class WorkbenchController implements vscode.Disposable {
         await this.sendCommitSnapshot(session, message.requestId);
         return;
       }
+      case "commit/preview-receipt": {
+        // v0.0.11 §3 动作级外发回执：受限差异模式调用模型前，先采集、
+        // 脱敏、裁剪并计算覆盖率，把回执下发给 Webview；此处不调用模型。
+        // 用户确认“开始模型生成”或“继续仅文件信息”后，再经
+        // commit/generate-message（携带 receiptToken）实际生成。
+        const state = this.ensureCommitState(session);
+        const candidates = await this.collectScopeCandidates(session);
+        const requested = asStringArray(data.selectedPaths);
+        if (requested !== undefined) {
+          const selectionError = this.applyWebviewSelection(
+            session,
+            requested,
+            candidates,
+            { trackManualSelection: false },
+          );
+          if (selectionError) {
+            await this.sendError(
+              "commit",
+              "提交选择未通过候选校验",
+              selectionError,
+              true,
+              message.requestId,
+            );
+            return;
+          }
+        }
+        state.message = asStringAllowEmpty(data.message) ?? state.message;
+        const selectedAbsolutePaths = this.resolveSelectedAbsolutePaths(
+          session,
+          candidates,
+        );
+        if (selectedAbsolutePaths.length === 0) {
+          state.pendingReceipt = undefined;
+          state.feedback = {
+            tone: "warning",
+            message: "当前没有勾选文件，无法预览受限差异回执；请先选择文件。",
+          };
+          await this.sendCommitSnapshot(session, message.requestId, candidates);
+          return;
+        }
+        const storedAi = await readStoredAiConfiguration(this.context);
+        const pending = await this.collectCommitDiffReceipt(
+          session,
+          candidates,
+          selectedAbsolutePaths,
+          storedAi,
+        );
+        if (!pending) {
+          await this.sendError(
+            "commit",
+            "无法生成受限差异回执",
+            "受限差异采集失败；请检查工作副本状态后重试。",
+            true,
+            message.requestId,
+          );
+          return;
+        }
+        state.pendingReceipt = pending;
+        await this.postCommitReceipt(pending, message.requestId);
+        return;
+      }
+      case "commit/receipt-dismiss": {
+        // v0.0.11 §3：取消回执。未确认前模型不会被调用，回执一次性失效；
+        // 明确说明未发生任何外发。
+        const state = this.ensureCommitState(session);
+        const token = asString(data.token);
+        if (state.pendingReceipt && state.pendingReceipt.token === token) {
+          state.pendingReceipt = undefined;
+          state.feedback = {
+            tone: "warning",
+            message:
+              "已放弃受限差异回执；未确认前未发送任何差异内容，提交说明保持不变。",
+          };
+        }
+        await this.sendCommitSnapshot(session, message.requestId);
+        return;
+      }
+      case "commit/open-evidence": {
+        // v0.0.11 §4/AI11-DRAFT-02：打开 Host 校验过的证据对应文件的差异。
+        // 只接受建议中 valid=true 的引用；建议过期、引用失效、文件已不在
+        // 候选集合或范围外均拒绝，防止把模型引用当可写路径使用。
+        const state = this.ensureCommitState(session);
+        const suggestion = state.messageSuggestion;
+        const token = asString(data.token);
+        const candidateId = asString(data.candidateId);
+        const projectRelativePath = asString(data.projectRelativePath);
+        const hunkId = asString(data.hunkId);
+        if (
+          !suggestion ||
+          suggestion.token !== token ||
+          !candidateId ||
+          !projectRelativePath
+        ) {
+          await this.sendError(
+            "commit",
+            "无法打开证据",
+            "证据引用无效或建议已不存在，未打开差异。",
+            true,
+            message.requestId,
+          );
+          return;
+        }
+        const candidates = await this.collectScopeCandidates(session);
+        if (
+          this.isCommitMessageSuggestionStale(session, suggestion, candidates)
+        ) {
+          await this.sendError(
+            "commit",
+            "建议已过期",
+            "范围或候选已变化，证据可能失效；请重新生成后查看。",
+            true,
+            message.requestId,
+          );
+          return;
+        }
+        const validEvidence = suggestion.evidence?.some(
+          (item) =>
+            item.valid &&
+            item.reference.candidateId === candidateId &&
+            item.reference.projectRelativePath === projectRelativePath &&
+            (hunkId === undefined ||
+              hunkId === "" ||
+              item.reference.hunkId === hunkId),
+        );
+        if (!validEvidence) {
+          await this.sendError(
+            "commit",
+            "证据引用无效",
+            "该引用不在建议的有效证据集合内，未打开差异。",
+            true,
+            message.requestId,
+          );
+          return;
+        }
+        const absolutePath = candidates.find(
+          (candidate) =>
+            buildCandidateId(
+              session.scope.repositoryRoot,
+              candidate.absolutePath,
+            ) === candidateId,
+        )?.absolutePath;
+        if (
+          !absolutePath ||
+          !isPathInScope(session.scope, absolutePath, nativePathSemantics)
+        ) {
+          await this.sendError(
+            "commit",
+            "证据文件已失效",
+            "该证据引用的文件已不在当前候选集合或操作范围内，未打开差异。",
+            true,
+            message.requestId,
+          );
+          return;
+        }
+        if (this.servedModule !== "diff") {
+          if (this.onOpenInOtherWindow) {
+            await this.onOpenInOtherWindow(
+              buildDiffWindowRequest({
+                svnPath: session.svnPath,
+                scope: session.scope,
+                targetFile: absolutePath,
+              }),
+            );
+            return;
+          }
+        }
+        session.moduleId = "diff";
+        session.taskId = defaultWorkbenchTask("diff");
+        session.targetFile = absolutePath;
+        this.panel!.title = getModuleTitle("diff", session.taskId);
+        await this.loadModule("diff", absolutePath, message.requestId);
+        return;
+      }
+      case "commit/retry-failed-diff": {
+        // v0.0.11 §6“部分完成只重试失败项”：只对上次读取失败/预算外的
+        // 文件重新采集受限差异并展示回执（不调用模型）；确认后经
+        // commit/generate-message 生成，新建议替换旧建议（草稿不变）。
+        const state = this.ensureCommitState(session);
+        const suggestion = state.messageSuggestion;
+        const token = asString(data.token);
+        if (!suggestion || suggestion.token !== token) {
+          await this.sendError(
+            "commit",
+            "无法重试失败项",
+            "建议不存在或已失效，未重试。",
+            true,
+            message.requestId,
+          );
+          return;
+        }
+        if (suggestion.diffMode !== "limited-diff") {
+          await this.sendError(
+            "commit",
+            "无法重试失败项",
+            "仅受限差异模式的建议支持重试失败项。",
+            true,
+            message.requestId,
+          );
+          return;
+        }
+        const candidates = await this.collectScopeCandidates(session);
+        if (
+          this.isCommitMessageSuggestionStale(session, suggestion, candidates)
+        ) {
+          await this.sendError(
+            "commit",
+            "建议已过期",
+            "范围或候选已变化，请重新生成后再重试。",
+            true,
+            message.requestId,
+          );
+          return;
+        }
+        const failedIds =
+          suggestion.coverageFiles
+            ?.filter(
+              (file) =>
+                file.state === "readFailed" || file.state === "budgetExcluded",
+            )
+            .map((file) => file.candidateId) ?? [];
+        const failedPaths = candidates
+          .filter((candidate) =>
+            failedIds.includes(
+              buildCandidateId(
+                session.scope.repositoryRoot,
+                candidate.absolutePath,
+              ),
+            ),
+          )
+          .map((candidate) => candidate.absolutePath);
+        if (failedPaths.length === 0) {
+          state.feedback = {
+            tone: "warning",
+            message:
+              "没有可重试的失败项（上次读取失败或预算外的文件已全部处理或已失效）。",
+          };
+          await this.sendCommitSnapshot(session, message.requestId, candidates);
+          return;
+        }
+        const storedAi = await readStoredAiConfiguration(this.context);
+        const pending = await this.collectCommitDiffReceipt(
+          session,
+          candidates,
+          failedPaths,
+          storedAi,
+          `本次重试仅覆盖 ${failedPaths.length} 个上次读取失败或预算外的文件。`,
+        );
+        if (!pending) {
+          await this.sendError(
+            "commit",
+            "无法重试失败项",
+            "受限差异采集失败；请检查工作副本状态后重试。",
+            true,
+            message.requestId,
+          );
+          return;
+        }
+        state.pendingReceipt = pending;
+        await this.postCommitReceipt(pending, message.requestId);
+        return;
+      }
       case "commit/generate-message": {
         const state = this.ensureCommitState(session);
         const candidates = await this.collectScopeCandidates(session);
@@ -1275,11 +1555,6 @@ export class WorkbenchController implements vscode.Disposable {
           session.scope.repositoryRoot,
           session.scope.project?.projectRoot,
         );
-        const diffSummaries = await collectCommitDiffSummaries(
-          session.svnPath,
-          session.scope,
-          selectedAbsolutePaths,
-        );
         const storedAi = await readStoredAiConfiguration(this.context);
         const recentHistory = storedAi.includeCommitHistory
           ? readTeamMemory(this.context.workspaceState, session.repositoryUuid)
@@ -1289,6 +1564,152 @@ export class WorkbenchController implements vscode.Disposable {
                 summary: entry.summary,
               }))
           : undefined;
+        const diffMode =
+          asString(data.diffMode) === "limited-diff"
+            ? "limited-diff"
+            : "metadata-only";
+
+        if (diffMode === "limited-diff") {
+          // v0.0.11 §3：受限差异必须携带匹配的回执令牌才调用模型。
+          const receiptToken = asString(data.receiptToken);
+          const pending = state.pendingReceipt;
+          const currentCandidateHash = hashCandidateState(candidates, "", []);
+          if (
+            !pending ||
+            !receiptToken ||
+            pending.token !== receiptToken ||
+            pending.scopeHash !== session.scopeHash ||
+            pending.candidateHash !== currentCandidateHash
+          ) {
+            state.pendingReceipt = undefined;
+            await this.sendError(
+              "commit",
+              "外发回执已失效",
+              "受限差异的外发回执已过期或不存在（范围或候选已变化），未调用模型；当前提交说明保持不变。",
+              true,
+              message.requestId,
+            );
+            await this.sendCommitSnapshot(
+              session,
+              message.requestId,
+              candidates,
+            );
+            return;
+          }
+          const pendingFragments = pending.fragments;
+          const request = buildCommitMessageAiRequest(
+            session.scope,
+            candidates,
+            selectedAbsolutePaths,
+            [],
+            {
+              currentMessage: state.message,
+              convention: toAiCommitConventionHint(convention.config),
+              recentHistory,
+              diffMode: "limited-diff",
+              receipt: pending.receipt,
+              coverage: pending.coverage,
+              diffs: pendingFragments,
+            },
+          );
+          const aiResult = await this.runAiScenario(
+            "commitMessage",
+            createMockCommitMessageResult(request),
+            (provider) => provider.generateCommitMessage(request),
+          );
+          const { result, source, fallbackReason } = aiResult;
+          const generated = normalizeCommitMessageResult(result);
+          if (!generated.message.trim()) {
+            state.messageSuggestion = undefined;
+            state.pendingReceipt = undefined;
+            state.feedback = {
+              tone: "warning",
+              message: `${
+                generated.summary || "当前没有足够的差异信息生成建议草稿"
+              }；当前提交说明保持不变。`,
+            };
+            state.preview = undefined;
+            await this.sendCommitSnapshot(
+              session,
+              message.requestId,
+              candidates,
+            );
+            return;
+          }
+          // v0.0.11 §4/AI11-SAFE-02：证据引用必须落在回执允许的文件与
+          // 差异块集合内；虚构、范围外、过期引用丢弃并计入警告。
+          const evidenceValidation = validateEvidenceReferences(
+            generated.evidence ?? [],
+            pendingFragments,
+          );
+          const evidenceWarnings = evidenceValidation.invalid.map(
+            (invalid) =>
+              `${invalid.reference.projectRelativePath}：${invalid.reason}。`,
+          );
+          // v0.0.11 §5：逐条声明逐条校验与强制降级——模型标 confirmed 但
+          // 无任何有效 Host 证据的声明降级为 toConfirm 并计入警告。
+          const claimValidation = validateCommitMessageClaims(
+            generated.claims ?? [],
+            pendingFragments,
+          );
+          const claimWarnings = claimValidation.claims
+            .filter((claim) => claim.downgraded)
+            .map(
+              (claim) =>
+                `模型把“${claim.text}”标为已证实，但缺少可核对的 Host 证据，已降级为待确认。`,
+            );
+          const suggestion: CommitMessageSuggestion = {
+            token: randomUUID(),
+            message: generated.message,
+            source,
+            model: session.aiModels.commitMessage || undefined,
+            metadataOnly: false,
+            diffMode: "limited-diff",
+            coverage: pending.coverage,
+            coverageFiles: pending.files,
+            claims: claimValidation.claims,
+            evidence: [
+              ...evidenceValidation.valid.map((reference) => ({
+                reference,
+                valid: true,
+              })),
+              ...evidenceValidation.invalid.map((invalid) => ({
+                reference: invalid.reference,
+                valid: false,
+                reason: invalid.reason,
+              })),
+            ],
+            receipt: pending.receipt,
+            warnings: [
+              ...generated.warnings,
+              ...(pending.retryNote ? [pending.retryNote] : []),
+              ...evidenceWarnings,
+              ...claimWarnings,
+              ...(fallbackReason
+                ? [`模型不可用，已使用本地回退：${fallbackReason}`]
+                : []),
+            ],
+            binding: {
+              repositoryUuid: session.repositoryUuid,
+              scopeHash: session.scopeHash,
+              candidateHash: currentCandidateHash,
+              revision: pending.revision,
+              generatedAt: new Date().toISOString(),
+              model: session.aiModels.commitMessage || undefined,
+            },
+          };
+          state.messageSuggestion = suggestion;
+          state.pendingReceipt = undefined;
+          state.preview = undefined;
+          await this.sendCommitSnapshot(session, message.requestId, candidates);
+          return;
+        }
+
+        const diffSummaries = await collectCommitDiffSummaries(
+          session.svnPath,
+          session.scope,
+          selectedAbsolutePaths,
+        );
         const request = buildCommitMessageAiRequest(
           session.scope,
           candidates,
@@ -1298,6 +1719,7 @@ export class WorkbenchController implements vscode.Disposable {
             currentMessage: state.message,
             convention: toAiCommitConventionHint(convention.config),
             recentHistory,
+            diffMode: "metadata-only",
           },
         );
         const aiResult = await this.runAiScenario(
@@ -1329,8 +1751,9 @@ export class WorkbenchController implements vscode.Disposable {
           source,
           model: session.aiModels.commitMessage || undefined,
           // 输入仅含文件信息与差异统计（未读取差异正文）：
-          // 本地回退为结构化占位草稿，明确标记“基于文件信息”。
-          metadataOnly: source === "local-rule-fallback",
+          // 无论模型还是本地回退，都明确标记“基于文件信息”。
+          metadataOnly: true,
+          diffMode: "metadata-only",
           warnings: [
             ...generated.warnings,
             ...(fallbackReason
@@ -1341,6 +1764,7 @@ export class WorkbenchController implements vscode.Disposable {
             repositoryUuid: session.repositoryUuid,
             scopeHash: session.scopeHash,
             candidateHash: hashCandidateState(candidates, "", []),
+            revision: session.workingCopyRevision,
             generatedAt: new Date().toISOString(),
             model: session.aiModels.commitMessage || undefined,
           },
@@ -5701,6 +6125,7 @@ export class WorkbenchController implements vscode.Disposable {
   /**
    * v0.0.9 §4：提交说明建议草稿过期判定（与快照 stale 标记同一来源）。
    * binding 与当前范围/候选哈希不匹配即过期：只能查看，不能采用。
+   * v0.0.11：工作副本 revision 变化同样使建议过期（证据时效绑定）。
    * 采用（adopt）前必须用它重新校验，不依赖 Webview 回传或快照副本。
    */
   private isCommitMessageSuggestionStale(
@@ -5708,12 +6133,141 @@ export class WorkbenchController implements vscode.Disposable {
     suggestion: CommitMessageSuggestion,
     candidates: Awaited<ReturnType<typeof collectCommitCandidates>>,
   ): boolean {
-    return (
-      suggestion.binding !== undefined &&
-      (suggestion.binding.scopeHash !== session.scopeHash ||
-        suggestion.binding.candidateHash !==
-          hashCandidateState(candidates, "", []))
-    );
+    if (suggestion.binding === undefined) {
+      return false;
+    }
+    return isCommitDraftEvidenceStale({
+      bindingScopeHash: suggestion.binding.scopeHash,
+      currentScopeHash: session.scopeHash,
+      bindingCandidateHash: suggestion.binding.candidateHash,
+      currentCandidateHash: hashCandidateState(candidates, "", []),
+      bindingRevision: suggestion.binding.revision,
+      currentRevision: session.workingCopyRevision,
+    });
+  }
+
+  /**
+   * v0.0.11 §3/§9：采集受限差异并构建外发回执（不调用模型）。
+   * 返回 pending 回执供 Webview 展示与确认；失败返回 undefined。
+   */
+  /**
+   * v0.0.11 §3：下发受限差异外发回执视图（preview-receipt / retry-failed-diff
+   * 共用；payload 不变，只有 pending 内容不同）。
+   */
+  private async postCommitReceipt(
+    pending: NonNullable<CommitSessionState["pendingReceipt"]>,
+    requestId?: string,
+  ): Promise<void> {
+    await this.post({
+      protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+      type: "commit/receipt",
+      requestId,
+      moduleId: "commit",
+      payload: {
+        token: pending.token,
+        receipt: pending.receipt,
+        coverage: pending.coverage,
+        files: pending.files,
+        excludedCount: pending.excludedCount,
+        historyIncluded: pending.historyIncluded,
+        historyCount: pending.historyCount,
+        notSent: [
+          "本地绝对路径（只发送项目内相对路径）",
+          "范围外文件内容",
+          "API 密钥、SVN 凭据与证书私密材料",
+          "未授权历史（默认不发送；开启时仅脱敏摘要并限条数）",
+        ],
+        retentionNote:
+          "数据保留策略由模型服务商策略决定，本插件无法证明其保留期限。",
+      },
+    });
+  }
+
+  private async collectCommitDiffReceipt(
+    session: WorkbenchSession,
+    candidates: Awaited<ReturnType<typeof collectCommitCandidates>>,
+    selectedAbsolutePaths: string[],
+    storedAi: Awaited<ReturnType<typeof readStoredAiConfiguration>>,
+    retryNote?: string,
+  ): Promise<NonNullable<CommitSessionState["pendingReceipt"]> | undefined> {
+    try {
+      const collected = await collectLimitedCommitDiffs({
+        svnPath: session.svnPath,
+        scope: session.scope,
+        selectedPaths: selectedAbsolutePaths,
+        candidates: this.toCommitDiffCandidateRefs(candidates),
+        perFileBudget: COMMIT_DIFF_PER_FILE_BUDGET,
+        totalBudget: COMMIT_DIFF_TOTAL_BUDGET,
+      });
+      const projectId = buildCandidateId(
+        session.scope.repositoryRoot,
+        session.scope.project?.projectRoot ?? session.scope.repositoryRoot,
+      );
+      const receipt = buildAnalysisReceipt({
+        projectId,
+        model: session.aiModels.commitMessage || "本地规则（未配置外部模型）",
+        files: collected.fragments.length,
+        totalBudget: COMMIT_DIFF_TOTAL_BUDGET,
+        perFileBudget: COMMIT_DIFF_PER_FILE_BUDGET,
+        historyIncluded: storedAi.includeCommitHistory,
+        dataTypes: [
+          "项目内相对路径、SVN 状态、脱敏差异片段",
+          ...(storedAi.includeCommitHistory ? ["脱敏历史摘要（限条数）"] : []),
+        ],
+      });
+      return {
+        token: randomUUID(),
+        receipt,
+        coverage: collected.summary,
+        files: collected.coverage.map((item) => ({
+          candidateId: item.candidateId,
+          projectRelativePath: toDisplayPath(item.projectRelativePath),
+          status: item.status,
+          state: item.state,
+          diffHash: item.diffHash,
+          charCount: item.charCount,
+          hunkCount: item.hunkCount,
+          reason: item.reason,
+        })),
+        fragments: collected.fragments,
+        revision: collected.revision,
+        scopeHash: session.scopeHash,
+        candidateHash: hashCandidateState(candidates, "", []),
+        excludedCount: collected.excludedCount,
+        historyIncluded: storedAi.includeCommitHistory,
+        historyCount: storedAi.includeCommitHistory
+          ? readTeamMemory(this.context.workspaceState, session.repositoryUuid)
+              .entries.length
+          : undefined,
+        ...(retryNote ? { retryNote } : {}),
+      };
+    } catch (error) {
+      void error;
+      return undefined;
+    }
+  }
+
+  /**
+   * v0.0.11：把提交候选映射为受限差异采集所需的候选引用
+   * （candidateId 在采集侧按工作副本根 + 绝对路径生成）。
+   */
+  private toCommitDiffCandidateRefs(
+    candidates: Awaited<ReturnType<typeof collectCommitCandidates>>,
+  ): CommitDiffCandidateRef[] {
+    const projectRoot = this.session?.scope.project?.projectRoot;
+    return candidates.map((candidate) => ({
+      absolutePath: candidate.absolutePath,
+      relativePath: candidate.relativePath,
+      status: candidate.status,
+      projectRelativePath:
+        projectRoot !== undefined
+          ? (projectRelativePath(
+              projectRoot,
+              candidate.absolutePath,
+              nativePathSemantics,
+            ) ?? candidate.relativePath)
+          : candidate.relativePath,
+    }));
   }
 
   private ensureCommitState(session: WorkbenchSession): CommitSessionState {
@@ -5866,6 +6420,18 @@ export class WorkbenchController implements vscode.Disposable {
       )
     ) {
       messageSuggestion = { ...messageSuggestion, stale: true };
+    }
+
+    // v0.0.11 §3：范围/候选变化后旧外发回执失效（fail-closed 在
+    // generate-message 复验，这里同步清除避免残留）。
+    if (state.pendingReceipt) {
+      const currentCandidateHash = hashCandidateState(candidates, "", []);
+      if (
+        state.pendingReceipt.scopeHash !== session.scopeHash ||
+        state.pendingReceipt.candidateHash !== currentCandidateHash
+      ) {
+        state.pendingReceipt = undefined;
+      }
     }
 
     return {

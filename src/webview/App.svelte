@@ -134,6 +134,7 @@
       draftAck={state.draftAck}
       targetSwitchRequest={state.targetSwitchRequest}
       pathDetail={state.pathDetail}
+      commitReceipt={state.commitReceipt}
       onAction={(action, data) => state.action(action, data)}
     />
   {:else}

@@ -86,6 +86,146 @@ test("suggestion draft replace flow shows char count and undoes (v0.0.9 §4)", a
   await expect(page.getByRole("textbox", { name: "提交说明" })).toHaveValue("");
 });
 
+test("limited-diff receipt flow: preview then confirm generation (v0.0.11 §3)", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await openModule(page, "提交");
+  // 选择受限差异模式：先展示外发回执，不调用模型。
+  await page.getByLabel("生成输入模式").selectOption("limited-diff");
+  await expect(
+    page.getByText(/受限差异模式：生成前会先展示外发回执/),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "生成建议草稿" }).click();
+
+  const receiptRegion = page.getByRole("region", {
+    name: "受限差异外发回执",
+  });
+  await expect(receiptRegion).toBeVisible();
+  await expect(
+    receiptRegion.getByText("受限差异外发回执（尚未发送）"),
+  ).toBeVisible();
+  await expect(
+    receiptRegion.getByText("提交说明（commit-draft）"),
+  ).toBeVisible();
+  await expect(receiptRegion.getByText("单文件 6000 字符")).toBeVisible();
+  await expect(receiptRegion.getByText("已分析 1")).toBeVisible();
+  await expect(receiptRegion.getByText("截断 1")).toBeVisible();
+  await expect(receiptRegion.getByText("预算外 0")).toBeVisible();
+  await expect(
+    receiptRegion.getByText(/数据保留策略由模型服务商策略决定/),
+  ).toBeVisible();
+  // 确认前不生成建议。
+  await expect(
+    page.getByRole("region", { name: "提交说明建议草稿" }),
+  ).not.toBeVisible();
+
+  // 展开包含 / 排除文件清单。
+  await receiptRegion
+    .getByRole("button", { name: "展开包含 / 排除文件清单" })
+    .click();
+  await expect(
+    receiptRegion.getByText("src/webview/app/FeatureRouter.svelte"),
+  ).toBeVisible();
+
+  // 确认后生成带证据与覆盖率的建议。
+  await receiptRegion.getByRole("button", { name: "开始模型生成" }).click();
+  const suggestionRegion = page.getByRole("region", {
+    name: "提交说明建议草稿",
+  });
+  await expect(suggestionRegion).toBeVisible();
+  await expect(
+    suggestionRegion.getByText("差异覆盖率：已分析 1"),
+  ).toBeVisible();
+  await expect(
+    suggestionRegion.getByText("证据引用（1 条有效）"),
+  ).toBeVisible();
+  // §5：逐条说明展示状态与证据。
+  await expect(suggestionRegion.getByText("逐条说明与证据状态")).toBeVisible();
+  await expect(suggestionRegion.getByText("已证实")).toBeVisible();
+  // 回执面板在生成后清除。
+  await expect(receiptRegion).not.toBeVisible();
+});
+
+test("limited-diff receipt can be dismissed without sending (v0.0.11 §3)", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await openModule(page, "提交");
+  await page.getByLabel("生成输入模式").selectOption("limited-diff");
+  await page.getByRole("button", { name: "生成建议草稿" }).click();
+  const receiptRegion = page.getByRole("region", {
+    name: "受限差异外发回执",
+  });
+  await expect(receiptRegion).toBeVisible();
+  await receiptRegion.getByRole("button", { name: "放弃" }).click();
+  await expect(receiptRegion).not.toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "提交说明建议草稿" }),
+  ).not.toBeVisible();
+});
+
+test("validated evidence opens the file diff (v0.0.11 §4)", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await openModule(page, "提交");
+  await page.getByLabel("生成输入模式").selectOption("limited-diff");
+  await page.getByRole("button", { name: "生成建议草稿" }).click();
+  const receiptRegion = page.getByRole("region", {
+    name: "受限差异外发回执",
+  });
+  await expect(receiptRegion).toBeVisible();
+  await receiptRegion.getByRole("button", { name: "开始模型生成" }).click();
+  const suggestionRegion = page.getByRole("region", {
+    name: "提交说明建议草稿",
+  });
+  await expect(suggestionRegion).toBeVisible();
+  // 有效证据提供“打开差异”入口，点击进入该文件差异视图。
+  await suggestionRegion
+    .getByRole("button", { name: "打开差异" })
+    .first()
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "查看本地修改" }),
+  ).toBeVisible();
+});
+
+test("partial completion retries only failed items (v0.0.11 §6)", async ({
+  page,
+}) => {
+  // commitMessage=partial：mock 建议包含读取失败项，展示“重试失败项”。
+  await page.goto("/?commitMessage=partial");
+  await openModule(page, "提交");
+  await page.getByLabel("生成输入模式").selectOption("limited-diff");
+  await page.getByRole("button", { name: "生成建议草稿" }).click();
+  const receiptRegion = page.getByRole("region", {
+    name: "受限差异外发回执",
+  });
+  await expect(receiptRegion).toBeVisible();
+  await receiptRegion.getByRole("button", { name: "开始模型生成" }).click();
+  const suggestionRegion = page.getByRole("region", {
+    name: "提交说明建议草稿",
+  });
+  await expect(suggestionRegion).toBeVisible();
+  // 逐文件覆盖情况列出失败项，提供重试入口。
+  await expect(
+    suggestionRegion.getByText("逐文件覆盖情况（3 个候选）"),
+  ).toBeVisible();
+  // §5：partial 场景的待确认声明可见。
+  await expect(suggestionRegion.getByText("待确认")).toBeVisible();
+  await suggestionRegion
+    .getByRole("button", { name: "重试失败项（1）" })
+    .click();
+  // 重试同样先展示回执（本次覆盖失败项），再确认生成。
+  await expect(receiptRegion).toBeVisible();
+  await receiptRegion.getByRole("button", { name: "开始模型生成" }).click();
+  await expect(suggestionRegion).toBeVisible();
+  await expect(
+    suggestionRegion.getByText("本次重试仅覆盖上次读取失败或预算外的文件。"),
+  ).toBeVisible();
+});
+
 test("keeps AI file selection advisory and user-editable", async ({ page }) => {
   await page.goto("/");
   await openModule(page, "提交");

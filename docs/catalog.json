@@ -217,12 +217,12 @@
     },
     {
       "version": "0.0.11",
-      "status": "draft",
-      "phase": "planned",
+      "status": "released",
+      "phase": "released",
       "baseVersion": "0.0.10",
       "canonicalEntry": "releases/v0.0.11/README.md",
       "manifest": "releases/v0.0.11/manifest.json",
-      "releasedFact": false,
+      "releasedFact": true,
       "topics": [
         "bounded-diff-context",
         "analysis-receipt",

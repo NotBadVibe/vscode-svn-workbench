@@ -8,6 +8,13 @@ import type {
   CommitSelectionStatusPolicies,
   ResolvedCommitSelectionPathRule,
 } from "../commit/commitSelectionRules";
+import type {
+  AnalysisReceipt,
+  DiffCoverageState,
+  DiffCoverageSummary,
+  EvidenceReference,
+  ValidatedCommitMessageClaim,
+} from "../commit/commitDiffEvidence";
 import type { DisplayPath } from "../scope/pathBrands";
 import type { SelectionKey } from "../selection/selectionCore";
 
@@ -293,6 +300,38 @@ export interface CommitMessageSuggestion {
    * 界面据此标记“基于文件信息”，不得声称理解具体行为。
    */
   metadataOnly: boolean;
+  /**
+   * v0.0.11 §2 生成输入模式：仅文件信息 / 用户确认后的受限差异。
+   * limited-diff 时建议可携带逐条证据引用（evidence）。
+   */
+  diffMode: "metadata-only" | "limited-diff";
+  /**
+   * v0.0.11 §6 差异覆盖率：总候选、已分析、截断、二进制、读取失败、
+   * 预算外数量；仅在 limited-diff 模式生成时提供。
+   */
+  coverage?: DiffCoverageSummary;
+  /**
+   * v0.0.11 §6 逐文件覆盖率（limited-diff 时提供）：页面可展示每个候选
+   * 的分析状态，并据此识别可重试的失败项（读取失败/预算外）。
+   */
+  coverageFiles?: CommitDiffFileCoverageView[];
+  /**
+   * v0.0.11 §5 逐条声明注解层（可选，不替代 message）：每条声明带状态
+   * （已证实/推断/待确认）与 Host 校验后的证据；模型标为 confirmed 但无
+   * 有效证据的声明已被 Host 强制降级为 toConfirm（downgraded=true）。
+   */
+  claims?: ValidatedCommitMessageClaim[];
+  /**
+   * v0.0.11 §4/§10.1 AI11-SAFE-02 证据引用：每条引用经 Host 校验，
+   * valid=false 的引用已丢弃并给出中文原因；建议正文不得引用范围外内容。
+   */
+  evidence?: Array<{
+    reference: EvidenceReference;
+    valid: boolean;
+    reason?: string;
+  }>;
+  /** v0.0.11 §3 动作级外发回执：本次生成实际外发的数据范围与预算。 */
+  receipt?: AnalysisReceipt;
   /** 生成/降级过程中的提醒（如文件过多、团队规范提示、降级原因）。 */
   warnings: string[];
   /**
@@ -300,14 +339,56 @@ export interface CommitMessageSuggestion {
    * 只能查看或重新生成，不能采用；用户草稿保持不变。
    */
   stale?: boolean;
-  /** 建议绑定信息：仓库、范围、候选状态、生成时间与模型。 */
+  /** 建议绑定信息：仓库、范围、候选状态、工作副本 revision、生成时间与模型。 */
   binding?: {
     repositoryUuid: string;
     scopeHash: string;
     candidateHash: string;
+    /** v0.0.11 §4：工作副本 revision（结果时效绑定之一）。 */
+    revision?: string;
     generatedAt: string;
     model?: string;
   };
+}
+
+/**
+ * v0.0.11 逐文件差异覆盖率（回执展示用）：覆盖分析、截断、二进制、
+ * 读取失败与预算外五种状态；只携带项目内路径，不暴露本地绝对路径。
+ */
+export interface CommitDiffFileCoverageView {
+  candidateId: string;
+  projectRelativePath: DisplayPath;
+  status: string;
+  state: DiffCoverageState;
+  diffHash: string;
+  charCount: number;
+  hunkCount: number;
+  reason?: string;
+}
+
+/**
+ * v0.0.11 §3 动作级外发回执视图：模型调用前由 Host 下发，用户确认
+ * “开始模型生成”或“继续仅文件信息”后才实际调用模型；取消则不外发。
+ * Webview 只能展示；token 一次性绑定 pending 回执，Host 校验。
+ */
+export interface CommitReceiptView {
+  /** 一次性回执令牌（确认生成 / 放弃回执时回传，Host 校验）。 */
+  token: string;
+  /** 任务、模型、数据类型、文件数、预算与历史（规划 §8 AnalysisReceipt）。 */
+  receipt: AnalysisReceipt;
+  /** 差异覆盖率摘要（总候选/已分析/截断/二进制/读取失败/预算外）。 */
+  coverage: DiffCoverageSummary;
+  /** 逐文件覆盖率清单（用户可展开查看包含 / 排除文件）。 */
+  files: CommitDiffFileCoverageView[];
+  /** 预计排除文件数（范围外、二进制、读取失败、预算外合计）。 */
+  excludedCount: number;
+  /** 是否包含历史及条数。 */
+  historyIncluded: boolean;
+  historyCount?: number;
+  /** 明确不会发送的数据（固定中文说明）。 */
+  notSent: string[];
+  /** 无法由插件证明的服务商保留策略提示。 */
+  retentionNote: string;
 }
 
 export interface CommitSnapshot {
@@ -1065,7 +1146,8 @@ export type HostToWebviewMessage =
     >
   | MessageEnvelope<"operation/result", { title: string; message: string }>
   | MessageEnvelope<"operation/cancelled", { title: string; message: string }>
-  | MessageEnvelope<"scope/changed", { scope: WorkbenchScopeView }>;
+  | MessageEnvelope<"scope/changed", { scope: WorkbenchScopeView }>
+  | MessageEnvelope<"commit/receipt", CommitReceiptView>;
 
 export type WebviewAction =
   | "refresh"
@@ -1090,6 +1172,10 @@ export type WebviewAction =
   | "commit/ai-select"
   | "commit/apply-template"
   | "commit/generate-message"
+  | "commit/preview-receipt"
+  | "commit/receipt-dismiss"
+  | "commit/open-evidence"
+  | "commit/retry-failed-diff"
   | "commit/adopt-suggestion"
   | "commit/undo-suggestion-replace"
   | "commit/discard-suggestion"
@@ -1204,6 +1290,10 @@ export const webviewActions = [
   "commit/ai-select",
   "commit/apply-template",
   "commit/generate-message",
+  "commit/preview-receipt",
+  "commit/receipt-dismiss",
+  "commit/open-evidence",
+  "commit/retry-failed-diff",
   "commit/adopt-suggestion",
   "commit/undo-suggestion-replace",
   "commit/discard-suggestion",
