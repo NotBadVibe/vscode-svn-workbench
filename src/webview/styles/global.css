@@ -1504,6 +1504,383 @@ button.path-detail__value:hover {
   flex: 0 0 auto;
   color: var(--vscode-foreground);
 }
+.generate-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.generate-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.generate-mode__label {
+  flex: 0 0 auto;
+}
+.generate-mode select {
+  max-width: 150px;
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--vscode-foreground);
+  background: var(--surface-0);
+  font-size: 11px;
+}
+.commit-receipt {
+  margin: 7px 0 10px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--warning);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface-2) 75%, transparent);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.commit-receipt__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.commit-receipt__head strong {
+  color: var(--vscode-foreground);
+}
+.commit-receipt__tag {
+  margin-left: auto;
+  padding: 1px 7px;
+  border-radius: 999px;
+  color: var(--warning);
+  border: 1px solid color-mix(in srgb, var(--warning) 45%, transparent);
+  font-size: 10px;
+}
+.commit-receipt__meta {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 3px 10px;
+  margin: 0 0 7px;
+}
+.commit-receipt__meta div {
+  display: contents;
+}
+.commit-receipt__meta dt {
+  color: var(--muted);
+}
+.commit-receipt__meta dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.commit-receipt__coverage {
+  margin: 0 0 7px;
+  color: var(--muted);
+}
+.commit-receipt__toggle {
+  padding: 0;
+  border: 0;
+  color: var(--link, var(--accent));
+  background: transparent;
+  cursor: pointer;
+  font-size: 11px;
+}
+.commit-receipt__files {
+  display: grid;
+  gap: 3px;
+  margin: 6px 0;
+  padding: 0;
+  list-style: none;
+  max-height: 220px;
+  overflow: auto;
+}
+.commit-receipt__file {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+}
+.commit-receipt__file--excluded {
+  background: color-mix(in srgb, var(--warning) 8%, transparent);
+}
+.commit-receipt__file span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.commit-receipt__file small {
+  color: var(--muted);
+  font-size: 10px;
+}
+.commit-receipt__note {
+  margin: 4px 0;
+  color: var(--muted);
+  font-size: 10px;
+}
+.commit-receipt__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 8px;
+}
+.commit-suggestion {
+  margin: 7px 0 10px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--surface-2) 75%, transparent);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.commit-suggestion--stale {
+  border-left-color: var(--muted);
+  opacity: 0.82;
+}
+.commit-suggestion__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.commit-suggestion__head strong {
+  color: var(--vscode-foreground);
+}
+.commit-suggestion__stale {
+  margin-left: auto;
+  padding: 1px 7px;
+  border-radius: 999px;
+  color: var(--warning);
+  border: 1px solid color-mix(in srgb, var(--warning) 45%, transparent);
+  font-size: 10px;
+}
+.commit-suggestion__note {
+  margin: 4px 0;
+  color: var(--muted);
+  font-size: 10px;
+}
+.commit-suggestion__body {
+  margin: 7px 0;
+  padding: 8px 9px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-0);
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 11px;
+  max-height: 260px;
+  overflow: auto;
+}
+.commit-suggestion__diff {
+  margin: 6px 0;
+}
+.commit-suggestion__diff summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+.commit-suggestion__diffgroup {
+  display: grid;
+  gap: 2px;
+  margin: 4px 0;
+}
+.commit-suggestion__removed-label,
+.commit-suggestion__added-label {
+  color: var(--muted);
+  font-size: 10px;
+}
+.commit-suggestion__removed {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+}
+.commit-suggestion__added {
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 10%, transparent);
+}
+.commit-suggestion__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 6px;
+}
+.commit-suggestion__confirm {
+  margin: 7px 0;
+  padding: 9px 10px;
+  border: 1px solid var(--warning);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--warning) 8%, transparent);
+  font-size: 11px;
+}
+.commit-suggestion__undo {
+  margin: 7px 0;
+}
+.commit-suggestion__evidence {
+  margin: 6px 0;
+}
+.commit-suggestion__evidence summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+.commit-suggestion__evidence ul {
+  display: grid;
+  gap: 3px;
+  margin: 5px 0 0;
+  padding: 0;
+  list-style: none;
+  max-height: 180px;
+  overflow: auto;
+}
+.commit-suggestion__evidence-item {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 3px 5px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+  overflow-wrap: anywhere;
+}
+.commit-suggestion__evidence-item small {
+  color: var(--warning);
+  font-size: 10px;
+}
+.commit-suggestion__evidence-open {
+  margin-left: auto;
+  padding: 1px 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--link, var(--accent));
+  background: transparent;
+  cursor: pointer;
+  font-size: 10px;
+}
+.commit-suggestion__evidence-open:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.commit-suggestion__claims {
+  margin: 6px 0;
+}
+.commit-suggestion__claims summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+.commit-suggestion__claims ul {
+  display: grid;
+  gap: 5px;
+  margin: 5px 0 0;
+  padding: 0;
+  list-style: none;
+  max-height: 260px;
+  overflow: auto;
+}
+.commit-suggestion__claim {
+  display: grid;
+  gap: 4px;
+  padding: 5px 7px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+  border-left: 2px solid var(--success);
+}
+.commit-suggestion__claim--toConfirm {
+  border-left-color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 6%, transparent);
+}
+.commit-suggestion__claim-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.commit-suggestion__claim-status {
+  flex: 0 0 auto;
+  padding: 0 6px;
+  border-radius: 999px;
+  color: var(--success);
+  border: 1px solid color-mix(in srgb, var(--success) 45%, transparent);
+  font-size: 10px;
+}
+.commit-suggestion__claim--toConfirm .commit-suggestion__claim-status {
+  color: var(--warning);
+  border-color: color-mix(in srgb, var(--warning) 45%, transparent);
+}
+.commit-suggestion__claim-downgrade {
+  flex: 0 0 auto;
+  padding: 0 6px;
+  border-radius: 999px;
+  color: var(--warning);
+  border: 1px solid color-mix(in srgb, var(--warning) 45%, transparent);
+  font-size: 10px;
+}
+.commit-suggestion__claim-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.commit-suggestion__claim-evidence {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.commit-suggestion__claim-evidence li {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+.commit-suggestion__claim-evidence .commit-suggestion__evidence-open {
+  margin-left: auto;
+}
+.commit-suggestion__claim-invalid {
+  color: var(--warning) !important;
+}
+.commit-suggestion__coverage-files {
+  margin: 6px 0;
+}
+.commit-suggestion__coverage-files summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+.commit-suggestion__coverage-files ul {
+  display: grid;
+  gap: 3px;
+  margin: 5px 0 0;
+  padding: 0;
+  list-style: none;
+  max-height: 180px;
+  overflow: auto;
+}
+.commit-suggestion__coverage-item {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+}
+.commit-suggestion__coverage-item--failed {
+  background: color-mix(in srgb, var(--warning) 8%, transparent);
+}
+.commit-suggestion__coverage-item span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.commit-suggestion__coverage-item small {
+  color: var(--muted);
+  font-size: 10px;
+}
+.commit-suggestion__retry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+}
+.commit-suggestion__retry small {
+  color: var(--muted);
+  font-size: 10px;
+}
 .danger {
   color: var(--danger);
 }

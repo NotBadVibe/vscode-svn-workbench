@@ -694,25 +694,129 @@ export function startMockWorkbench(): void {
       const commitMessageScenario = new URLSearchParams(
         window.location.search,
       ).get("commitMessage");
+      const isPartial = commitMessageScenario === "partial";
+      const diffMode = (data && data.diffMode) || "metadata-only";
+      const evidence =
+        diffMode === "limited-diff"
+          ? [
+              {
+                reference: {
+                  candidateId: "mock-candidate-a",
+                  hunkId: "mock-hunk-1",
+                  projectRelativePath: "src/webview/app/FeatureRouter.svelte",
+                },
+                valid: true,
+              },
+            ]
+          : undefined;
       const suggestion: CommitMessageSuggestion = {
         token: "mock-suggestion-token",
         message:
           "feat(workbench): 迁移统一 Svelte UI\n\n范围：当前提交范围\n影响：涉及工作台模块，提交前请确认",
         source: "configured-model" as const,
         model: "deepseek-v4-flash",
-        metadataOnly: false,
-        warnings: [],
+        metadataOnly: diffMode === "metadata-only",
+        diffMode: diffMode as "metadata-only" | "limited-diff",
+        ...(evidence ? { evidence } : {}),
+        ...(diffMode === "limited-diff"
+          ? {
+              claims: [
+                {
+                  text: "src/webview/app/FeatureRouter.svelte：修改了 2 处差异块，具体行为见证据。",
+                  status: "confirmed" as const,
+                  downgraded: false,
+                  evidence: [
+                    {
+                      candidateId: "mock-candidate-a",
+                      hunkId: "mock-hunk-1",
+                      projectRelativePath:
+                        "src/webview/app/FeatureRouter.svelte",
+                    },
+                  ],
+                  invalidEvidence: [],
+                },
+                ...(isPartial
+                  ? [
+                      {
+                        text: "src/data/db.ts 的改动无法判断具体行为。",
+                        status: "toConfirm" as const,
+                        downgraded: false,
+                        evidence: [],
+                        invalidEvidence: [],
+                      },
+                    ]
+                  : []),
+              ],
+              coverage: {
+                total: isPartial ? 3 : 2,
+                analyzed: 1,
+                truncated: 1,
+                binary: 0,
+                readFailed: isPartial ? 1 : 0,
+                budgetExcluded: 0,
+              },
+              coverageFiles: [
+                {
+                  candidateId: "mock-candidate-a",
+                  projectRelativePath:
+                    "src/webview/app/FeatureRouter.svelte" as never,
+                  status: "modified",
+                  state: "analyzed",
+                  diffHash: "deadbeef",
+                  charCount: 320,
+                  hunkCount: 2,
+                },
+                {
+                  candidateId: "mock-candidate-b",
+                  projectRelativePath: "dist/out.js" as never,
+                  status: "modified",
+                  state: "truncated",
+                  diffHash: "deadbeef",
+                  charCount: 6000,
+                  hunkCount: 1,
+                  reason: "差异超过单文件预算，已截断",
+                },
+                ...(isPartial
+                  ? [
+                      {
+                        candidateId: "mock-candidate-c",
+                        projectRelativePath: "src/data/db.ts" as never,
+                        status: "modified",
+                        state: "readFailed" as const,
+                        diffHash: "",
+                        charCount: 0,
+                        hunkCount: 0,
+                        reason: "svn diff 读取失败",
+                      },
+                    ]
+                  : []),
+              ],
+              receipt: {
+                task: "commit-draft",
+                projectId: "mock-project",
+                model: "deepseek-v4-flash",
+                dataTypes: ["项目内相对路径、SVN 状态、脱敏差异片段"],
+                files: 1,
+                totalBudget: 40000,
+                perFileBudget: 6000,
+                historyIncluded: false,
+              },
+            }
+          : {}),
+        warnings: mockRetryNote ? [mockRetryNote] : [],
         stale: commitMessageScenario === "stale" ? true : undefined,
         binding: {
           repositoryUuid: "mock-repository-uuid",
           scopeHash: "mock-scope-hash",
           candidateHash: "mock-candidate-hash",
+          revision: "42",
           generatedAt: "2026-08-04T09:30:00.000Z",
           model: "deepseek-v4-flash",
         },
       };
       // 跨 action 保持：生成后 preview/adopt/undo 快照仍携带建议区。
       mockCommitSuggestion = suggestion;
+      mockRetryNote = undefined;
       injectSnapshot(
         "commit",
         commitSnapshot({
@@ -724,6 +828,35 @@ export function startMockWorkbench(): void {
                   tone: "success" as const,
                   message: "已生成建议草稿；当前提交说明保持不变。",
                 },
+        }),
+      );
+    }
+    if (action === "commit/preview-receipt") {
+      // v0.0.11 §3：仅下发外发回执，不调用模型。
+      injectMockCommitReceipt();
+    }
+    if (action === "commit/retry-failed-diff") {
+      // v0.0.11 §6：只重试失败项——同样先展示回执（本次覆盖失败项）。
+      mockRetryNote = "本次重试仅覆盖上次读取失败或预算外的文件。";
+      injectMockCommitReceipt(mockRetryNote);
+    }
+    if (action === "commit/open-evidence") {
+      // v0.0.11 §4：打开证据对应文件的差异（模拟 Host 校验后路由到 Diff）。
+      const referencePath =
+        typeof data.projectRelativePath === "string"
+          ? data.projectRelativePath
+          : activeMockDiffPath;
+      injectSnapshot("diff", mockDiffSnapshot(referencePath));
+    }
+    if (action === "commit/receipt-dismiss") {
+      // v0.0.11 §3：放弃回执，不外发、不调用模型；草稿保持不变。
+      injectSnapshot(
+        "commit",
+        commitSnapshot({
+          feedback: {
+            tone: "warning",
+            message: "已放弃受限差异回执；未发送任何差异内容。",
+          },
         }),
       );
     }
@@ -1568,6 +1701,7 @@ function commitMessageMockSuggestion() {
     source: "configured-model" as const,
     model: "deepseek-v4-flash",
     metadataOnly: false,
+    diffMode: "metadata-only" as const,
     warnings: [],
     binding: {
       repositoryUuid: "mock-repository-uuid",
@@ -1903,6 +2037,8 @@ let mockSelectionState: MockSelectionState = initialMockSelectionState();
 /** v0.0.9 §4：Mock 跨 action 保持提交说明建议草稿，与真实 Host 一致
  * （生成后经 preview/adopt/undo 等快照重建仍保留，discard/commit 后清除）。 */
 let mockCommitSuggestion: CommitMessageSuggestion | undefined;
+/** v0.0.11 §6：重试失败项后生成建议时并入的说明（一次性）。 */
+let mockRetryNote: string | undefined;
 
 function mockSelectionCandidateInputs(): Array<{
   relativePath: string;
@@ -2526,6 +2662,75 @@ function agentSnapshot(
         ? "只读流水线已完成，可以进入本地检查、影响或提交模块继续操作。"
         : undefined,
   };
+}
+
+function injectMockCommitReceipt(retryNote?: string): void {
+  // v0.0.11 §3/§6：受限差异外发回执（模型调用前展示与确认）。
+  workbenchBridge.injectMock({
+    protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+    type: "commit/receipt",
+    moduleId: "commit",
+    taskId: "commit/compose",
+    sessionId: "mock-session-id",
+    repositoryUuid: "mock-repository-uuid",
+    scopeHash: "mock-scope-hash",
+    payload: {
+      token: "mock-receipt-token",
+      receipt: {
+        task: "commit-draft",
+        projectId: "mock-project",
+        model: "deepseek-v4-flash",
+        dataTypes: ["项目内相对路径、SVN 状态、脱敏差异片段"],
+        files: 1,
+        totalBudget: 40000,
+        perFileBudget: 6000,
+        historyIncluded: false,
+      },
+      coverage: {
+        total: 2,
+        analyzed: 1,
+        truncated: 1,
+        binary: 0,
+        readFailed: 0,
+        budgetExcluded: 0,
+      },
+      files: [
+        {
+          candidateId: "mock-candidate-a",
+          projectRelativePath: "src/webview/app/FeatureRouter.svelte" as never,
+          status: "modified",
+          state: "analyzed",
+          diffHash: "deadbeef",
+          charCount: 320,
+          hunkCount: 2,
+        },
+        {
+          candidateId: "mock-candidate-b",
+          projectRelativePath: "dist/out.js" as never,
+          status: "modified",
+          state: "truncated",
+          diffHash: "deadbeef",
+          charCount: 6000,
+          hunkCount: 1,
+          reason: "差异超过单文件预算，已截断",
+        },
+      ],
+      excludedCount: 1,
+      historyIncluded: false,
+      ...(retryNote
+        ? {
+            retryNote,
+          }
+        : {}),
+      notSent: [
+        "本地绝对路径（只发送项目内相对路径）",
+        "范围外文件内容",
+        "API 密钥、SVN 凭据与证书私密材料",
+      ],
+      retentionNote:
+        "数据保留策略由模型服务商策略决定，本插件无法证明其保留期限。",
+    },
+  });
 }
 
 function injectSnapshot(

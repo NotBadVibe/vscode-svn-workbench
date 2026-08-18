@@ -1,9 +1,16 @@
 import { CommitCandidate } from "../commit/commitCandidateCollector";
 import { CommitDiffSummary } from "../commit/commitDiffSummary";
+import {
+  type AnalysisReceipt,
+  type CommitDiffFragment,
+  type DiffCoverageSummary,
+  type EvidenceReference,
+} from "../commit/commitDiffEvidence";
 import { OperationScope } from "../scope/operationScope";
 import { normalizePathIdentity as normalizePathKey } from "../scope/pathIdentity";
 import { nativePathSemantics } from "../scope/nativePathSemantics";
 import {
+  AiCommitMessageClaim,
   AiCommitMessageFileContext,
   AiCommitMessageRequest,
   AiCommitMessageResult,
@@ -18,6 +25,14 @@ export interface CommitMessageAiRequestOptions {
   currentMessage?: string;
   convention?: AiCommitMessageRequest["convention"];
   recentHistory?: AiCommitMessageRequest["recentHistory"];
+  /** v0.0.11 §2 生成输入模式；缺省仅文件信息。 */
+  diffMode?: "metadata-only" | "limited-diff";
+  /** v0.0.11 §3 动作级外发回执（limited-diff 时携带）。 */
+  receipt?: AnalysisReceipt;
+  /** v0.0.11 §2.2 受限差异片段（limited-diff 时携带）。 */
+  diffs?: CommitDiffFragment[];
+  /** v0.0.11 §6 差异覆盖率（limited-diff 时携带）。 */
+  coverage?: DiffCoverageSummary;
 }
 
 export function buildCommitMessageAiRequest(
@@ -67,6 +82,24 @@ export function buildCommitMessageAiRequest(
     currentMessage: options.currentMessage,
     convention: options.convention,
     recentHistory: options.recentHistory?.slice(0, 20),
+    // v0.0.11：受限差异输入模式（用户确认后）携带回执、覆盖率与脱敏差异正文。
+    diffMode: options.diffMode,
+    receipt: options.receipt,
+    coverage: options.coverage,
+    diffs:
+      options.diffMode === "limited-diff" && options.diffs
+        ? options.diffs.map((fragment) => ({
+            candidateId: fragment.candidateId,
+            projectRelativePath: fragment.projectRelativePath,
+            content: fragment.content,
+            hunks: fragment.hunks.map((hunk) => ({
+              hunkId: hunk.hunkId,
+              header: hunk.header,
+            })),
+            truncated: fragment.truncated,
+            binary: fragment.binary,
+          }))
+        : undefined,
   };
 }
 
@@ -94,6 +127,13 @@ export function createMockCommitMessageResult(
           ? ["文件较多，AI 请求只包含前 80 个文件。"]
           : [],
     };
+  }
+
+  // v0.0.11 §2.2 受限差异模式：模型能看到脱敏差异正文，可生成
+  // 每条陈述关联 Host 可校验证据（candidateId + hunkId + 项目内路径）
+  // 的具体说明。本地回退同样生成证据结构，由 Host 重新校验。
+  if (request.diffMode === "limited-diff" && (request.diffs?.length ?? 0) > 0) {
+    return createEvidenceCommitMessageResult(request);
   }
 
   const statuses = countBy(request.files.map((file) => file.status));
@@ -151,6 +191,73 @@ export function createMockCommitMessageResult(
   };
 }
 
+/**
+ * v0.0.11 受限差异模式的本地回退：基于脱敏差异正文生成“对象 + 变化 + 结果”
+ * 的具体说明，每条陈述关联真实差异块证据（候选 + hunk + 项目内路径），
+ * 供 Host 重新校验后展示。不虚构工单号，不覆盖用户草稿。
+ */
+function createEvidenceCommitMessageResult(
+  request: AiCommitMessageRequest,
+): AiCommitMessageResult {
+  const fragments = request.diffs ?? [];
+  const analyzed = fragments.filter((fragment) => fragment.hunks.length > 0);
+  const primary = analyzed[0];
+  const claims: AiCommitMessageClaim[] = [];
+
+  const title =
+    analyzed.length > 0
+      ? `变更：${primary.projectRelativePath} 等 ${analyzed.length} 个文件的行为调整`
+      : createFallbackTitle(request);
+
+  // §5：逐条声明是正文与聚合证据的唯一来源——正文由 claims 逐条渲染，
+  // 聚合证据 = 各 confirmed 声明的证据引用（每个差异块一条）。
+  for (const fragment of analyzed.slice(0, 3)) {
+    const hunk = fragment.hunks[0];
+    if (!hunk) continue;
+    claims.push({
+      text: `${fragment.projectRelativePath}：${fragment.truncated ? "截断" : ""}修改了 ${fragment.hunks.length} 处差异块，具体行为见证据。`,
+      status: "confirmed",
+      evidence: [
+        {
+          candidateId: fragment.candidateId,
+          hunkId: hunk.hunkId,
+          projectRelativePath: fragment.projectRelativePath,
+        },
+      ],
+    });
+  }
+
+  const unknownCount = request.selectedFileCount - analyzed.length;
+  if (unknownCount > 0) {
+    // §5：仅文件信息/截断/二进制/读取失败的项无法证明具体行为，标记待确认。
+    claims.push({
+      text: `另有 ${unknownCount} 个文件仅文件信息，无法判断具体行为（截断/二进制/读取失败或预算外）。`,
+      status: "toConfirm",
+    });
+  }
+  const conventionWarnings = getConventionWarnings(request);
+  const claimsLines = claims.map((claim) => `- ${claim.text}`);
+  const evidence = claims.flatMap((claim) => claim.evidence ?? []);
+
+  return {
+    message: [
+      title,
+      "",
+      claimsLines.length > 0 ? claimsLines.join("\n") : "无法判断具体改动。",
+    ].join("\n"),
+    summary: `基于受限差异生成提交说明：已分析 ${analyzed.length} 个文件，${unknownCount} 个文件仅文件信息。`,
+    warnings: [
+      ...(fragments.some((fragment) => fragment.truncated)
+        ? ["部分差异超过预算已截断，具体行为以证据为准。"]
+        : []),
+      ...conventionWarnings,
+    ],
+    evidence,
+    // §5 逐条声明注解层：本地回退为每条已证实/待确认陈述标记状态。
+    ...(claims.length > 0 ? { claims } : {}),
+  };
+}
+
 export function mergeCommitMessagePreservingUserContent(
   currentMessage: string,
   generatedMessage: string,
@@ -198,11 +305,113 @@ export function normalizeCommitMessageResult(
         .filter(Boolean)
     : [];
 
-  return {
-    message,
-    summary: summary || "AI 已生成提交说明草稿。",
-    warnings,
-  };
+  const evidence = normalizeEvidenceReferences(value.evidence, warnings);
+  const claims = normalizeCommitMessageClaims(value.claims, warnings);
+
+  // v0.0.11 §4/§5：证据与声明结构校验——畸形条目丢弃并计入警告；引用是否
+  // 真实有效（候选/路径/hunk/时效）由 Host 经 validateEvidenceReferences /
+  // validateCommitMessageClaims 重新校验，这里不做信任假设。
+  // 输入未携带证据/声明字段时返回不带对应字段的对象（保持 v0.0.9 契约）。
+  return evidence.length > 0 || claims.length > 0
+    ? {
+        message,
+        summary: summary || "AI 已生成提交说明草稿。",
+        warnings,
+        ...(evidence.length > 0 ? { evidence } : {}),
+        ...(claims.length > 0 ? { claims } : {}),
+      }
+    : { message, summary: summary || "AI 已生成提交说明草稿。", warnings };
+}
+
+/**
+ * 规范化模型返回的逐条声明：text 非空字符串、status 在枚举内；
+ * 每条声明的证据引用经证据规范化处理；畸形条目丢弃并追加警告。
+ */
+function normalizeCommitMessageClaims(
+  value: unknown,
+  warnings: string[],
+): AiCommitMessageClaim[] {
+  if (!Array.isArray(value)) {
+    if (value !== undefined) {
+      warnings.push("模型返回的逐条声明结构无效，已忽略。");
+    }
+    return [];
+  }
+  const normalized: AiCommitMessageClaim[] = [];
+  let dropped = 0;
+  for (const item of value) {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) {
+      dropped += 1;
+      continue;
+    }
+    const raw = item as Record<string, unknown>;
+    if (typeof raw.text !== "string" || raw.text.trim() === "") {
+      dropped += 1;
+      continue;
+    }
+    if (
+      raw.status !== "confirmed" &&
+      raw.status !== "inferred" &&
+      raw.status !== "toConfirm"
+    ) {
+      dropped += 1;
+      continue;
+    }
+    const evidence = normalizeEvidenceReferences(raw.evidence, warnings);
+    normalized.push({
+      text: raw.text.trim(),
+      status: raw.status,
+      ...(evidence.length > 0 ? { evidence } : {}),
+    });
+  }
+  if (dropped > 0) {
+    warnings.push(`模型返回 ${dropped} 条结构无效的逐条声明，已忽略。`);
+  }
+  return normalized;
+}
+
+/** 规范化模型返回的证据引用：畸形条目丢弃并追加警告，不静默放过。 */
+function normalizeEvidenceReferences(
+  value: unknown,
+  warnings: string[],
+): EvidenceReference[] {
+  if (!Array.isArray(value)) {
+    if (value !== undefined) {
+      warnings.push("模型返回的证据引用结构无效，已忽略。");
+    }
+    return [];
+  }
+  const normalized: EvidenceReference[] = [];
+  let dropped = 0;
+  for (const item of value) {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) {
+      dropped += 1;
+      continue;
+    }
+    const raw = item as Record<string, unknown>;
+    if (
+      typeof raw.candidateId !== "string" ||
+      raw.candidateId.trim() === "" ||
+      typeof raw.projectRelativePath !== "string" ||
+      raw.projectRelativePath.trim() === ""
+    ) {
+      dropped += 1;
+      continue;
+    }
+    const hunkId =
+      typeof raw.hunkId === "string" && raw.hunkId.trim() !== ""
+        ? raw.hunkId.trim()
+        : undefined;
+    normalized.push({
+      candidateId: raw.candidateId.trim(),
+      projectRelativePath: raw.projectRelativePath.trim(),
+      ...(hunkId ? { hunkId } : {}),
+    });
+  }
+  if (dropped > 0) {
+    warnings.push(`模型返回 ${dropped} 条结构无效的证据引用，已忽略。`);
+  }
+  return normalized;
 }
 
 function completeCommitMessageTemplate(

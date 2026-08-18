@@ -6,7 +6,7 @@
   "releaseDate": null,
   "gitTag": null,
   "gitCommit": null,
-  "sourceState": "未形成 v0.0.11 候选源码；当前仅有受限差异、动作级外发回执、有证据提交说明与草稿恢复规划，前序依赖尚未形成候选版本",
+  "sourceState": "候选源码已落地：受限差异采集/脱敏/预算、动作级外发回执（preview-receipt/commit/receipt）、有证据的提交说明（证据引用校验 + revision 时效 + 逐条声明 claims 与 confirmed 无证据强制降级）、证据打开与部分完成重试；npm run verify 全链路通过；发布 evidence 与 VSIX 指纹待生成（记录提交时置 clean）",
   "vsix": null,
   "tests": null,
   "acceptedEvidenceRun": null,

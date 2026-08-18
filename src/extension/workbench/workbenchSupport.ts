@@ -140,6 +140,29 @@ export async function resolveWorkingCopyUrl(
   return undefined;
 }
 
+/**
+ * v0.0.11：解析工作副本 revision（svn info --show-item revision），
+ * 用于 AI 结果时效绑定；SVN 不可用时返回 undefined（界面如实缺省，
+ * 不把结果误判过期）。
+ */
+export async function resolveWorkingCopyRevision(
+  svnPath: string,
+  scope: OperationScope,
+): Promise<string | undefined> {
+  try {
+    const result = await runSvnCommand(
+      svnPath,
+      ["info", "--show-item", "revision", scope.repositoryRoot],
+      scope.repositoryRoot,
+    );
+    const revision = result.stdout.trim();
+    if (result.exitCode === 0 && revision) return revision;
+  } catch {
+    // 无 SVN 时保持页面可用。
+  }
+  return undefined;
+}
+
 export function hashCandidateState(
   candidates: Awaited<ReturnType<typeof collectCommitCandidates>>,
   message: string,

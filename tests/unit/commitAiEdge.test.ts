@@ -181,6 +181,121 @@ describe("提交说明 AI 边界", () => {
     ).toEqual({ message: "", summary: "a b", warnings: ["ok"] });
     expect(normalizeCommitMessageResult({}).summary).toContain("草稿");
   });
+
+  it("受限差异本地回退生成逐条声明（confirmed + toConfirm），仅文件信息不生成", () => {
+    const limited = buildCommitMessageAiRequest(
+      scope,
+      [candidate("src/a.ts")],
+      [absolute("src/a.ts")],
+      [],
+      {
+        diffMode: "limited-diff",
+        diffs: [
+          {
+            candidateId: "cand-a",
+            projectRelativePath: "src/a.ts",
+            status: "modified",
+            diffHash: "deadbeef",
+            content: "@@ -1,1 +1,1 @@\n+新增",
+            hunks: [{ hunkId: "hunk-1", header: "@@ -1,1 +1,1 @@" }],
+            truncated: false,
+            binary: false,
+          },
+        ],
+        coverage: {
+          total: 1,
+          analyzed: 1,
+          truncated: 0,
+          binary: 0,
+          readFailed: 0,
+          budgetExcluded: 0,
+        },
+      },
+    );
+    const limitedResult = createMockCommitMessageResult(limited);
+    expect(limitedResult.claims?.length).toBeGreaterThan(0);
+    expect(limitedResult.claims?.[0].status).toBe("confirmed");
+    expect(limitedResult.claims?.[0].evidence?.[0].candidateId).toBe("cand-a");
+
+    // 部分未知文件：正文中“另有…”只出现一次，且聚合证据 = 各声明证据。
+    const partial = buildCommitMessageAiRequest(
+      scope,
+      [candidate("src/a.ts"), candidate("src/b.ts")],
+      [absolute("src/a.ts"), absolute("src/b.ts")],
+      [],
+      {
+        diffMode: "limited-diff",
+        diffs: [
+          {
+            candidateId: "cand-a",
+            projectRelativePath: "src/a.ts",
+            status: "modified",
+            diffHash: "deadbeef",
+            content: "@@ -1,1 +1,1 @@\n+新增",
+            hunks: [{ hunkId: "hunk-1", header: "@@ -1,1 +1,1 @@" }],
+            truncated: false,
+            binary: false,
+          },
+        ],
+        coverage: {
+          total: 2,
+          analyzed: 1,
+          truncated: 0,
+          binary: 0,
+          readFailed: 1,
+          budgetExcluded: 0,
+        },
+      },
+    );
+    const partialResult = createMockCommitMessageResult(partial);
+    const unknownLineCount = (
+      partialResult.message.match(/另有 1 个文件/g) ?? []
+    ).length;
+    expect(unknownLineCount).toBe(1);
+    // 聚合证据来自 confirmed 声明的证据（1 条）。
+    expect(partialResult.evidence).toHaveLength(1);
+    expect(
+      partialResult.claims?.some((claim) => claim.status === "toConfirm"),
+    ).toBe(true);
+
+    const metadataOnly = buildCommitMessageAiRequest(
+      scope,
+      [candidate("src/a.ts")],
+      [absolute("src/a.ts")],
+      [],
+      { diffMode: "metadata-only" },
+    );
+    expect(createMockCommitMessageResult(metadataOnly).claims).toBeUndefined();
+  });
+
+  it("严格规范化逐条声明：畸形条目丢弃并计入警告", () => {
+    const result = normalizeCommitMessageResult({
+      message: "正文",
+      summary: "s",
+      warnings: [],
+      claims: [
+        {
+          text: "有效声明",
+          status: "inferred",
+          evidence: [
+            {
+              candidateId: "cand-a",
+              hunkId: "hunk-1",
+              projectRelativePath: "src/a.ts",
+            },
+          ],
+        },
+        { text: "", status: "confirmed" },
+        { text: "坏状态", status: "bogus" },
+        "非对象",
+      ],
+    });
+    expect(result.claims).toHaveLength(1);
+    expect(result.claims?.[0].status).toBe("inferred");
+    expect(result.warnings.some((warning) => warning.includes("3 条"))).toBe(
+      true,
+    );
+  });
 });
 
 describe("提交拆分 AI 边界", () => {

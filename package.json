@@ -2,7 +2,7 @@
   "name": "svn-workbench",
   "displayName": "SVN \u5de5\u4f5c\u53f0",
   "description": "\u9762\u5411\u4e2d\u6587\u7528\u6237\u7684 AI \u539f\u751f SVN \u5de5\u4f5c\u53f0\u3002",
-  "version": "0.0.10",
+  "version": "0.0.11",
   "publisher": "local",
   "private": true,
   "license": "MIT",

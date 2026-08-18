@@ -55,6 +55,8 @@ export interface WorkbenchSession extends OpenWorkbenchRequest {
   repositoryRootUrl?: string;
   /** v0.0.7：工作副本根检出 URL，是推导文件 SVN URL 的唯一合法基础。 */
   workingCopyUrl?: string;
+  /** v0.0.11：工作副本 revision（AI 结果时效绑定之一）。 */
+  workingCopyRevision?: string;
   scopeHash: string;
   aiModels: Partial<Record<AiUsageScenario, string>>;
   security: {
@@ -223,6 +225,26 @@ export interface CommitSessionState {
    * 用户后续编辑、再次采用或放弃建议后清除。
    */
   messageSuggestionReplaceBackup?: { previous: string };
+  /**
+   * v0.0.11 §3：受限差异模式的外发回执（模型调用前由 commit/preview-receipt
+   * 建立）。确认“开始模型生成”必须回传匹配 token；范围/候选变化或
+   * commit/receipt-dismiss 后失效，不得据此继续调用模型。
+   */
+  pendingReceipt?: {
+    token: string;
+    receipt: import("../../commit/commitDiffEvidence").AnalysisReceipt;
+    coverage: import("../../commit/commitDiffEvidence").DiffCoverageSummary;
+    files: import("../../protocol/workbenchProtocol").CommitDiffFileCoverageView[];
+    fragments: import("../../commit/commitDiffEvidence").CommitDiffFragment[];
+    revision?: string;
+    scopeHash: string;
+    candidateHash: string;
+    excludedCount: number;
+    historyIncluded: boolean;
+    historyCount?: number;
+    /** v0.0.11 §6：重试失败项时携带说明，生成时并入建议警告。 */
+    retryNote?: string;
+  };
   /**
    * 提交页一次性反馈（应用本地规则结果、规则更新提示）；
    * 下次构建提交快照时消费并清除。

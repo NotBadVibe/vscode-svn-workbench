@@ -75,6 +75,11 @@ export class WorkbenchState {
       >["payload"]
     | undefined
   >();
+  /** v0.0.11 受限差异外发回执（commit/receipt，模型调用前展示与确认）。 */
+  commitReceipt = $state<
+    | Extract<HostToWebviewMessage, { type: "commit/receipt" }>["payload"]
+    | undefined
+  >();
 
   readonly dispose: () => void;
 
@@ -164,6 +169,7 @@ export class WorkbenchState {
         this.draftAck = undefined;
         this.targetSwitchRequest = undefined;
         this.pathDetail = undefined;
+        this.commitReceipt = undefined;
         break;
       case "module/loading":
         this.loading = true;
@@ -171,17 +177,22 @@ export class WorkbenchState {
         this.notification = undefined;
         this.error = undefined;
         this.pathDetail = undefined;
+        this.commitReceipt = undefined;
         break;
       case "module/snapshot":
         this.snapshot = message.payload.snapshot;
         this.loading = false;
         this.progress = undefined;
         this.error = undefined;
+        // v0.0.11：回执是等待确认的一次性状态；任何快照（生成/放弃/降级）
+        // 到达后即清除，避免生成完成后回执面板残留。
+        this.commitReceipt = undefined;
         break;
       case "operation/error":
         this.loading = false;
         this.progress = undefined;
         this.error = message.payload;
+        this.commitReceipt = undefined;
         break;
       case "operation/progress":
         this.progress = {
@@ -233,6 +244,9 @@ export class WorkbenchState {
         break;
       case "file/path-detail-result":
         this.pathDetail = message.payload;
+        break;
+      case "commit/receipt":
+        this.commitReceipt = message.payload;
         break;
     }
   }

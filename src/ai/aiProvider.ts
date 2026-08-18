@@ -1,3 +1,9 @@
+import type {
+  AnalysisReceipt,
+  DiffCoverageSummary,
+  EvidenceReference,
+} from "../commit/commitDiffEvidence";
+
 export interface AiProviderConfig {
   baseUrl: string;
   apiKey: string;
@@ -66,6 +72,19 @@ export interface AiCommitMessageDiffSummary {
   error?: string;
 }
 
+/**
+ * v0.0.11 受限差异发送单元：经脱敏、裁剪与预算限制后的差异片段，
+ * 携带不透明 candidateId 与逐差异块 hunkId 供证据绑定。
+ */
+export interface AiCommitMessageDiffContent {
+  candidateId: string;
+  projectRelativePath: string;
+  content: string;
+  hunks: Array<{ hunkId: string; header: string }>;
+  truncated: boolean;
+  binary: boolean;
+}
+
 export interface AiCommitConventionHint {
   enabled: boolean;
   requiredIssueId: boolean;
@@ -89,12 +108,38 @@ export interface AiCommitMessageRequest {
   currentMessage?: string;
   convention?: AiCommitConventionHint;
   recentHistory?: Array<{ revision?: string; summary: string }>;
+  /** v0.0.11 §2 生成输入模式。 */
+  diffMode?: "metadata-only" | "limited-diff";
+  /** v0.0.11 §3 动作级外发回执。 */
+  receipt?: AnalysisReceipt;
+  /** v0.0.11 §6 差异覆盖率（limited-diff 时携带）。 */
+  coverage?: DiffCoverageSummary;
+  /** v0.0.11 §2.2 受限差异正文（用户确认后按操作范围采集与脱敏）。 */
+  diffs?: AiCommitMessageDiffContent[];
 }
 
 export interface AiCommitMessageResult {
   message: string;
   summary: string;
   warnings: string[];
+  /**
+   * v0.0.11 §4 证据引用：每条具体陈述关联的 Host 可校验证据；
+   * 虚构、范围外、过期引用由 Host 丢弃并计入 coverage。
+   */
+  evidence?: EvidenceReference[];
+  /**
+   * v0.0.11 §5 逐条声明注解层（可选，不替代 message）：每条声明带
+   * 状态（已证实/推断/待确认）与可关联证据；模型标为 confirmed 但无
+   * 有效 Host 证据的声明由 Host 强制降级为 toConfirm。
+   */
+  claims?: AiCommitMessageClaim[];
+}
+
+/** v0.0.11 §5 逐条声明：文本 + 状态 + 可选证据引用。 */
+export interface AiCommitMessageClaim {
+  text: string;
+  status: "confirmed" | "inferred" | "toConfirm";
+  evidence?: EvidenceReference[];
 }
 
 export interface AiCommitSplitFileContext {

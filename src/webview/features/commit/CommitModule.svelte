@@ -66,6 +66,7 @@
     snapshot,
     onAction,
     pathDetail,
+    commitReceipt,
   }: {
     snapshot: CommitSnapshot;
     onAction: (action: WebviewAction, data?: Record<string, unknown>) => void;
@@ -73,6 +74,11 @@
     pathDetail?: Extract<
       HostToWebviewMessage,
       { type: "file/path-detail-result" }
+    >["payload"];
+    /** v0.0.11 受限差异外发回执（commit/receipt 一次性下发）。 */
+    commitReceipt?: Extract<
+      HostToWebviewMessage,
+      { type: "commit/receipt" }
     >["payload"];
   } = $props();
 
@@ -85,6 +91,9 @@
   let filter = $state<CommitFilter>("all");
   let onlySelected = $state(false);
   let message = $state("");
+  /** v0.0.11 §2 生成输入模式：仅文件信息（默认）/ 受限差异（需回执确认）。 */
+  let diffMode = $state<"metadata-only" | "limited-diff">("metadata-only");
+  let receiptExpanded = $state(false);
   let selected = $state<ReadonlySet<SelectionKey>>(emptySelection());
   /** 回声防护：最后一次发给 Host 的选择签名；未匹配前忽略快照回声。 */
   let pendingEcho = $state<string | undefined>();
@@ -355,6 +364,33 @@
     return diffDraftAgainstSuggestion(message, suggestion.message);
   });
   const suggestionCharacterCount = $derived(suggestion?.message.length ?? 0);
+  /** v0.0.11 §6：可重试的失败项（上次读取失败/预算外的文件数）。 */
+  const failedRetryCount = $derived(
+    suggestion?.coverageFiles?.filter(
+      (file) => file.state === "readFailed" || file.state === "budgetExcluded",
+    ).length ?? 0,
+  );
+
+  /** v0.0.11 §6：只重试失败项——Host 对失败文件重新采集并下发回执。 */
+  function requestRetryFailed(): void {
+    if (!suggestion) return;
+    onAction("commit/retry-failed-diff", { token: suggestion.token });
+  }
+
+  /** v0.0.11 §4：打开 Host 校验过的证据对应的文件差异。 */
+  function openEvidence(reference: {
+    candidateId: string;
+    hunkId?: string;
+    projectRelativePath: string;
+  }): void {
+    if (!suggestion) return;
+    onAction("commit/open-evidence", {
+      token: suggestion.token,
+      candidateId: reference.candidateId,
+      ...(reference.hunkId ? { hunkId: reference.hunkId } : {}),
+      projectRelativePath: reference.projectRelativePath,
+    });
+  }
 
   function requestInsertBlankFields(): void {
     if (!suggestion) return;
@@ -399,6 +435,84 @@
   function undoSuggestionReplace(): void {
     onAction("commit/undo-suggestion-replace");
   }
+
+  /*
+   * v0.0.11 §3：生成入口按输入模式分支。受限差异先请求外发回执
+   * （commit/preview-receipt，不调用模型），用户确认后再经
+   * commit/generate-message 携带 receiptToken 实际生成。
+   */
+  function requestGenerate(): void {
+    if (diffMode === "limited-diff") {
+      onAction("commit/preview-receipt", {
+        selectedPaths: selectedPaths(),
+        message,
+      });
+      return;
+    }
+    onAction("commit/generate-message", {
+      selectedPaths: selectedPaths(),
+      message,
+      diffMode: "metadata-only",
+    });
+  }
+
+  /** 确认回执：开始受限差异模型生成（Host 校验 token 与范围后调用模型）。 */
+  function confirmReceiptGenerate(): void {
+    const receipt = commitReceipt;
+    if (!receipt) return;
+    onAction("commit/generate-message", {
+      selectedPaths: selectedPaths(),
+      message,
+      diffMode: "limited-diff",
+      receiptToken: receipt.token,
+    });
+    commitReceipt = undefined;
+  }
+
+  /** 回执降级：不发送差异，继续仅文件信息生成。 */
+  function continueMetadataOnly(): void {
+    const receipt = commitReceipt;
+    if (receipt) {
+      onAction("commit/receipt-dismiss", { token: receipt.token });
+    }
+    commitReceipt = undefined;
+    diffMode = "metadata-only";
+    onAction("commit/generate-message", {
+      selectedPaths: selectedPaths(),
+      message,
+      diffMode: "metadata-only",
+    });
+  }
+
+  /** 放弃回执：取消后未确认前模型不会被调用。 */
+  function dismissReceipt(): void {
+    const receipt = commitReceipt;
+    if (receipt) {
+      onAction("commit/receipt-dismiss", { token: receipt.token });
+    }
+    commitReceipt = undefined;
+  }
+
+  const coverageLabels: Record<
+    "analyzed" | "truncated" | "binary" | "readFailed" | "budgetExcluded",
+    string
+  > = {
+    analyzed: "已分析",
+    truncated: "已截断",
+    binary: "二进制",
+    readFailed: "读取失败",
+    budgetExcluded: "预算外",
+  };
+
+  /** v0.0.11 §5 声明状态中文标签。 */
+  const claimStatusLabels: Record<
+    "confirmed" | "inferred" | "toConfirm",
+    string
+  > = {
+    confirmed: "已证实",
+    inferred: "推断",
+    toConfirm: "待确认",
+  };
 
   function handleMessageKeydown(event: KeyboardEvent): void {
     if (!isExplicitSubmitShortcut(event)) return;
@@ -714,17 +828,26 @@
           <span class="eyebrow">提交内容</span>
           <h2>提交说明</h2>
         </div>
-        <button
-          class="button button--secondary"
-          onclick={() =>
-            onAction("commit/generate-message", {
-              selectedPaths: selectedPaths(),
-              message,
-            })}
-        >
-          <span class="codicon codicon-sparkle" aria-hidden="true"></span>
-          生成建议草稿
-        </button>
+        <div class="generate-actions">
+          <label class="generate-mode">
+            <span class="generate-mode__label">生成输入</span>
+            <select
+              aria-label="生成输入模式"
+              value={diffMode}
+              onchange={(event) => {
+                diffMode = (event.currentTarget as HTMLSelectElement).value as
+                  "metadata-only" | "limited-diff";
+              }}
+            >
+              <option value="metadata-only">仅文件信息</option>
+              <option value="limited-diff">含差异（需确认）</option>
+            </select>
+          </label>
+          <button class="button button--secondary" onclick={requestGenerate}>
+            <span class="codicon codicon-sparkle" aria-hidden="true"></span>
+            生成建议草稿
+          </button>
+        </div>
       </div>
       {#if messagePrivacy}<div class="privacy-note">
           <strong>外发预览</strong><span
@@ -733,6 +856,109 @@
               : "不含历史"}。</span
           >
         </div>{/if}
+      {#if diffMode === "limited-diff"}<p class="commit-suggestion__note">
+          受限差异模式：生成前会先展示外发回执（数据类型、文件数、预算与
+          排除项），确认后才发送脱敏差异正文；不会发送本地绝对路径、范围外
+          内容或凭据。
+        </p>{/if}
+      {#if commitReceipt}
+        <div class="commit-receipt" role="region" aria-label="受限差异外发回执">
+          <div class="commit-receipt__head">
+            <span class="codicon codicon-arrow-up" aria-hidden="true"></span>
+            <strong>受限差异外发回执（尚未发送）</strong>
+            <span class="commit-receipt__tag" role="status">等待确认</span>
+          </div>
+          <dl class="commit-receipt__meta">
+            <div>
+              <dt>任务</dt>
+              <dd>提交说明（{commitReceipt.receipt.task}）</dd>
+            </div>
+            <div>
+              <dt>模型</dt>
+              <dd>{commitReceipt.receipt.model}</dd>
+            </div>
+            <div>
+              <dt>数据类型</dt>
+              <dd>{commitReceipt.receipt.dataTypes.join("、")}</dd>
+            </div>
+            <div>
+              <dt>文件数</dt>
+              <dd>{commitReceipt.receipt.files} 个已发送候选</dd>
+            </div>
+            <div>
+              <dt>预算</dt>
+              <dd>
+                单文件 {commitReceipt.receipt.perFileBudget} 字符 / 总计
+                {commitReceipt.receipt.totalBudget} 字符
+              </dd>
+            </div>
+            <div>
+              <dt>历史</dt>
+              <dd>
+                {commitReceipt.historyIncluded
+                  ? `包含 ${commitReceipt.historyCount ?? 0} 条已脱敏历史摘要`
+                  : "不包含"}
+              </dd>
+            </div>
+          </dl>
+          <p class="commit-receipt__coverage">
+            覆盖率：已分析 {commitReceipt.coverage.analyzed} · 截断
+            {commitReceipt.coverage.truncated} · 二进制
+            {commitReceipt.coverage.binary} · 读取失败
+            {commitReceipt.coverage.readFailed} · 预算外
+            {commitReceipt.coverage.budgetExcluded}（共
+            {commitReceipt.coverage.total} 个候选）
+          </p>
+          <button
+            type="button"
+            class="commit-receipt__toggle"
+            aria-expanded={receiptExpanded}
+            onclick={() => (receiptExpanded = !receiptExpanded)}
+            >{receiptExpanded ? "收起" : "展开"}包含 / 排除文件清单</button
+          >
+          {#if receiptExpanded}
+            <ul class="commit-receipt__files" aria-label="包含与排除文件清单">
+              {#each commitReceipt.files as file (file.candidateId)}
+                <li
+                  class="commit-receipt__file"
+                  class:commit-receipt__file--excluded={file.state !==
+                    "analyzed"}
+                >
+                  <span>{file.projectRelativePath}</span>
+                  <small
+                    >{coverageLabels[file.state]}{file.reason
+                      ? `（${file.reason}）`
+                      : ""} · {file.charCount} 字符 / {file.hunkCount} 块</small
+                  >
+                </li>
+              {/each}
+            </ul>
+          {/if}
+          <p class="commit-receipt__note">
+            不会发送：{commitReceipt.notSent.join("；")}。
+          </p>
+          <p class="commit-receipt__note">
+            {commitReceipt.retentionNote}
+          </p>
+          <div class="commit-receipt__actions">
+            <button
+              type="button"
+              class="button button--primary"
+              onclick={confirmReceiptGenerate}>开始模型生成</button
+            >
+            <button
+              type="button"
+              class="button button--secondary"
+              onclick={continueMetadataOnly}>继续仅文件信息</button
+            >
+            <button
+              type="button"
+              class="button button--secondary"
+              onclick={dismissReceipt}>放弃</button
+            >
+          </div>
+        </div>
+      {/if}
       <div class="template-row" aria-label="提交说明模板">
         {#each snapshot.templates as template (template.id)}
           <button
@@ -785,16 +1011,157 @@
               >{/if}
           </div>
           <small>
-            来源：{sourceLabels[suggestion.source]} · 生成输入仅包含文件信息与差异统计，不能证明具体行为
-            {#if suggestion.model}· 模型 {suggestion.model}{/if}
+            来源：{sourceLabels[
+              suggestion.source
+            ]}{#if suggestion.diffMode === "metadata-only"}
+              · 生成输入仅包含文件信息与差异统计，不能证明具体行为{/if}{#if suggestion.model}
+              · 模型 {suggestion.model}{/if}
           </small>
           {#if suggestion.metadataOnly}<small class="commit-suggestion__note"
               >基于文件信息生成，未读取差异正文；请结合实际改动确认。</small
             >{/if}
+          {#if suggestion.diffMode === "limited-diff" && suggestion.coverage}
+            <p class="commit-suggestion__note" role="status">
+              差异覆盖率：已分析 {suggestion.coverage.analyzed} · 截断
+              {suggestion.coverage.truncated} · 二进制
+              {suggestion.coverage.binary} · 读取失败
+              {suggestion.coverage.readFailed} · 预算外
+              {suggestion.coverage.budgetExcluded}（共
+              {suggestion.coverage.total} 个候选）。
+            </p>
+          {/if}
+          {#if suggestion.coverageFiles && suggestion.coverageFiles.length > 0}
+            <details class="commit-suggestion__coverage-files">
+              <summary
+                >逐文件覆盖情况（{suggestion.coverageFiles.length} 个候选）</summary
+              >
+              <ul aria-label="建议逐文件覆盖情况">
+                {#each suggestion.coverageFiles as file (file.candidateId)}
+                  <li
+                    class="commit-suggestion__coverage-item"
+                    class:commit-suggestion__coverage-item--failed={file.state ===
+                      "readFailed" || file.state === "budgetExcluded"}
+                  >
+                    <span>{file.projectRelativePath}</span>
+                    <small
+                      >{coverageLabels[file.state]}{file.reason
+                        ? `（${file.reason}）`
+                        : ""} · {file.charCount} 字符 / {file.hunkCount} 块</small
+                    >
+                  </li>
+                {/each}
+              </ul>
+            </details>
+          {/if}
+          {#if failedRetryCount > 0 && !suggestion.stale}
+            <div class="commit-suggestion__retry">
+              <button
+                type="button"
+                class="button button--secondary"
+                onclick={requestRetryFailed}
+                >重试失败项（{failedRetryCount}）</button
+              >
+              <small
+                >仅重新采集上次读取失败或预算外的文件，并重新展示外发回执。</small
+              >
+            </div>
+          {/if}
           {#if suggestion.stale}<p class="commit-suggestion__note">
               范围或候选已变化，该建议只能查看，不能直接采用；当前提交说明保持不变。
             </p>{/if}
           <pre class="commit-suggestion__body">{suggestion.message}</pre>
+          {#if suggestion.claims && suggestion.claims.length > 0}
+            <details class="commit-suggestion__claims" open>
+              <summary>逐条说明与证据状态</summary>
+              <ul aria-label="建议逐条说明">
+                {#each suggestion.claims as claim, claimIndex (claimIndex)}
+                  <li
+                    class="commit-suggestion__claim"
+                    class:commit-suggestion__claim--toConfirm={claim.status ===
+                      "toConfirm"}
+                  >
+                    <div class="commit-suggestion__claim-head">
+                      <span class="commit-suggestion__claim-status"
+                        >{claimStatusLabels[claim.status]}</span
+                      >
+                      {#if claim.downgraded}<span
+                          class="commit-suggestion__claim-downgrade"
+                          title="模型标为已证实但缺少可核对证据">已降级</span
+                        >{/if}
+                      <span class="commit-suggestion__claim-text">
+                        {claim.text}
+                      </span>
+                    </div>
+                    {#if claim.evidence.length > 0 || claim.invalidEvidence.length > 0}
+                      <ul
+                        class="commit-suggestion__claim-evidence"
+                        aria-label="声明证据"
+                      >
+                        {#each claim.evidence as reference (reference.candidateId + (reference.hunkId ?? ""))}
+                          <li>
+                            {reference.projectRelativePath}{#if reference.hunkId}
+                              · 差异块已验证{/if}
+                            <button
+                              type="button"
+                              class="commit-suggestion__evidence-open"
+                              disabled={suggestion.stale}
+                              onclick={() => openEvidence(reference)}
+                              >打开差异</button
+                            >
+                          </li>
+                        {/each}
+                        {#each claim.invalidEvidence as invalid (invalid.reference.candidateId + (invalid.reference.hunkId ?? ""))}
+                          <li class="commit-suggestion__claim-invalid">
+                            {invalid.reference.projectRelativePath}：
+                            {invalid.reason}
+                          </li>
+                        {/each}
+                      </ul>
+                    {/if}
+                  </li>
+                {/each}
+              </ul>
+            </details>
+          {/if}
+          {#if suggestion.evidence && suggestion.evidence.length > 0}
+            <details class="commit-suggestion__evidence" open>
+              <summary
+                >证据引用（{suggestion.evidence.filter((item) => item.valid)
+                  .length} 条有效）</summary
+              >
+              <ul aria-label="建议证据引用">
+                {#each suggestion.evidence as item (item.reference.candidateId + (item.reference.hunkId ?? ""))}
+                  <li
+                    class="commit-suggestion__evidence-item"
+                    class:commit-suggestion__evidence-item--invalid={!item.valid}
+                  >
+                    {#if item.valid}
+                      <span class="codicon codicon-check" aria-hidden="true"
+                      ></span>
+                    {:else}
+                      <span class="codicon codicon-warning" aria-hidden="true"
+                      ></span>
+                    {/if}
+                    {item.reference
+                      .projectRelativePath}{#if item.reference.hunkId}
+                      · 差异块已验证{/if}
+                    {#if item.valid}
+                      <button
+                        type="button"
+                        class="commit-suggestion__evidence-open"
+                        disabled={suggestion.stale}
+                        onclick={() => openEvidence(item.reference)}
+                        >打开差异</button
+                      >
+                    {/if}
+                    {#if !item.valid && item.reason}<small>
+                        {item.reason}
+                      </small>{/if}
+                  </li>
+                {/each}
+              </ul>
+            </details>
+          {/if}
           {#if !suggestion.stale && suggestionDiff}
             <details class="commit-suggestion__diff" open>
               <summary>与当前草稿的差异</summary>
