@@ -1,14 +1,31 @@
 {
   "schemaVersion": 1,
   "version": "0.0.11",
-  "status": "draft",
+  "status": "released",
   "baseVersion": "0.0.10",
-  "releaseDate": null,
-  "gitTag": null,
-  "gitCommit": null,
-  "sourceState": "候选源码已落地：受限差异采集/脱敏/预算、动作级外发回执（preview-receipt/commit/receipt）、有证据的提交说明（证据引用校验 + revision 时效 + 逐条声明 claims 与 confirmed 无证据强制降级）、证据打开与部分完成重试；npm run verify 全链路通过；发布 evidence 与 VSIX 指纹待生成（记录提交时置 clean）",
-  "vsix": null,
-  "tests": null,
-  "acceptedEvidenceRun": null,
-  "evidencePath": null
+  "releaseDate": "2026-08-18",
+  "gitTag": "v0.0.11",
+  "gitCommit": "8e347581f6363fd054d54d9331e2fbdd919c9675",
+  "sourceState": "clean",
+  "vsix": {
+    "fileName": "svn-workbench-0.0.11.vsix",
+    "sizeBytes": 8597847,
+    "sha256": "29B1BEA1B1F0388C1929EF8CC0F3743DBF8A16318B476C0FCD83FF86A0DCA3B6"
+  },
+  "tests": {
+    "unit": 1115,
+    "lineCoverage": "94.11%",
+    "webview": 73,
+    "extensionHost": "passed",
+    "performance": "passed",
+    "toolchain": {
+      "node": "26.7.0",
+      "npm": "12.0.2",
+      "vscode": "1.133.0",
+      "platform": "macOS 26.6 arm64"
+    }
+  },
+  "acceptedEvidenceRun": "2026-08-18T04-08-30-594Z-c16b5c15",
+  "evidencePath": "artifacts/2026-08-18T04-08-30-594Z-c16b5c15",
+  "evidenceTreeSha256": "AC30CC3C4C489C15FC246777529EF65E0D12EA3CEDFF2672A7C7C5E961CA6F46"
 }
