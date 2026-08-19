@@ -1,8 +1,8 @@
-# SVN Workbench v0.0.12 规划：有证据的变更解读与任务内 AI 协作
+# SVN Workbench v0.0.12：有证据的变更解读与任务内 AI 协作
 
-> 文档身份：`planned-version-specification`
+> 文档身份：`released-version-record`
 >
-> 状态：候选（candidate）。批次 A（变更解读主闭环）、批次 B（提交说明接入有效确认 + 按改动意图拆分）、批次 C（冲突意图解释 + 旧 ai-review/impact/agent 入口收敛）已全部落地并通过本地完整门禁（`npm run verify` 全链路）；候选源码提交、发布 evidence 与 VSIX 指纹见 [`manifest.json`](./manifest.json)。真实读屏 / 200% 目视 / 真实 SVN 人工主路径与三平台 CI 保留为非阻断观察项。
+> 状态：已发布。源码提交 `374c762c4d1214afd33b1e5c132e4cdddff404ce`、标签 `v0.0.12`、VSIX 指纹、本地完整门禁、发布 evidence 已绑定；真实读屏 / 200% 目视 / 真实 SVN 人工主路径与三平台 CI 保留为非阻断观察项。
 >
 > 规划基线：[`v0.0.11`](../v0.0.11/)。v0.0.11 已于 2026-08-18 正式发布；当前开发事实继续以源码、测试和 [`../../current/`](../../current/) 为准。
 >

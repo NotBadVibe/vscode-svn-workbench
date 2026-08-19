@@ -1,14 +1,31 @@
 {
   "schemaVersion": 1,
   "version": "0.0.12",
-  "status": "draft",
+  "status": "released",
   "baseVersion": "0.0.11",
-  "releaseDate": null,
-  "gitTag": null,
-  "gitCommit": null,
-  "sourceState": "候选源码已落地：批次 A（变更解读主闭环）、批次 B（提交说明接入有效确认 + 按改动意图拆分）、批次 C（冲突意图解释 + 旧 ai-review/impact/agent 入口收敛）已全部落地；npm run verify 全链路通过；发布 evidence 与 VSIX 指纹待生成（记录提交时置 clean）",
-  "vsix": null,
-  "tests": null,
-  "acceptedEvidenceRun": null,
-  "evidencePath": null
+  "releaseDate": "2026-08-19",
+  "gitTag": "v0.0.12",
+  "gitCommit": "374c762c4d1214afd33b1e5c132e4cdddff404ce",
+  "sourceState": "clean",
+  "vsix": {
+    "fileName": "svn-workbench-0.0.12.vsix",
+    "sizeBytes": 8616260,
+    "sha256": "3086348697878AA3C5AE546F13EA6B307542841C3CF86371DDFFD3DD44F70514"
+  },
+  "tests": {
+    "unit": 1160,
+    "lineCoverage": "91.48%",
+    "webview": 75,
+    "extensionHost": "passed",
+    "performance": "passed",
+    "toolchain": {
+      "node": "26.7.0",
+      "npm": "12.0.2",
+      "vscode": "1.133.0",
+      "platform": "macOS 26.6 arm64"
+    }
+  },
+  "acceptedEvidenceRun": "2026-08-19T05-29-54-393Z-0eeaa78d",
+  "evidencePath": "artifacts/2026-08-19T05-29-54-393Z-0eeaa78d",
+  "evidenceTreeSha256": "682929F91DFC85F21A3D177AA79A8C50360370204F497E82253F6C50ECDEE530"
 }

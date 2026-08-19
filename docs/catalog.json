@@ -233,12 +233,12 @@
     },
     {
       "version": "0.0.12",
-      "status": "draft",
-      "phase": "planned",
+      "status": "released",
+      "phase": "released",
       "baseVersion": "0.0.11",
       "canonicalEntry": "releases/v0.0.12/README.md",
       "manifest": "releases/v0.0.12/manifest.json",
-      "releasedFact": false,
+      "releasedFact": true,
       "topics": [
         "change-understanding",
         "evidence-grounded-summary",
