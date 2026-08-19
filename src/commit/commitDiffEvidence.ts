@@ -21,6 +21,19 @@
  */
 
 export const COMMIT_DRAFT_TASK = "commit-draft" as const;
+/** v0.0.12 批次 A：变更解读回执任务标识。 */
+export const UNDERSTAND_CHANGES_TASK = "understand-changes" as const;
+/** v0.0.12 批次 B：语义拆分回执任务标识。 */
+export const CHANGELIST_SPLIT_TASK = "changelist-split" as const;
+/** v0.0.12 批次 C：冲突意图解释回执任务标识。 */
+export const CONFLICT_INTERPRET_TASK = "conflict-interpret" as const;
+
+/** 动作级外发回执的任务类型（commit-draft / understand-changes / changelist-split / conflict-interpret）。 */
+export type AnalysisTask =
+  | typeof COMMIT_DRAFT_TASK
+  | typeof UNDERSTAND_CHANGES_TASK
+  | typeof CHANGELIST_SPLIT_TASK
+  | typeof CONFLICT_INTERPRET_TASK;
 
 /** 逐文件差异分析状态（规划 §6：覆盖率、截断、二进制、读取失败与预算外）。 */
 export type DiffCoverageState =
@@ -54,7 +67,7 @@ export interface DiffCoverageSummary {
 
 /** v0.0.11 §8 动作级外发回执（建议建立可供 v0.0.12 复用的基础类型）。 */
 export interface AnalysisReceipt {
-  task: "commit-draft";
+  task: AnalysisTask;
   projectId: string;
   model: string;
   dataTypes: string[];
@@ -224,6 +237,7 @@ export function buildCandidateId(
 }
 
 export function buildAnalysisReceipt(input: {
+  task?: AnalysisTask;
   projectId: string;
   model: string;
   files: number;
@@ -233,7 +247,7 @@ export function buildAnalysisReceipt(input: {
   dataTypes?: string[];
 }): AnalysisReceipt {
   return {
-    task: COMMIT_DRAFT_TASK,
+    task: input.task ?? COMMIT_DRAFT_TASK,
     projectId: input.projectId,
     model: input.model,
     dataTypes:

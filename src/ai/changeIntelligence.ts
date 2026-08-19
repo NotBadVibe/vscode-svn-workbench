@@ -1,10 +1,52 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { CommitCandidate } from "../commit/commitCandidateCollector";
-import type {
-  AiReviewSnapshot,
-  ImpactSnapshot,
-} from "../protocol/workbenchProtocol";
+
+/** 本地变更检查快照（v0.0.12 批次 C 起：领域契约，供 understanding 本地适配）。 */
+export interface AiReviewSnapshot {
+  kind: "ai-review";
+  state: "ready" | "empty" | "stale";
+  source: "local-rule" | "configured-model" | "local-rule-fallback";
+  generatedAt: string;
+  privacy: {
+    files: number;
+    characters: number;
+    maxCharacters: number;
+    historyIncluded: boolean;
+    model: string;
+  };
+  summary: { critical: number; warning: number; note: number };
+  findings: Array<{
+    id: string;
+    severity: "critical" | "warning" | "note";
+    category: "security" | "debug" | "generated" | "quality" | "testing";
+    relativePath?: string;
+    line?: number;
+    title: string;
+    evidence: string;
+    recommendation: string;
+    confidence: "low" | "medium" | "high";
+  }>;
+  warnings: string[];
+}
+
+/** 本地影响分析快照（领域契约，供 understanding 本地适配）。 */
+export interface ImpactSnapshot {
+  kind: "impact";
+  generatedAt: string;
+  source: "local-rule" | "configured-model" | "local-rule-fallback";
+  changedFiles: number;
+  areas: Array<{
+    id: string;
+    title: string;
+    detail: string;
+    paths: string[];
+    risk: "low" | "medium" | "high";
+  }>;
+  tests: Array<{ title: string; reason: string; command?: string }>;
+  observations: string[];
+  warnings: string[];
+}
 
 const MAX_FILE_CHARACTERS = 160_000;
 const MAX_TOTAL_CHARACTERS = 2_000_000;

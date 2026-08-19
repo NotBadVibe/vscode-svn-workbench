@@ -9,7 +9,8 @@ export type AiUsageScenario =
   | "commitMessage"
   | "commitSplit"
   | "teamRules"
-  | "conflictMerge";
+  | "conflictMerge"
+  | "changeUnderstanding";
 
 export type AiProviderPresetId =
   | "deepseek"
@@ -135,6 +136,12 @@ export const AI_USAGE_SCENARIOS: Array<{
     id: "conflictMerge",
     label: "冲突候选合并",
     description: "用于分析三方冲突；内嵌编辑器负责生成并保存工作副本内容。",
+  },
+  {
+    id: "changeUnderstanding",
+    label: "变更解读",
+    description:
+      "解读所选变更：改了什么、需要确认、影响与验证（受限差异 + 证据）。",
   },
 ];
 

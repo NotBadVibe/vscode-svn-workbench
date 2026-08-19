@@ -3,7 +3,6 @@ import type { CommitConventionConfig } from "../../commit/commitConvention";
 import type { CommitCandidate } from "../../commit/commitCandidateCollector";
 import type { buildCommitPlanPreview } from "../../commit/commitPlanBuilder";
 import type {
-  AgentSnapshot,
   ChangesSnapshot,
   ChangelistsSnapshot,
   CommitMessageSuggestion,
@@ -57,6 +56,11 @@ export interface WorkbenchSession extends OpenWorkbenchRequest {
   workingCopyUrl?: string;
   /** v0.0.11：工作副本 revision（AI 结果时效绑定之一）。 */
   workingCopyRevision?: string;
+  /**
+   * v0.0.12 批次 A：变更解读会话状态（用户确认仅会话内；切换项目/会话
+   * 替换即失效）。snapshot 由 sendUnderstandingSnapshot 重建。
+   */
+  understandingState?: import("../../understanding/changeUnderstanding").UnderstandingSessionState;
   scopeHash: string;
   aiModels: Partial<Record<AiUsageScenario, string>>;
   security: {
@@ -85,6 +89,24 @@ export interface WorkbenchSession extends OpenWorkbenchRequest {
     /** v0.0.10：会话内首次冲突总数（处理进度基线）。 */
     initialCount?: number;
     advice?: import("../../protocol/workbenchProtocol").ConflictSnapshot["advice"];
+    /** v0.0.12 批次 C：冲突意图解释（§7 六段）。 */
+    interpretation?: import("../../protocol/workbenchProtocol").ConflictSnapshot["interpretation"];
+    /** v0.0.12 批次 C：语义回执（任务 conflict-interpret，跨任务拒绝）。 */
+    pendingReceipt?: {
+      token: string;
+      task: import("../../commit/commitDiffEvidence").AnalysisTask;
+      receipt: import("../../commit/commitDiffEvidence").AnalysisReceipt;
+      files: Array<{
+        name: string;
+        characters: number;
+        maxCharacters: number;
+        truncated: boolean;
+        readError?: string;
+      }>;
+      scopeHash: string;
+      conflictHash: string;
+      revision?: string;
+    };
     resolvePreview?: {
       token: string;
       contentHash: string;
@@ -171,10 +193,22 @@ export interface WorkbenchSession extends OpenWorkbenchRequest {
       paths: string[];
       issues: string[];
     };
-  };
-  agentState?: {
-    snapshot: AgentSnapshot;
-    candidateHash: string;
+    /** v0.0.12 批次 B：语义拆分受限差异回执（任务 changelist-split，跨任务拒绝）。 */
+    pendingReceipt?: {
+      token: string;
+      task: import("../../commit/commitDiffEvidence").AnalysisTask;
+      receipt: import("../../commit/commitDiffEvidence").AnalysisReceipt;
+      coverage: import("../../commit/commitDiffEvidence").DiffCoverageSummary;
+      files: import("../../protocol/workbenchProtocol").CommitDiffFileCoverageView[];
+      fragments: import("../../commit/commitDiffEvidence").CommitDiffFragment[];
+      revision?: string;
+      scopeHash: string;
+      candidateHash: string;
+      excludedCount: number;
+      historyIncluded: boolean;
+      historyCount?: number;
+      retryNote?: string;
+    };
   };
   changesState?: {
     preview?: {
@@ -232,6 +266,8 @@ export interface CommitSessionState {
    */
   pendingReceipt?: {
     token: string;
+    /** v0.0.12：回执显式绑定任务；跨任务使用一律拒绝。 */
+    task: import("../../commit/commitDiffEvidence").AnalysisTask;
     receipt: import("../../commit/commitDiffEvidence").AnalysisReceipt;
     coverage: import("../../commit/commitDiffEvidence").DiffCoverageSummary;
     files: import("../../protocol/workbenchProtocol").CommitDiffFileCoverageView[];

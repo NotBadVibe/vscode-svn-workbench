@@ -3,6 +3,14 @@ import type {
   DiffCoverageSummary,
   EvidenceReference,
 } from "../commit/commitDiffEvidence";
+import type {
+  AiUnderstandingRequest,
+  AiUnderstandingResult,
+} from "../understanding/understandingAi";
+import type { AiConflictInterpretation } from "./conflictInterpretation";
+
+export type { AiUnderstandingRequest, AiUnderstandingResult };
+export type { AiConflictInterpretation };
 
 export interface AiProviderConfig {
   baseUrl: string;
@@ -108,6 +116,8 @@ export interface AiCommitMessageRequest {
   currentMessage?: string;
   convention?: AiCommitConventionHint;
   recentHistory?: Array<{ revision?: string; summary: string }>;
+  /** v0.0.12 批次 B：变更解读中仍有效的会话内确认事实。 */
+  userConfirmations?: string[];
   /** v0.0.11 §2 生成输入模式。 */
   diffMode?: "metadata-only" | "limited-diff";
   /** v0.0.11 §3 动作级外发回执。 */
@@ -163,6 +173,10 @@ export interface AiCommitSplitRequest {
     onlyUseProvidedFiles: boolean;
   };
   convention?: AiCommitConventionHint;
+  /** v0.0.12 批次 B：变更解读中仍有效的会话内确认事实。 */
+  userConfirmations?: string[];
+  /** v0.0.12 批次 B：语义拆分时的受限差异片段（经独立回执/脱敏/预算）。 */
+  diffs?: AiCommitMessageDiffContent[];
 }
 
 export interface AiCommitSplitSuggestion {
@@ -173,6 +187,10 @@ export interface AiCommitSplitSuggestion {
   paths: string[];
   reason: string;
   risks: string[];
+  /** v0.0.12 批次 B：该拆分的提交意图/目的（语义拆分时）。 */
+  purpose?: string;
+  /** v0.0.12 批次 B：依赖项说明（语义拆分时）。 */
+  dependencies?: string[];
 }
 
 export interface AiCommitSplitResult {
@@ -248,4 +266,10 @@ export interface AiProvider {
     request: AiTeamRulesRequest,
   ): Promise<AiTeamRulesRecommendation>;
   adviseConflict(request: AiConflictRequest): Promise<AiConflictAdvice>;
+  interpretConflict(
+    request: AiConflictRequest,
+  ): Promise<AiConflictInterpretation>;
+  understandChanges(
+    request: AiUnderstandingRequest,
+  ): Promise<AiUnderstandingResult>;
 }

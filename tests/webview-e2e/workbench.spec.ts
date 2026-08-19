@@ -396,31 +396,6 @@ test("requires an update preview before running svn update", async ({
   await expect(page.getByText("已更新到 r43")).toBeVisible();
 });
 
-test("shows review evidence without rendering sensitive values", async ({
-  page,
-}) => {
-  await page.goto("/");
-  await openModule(page, "AI 审查");
-  await expect(
-    page
-      .locator(".intelligence-page")
-      .getByRole("heading", { name: "本地变更检查" }),
-  ).toBeVisible();
-  await expect(page.getByText("src/config.ts:8")).toBeVisible();
-  await expect(page.getByText("检测到疑似凭据，具体值已隐藏。")).toBeVisible();
-});
-
-test("links impact areas to concrete test commands", async ({ page }) => {
-  await page.goto("/");
-  await openModule(page, "影响分析");
-  await expect(
-    page
-      .locator(".intelligence-page")
-      .getByRole("heading", { name: "影响与测试建议" }),
-  ).toBeVisible();
-  await expect(page.getByText("npm run test:webview")).toBeVisible();
-});
-
 test("turns a grouping suggestion into a previewed SVN changelist", async ({
   page,
 }) => {
@@ -432,22 +407,6 @@ test("turns a grouping suggestion into a previewed SVN changelist", async ({
   await expect(page.getByText('svn changelist "webview" …')).toBeVisible();
   await page.getByRole("button", { name: "确认应用变更集" }).click();
   await expect(page.getByText("文件已加入 webview。")).toBeVisible();
-});
-
-test("runs the fixed read-only pipeline step by step", async ({ page }) => {
-  await page.goto("/");
-  await openModule(page, "任务代理");
-  await page
-    .getByRole("textbox", { name: "任务目标" })
-    .fill("检查当前范围并形成测试建议");
-  await page.getByRole("button", { name: "运行固定流水线" }).click();
-  for (let index = 0; index < 3; index += 1)
-    await page.getByRole("button", { name: "执行此步" }).first().click();
-  await expect(
-    page.getByText(
-      "只读流水线已完成，可以进入本地检查、影响或提交模块继续操作。",
-    ),
-  ).toBeVisible();
 });
 
 test("uses an accessible Svelte context menu and explicit file-operation preview", async ({
@@ -784,4 +743,121 @@ test("consecutive saves carry the rotated token and hash (v0.0.6 regression)", a
   await page.keyboard.press("Control+s");
   await expect(page.getByText(/保存被拒绝/)).toHaveCount(0);
   await expect(page.getByRole("button", { name: "保存修改" })).toBeDisabled();
+});
+
+test("change understanding: local check then receipt-confirmed model analysis (v0.0.12)", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await openModule(page, "变更解读");
+  await expect(
+    page.getByText(/理解当前修改、找出需要确认的风险/),
+  ).toBeVisible();
+  await expect(page.getByText(/AI 不会修改文件或执行提交/)).toBeVisible();
+
+  // 只运行本地检查。
+  await page.getByRole("button", { name: "只运行本地检查" }).click();
+  await expect(
+    page.getByRole("heading", { name: "这次改了什么" }),
+  ).toBeVisible();
+  await expect(page.getByText("修改了 2 个文件")).toBeVisible();
+
+  // 受限差异回执：先展示回执，再确认开始模型分析。
+  await page.getByRole("button", { name: /重新分析|查看并开始分析/ }).click();
+  const receiptRegion = page.getByRole("region", {
+    name: "变更解读外发回执",
+  });
+  await expect(receiptRegion).toBeVisible();
+  await expect(
+    receiptRegion.getByText("变更解读（understand-changes）"),
+  ).toBeVisible();
+  await receiptRegion.getByRole("button", { name: "开始模型分析" }).click();
+  await expect(page.getByRole("heading", { name: "需要你确认" })).toBeVisible();
+  await expect(page.getByText("已证实")).toBeVisible();
+  // 会话内确认。
+  await page
+    .getByLabel("输入要确认的事实")
+    .fill("确认 src/extension.ts 仅影响命令注册。");
+  await page.getByRole("button", { name: "确认", exact: true }).click();
+  await expect(
+    page.getByText("确认 src/extension.ts 仅影响命令注册。"),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "清除会话内确认" }).click();
+  await expect(
+    page.getByText("确认 src/extension.ts 仅影响命令注册。"),
+  ).not.toBeVisible();
+});
+
+test("change understanding: validated evidence opens the file diff (v0.0.12)", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await openModule(page, "变更解读");
+  await page.getByRole("button", { name: /重新分析|查看并开始分析/ }).click();
+  const receiptRegion = page.getByRole("region", {
+    name: "变更解读外发回执",
+  });
+  await expect(receiptRegion).toBeVisible();
+  await receiptRegion.getByRole("button", { name: "开始模型分析" }).click();
+  await page.getByRole("button", { name: "打开差异" }).first().click();
+  await expect(
+    page.getByRole("heading", { name: "查看本地修改" }),
+  ).toBeVisible();
+});
+
+test("semantic changelist split: receipt-confirmed then purpose/deps suggestions (v0.0.12 batch B)", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await openModule(page, "变更集");
+  await page.getByRole("button", { name: /按改动意图拆分/ }).click();
+  const receiptRegion = page.getByRole("region", {
+    name: "语义拆分外发回执",
+  });
+  await expect(receiptRegion).toBeVisible();
+  await expect(
+    receiptRegion.getByText("语义拆分（changelist-split）"),
+  ).toBeVisible();
+  await receiptRegion.getByRole("button", { name: "开始语义拆分" }).click();
+  await expect(page.getByText(/目的：基于受限差异/)).toBeVisible();
+  await expect(page.getByText("依赖 1 条已确认事实")).toBeVisible();
+});
+
+test("commit suggestion notes usage of still-valid confirmations (v0.0.12 batch B)", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await openModule(page, "提交");
+  await page.getByRole("button", { name: "生成建议草稿" }).click();
+  await expect(
+    page.getByRole("region", { name: "提交说明建议草稿" }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(/已使用 1 条变更解读中的会话内确认事实/),
+  ).toBeVisible();
+});
+
+test("conflict intent interpretation: receipt-confirmed six-section output (v0.0.12 batch C)", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await openModule(page, "冲突");
+  await page
+    .getByRole("button", { name: /选择一个冲突文件|app\/conflicted/ })
+    .isVisible()
+    .catch(() => undefined);
+  await page.getByRole("button", { name: "解释冲突意图" }).first().click();
+  const receiptRegion = page.getByRole("region", {
+    name: "冲突意图解释回执",
+  });
+  await expect(receiptRegion).toBeVisible();
+  await expect(
+    receiptRegion.getByText("冲突意图解释（conflict-interpret）"),
+  ).toBeVisible();
+  await receiptRegion.getByRole("button", { name: "开始解释" }).click();
+  await expect(page.getByRole("heading", { name: "意图解释" })).toBeVisible();
+  await expect(page.getByText("我的修改意图")).toBeVisible();
+  await expect(page.getByText("对方修改意图")).toBeVisible();
+  await expect(page.getByText("无法判断的业务选择")).toBeVisible();
+  await expect(page.getByText("保存后应运行的验证")).toBeVisible();
 });

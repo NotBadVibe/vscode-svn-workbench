@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- v0.0.12 批次 C 入口收敛：移除旧 `ai-review`、`impact`、`agent` 一级模块/命令/菜单，
+  变更解读（`understanding`）为唯一变更解读主路径；本地检查/影响分析引擎
+  （`src/ai/changeIntelligence.ts`）保留供变更解读本地适配。
+
 ## 0.0.8 (2026-08-15)
 
 ### Added

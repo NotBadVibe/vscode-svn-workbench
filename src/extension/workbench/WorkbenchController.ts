@@ -2,6 +2,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import * as vscode from "vscode";
+import type { AiConflictRequest } from "../../ai/aiProvider";
 import {
   buildCommitMessageAiRequest,
   createMockCommitMessageResult,
@@ -20,14 +21,15 @@ import {
   validateAiSelectionResult,
 } from "../../ai/aiResultValidator";
 import {
-  buildLocalChangeReview,
-  buildLocalImpactAnalysis,
-} from "../../ai/changeIntelligence";
-import {
   buildConflictAiRequest,
   containsSvnConflictMarkers,
   createMockConflictAdvice,
 } from "../../ai/conflictAiAdvisor";
+import {
+  buildConflictInterpretationRequest,
+  createLocalConflictInterpretation,
+  normalizeConflictInterpretation,
+} from "../../ai/conflictInterpretation";
 import {
   AI_API_KEY_SECRET_KEY,
   AI_PROVIDER_PRESETS,
@@ -160,10 +162,40 @@ import { projectRelativePath } from "../../scope/projectIdentity";
 import {
   buildAnalysisReceipt,
   buildCandidateId,
+  CHANGELIST_SPLIT_TASK,
+  COMMIT_DRAFT_TASK,
+  CONFLICT_INTERPRET_TASK,
   isCommitDraftEvidenceStale,
+  UNDERSTAND_CHANGES_TASK,
   validateCommitMessageClaims,
   validateEvidenceReferences,
+  type EvidenceReference,
 } from "../../commit/commitDiffEvidence";
+import {
+  buildUserConfirmedFact,
+  buildDraftProposalFromConfirmations,
+  isUnderstandingSnapshotStale,
+  markConfirmationsNeedsReview,
+  mergeUnderstandingResults,
+  type ChangeUnderstandingSnapshot,
+  type UnderstandingResultParts,
+  type UnderstandingSessionState,
+} from "../../understanding/changeUnderstanding";
+import { buildLocalUnderstandingParts } from "../../understanding/understandingLocal";
+import {
+  toAiUnderstandingResult,
+  normalizeUnderstandingResult,
+  type AiUnderstandingRequest,
+  type AiUnderstandingResult,
+} from "../../understanding/understandingAi";
+import {
+  collectUnderstandingDiffs,
+  buildUnderstandingReceiptForSession,
+} from "../../understanding/understandingCollector";
+import {
+  readValidUnderstandingConfirmations,
+  updateUnderstandingConfirmations,
+} from "./understandingConfirmations";
 import {
   collectLimitedCommitDiffs,
   COMMIT_DIFF_PER_FILE_BUDGET,
@@ -258,7 +290,6 @@ import {
   asStringAllowEmpty,
   asStringArray,
   buildScenarioModelMap,
-  emptyAgentSnapshot,
   errorMessage,
   getModuleTitle,
   inferLanguage,
@@ -1551,6 +1582,11 @@ export class WorkbenchController implements vscode.Disposable {
           session,
           candidates,
         );
+        // v0.0.12 批次 B：复用变更解读中仍有效的会话内确认事实。
+        const validConfirmations = this.readValidConfirmations(
+          session,
+          candidates,
+        );
         const convention = await resolveCommitConventionConfig(
           session.scope.repositoryRoot,
           session.scope.project?.projectRoot,
@@ -1577,6 +1613,7 @@ export class WorkbenchController implements vscode.Disposable {
           if (
             !pending ||
             !receiptToken ||
+            pending.task !== COMMIT_DRAFT_TASK ||
             pending.token !== receiptToken ||
             pending.scopeHash !== session.scopeHash ||
             pending.candidateHash !== currentCandidateHash
@@ -1606,6 +1643,7 @@ export class WorkbenchController implements vscode.Disposable {
               currentMessage: state.message,
               convention: toAiCommitConventionHint(convention.config),
               recentHistory,
+              userConfirmations: validConfirmations,
               diffMode: "limited-diff",
               receipt: pending.receipt,
               coverage: pending.coverage,
@@ -1668,6 +1706,8 @@ export class WorkbenchController implements vscode.Disposable {
             coverage: pending.coverage,
             coverageFiles: pending.files,
             claims: claimValidation.claims,
+            userConfirmations:
+              validConfirmations.length > 0 ? validConfirmations : undefined,
             evidence: [
               ...evidenceValidation.valid.map((reference) => ({
                 reference,
@@ -1719,6 +1759,7 @@ export class WorkbenchController implements vscode.Disposable {
             currentMessage: state.message,
             convention: toAiCommitConventionHint(convention.config),
             recentHistory,
+            userConfirmations: validConfirmations,
             diffMode: "metadata-only",
           },
         );
@@ -1754,6 +1795,8 @@ export class WorkbenchController implements vscode.Disposable {
           // 无论模型还是本地回退，都明确标记“基于文件信息”。
           metadataOnly: true,
           diffMode: "metadata-only",
+          userConfirmations:
+            validConfirmations.length > 0 ? validConfirmations : undefined,
           warnings: [
             ...generated.warnings,
             ...(fallbackReason
@@ -1949,6 +1992,355 @@ export class WorkbenchController implements vscode.Disposable {
       case "commit/execute": {
         const previewToken = asString(data.previewToken);
         await this.executeCommit(session, previewToken, message.requestId);
+        return;
+      }
+      case "understanding/run-local": {
+        // v0.0.12 批次 A：只运行本地检查，不调用模型、不采集受限差异。
+        const state = this.ensureUnderstandingState(session);
+        const candidates = await this.collectScopeCandidates(session);
+        state.pendingReceipt = undefined;
+        const selectedAbsolutePaths =
+          this.resolveUnderstandingPaths(candidates);
+        const localParts = await buildLocalUnderstandingParts({
+          candidates,
+          scopeText: this.understandingScopeText(session),
+          repositoryRoot: session.scope.repositoryRoot,
+        });
+        state.localParts = localParts;
+        state.modelParts = undefined;
+        state.lastCoverageFiles = [];
+        state.binding = {
+          repositoryUuid: session.repositoryUuid,
+          scopeHash: session.scopeHash,
+          candidateHash: hashCandidateState(candidates, "", []),
+          revision: session.workingCopyRevision,
+          generatedAt: new Date().toISOString(),
+        };
+        state.analysis = {
+          state: selectedAbsolutePaths.length === 0 ? "failed" : "ready",
+          source: "local-rule",
+          warnings:
+            selectedAbsolutePaths.length === 0
+              ? ["当前没有可分析的候选，仅显示空态。"]
+              : [],
+          generatedAt: new Date().toISOString(),
+        };
+        await this.sendUnderstandingSnapshot(
+          session,
+          message.requestId,
+          candidates,
+        );
+        return;
+      }
+      case "understanding/preview-receipt": {
+        // 只采集受限差异并下发回执（任务 understand-changes），不调用模型。
+        const state = this.ensureUnderstandingState(session);
+        const candidates = await this.collectScopeCandidates(session);
+        const selectedAbsolutePaths =
+          this.resolveUnderstandingPaths(candidates);
+        if (selectedAbsolutePaths.length === 0) {
+          state.pendingReceipt = undefined;
+          state.feedback = {
+            tone: "warning",
+            message:
+              "当前没有可分析的候选，无法预览受限差异回执；请先选择文件。",
+          };
+          await this.sendUnderstandingSnapshot(
+            session,
+            message.requestId,
+            candidates,
+          );
+          return;
+        }
+        const storedAi = await readStoredAiConfiguration(this.context);
+        const pending = await this.collectUnderstandingReceipt(
+          session,
+          candidates,
+          selectedAbsolutePaths,
+          storedAi,
+        );
+        if (!pending) {
+          await this.sendError(
+            "understanding",
+            "无法生成受限差异回执",
+            "受限差异采集失败；请检查工作副本状态后重试。",
+            true,
+            message.requestId,
+          );
+          return;
+        }
+        state.pendingReceipt = pending;
+        await this.postUnderstandingReceipt(pending, message.requestId);
+        return;
+      }
+      case "understanding/receipt-dismiss": {
+        const state = this.ensureUnderstandingState(session);
+        const token = asString(data.token);
+        if (state.pendingReceipt && state.pendingReceipt.token === token) {
+          state.pendingReceipt = undefined;
+          state.feedback = {
+            tone: "warning",
+            message:
+              "已放弃受限差异回执；未确认前未发送任何差异内容，本地结果保持不变。",
+          };
+        }
+        await this.sendUnderstandingSnapshot(session, message.requestId);
+        return;
+      }
+      case "understanding/run-model": {
+        // 确认回执后调用模型；pending 显式绑定 understand-changes，跨任务拒绝。
+        const state = this.ensureUnderstandingState(session);
+        const candidates = await this.collectScopeCandidates(session);
+        const receiptToken = asString(data.receiptToken);
+        const pending = state.pendingReceipt;
+        const currentCandidateHash = hashCandidateState(candidates, "", []);
+        if (
+          !pending ||
+          !receiptToken ||
+          pending.task !== UNDERSTAND_CHANGES_TASK ||
+          pending.token !== receiptToken ||
+          pending.scopeHash !== session.scopeHash ||
+          pending.candidateHash !== currentCandidateHash
+        ) {
+          state.pendingReceipt = undefined;
+          await this.sendError(
+            "understanding",
+            "外发回执已失效",
+            "受限差异的外发回执已过期或不存在（任务/范围/候选不匹配），未调用模型。",
+            true,
+            message.requestId,
+          );
+          await this.sendUnderstandingSnapshot(
+            session,
+            message.requestId,
+            candidates,
+          );
+          return;
+        }
+        const localParts = await buildLocalUnderstandingParts({
+          candidates,
+          fragments: pending.fragments,
+          scopeText: this.understandingScopeText(session),
+          repositoryRoot: session.scope.repositoryRoot,
+        });
+        state.localParts = localParts;
+        const request = this.buildUnderstandingRequest(
+          session,
+          candidates,
+          pending,
+        );
+        const fallback = toAiUnderstandingResult(localParts);
+        const aiResult = await this.runAiScenario(
+          "changeUnderstanding",
+          fallback,
+          (provider) => provider.understandChanges(request),
+        );
+        const normalized = normalizeUnderstandingResult(aiResult.result);
+        const modelParts = this.toUnderstandingParts(
+          normalized,
+          pending.fragments,
+        );
+        state.modelParts = modelParts;
+        state.pendingReceipt = undefined;
+        state.lastCoverageFiles = pending.files;
+        state.binding = {
+          repositoryUuid: session.repositoryUuid,
+          scopeHash: session.scopeHash,
+          candidateHash: currentCandidateHash,
+          revision: pending.revision,
+          generatedAt: new Date().toISOString(),
+          model: session.aiModels.changeUnderstanding || undefined,
+        };
+        state.analysis = {
+          state:
+            pending.coverage.readFailed > 0 ||
+            pending.coverage.budgetExcluded > 0 ||
+            (modelParts.changes.length === 0 &&
+              modelParts.findings.length === 0)
+              ? "partial"
+              : "ready",
+          source: aiResult.source,
+          warnings: [
+            ...normalized.warnings,
+            ...(aiResult.fallbackReason
+              ? [`模型不可用，已使用本地回退：${aiResult.fallbackReason}`]
+              : []),
+          ],
+          generatedAt: new Date().toISOString(),
+        };
+        await this.sendUnderstandingSnapshot(
+          session,
+          message.requestId,
+          candidates,
+        );
+        return;
+      }
+      case "understanding/confirm-fact": {
+        // 会话内用户确认；scope/候选/revision 变化后待复核，绝不静默沿用。
+        const state = this.ensureUnderstandingState(session);
+        const statement = (asStringAllowEmpty(data.statement) ?? "").trim();
+        if (!statement) {
+          state.feedback = {
+            tone: "warning",
+            message: "请输入要确认的事实内容。",
+          };
+          await this.sendUnderstandingSnapshot(session, message.requestId);
+          return;
+        }
+        const candidates = await this.collectScopeCandidates(session);
+        const fact = buildUserConfirmedFact({
+          statement,
+          candidateHash: hashCandidateState(candidates, "", []),
+        });
+        state.userConfirmations = [...state.userConfirmations, fact].slice(-50);
+        state.feedback = {
+          tone: "success",
+          message:
+            "已记录确认（仅当前会话有效）；切换项目或工作副本变化后需复核。",
+        };
+        await this.sendUnderstandingSnapshot(
+          session,
+          message.requestId,
+          candidates,
+        );
+        return;
+      }
+      case "understanding/clear-confirmations": {
+        const state = this.ensureUnderstandingState(session);
+        state.userConfirmations = [];
+        state.feedback = {
+          tone: "success",
+          message: "已清除会话内的用户确认。",
+        };
+        await this.sendUnderstandingSnapshot(session, message.requestId);
+        return;
+      }
+      case "understanding/open-evidence": {
+        // 只接受当前快照有效证据；token/时效/候选/范围复验后路由到 Diff。
+        const state = this.ensureUnderstandingState(session);
+        const candidateId = asString(data.candidateId);
+        const projectRelativePath = asString(data.projectRelativePath);
+        if (!candidateId || !projectRelativePath) {
+          await this.sendError(
+            "understanding",
+            "无法打开证据",
+            "证据引用无效，未打开差异。",
+            true,
+            message.requestId,
+          );
+          return;
+        }
+        const candidates = await this.collectScopeCandidates(session);
+        if (
+          this.isUnderstandingStale(session, state, candidates) ||
+          !this.understandingHasEvidence(
+            state,
+            candidateId,
+            projectRelativePath,
+          )
+        ) {
+          await this.sendError(
+            "understanding",
+            "证据已失效",
+            "结果或证据已过期（范围/候选已变化），未打开差异。",
+            true,
+            message.requestId,
+          );
+          return;
+        }
+        const absolutePath = candidates.find(
+          (candidate) =>
+            buildCandidateId(
+              session.scope.repositoryRoot,
+              candidate.absolutePath,
+            ) === candidateId,
+        )?.absolutePath;
+        if (
+          !absolutePath ||
+          !isPathInScope(session.scope, absolutePath, nativePathSemantics)
+        ) {
+          await this.sendError(
+            "understanding",
+            "证据文件已失效",
+            "该证据引用的文件已不在当前候选集合或操作范围内，未打开差异。",
+            true,
+            message.requestId,
+          );
+          return;
+        }
+        if (this.servedModule !== "diff") {
+          if (this.onOpenInOtherWindow) {
+            await this.onOpenInOtherWindow(
+              buildDiffWindowRequest({
+                svnPath: session.svnPath,
+                scope: session.scope,
+                targetFile: absolutePath,
+              }),
+            );
+            return;
+          }
+        }
+        session.moduleId = "diff";
+        session.taskId = defaultWorkbenchTask("diff");
+        session.targetFile = absolutePath;
+        this.panel!.title = getModuleTitle("diff", session.taskId);
+        await this.loadModule("diff", absolutePath, message.requestId);
+        return;
+      }
+      case "understanding/retry-failed": {
+        // 只对读取失败/预算外的失败项重新采集并下发回执（复用 v0.0.11 模式）。
+        const state = this.ensureUnderstandingState(session);
+        const candidates = await this.collectScopeCandidates(session);
+        const coverageFiles = state.lastCoverageFiles ?? [];
+        const failedIds = coverageFiles
+          .filter(
+            (file) =>
+              file.state === "readFailed" || file.state === "budgetExcluded",
+          )
+          .map((file) => file.candidateId);
+        const failedPaths = candidates
+          .filter((candidate) =>
+            failedIds.includes(
+              buildCandidateId(
+                session.scope.repositoryRoot,
+                candidate.absolutePath,
+              ),
+            ),
+          )
+          .map((candidate) => candidate.absolutePath);
+        if (failedPaths.length === 0) {
+          state.feedback = {
+            tone: "warning",
+            message:
+              "没有可重试的失败项（上次读取失败或预算外的文件已全部处理或已失效）。",
+          };
+          await this.sendUnderstandingSnapshot(
+            session,
+            message.requestId,
+            candidates,
+          );
+          return;
+        }
+        const storedAi = await readStoredAiConfiguration(this.context);
+        const pending = await this.collectUnderstandingReceipt(
+          session,
+          candidates,
+          failedPaths,
+          storedAi,
+          `本次重试仅覆盖 ${failedPaths.length} 个上次读取失败或预算外的文件。`,
+        );
+        if (!pending) {
+          await this.sendError(
+            "understanding",
+            "无法重试失败项",
+            "受限差异采集失败；请检查工作副本状态后重试。",
+            true,
+            message.requestId,
+          );
+          return;
+        }
+        state.pendingReceipt = pending;
+        await this.postUnderstandingReceipt(pending, message.requestId);
         return;
       }
       case "history/select": {
@@ -2177,6 +2569,136 @@ export class WorkbenchController implements vscode.Disposable {
           ...session.conflictState,
           selectedPath,
           advice: { ...advice, source, fallbackReason },
+        };
+        await this.sendConflictSnapshot(session, message.requestId, conflicts);
+        return;
+      }
+      case "conflict/preview-receipt": {
+        // v0.0.12 批次 C：冲突意图解释受限回执（任务 conflict-interpret），
+        // 只读取冲突正文并计算字符预算，不调用模型。
+        const selectedPath =
+          asString(data.relativePath) ?? session.conflictState?.selectedPath;
+        if (!selectedPath) return;
+        const conflicts = await collectConflictItems(
+          session.svnPath,
+          session.scope,
+        );
+        const conflict = conflicts.find(
+          (item) => item.relativePath === selectedPath,
+        );
+        if (!conflict) {
+          await this.sendError(
+            "conflicts",
+            "冲突已变化",
+            "当前冲突不存在，请刷新状态。",
+            true,
+            message.requestId,
+          );
+          return;
+        }
+        const request = await buildConflictInterpretationRequest(conflict);
+        const storedAi = await readStoredAiConfiguration(this.context);
+        const pending = this.buildConflictInterpretReceipt(
+          session,
+          conflicts,
+          request,
+          storedAi,
+        );
+        session.conflictState = {
+          ...session.conflictState,
+          selectedPath,
+          pendingReceipt: pending,
+        };
+        await this.postConflictReceipt(pending, message.requestId);
+        return;
+      }
+      case "conflict/receipt-dismiss": {
+        const token = asString(data.token);
+        if (
+          session.conflictState?.pendingReceipt &&
+          session.conflictState.pendingReceipt.token === token
+        ) {
+          session.conflictState.pendingReceipt = undefined;
+        }
+        const conflicts = await collectConflictItems(
+          session.svnPath,
+          session.scope,
+        );
+        await this.sendConflictSnapshot(session, message.requestId, conflicts);
+        return;
+      }
+      case "conflict/interpret": {
+        // v0.0.12 批次 C：确认回执后调用模型解释冲突意图；pending 显式
+        // 绑定 conflict-interpret，跨任务/范围/冲突集变化一律拒绝。
+        const receiptToken = asString(data.receiptToken);
+        const pending = session.conflictState?.pendingReceipt;
+        const conflicts = await collectConflictItems(
+          session.svnPath,
+          session.scope,
+        );
+        const conflictHash = hashConflictSet(conflicts);
+        if (
+          !pending ||
+          !receiptToken ||
+          pending.task !== CONFLICT_INTERPRET_TASK ||
+          pending.token !== receiptToken ||
+          pending.scopeHash !== session.scopeHash ||
+          pending.conflictHash !== conflictHash
+        ) {
+          if (session.conflictState) {
+            session.conflictState.pendingReceipt = undefined;
+          }
+          await this.sendError(
+            "conflicts",
+            "外发回执已失效",
+            "冲突意图解释的回执已过期或不存在（任务/范围/冲突已变化），未调用模型。",
+            true,
+            message.requestId,
+          );
+          await this.sendConflictSnapshot(
+            session,
+            message.requestId,
+            conflicts,
+          );
+          return;
+        }
+        const selectedPath =
+          session.conflictState?.selectedPath ?? asString(data.relativePath);
+        const conflict = conflicts.find(
+          (item) => item.relativePath === selectedPath,
+        );
+        if (!conflict) {
+          await this.sendError(
+            "conflicts",
+            "冲突已变化",
+            "当前冲突不存在，请刷新状态。",
+            true,
+            message.requestId,
+          );
+          return;
+        }
+        const request = await buildConflictInterpretationRequest(conflict);
+        const aiResult = await this.runAiScenario(
+          "conflictAdvice",
+          createLocalConflictInterpretation(request),
+          (provider) => provider.interpretConflict(request),
+        );
+        const normalized = normalizeConflictInterpretation(aiResult.result);
+        session.conflictState = {
+          ...session.conflictState,
+          selectedPath,
+          pendingReceipt: undefined,
+          interpretation: {
+            ...normalized,
+            source: aiResult.source,
+            fallbackReason: aiResult.fallbackReason,
+            binding: {
+              scopeHash: session.scopeHash,
+              conflictHash,
+              revision: session.workingCopyRevision,
+              generatedAt: new Date().toISOString(),
+            },
+          },
         };
         await this.sendConflictSnapshot(session, message.requestId, conflicts);
         return;
@@ -2995,58 +3517,92 @@ export class WorkbenchController implements vscode.Disposable {
           message.requestId,
         );
         return;
-      case "ai-review/run":
-        await this.sendAiReviewSnapshot(session, message.requestId);
-        return;
-      case "impact/run":
-        await this.sendImpactSnapshot(session, message.requestId);
-        return;
       case "changelist/suggest": {
+        // v0.0.12 批次 B：semantic 模式先走受限差异回执（不调用模型），
+        // 确认后再经 changelist/run-semantic 语义拆分；默认 metadata 分组。
+        if (asString(data.mode) === "semantic") {
+          await this.previewChangelistSplitReceipt(session, message.requestId);
+          return;
+        }
         const candidates = await this.collectScopeCandidates(session);
-        const convention = await resolveCommitConventionConfig(
-          session.scope.repositoryRoot,
-          session.scope.project?.projectRoot,
-        );
-        const selectedPaths = candidates
-          .filter(
-            (item) =>
-              item.selection !== "blocked" && item.selection !== "excluded",
-          )
-          .map((item) => item.absolutePath);
-        const request = buildCommitSplitAiRequest(
-          session.scope,
+        await this.runChangelistSplit(
+          session,
           candidates,
-          selectedPaths,
-          { convention: toAiCommitConventionHint(convention.config) },
+          {},
+          message.requestId,
         );
-        const aiResult = await this.runAiScenario(
-          "commitSplit",
-          createLocalCommitSplitResult(request),
-          (provider) => provider.suggestCommitSplits(request),
-        );
-        const { result: rawResult, source, fallbackReason } = aiResult;
-        const result = validateCommitSplitResult(
-          session.scope,
-          rawResult,
-          selectedPaths,
-        );
-        session.changelistState = {
-          suggestions: result.splits.map((item) => ({
-            ...item,
-            paths: item.paths.map((filePath) =>
-              normalizeRelative(
-                path.relative(session.scope.repositoryRoot, filePath),
-              ),
-            ),
-          })),
-          warnings: result.warnings,
-          source,
-          fallbackReason,
-        };
+        return;
+      }
+      case "changelist/preview-receipt": {
+        // v0.0.12 批次 B：语义拆分受限差异回执（任务 changelist-split）。
+        await this.previewChangelistSplitReceipt(session, message.requestId);
+        return;
+      }
+      case "changelist/receipt-dismiss": {
+        const state = session.changelistState;
+        const token = asString(data.token);
+        if (state?.pendingReceipt && state.pendingReceipt.token === token) {
+          state.pendingReceipt = undefined;
+          state.feedback = "已放弃语义拆分回执；未确认前未发送任何差异内容。";
+        }
+        const candidates = await this.collectScopeCandidates(session);
         await this.sendChangelistsSnapshot(
           session,
           message.requestId,
           candidates,
+        );
+        return;
+      }
+      case "changelist/run-semantic": {
+        // v0.0.12 批次 B：确认回执后语义拆分；pending 显式绑定
+        // changelist-split，跨任务一律拒绝；模型永不加入 scope 外文件
+        // （validateCommitSplitResult 范围/候选/去重校验）。
+        const state = session.changelistState;
+        const candidates = await this.collectScopeCandidates(session);
+        const receiptToken = asString(data.receiptToken);
+        const pending = state?.pendingReceipt;
+        const currentCandidateHash = hashCandidateState(candidates, "", []);
+        if (
+          !pending ||
+          !receiptToken ||
+          pending.task !== CHANGELIST_SPLIT_TASK ||
+          pending.token !== receiptToken ||
+          pending.scopeHash !== session.scopeHash ||
+          pending.candidateHash !== currentCandidateHash
+        ) {
+          if (state) state.pendingReceipt = undefined;
+          await this.sendError(
+            "changelists",
+            "外发回执已失效",
+            "语义拆分的外发回执已过期或不存在（任务/范围/候选不匹配），未调用模型。",
+            true,
+            message.requestId,
+          );
+          await this.sendChangelistsSnapshot(
+            session,
+            message.requestId,
+            candidates,
+          );
+          return;
+        }
+        state!.pendingReceipt = undefined;
+        await this.runChangelistSplit(
+          session,
+          candidates,
+          {
+            diffs: pending.fragments.map((fragment) => ({
+              candidateId: fragment.candidateId,
+              projectRelativePath: fragment.projectRelativePath,
+              content: fragment.content,
+              hunks: fragment.hunks.map((hunk) => ({
+                hunkId: hunk.hunkId,
+                header: hunk.header,
+              })),
+              truncated: fragment.truncated,
+              binary: fragment.binary,
+            })),
+          },
+          message.requestId,
         );
         return;
       }
@@ -3063,6 +3619,31 @@ export class WorkbenchController implements vscode.Disposable {
         if (paths.length === 0) issues.push("请选择至少一个文件。");
         if (paths.some((item) => !candidatePaths.has(item)))
           issues.push("选择中包含已变化或不属于当前范围的路径。");
+        // v0.0.12 批次 B §6：同一文件不能出现在两个实际 Changelist。
+        // 加入前检查既有真实 Changelist 归属，重复项形成阻止 issue。
+        if (!remove && issues.length === 0) {
+          const existing = await collectSvnChangelists(
+            session.svnPath,
+            session.scope,
+          );
+          const ownerByPath = new Map<string, string>();
+          for (const group of existing) {
+            for (const filePath of group.paths) {
+              ownerByPath.set(filePath, group.name);
+            }
+          }
+          const duplicates = paths.filter(
+            (filePath) =>
+              ownerByPath.has(filePath) && ownerByPath.get(filePath) !== name,
+          );
+          if (duplicates.length > 0) {
+            issues.push(
+              `以下文件已属于其他真实 Changelist，不能重复加入：${duplicates
+                .slice(0, 5)
+                .join("、")}${duplicates.length > 5 ? " 等" : ""}。`,
+            );
+          }
+        }
         const token = randomUUID();
         const state = session.changelistState ?? {
           suggestions: [],
@@ -3090,6 +3671,32 @@ export class WorkbenchController implements vscode.Disposable {
       case "changelist/execute-apply": {
         const token = asString(data.previewToken);
         const preview = session.changelistState?.preview;
+        // v0.0.12 批次 B：执行前再次复验重复归属（fail-closed，防止
+        // 预览后工作副本变化导致同文件进入两个真实 Changelist）。
+        if (preview && !preview.remove && preview.issues.length === 0) {
+          const existing = await collectSvnChangelists(
+            session.svnPath,
+            session.scope,
+          );
+          const ownerByPath = new Map<string, string>();
+          for (const group of existing) {
+            for (const filePath of group.paths) {
+              ownerByPath.set(filePath, group.name);
+            }
+          }
+          const duplicates = preview.paths.filter(
+            (filePath) =>
+              ownerByPath.has(filePath) &&
+              ownerByPath.get(filePath) !== preview.name,
+          );
+          if (duplicates.length > 0) {
+            preview.issues = [
+              `以下文件已属于其他真实 Changelist，不能重复加入：${duplicates
+                .slice(0, 5)
+                .join("、")}${duplicates.length > 5 ? " 等" : ""}。`,
+            ];
+          }
+        }
         if (
           !token ||
           !preview ||
@@ -3138,135 +3745,6 @@ export class WorkbenchController implements vscode.Disposable {
           ? "文件已移出 Changelist。"
           : `文件已加入 ${preview.name}。`;
         await this.sendChangelistsSnapshot(session, message.requestId);
-        return;
-      }
-      case "agent/create-plan": {
-        const candidates = await this.collectScopeCandidates(session);
-        const objective =
-          (asStringAllowEmpty(data.objective) ?? "").trim().slice(0, 500) ||
-          "检查当前 SVN 变更并形成可执行的提交前建议";
-        session.agentState = {
-          candidateHash: hashCandidateState(candidates, "", []),
-          snapshot: {
-            kind: "agent",
-            status: "planned",
-            objective,
-            guardrails: [
-              "只访问当前右键范围",
-              "只执行只读采集与本地分析",
-              "不自动修改文件、不自动提交",
-              "状态变化后流水线结果立即失效",
-            ],
-            steps: [
-              {
-                id: "status",
-                title: "重新采集 SVN 状态",
-                detail: "读取当前范围的状态并确认阻止项。",
-                capability: "svn-read",
-                command: "svn status --xml <current-scope>",
-                scope: "当前右键范围",
-                risk: "低 · 只读 SVN 状态",
-                reversibility: "不产生修改",
-                status: "pending",
-                requiresApproval: true,
-              },
-              {
-                id: "review",
-                title: "执行本地证据检查",
-                detail:
-                  "使用本地敏感信息、调试代码与生成物规则扫描，不调用外部模型。",
-                capability: "local-analysis",
-                scope: "当前候选元数据与受限差异",
-                risk: "低 · 可能产生误报",
-                reversibility: "只生成建议，可丢弃",
-                status: "pending",
-                requiresApproval: true,
-              },
-              {
-                id: "impact",
-                title: "生成影响与测试计划",
-                detail: "根据实际变更路径与本地规则给出验证命令和上线观察点。",
-                capability: "local-analysis",
-                scope: "当前候选路径和文件类型",
-                risk: "低 · 需要人工验证建议",
-                reversibility: "只生成计划，可丢弃",
-                status: "pending",
-                requiresApproval: true,
-              },
-            ],
-            nextStepId: "status",
-          },
-        };
-        await this.sendAgentSnapshot(session, message.requestId);
-        return;
-      }
-      case "agent/approve-step": {
-        const stepId = asString(data.stepId);
-        const state = session.agentState;
-        if (!stepId || !state || state.snapshot.nextStepId !== stepId) {
-          await this.sendError(
-            "agent",
-            "流水线步骤不可执行",
-            "只能执行当前待运行步骤，请重新运行流水线。",
-            true,
-            message.requestId,
-          );
-          return;
-        }
-        const candidates = await this.collectScopeCandidates(session);
-        if (hashCandidateState(candidates, "", []) !== state.candidateHash) {
-          state.snapshot.status = "failed";
-          state.snapshot.message =
-            "工作副本已变化，原流水线结果已过期。请重新运行流水线。";
-          await this.sendAgentSnapshot(session, message.requestId);
-          return;
-        }
-        const step = state.snapshot.steps.find((item) => item.id === stepId)!;
-        state.snapshot.status = "running";
-        step.status = "running";
-        await this.sendAgentSnapshot(session, message.requestId);
-        try {
-          if (stepId === "status") {
-            const blocked = candidates.filter(
-              (item) => item.selection === "blocked",
-            ).length;
-            step.output = `已采集 ${candidates.length} 个候选，其中 ${blocked} 个阻止项。`;
-          } else if (stepId === "review") {
-            const review = await buildLocalChangeReview(candidates);
-            step.output = `发现 ${review.summary.critical} 个高风险、${review.summary.warning} 个提醒、${review.summary.note} 个建议。`;
-          } else {
-            const impact = buildLocalImpactAnalysis(candidates);
-            step.output = `识别 ${impact.areas.length} 个影响区域，生成 ${impact.tests.length} 条测试建议。`;
-          }
-          step.status = "completed";
-          const next = state.snapshot.steps.find(
-            (item) => item.status === "pending",
-          );
-          state.snapshot.nextStepId = next?.id;
-          state.snapshot.status = next ? "planned" : "completed";
-          state.snapshot.message = next
-            ? "当前步骤完成，等待执行下一步。"
-            : "只读流水线已完成，可以进入本地检查、影响或提交模块继续操作。";
-        } catch (error) {
-          step.status = "failed";
-          step.output = errorMessage(error);
-          state.snapshot.status = "failed";
-          state.snapshot.message = "步骤执行失败；未继续后续步骤。";
-        }
-        await this.sendAgentSnapshot(session, message.requestId);
-        return;
-      }
-      case "agent/cancel": {
-        if (session.agentState) {
-          session.agentState.snapshot.status = "cancelled";
-          session.agentState.snapshot.nextStepId = undefined;
-          session.agentState.snapshot.message = "计划已取消；没有执行写操作。";
-          for (const step of session.agentState.snapshot.steps) {
-            if (step.status === "pending" || step.status === "running")
-              step.status = "cancelled";
-          }
-          await this.sendAgentSnapshot(session, message.requestId);
-        }
         return;
       }
       case "changes/preview-operation": {
@@ -3622,29 +4100,41 @@ export class WorkbenchController implements vscode.Disposable {
       return this.buildRepositorySnapshot(session);
     }
 
-    if (moduleId === "ai-review") {
-      const candidates = await this.collectScopeCandidates(session);
-      return buildLocalChangeReview(candidates);
-    }
-
-    if (moduleId === "impact") {
-      const candidates = await this.collectScopeCandidates(session);
-      return buildLocalImpactAnalysis(candidates);
-    }
-
     if (moduleId === "changelists") {
       return this.buildChangelistsSnapshot(session);
-    }
-
-    if (moduleId === "agent") {
-      return session.agentState?.snapshot ?? emptyAgentSnapshot();
     }
 
     if (moduleId === "projects") {
       return this.buildProjectsSnapshot(session);
     }
 
+    if (moduleId === "understanding") {
+      return this.buildUnderstandingSnapshotForDispatch(session);
+    }
+
     throw new Error(`未实现的工作台模块：${moduleId satisfies never}`);
+  }
+
+  /** v0.0.12：变更解读快照（供跨模块/深链接分发与发送共用）。 */
+  private async buildUnderstandingSnapshotForDispatch(
+    session: WorkbenchSession,
+  ): Promise<ChangeUnderstandingSnapshot> {
+    const state = this.ensureUnderstandingState(session);
+    const candidates = await this.collectScopeCandidates(session);
+    if (state.localParts === undefined) {
+      state.localParts = {
+        changes: [],
+        findings: [],
+        verification: [],
+        limitations: [],
+      };
+    }
+    const composed = this.composeUnderstandingSnapshot(
+      session,
+      state,
+      candidates,
+    );
+    return composed;
   }
 
   /**
@@ -4478,6 +4968,18 @@ export class WorkbenchController implements vscode.Disposable {
             }
           : undefined,
       advice: session.conflictState?.advice,
+      // v0.0.12 批次 C：冲突意图解释；scope/冲突集/revision 变化后标 stale 只读。
+      interpretation: (() => {
+        const interpretation = session.conflictState?.interpretation;
+        if (!interpretation || !interpretation.binding) return undefined;
+        const stale =
+          interpretation.binding.scopeHash !== session.scopeHash ||
+          interpretation.binding.conflictHash !== hashConflictSet(conflicts) ||
+          (interpretation.binding.revision !== undefined &&
+            session.workingCopyRevision !== undefined &&
+            interpretation.binding.revision !== session.workingCopyRevision);
+        return stale ? { ...interpretation, stale: true } : interpretation;
+      })(),
       aiPrivacy: request
         ? {
             model:
@@ -5382,6 +5884,8 @@ export class WorkbenchController implements vscode.Disposable {
       hasConflictResolvePreview:
         session.conflictState?.resolvePreview !== undefined,
       hasConflictAdvice: session.conflictState?.advice !== undefined,
+      hasUnderstandingConfirmations:
+        (session.understandingState?.userConfirmations.length ?? 0) > 0,
     });
   }
 
@@ -5875,36 +6379,6 @@ export class WorkbenchController implements vscode.Disposable {
     await this.repositoryActions.createUpdatePreview(session, requestId);
   }
 
-  private async sendAiReviewSnapshot(
-    session: WorkbenchSession,
-    requestId?: string,
-  ): Promise<void> {
-    const candidates = await this.collectScopeCandidates(session);
-    const snapshot = await buildLocalChangeReview(candidates);
-    await this.post({
-      protocolVersion: WORKBENCH_PROTOCOL_VERSION,
-      type: "module/snapshot",
-      requestId,
-      moduleId: "ai-review",
-      payload: { snapshot },
-    });
-  }
-
-  private async sendImpactSnapshot(
-    session: WorkbenchSession,
-    requestId?: string,
-  ): Promise<void> {
-    const candidates = await this.collectScopeCandidates(session);
-    const snapshot = buildLocalImpactAnalysis(candidates);
-    await this.post({
-      protocolVersion: WORKBENCH_PROTOCOL_VERSION,
-      type: "module/snapshot",
-      requestId,
-      moduleId: "impact",
-      payload: { snapshot },
-    });
-  }
-
   private async buildChangelistsSnapshot(
     session: WorkbenchSession,
     providedCandidates?: Awaited<ReturnType<typeof collectCommitCandidates>>,
@@ -6019,20 +6493,6 @@ export class WorkbenchController implements vscode.Disposable {
       type: "module/snapshot",
       requestId,
       moduleId: "changelists",
-      payload: { snapshot },
-    });
-  }
-
-  private async sendAgentSnapshot(
-    session: WorkbenchSession,
-    requestId?: string,
-  ): Promise<void> {
-    const snapshot = session.agentState?.snapshot ?? emptyAgentSnapshot();
-    await this.post({
-      protocolVersion: WORKBENCH_PROTOCOL_VERSION,
-      type: "module/snapshot",
-      requestId,
-      moduleId: "agent",
       payload: { snapshot },
     });
   }
@@ -6154,6 +6614,15 @@ export class WorkbenchController implements vscode.Disposable {
    * v0.0.11 §3：下发受限差异外发回执视图（preview-receipt / retry-failed-diff
    * 共用；payload 不变，只有 pending 内容不同）。
    */
+  private static readonly RECEIPT_NOT_SENT = [
+    "本地绝对路径（只发送项目内相对路径）",
+    "范围外文件内容",
+    "API 密钥、SVN 凭据与证书私密材料",
+    "未授权历史（默认不发送；开启时仅脱敏摘要并限条数）",
+  ] as const;
+  private static readonly RECEIPT_RETENTION_NOTE =
+    "数据保留策略由模型服务商策略决定，本插件无法证明其保留期限。";
+
   private async postCommitReceipt(
     pending: NonNullable<CommitSessionState["pendingReceipt"]>,
     requestId?: string,
@@ -6171,16 +6640,624 @@ export class WorkbenchController implements vscode.Disposable {
         excludedCount: pending.excludedCount,
         historyIncluded: pending.historyIncluded,
         historyCount: pending.historyCount,
-        notSent: [
-          "本地绝对路径（只发送项目内相对路径）",
-          "范围外文件内容",
-          "API 密钥、SVN 凭据与证书私密材料",
-          "未授权历史（默认不发送；开启时仅脱敏摘要并限条数）",
-        ],
-        retentionNote:
-          "数据保留策略由模型服务商策略决定，本插件无法证明其保留期限。",
+        notSent: [...WorkbenchController.RECEIPT_NOT_SENT],
+        retentionNote: WorkbenchController.RECEIPT_RETENTION_NOTE,
       },
     });
+  }
+
+  /**
+   * v0.0.12 批次 B：拆分建议公共编排（元数据分组与语义拆分共用）——
+   * 构建请求（含仍有效确认事实）→ 调用模型/本地回退 → 范围/候选/去重
+   * 校验 → 写入 changelistState → 下发快照。requestOptions 传入 diffs。
+   */
+  private async runChangelistSplit(
+    session: WorkbenchSession,
+    candidates: Awaited<ReturnType<typeof collectCommitCandidates>>,
+    requestOptions: Parameters<typeof buildCommitSplitAiRequest>[3],
+    requestId?: string,
+  ): Promise<void> {
+    const convention = await resolveCommitConventionConfig(
+      session.scope.repositoryRoot,
+      session.scope.project?.projectRoot,
+    );
+    const selectedPaths = candidates
+      .filter(
+        (item) => item.selection !== "blocked" && item.selection !== "excluded",
+      )
+      .map((item) => item.absolutePath);
+    const request = buildCommitSplitAiRequest(
+      session.scope,
+      candidates,
+      selectedPaths,
+      {
+        convention: toAiCommitConventionHint(convention.config),
+        userConfirmations: this.readValidConfirmations(session, candidates),
+        ...requestOptions,
+      },
+    );
+    const aiResult = await this.runAiScenario(
+      "commitSplit",
+      createLocalCommitSplitResult(request),
+      (provider) => provider.suggestCommitSplits(request),
+    );
+    const { result: rawResult, source, fallbackReason } = aiResult;
+    const result = validateCommitSplitResult(
+      session.scope,
+      rawResult,
+      selectedPaths,
+    );
+    session.changelistState = {
+      suggestions: result.splits.map((item) => ({
+        ...item,
+        paths: item.paths.map((filePath) =>
+          normalizeRelative(
+            path.relative(session.scope.repositoryRoot, filePath),
+          ),
+        ),
+      })),
+      warnings: result.warnings,
+      source,
+      fallbackReason,
+    };
+    await this.sendChangelistsSnapshot(session, requestId, candidates);
+  }
+
+  /** v0.0.12 批次 B：语义拆分受限差异回执（任务 changelist-split，不调用模型）。 */
+  private async previewChangelistSplitReceipt(
+    session: WorkbenchSession,
+    requestId?: string,
+  ): Promise<void> {
+    const candidates = await this.collectScopeCandidates(session);
+    const selectedPaths = candidates
+      .filter(
+        (item) => item.selection !== "blocked" && item.selection !== "excluded",
+      )
+      .map((item) => item.absolutePath);
+    if (selectedPaths.length === 0) {
+      session.changelistState = {
+        suggestions: [],
+        warnings: [],
+        source: "local-rule",
+        feedback: "当前没有可拆分的候选，无法预览语义拆分回执。",
+      };
+      await this.sendChangelistsSnapshot(session, requestId, candidates);
+      return;
+    }
+    const storedAi = await readStoredAiConfiguration(this.context);
+    const pending = await this.collectChangelistSplitReceipt(
+      session,
+      candidates,
+      selectedPaths,
+      storedAi,
+    );
+    if (!pending) {
+      await this.sendError(
+        "changelists",
+        "无法生成语义拆分回执",
+        "受限差异采集失败；请检查工作副本状态后重试。",
+        true,
+        requestId,
+      );
+      return;
+    }
+    session.changelistState = session.changelistState ?? {
+      suggestions: [],
+      warnings: [],
+      source: "local-rule",
+    };
+    session.changelistState.pendingReceipt = pending;
+    await this.postChangelistReceipt(pending, requestId);
+  }
+
+  private async collectChangelistSplitReceipt(
+    session: WorkbenchSession,
+    candidates: Awaited<ReturnType<typeof collectCommitCandidates>>,
+    selectedAbsolutePaths: string[],
+    storedAi: Awaited<ReturnType<typeof readStoredAiConfiguration>>,
+  ): Promise<
+    | NonNullable<WorkbenchSession["changelistState"]>["pendingReceipt"]
+    | undefined
+  > {
+    try {
+      const collected = await collectUnderstandingDiffs({
+        svnPath: session.svnPath,
+        scope: session.scope,
+        selectedPaths: selectedAbsolutePaths,
+        candidates: this.toCommitDiffCandidateRefs(candidates),
+      });
+      const receipt = buildUnderstandingReceiptForSession({
+        scope: session.scope,
+        files: collected.fragments.length,
+        model: session.aiModels.commitSplit,
+        storedAi,
+      });
+      return {
+        token: randomUUID(),
+        task: CHANGELIST_SPLIT_TASK,
+        receipt: { ...receipt, task: CHANGELIST_SPLIT_TASK },
+        coverage: collected.coverage,
+        files: collected.coverageFiles,
+        fragments: collected.fragments,
+        revision: collected.revision,
+        scopeHash: session.scopeHash,
+        candidateHash: hashCandidateState(candidates, "", []),
+        excludedCount: collected.excludedCount,
+        historyIncluded: storedAi.includeCommitHistory,
+        historyCount: storedAi.includeCommitHistory
+          ? readTeamMemory(this.context.workspaceState, session.repositoryUuid)
+              .entries.length
+          : undefined,
+      };
+    } catch (error) {
+      void error;
+      return undefined;
+    }
+  }
+
+  private async postChangelistReceipt(
+    pending: NonNullable<
+      NonNullable<WorkbenchSession["changelistState"]>["pendingReceipt"]
+    >,
+    requestId?: string,
+  ): Promise<void> {
+    await this.post({
+      protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+      type: "changelist/receipt",
+      requestId,
+      moduleId: "changelists",
+      payload: {
+        token: pending.token,
+        receipt: pending.receipt,
+        coverage: pending.coverage,
+        files: pending.files,
+        excludedCount: pending.excludedCount,
+        historyIncluded: pending.historyIncluded,
+        historyCount: pending.historyCount,
+        notSent: [...WorkbenchController.RECEIPT_NOT_SENT],
+        retentionNote: WorkbenchController.RECEIPT_RETENTION_NOTE,
+      },
+    });
+  }
+
+  /** v0.0.12 批次 C：构建冲突意图解释回执（任务 conflict-interpret）。 */
+  private buildConflictInterpretReceipt(
+    session: WorkbenchSession,
+    conflicts: Awaited<ReturnType<typeof collectConflictItems>>,
+    request: Awaited<ReturnType<typeof buildConflictInterpretationRequest>>,
+    storedAi: Awaited<ReturnType<typeof readStoredAiConfiguration>>,
+  ): NonNullable<
+    NonNullable<WorkbenchSession["conflictState"]>["pendingReceipt"]
+  > {
+    const maxCharacters = 8000;
+    const names: Array<keyof AiConflictRequest["contents"]> = [
+      "base",
+      "mine",
+      "theirs",
+      "working",
+    ];
+    const files = names.map((name) => {
+      const content = request.contents[name];
+      return {
+        name,
+        characters: content?.content?.length ?? 0,
+        maxCharacters,
+        truncated: content?.truncated ?? false,
+        readError: content?.readError,
+      };
+    });
+    const projectId = buildCandidateId(
+      session.scope.repositoryRoot,
+      session.scope.project?.projectRoot ?? session.scope.repositoryRoot,
+    );
+    return {
+      token: randomUUID(),
+      task: CONFLICT_INTERPRET_TASK,
+      receipt: {
+        task: CONFLICT_INTERPRET_TASK,
+        projectId,
+        model: session.aiModels.conflictAdvice || "本地规则（未配置外部模型）",
+        dataTypes: ["冲突文件受限正文（base/mine/theirs/working）"],
+        files: files.filter((file) => file.characters > 0).length,
+        totalBudget: maxCharacters * 4,
+        perFileBudget: maxCharacters,
+        historyIncluded: storedAi.includeCommitHistory,
+      },
+      files,
+      scopeHash: session.scopeHash,
+      conflictHash: hashConflictSet(conflicts),
+      revision: session.workingCopyRevision,
+    };
+  }
+
+  private async postConflictReceipt(
+    pending: NonNullable<
+      NonNullable<WorkbenchSession["conflictState"]>["pendingReceipt"]
+    >,
+    requestId?: string,
+  ): Promise<void> {
+    await this.post({
+      protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+      type: "conflict/receipt",
+      requestId,
+      moduleId: "conflicts",
+      payload: {
+        token: pending.token,
+        receipt: pending.receipt,
+        files: pending.files,
+        notSent: [...WorkbenchController.RECEIPT_NOT_SENT],
+        retentionNote: WorkbenchController.RECEIPT_RETENTION_NOTE,
+      },
+    });
+  }
+
+  /** v0.0.12 批次 C：冲突集确定性 hash（结果时效绑定）。 */
+  private ensureUnderstandingState(
+    session: WorkbenchSession,
+  ): UnderstandingSessionState {
+    if (!session.understandingState) {
+      session.understandingState = {
+        userConfirmations: [],
+      };
+    }
+    return session.understandingState;
+  }
+
+  private understandingScopeText(session: WorkbenchSession): string {
+    return (
+      session.scope.roots.map((root) => root.relativePath).join(", ") || "."
+    );
+  }
+
+  /** v0.0.12 批次 B：跨模块共享确认的项目键（项目根，回退工作副本根）。 */
+  private understandingProjectKey(session: WorkbenchSession): string {
+    return session.scope.project?.projectRoot ?? session.scope.repositoryRoot;
+  }
+
+  /** v0.0.12 批次 B：读取仍有效的会话内确认事实（候选 hash 一致才有效）。 */
+  private readValidConfirmations(
+    session: WorkbenchSession,
+    candidates: Awaited<ReturnType<typeof collectCommitCandidates>>,
+  ): string[] {
+    return readValidUnderstandingConfirmations({
+      projectKey: this.understandingProjectKey(session),
+      currentCandidateHash: hashCandidateState(candidates, "", []),
+    }).map((fact) => fact.statement);
+  }
+
+  /** v0.0.12：变更解读候选 = 当前 scope 中未被阻止/排除的候选（仅缩小范围）。 */
+  private resolveUnderstandingPaths(
+    candidates: Awaited<ReturnType<typeof collectCommitCandidates>>,
+  ): string[] {
+    return candidates
+      .filter(
+        (candidate) =>
+          candidate.selection !== "blocked" &&
+          candidate.selection !== "excluded",
+      )
+      .map((candidate) => candidate.absolutePath);
+  }
+
+  /** v0.0.12：变更解读回执（任务固定 understand-changes）。 */
+  private async collectUnderstandingReceipt(
+    session: WorkbenchSession,
+    candidates: Awaited<ReturnType<typeof collectCommitCandidates>>,
+    selectedAbsolutePaths: string[],
+    storedAi: Awaited<ReturnType<typeof readStoredAiConfiguration>>,
+    retryNote?: string,
+  ): Promise<
+    NonNullable<UnderstandingSessionState["pendingReceipt"]> | undefined
+  > {
+    try {
+      const collected = await collectUnderstandingDiffs({
+        svnPath: session.svnPath,
+        scope: session.scope,
+        selectedPaths: selectedAbsolutePaths,
+        candidates: this.toCommitDiffCandidateRefs(candidates),
+      });
+      const receipt = buildUnderstandingReceiptForSession({
+        scope: session.scope,
+        files: collected.fragments.length,
+        model: session.aiModels.changeUnderstanding,
+        storedAi,
+      });
+      return {
+        token: randomUUID(),
+        task: UNDERSTAND_CHANGES_TASK,
+        receipt,
+        coverage: collected.coverage,
+        files: collected.coverageFiles,
+        fragments: collected.fragments,
+        revision: collected.revision,
+        scopeHash: session.scopeHash,
+        candidateHash: hashCandidateState(candidates, "", []),
+        excludedCount: collected.excludedCount,
+        historyIncluded: storedAi.includeCommitHistory,
+        historyCount: storedAi.includeCommitHistory
+          ? readTeamMemory(this.context.workspaceState, session.repositoryUuid)
+              .entries.length
+          : undefined,
+        ...(retryNote ? { retryNote } : {}),
+      };
+    } catch (error) {
+      void error;
+      return undefined;
+    }
+  }
+
+  private async postUnderstandingReceipt(
+    pending: NonNullable<UnderstandingSessionState["pendingReceipt"]>,
+    requestId?: string,
+  ): Promise<void> {
+    await this.post({
+      protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+      type: "understanding/receipt",
+      requestId,
+      moduleId: "understanding",
+      payload: {
+        token: pending.token,
+        receipt: pending.receipt,
+        coverage: pending.coverage,
+        files: pending.files,
+        excludedCount: pending.excludedCount,
+        historyIncluded: pending.historyIncluded,
+        historyCount: pending.historyCount,
+        notSent: [...WorkbenchController.RECEIPT_NOT_SENT],
+        retentionNote: WorkbenchController.RECEIPT_RETENTION_NOTE,
+      },
+    });
+  }
+
+  /** 构建变更解读模型请求（受限差异 + 回执 + 会话内确认事实）。 */
+  private buildUnderstandingRequest(
+    session: WorkbenchSession,
+    candidates: Awaited<ReturnType<typeof collectCommitCandidates>>,
+    pending: NonNullable<UnderstandingSessionState["pendingReceipt"]>,
+  ): AiUnderstandingRequest {
+    return {
+      scope: this.understandingScopeText(session),
+      selectedFileCount: pending.files.length,
+      files: candidates.map((candidate) => ({
+        path: candidate.relativePath,
+        status: candidate.status,
+        fileType: candidate.fileType,
+        templateGroup: candidate.templateGroup,
+        reason: candidate.reason,
+      })),
+      locale: "zh-CN",
+      receipt: pending.receipt,
+      coverage: pending.coverage,
+      diffs: pending.fragments.map((fragment) => ({
+        candidateId: fragment.candidateId,
+        projectRelativePath: fragment.projectRelativePath,
+        content: fragment.content,
+        hunks: fragment.hunks.map((hunk) => ({
+          hunkId: hunk.hunkId,
+          header: hunk.header,
+        })),
+        truncated: fragment.truncated,
+        binary: fragment.binary,
+      })),
+      userConfirmations: (session.understandingState?.userConfirmations ?? [])
+        .filter((fact) => !fact.needsReview)
+        .map((fact) => fact.statement),
+    };
+  }
+
+  /** 把规范化模型结果映射为理解结果段，证据经 validateEvidenceReferences 复验。 */
+  private toUnderstandingParts(
+    normalized: AiUnderstandingResult,
+    fragments: import("../../commit/commitDiffEvidence").CommitDiffFragment[],
+  ): UnderstandingResultParts {
+    const checked = (refs: EvidenceReference[] | undefined) =>
+      validateEvidenceReferences(refs ?? [], fragments);
+    const changes: ChangeUnderstandingSnapshot["changes"] =
+      normalized.changes.map((change, index) => {
+        const result = checked(change.evidence);
+        let status = change.status;
+        let downgraded = false;
+        if (status === "confirmed" && result.valid.length === 0) {
+          status = "toConfirm";
+          downgraded = true;
+        }
+        return {
+          id: `model-change-${index}`,
+          statement: change.statement,
+          source: "configured-model",
+          status,
+          confidenceReason:
+            change.confidenceReason ??
+            (downgraded
+              ? "模型标为已证实但缺少可核对证据，已降级为待确认。"
+              : ""),
+          evidence: result.valid,
+          invalidEvidence: result.invalid,
+          limitations: change.limitations ?? [],
+          nextAction: change.nextAction ?? "",
+        };
+      });
+    const findings: ChangeUnderstandingSnapshot["findings"] =
+      normalized.findings.map((finding, index) => {
+        const result = checked(finding.evidence);
+        return {
+          id: `model-finding-${index}`,
+          category: finding.category,
+          statement: finding.statement,
+          source: "configured-model",
+          severity: finding.severity,
+          consequence: finding.consequence ?? "",
+          evidence: result.valid,
+          invalidEvidence: result.invalid,
+          limitations: finding.limitations ?? [],
+          nextAction: finding.nextAction ?? "",
+        };
+      });
+    const verification = normalized.verification.map((item, index) => ({
+      id: `model-verify-${index}`,
+      title: item.title,
+      reason: item.reason,
+      ...(item.command ? { command: item.command } : {}),
+      gate: "specific" as const,
+    }));
+    return {
+      changes,
+      findings,
+      verification,
+      limitations: [],
+    };
+  }
+
+  /** v0.0.12：发送变更解读快照（合并本地/模型/确认；stale 只读）。 */
+  private async sendUnderstandingSnapshot(
+    session: WorkbenchSession,
+    requestId?: string,
+    providedCandidates?: Awaited<ReturnType<typeof collectCommitCandidates>>,
+  ): Promise<void> {
+    const state = this.ensureUnderstandingState(session);
+    const candidates =
+      providedCandidates ?? (await this.collectScopeCandidates(session));
+    const snapshot = this.composeUnderstandingSnapshot(
+      session,
+      state,
+      candidates,
+    );
+    await this.post({
+      protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+      type: "module/snapshot",
+      requestId,
+      moduleId: "understanding",
+      payload: { snapshot },
+    });
+  }
+
+  /** v0.0.12：组合变更解读快照（合并本地/模型/确认；stale 只读；反馈一次性）。 */
+  private composeUnderstandingSnapshot(
+    session: WorkbenchSession,
+    state: UnderstandingSessionState,
+    candidates: Awaited<ReturnType<typeof collectCommitCandidates>>,
+  ): ChangeUnderstandingSnapshot {
+    const currentCandidateHash = hashCandidateState(candidates, "", []);
+    const stale = state.binding
+      ? isUnderstandingSnapshotStale({
+          binding: state.binding,
+          currentScopeHash: session.scopeHash,
+          currentCandidateHash,
+          currentRevision: session.workingCopyRevision,
+        })
+      : false;
+    const confirmations = markConfirmationsNeedsReview(
+      state.userConfirmations,
+      currentCandidateHash,
+    );
+    state.userConfirmations = confirmations;
+    // v0.0.12 批次 B：同步跨模块共享的会话内确认（commit/changelists 复用）。
+    updateUnderstandingConfirmations({
+      projectKey: this.understandingProjectKey(session),
+      scopeHash: session.scopeHash,
+      candidateHash: currentCandidateHash,
+      facts: confirmations,
+    });
+    const feedback = state.feedback;
+    state.feedback = undefined;
+    const emptyParts = {
+      changes: [],
+      findings: [],
+      verification: [],
+      limitations: [],
+    };
+    const merged = state.modelParts
+      ? mergeUnderstandingResults({
+          local: state.localParts ?? emptyParts,
+          model: {
+            parts: state.modelParts,
+            source:
+              state.analysis?.source === "local-rule-fallback"
+                ? "local-rule-fallback"
+                : "configured-model",
+          },
+          userConfirmations: confirmations,
+        })
+      : mergeUnderstandingResults({
+          local: state.localParts ?? emptyParts,
+          userConfirmations: confirmations,
+        });
+    return {
+      kind: "change-understanding",
+      state: stale ? "stale" : (state.analysis?.state ?? "idle"),
+      source: merged.source,
+      binding: state.binding ?? {
+        repositoryUuid: session.repositoryUuid,
+        scopeHash: session.scopeHash,
+        candidateHash: currentCandidateHash,
+        generatedAt: new Date().toISOString(),
+      },
+      receipt: state.pendingReceipt?.receipt ?? {
+        task: UNDERSTAND_CHANGES_TASK,
+        projectId: "",
+        model:
+          session.aiModels.changeUnderstanding || "本地规则（未配置外部模型）",
+        dataTypes: ["路径、状态、差异片段"],
+        files: 0,
+        totalBudget: 0,
+        perFileBudget: 0,
+        historyIncluded: false,
+      },
+      coverage: state.pendingReceipt?.coverage ?? {
+        total: 0,
+        analyzed: 0,
+        truncated: 0,
+        binary: 0,
+        readFailed: 0,
+        budgetExcluded: 0,
+      },
+      coverageFiles:
+        state.pendingReceipt?.files ?? state.lastCoverageFiles ?? [],
+      changes: merged.parts.changes,
+      findings: merged.parts.findings,
+      verification: merged.parts.verification,
+      userConfirmations: confirmations,
+      limitations: merged.parts.limitations,
+      warnings: [...(state.analysis?.warnings ?? []), ...merged.warnings],
+      draftProposal: buildDraftProposalFromConfirmations(
+        confirmations,
+        this.understandingScopeText(session),
+      ),
+      ...(stale ? { stale: true } : {}),
+      ...(feedback ? { feedback } : {}),
+    };
+  }
+
+  private isUnderstandingStale(
+    session: WorkbenchSession,
+    state: UnderstandingSessionState,
+    candidates: Awaited<ReturnType<typeof collectCommitCandidates>>,
+  ): boolean {
+    if (!state.binding) return false;
+    return isUnderstandingSnapshotStale({
+      binding: state.binding,
+      currentScopeHash: session.scopeHash,
+      currentCandidateHash: hashCandidateState(candidates, "", []),
+      currentRevision: session.workingCopyRevision,
+    });
+  }
+
+  private understandingHasEvidence(
+    state: UnderstandingSessionState,
+    candidateId: string,
+    projectRelativePath: string,
+  ): boolean {
+    const parts = [state.localParts, state.modelParts];
+    const evidence = [
+      ...(parts[0]?.changes ?? []),
+      ...(parts[0]?.findings ?? []),
+      ...(parts[1]?.changes ?? []),
+      ...(parts[1]?.findings ?? []),
+    ].flatMap((item) => item.evidence);
+    return evidence.some(
+      (reference) =>
+        reference.candidateId === candidateId &&
+        reference.projectRelativePath === projectRelativePath,
+    );
   }
 
   private async collectCommitDiffReceipt(
@@ -6217,6 +7294,7 @@ export class WorkbenchController implements vscode.Disposable {
       });
       return {
         token: randomUUID(),
+        task: "commit-draft",
         receipt,
         coverage: collected.summary,
         files: collected.coverage.map((item) => ({
@@ -6869,4 +7947,17 @@ export class WorkbenchController implements vscode.Disposable {
       scopeHash: this.session?.scopeHash,
     } satisfies HostToWebviewMessage);
   }
+}
+
+/** v0.0.12 批次 C：冲突集确定性 hash（scope + 冲突相对路径/修订/操作）。 */
+function hashConflictSet(
+  conflicts: Awaited<ReturnType<typeof collectConflictItems>>,
+): string {
+  return conflicts
+    .map(
+      (item) =>
+        `${item.relativePath}|${item.operation ?? ""}|${item.sourceLeftRevision ?? ""}|${item.sourceRightRevision ?? ""}`,
+    )
+    .sort()
+    .join("\n");
 }

@@ -729,10 +729,8 @@ async function testCommandRegistration(): Promise<void> {
   assert.ok(commands.includes("svnWorkbench.openPatchShelf"));
   assert.ok(commands.includes("svnWorkbench.openReleaseNotes"));
   assert.ok(commands.includes("svnWorkbench.openHistory"));
-  assert.ok(commands.includes("svnWorkbench.aiReviewScope"));
-  assert.ok(commands.includes("svnWorkbench.analyzeImpact"));
+  assert.ok(commands.includes("svnWorkbench.understandScope"));
   assert.ok(commands.includes("svnWorkbench.openChangelists"));
-  assert.ok(commands.includes("svnWorkbench.openAgent"));
   assert.ok(commands.includes("svnWorkbench.scmRefresh"));
   assert.ok(commands.includes("svnWorkbench.add"));
   assert.ok(commands.includes("svnWorkbench.ignore"));
@@ -4411,6 +4409,7 @@ async function testAiProviderPresets(): Promise<void> {
       "commitSplit",
       "teamRules",
       "conflictMerge",
+      "changeUnderstanding",
     ],
   );
   // v0.0.9 §6：设置页只展示有真实调用链的场景，伪场景（conflictMerge）不进入可见列表。

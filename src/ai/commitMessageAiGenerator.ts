@@ -25,6 +25,8 @@ export interface CommitMessageAiRequestOptions {
   currentMessage?: string;
   convention?: AiCommitMessageRequest["convention"];
   recentHistory?: AiCommitMessageRequest["recentHistory"];
+  /** v0.0.12 批次 B：变更解读中仍有效的会话内确认事实。 */
+  userConfirmations?: string[];
   /** v0.0.11 §2 生成输入模式；缺省仅文件信息。 */
   diffMode?: "metadata-only" | "limited-diff";
   /** v0.0.11 §3 动作级外发回执（limited-diff 时携带）。 */
@@ -82,6 +84,10 @@ export function buildCommitMessageAiRequest(
     currentMessage: options.currentMessage,
     convention: options.convention,
     recentHistory: options.recentHistory?.slice(0, 20),
+    userConfirmations:
+      options.userConfirmations && options.userConfirmations.length > 0
+        ? options.userConfirmations
+        : undefined,
     // v0.0.11：受限差异输入模式（用户确认后）携带回执、覆盖率与脱敏差异正文。
     diffMode: options.diffMode,
     receipt: options.receipt,

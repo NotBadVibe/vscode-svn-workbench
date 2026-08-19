@@ -13,7 +13,6 @@ import {
 import {
   defaultWorkbenchTask,
   isWorkbenchTaskForModule,
-  type AgentSnapshot,
   type WorkbenchModuleId,
   type WorkbenchScopeView,
   type WorkbenchTaskId,
@@ -62,9 +61,7 @@ export function getModuleTitle(
     "history/revisions": "历史记录",
     "conflicts/resolve": "冲突处理",
     "changelists/manage": "变更集",
-    "ai-review/review": "本地变更检查",
-    "impact/analyze": "影响与测试建议",
-    "agent/plan": "本地检查流水线",
+    "understanding/analyze": "变更解读",
     "repository/update": "更新当前范围",
     "repository/recovery": "清理与恢复工作副本",
     "repository/browse": "浏览 SVN 仓库",
@@ -224,19 +221,4 @@ export function buildScenarioModelMap(
 
 export function quoteRelative(value: string): string {
   return `"${normalizeRelative(value).replace(/"/g, '\\"')}"`;
-}
-
-export function emptyAgentSnapshot(): AgentSnapshot {
-  return {
-    kind: "agent",
-    status: "idle",
-    objective: "",
-    steps: [],
-    guardrails: [
-      "只访问当前右键范围",
-      "只执行只读采集与本地分析",
-      "不自动修改文件、不自动提交",
-      "状态变化后流水线结果立即失效",
-    ],
-  };
 }

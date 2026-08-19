@@ -1020,6 +1020,11 @@
           {#if suggestion.metadataOnly}<small class="commit-suggestion__note"
               >基于文件信息生成，未读取差异正文；请结合实际改动确认。</small
             >{/if}
+          {#if suggestion.userConfirmations?.length}<small
+              class="commit-suggestion__note"
+              role="status"
+              >已使用 {suggestion.userConfirmations.length} 条变更解读中的会话内确认事实；过期或待复核确认不会被采用。</small
+            >{/if}
           {#if suggestion.diffMode === "limited-diff" && suggestion.coverage}
             <p class="commit-suggestion__note" role="status">
               差异覆盖率：已分析 {suggestion.coverage.analyzed} · 截断

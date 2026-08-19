@@ -163,34 +163,16 @@ test("保存每个 Svelte 功能页面的验收截图", async ({ page }) => {
     await capture(page, "06-changelists");
   });
 
-  await test.step("AI Review", async () => {
-    await openModule(page, "AI 审查");
+  await test.step("Understanding", async () => {
+    await openModule(page, "变更解读");
     await expect(
-      page.getByRole("heading", { name: "本地变更检查" }).last(),
+      page.getByText(/理解当前修改、找出需要确认的风险/),
     ).toBeVisible();
-    await capture(page, "07-ai-review");
-  });
-
-  await test.step("Impact", async () => {
-    await openModule(page, "影响分析");
+    await page.getByRole("button", { name: "只运行本地检查" }).click();
     await expect(
-      page
-        .locator(".intelligence-page")
-        .getByRole("heading", { name: "影响与测试建议" }),
+      page.getByRole("heading", { name: "这次改了什么" }),
     ).toBeVisible();
-    await capture(page, "08-impact");
-  });
-
-  await test.step("Agent", async () => {
-    await openModule(page, "任务代理");
-    await page
-      .getByRole("textbox", { name: "任务目标" })
-      .fill("检查当前范围并形成测试建议");
-    await page.getByRole("button", { name: "运行固定流水线" }).click();
-    await expect(
-      page.getByText("重新采集 SVN 状态", { exact: true }),
-    ).toBeVisible();
-    await capture(page, "09-agent");
+    await capture(page, "07-understanding");
   });
 
   await test.step("Repository", async () => {

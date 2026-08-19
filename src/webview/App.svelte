@@ -135,6 +135,9 @@
       targetSwitchRequest={state.targetSwitchRequest}
       pathDetail={state.pathDetail}
       commitReceipt={state.commitReceipt}
+      understandingReceipt={state.understandingReceipt}
+      changelistReceipt={state.changelistReceipt}
+      conflictReceipt={state.conflictReceipt}
       onAction={(action, data) => state.action(action, data)}
     />
   {:else}

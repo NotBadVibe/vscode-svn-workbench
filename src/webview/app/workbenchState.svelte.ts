@@ -80,6 +80,24 @@ export class WorkbenchState {
     | Extract<HostToWebviewMessage, { type: "commit/receipt" }>["payload"]
     | undefined
   >();
+  /** v0.0.12 变更解读外发回执（understanding/receipt，独立于 commit/receipt）。 */
+  understandingReceipt = $state<
+    | Extract<
+        HostToWebviewMessage,
+        { type: "understanding/receipt" }
+      >["payload"]
+    | undefined
+  >();
+  /** v0.0.12 批次 B 语义拆分外发回执（changelist/receipt）。 */
+  changelistReceipt = $state<
+    | Extract<HostToWebviewMessage, { type: "changelist/receipt" }>["payload"]
+    | undefined
+  >();
+  /** v0.0.12 批次 C 冲突意图解释外发回执（conflict/receipt）。 */
+  conflictReceipt = $state<
+    | Extract<HostToWebviewMessage, { type: "conflict/receipt" }>["payload"]
+    | undefined
+  >();
 
   readonly dispose: () => void;
 
@@ -170,6 +188,9 @@ export class WorkbenchState {
         this.targetSwitchRequest = undefined;
         this.pathDetail = undefined;
         this.commitReceipt = undefined;
+        this.understandingReceipt = undefined;
+        this.changelistReceipt = undefined;
+        this.conflictReceipt = undefined;
         break;
       case "module/loading":
         this.loading = true;
@@ -178,6 +199,9 @@ export class WorkbenchState {
         this.error = undefined;
         this.pathDetail = undefined;
         this.commitReceipt = undefined;
+        this.understandingReceipt = undefined;
+        this.changelistReceipt = undefined;
+        this.conflictReceipt = undefined;
         break;
       case "module/snapshot":
         this.snapshot = message.payload.snapshot;
@@ -187,12 +211,18 @@ export class WorkbenchState {
         // v0.0.11：回执是等待确认的一次性状态；任何快照（生成/放弃/降级）
         // 到达后即清除，避免生成完成后回执面板残留。
         this.commitReceipt = undefined;
+        this.understandingReceipt = undefined;
+        this.changelistReceipt = undefined;
+        this.conflictReceipt = undefined;
         break;
       case "operation/error":
         this.loading = false;
         this.progress = undefined;
         this.error = message.payload;
         this.commitReceipt = undefined;
+        this.understandingReceipt = undefined;
+        this.changelistReceipt = undefined;
+        this.conflictReceipt = undefined;
         break;
       case "operation/progress":
         this.progress = {
@@ -247,6 +277,15 @@ export class WorkbenchState {
         break;
       case "commit/receipt":
         this.commitReceipt = message.payload;
+        break;
+      case "understanding/receipt":
+        this.understandingReceipt = message.payload;
+        break;
+      case "changelist/receipt":
+        this.changelistReceipt = message.payload;
+        break;
+      case "conflict/receipt":
+        this.conflictReceipt = message.payload;
         break;
     }
   }

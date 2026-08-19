@@ -1,6 +1,7 @@
 import * as path from "node:path";
 import {
   AiCommitConventionHint,
+  AiCommitMessageDiffContent,
   AiCommitSplitFileContext,
   AiCommitSplitRequest,
   AiCommitSplitResult,
@@ -19,7 +20,13 @@ export function buildCommitSplitAiRequest(
   scope: OperationScope,
   candidates: CommitCandidate[],
   selectedPaths: string[],
-  options: { convention?: AiCommitConventionHint } = {},
+  options: {
+    convention?: AiCommitConventionHint;
+    /** v0.0.12 批次 B：变更解读中仍有效的会话内确认事实。 */
+    userConfirmations?: string[];
+    /** v0.0.12 批次 B：语义拆分时的受限差异片段。 */
+    diffs?: AiCommitMessageDiffContent[];
+  } = {},
 ): AiCommitSplitRequest {
   const selected = new Set(
     selectedPaths.map((filePath) =>
@@ -52,6 +59,8 @@ export function buildCommitSplitAiRequest(
       onlyUseProvidedFiles: true,
     },
     convention: options.convention,
+    userConfirmations: options.userConfirmations,
+    diffs: options.diffs,
   };
 }
 
@@ -175,20 +184,37 @@ function createLocalSplitSuggestion(
   const statusText = summarizeCounts(files.map((file) => file.status));
   const title = `拆分 ${index + 1}: ${label}`;
   const risks = inferSplitRisks(files);
+  // v0.0.12 批次 B：优先消费仍有效的确认事实；无受限差异时明确降级为
+  // 目录/文件类型分组（purpose/dependencies 按元数据诚实推断）。
+  const confirmations = request.userConfirmations ?? [];
+  const semantic = (request.diffs?.length ?? 0) > 0;
+  const confirmationLines = confirmations
+    .map((statement) => `- ${statement}`)
+    .join("\n");
+  const purpose = semantic
+    ? "基于受限差异与已确认事实推断提交意图。"
+    : confirmations.length > 0
+      ? "按目录/文件类型分组，并结合已确认事实；未读取差异正文。"
+      : "按目录/文件类型分组，仅路径元数据，未读取差异正文。";
 
   return {
     id: `split-${index + 1}`,
     title,
     summary: `${label}，${files.length} 个文件，状态：${statusText}`,
-    message: createSplitCommitMessage(
-      request.convention,
-      label,
-      templateGroup,
-      files,
-    ),
+    message: [
+      createSplitCommitMessage(request.convention, label, templateGroup, files),
+      ...(confirmationLines ? ["", "已确认事实：", confirmationLines] : []),
+    ].join("\n"),
     paths: files.map((file) => file.path),
     reason: `按 ${moduleGroup === "repository-root" ? "文件预设" : "目录"} 聚合，便于提交说明聚焦。`,
     risks,
+    purpose,
+    dependencies: [
+      ...(confirmations.length > 0
+        ? [`依赖 ${confirmations.length} 条已确认事实`]
+        : []),
+      ...(semantic ? [] : ["未读取差异正文，具体依赖需人工核对。"]),
+    ],
   };
 }
 
@@ -302,6 +328,12 @@ function normalizeSplitSuggestion(value: unknown): AiCommitSplitSuggestion {
     reason:
       typeof raw.reason === "string" ? raw.reason.trim() : "AI 建议拆分。",
     risks: normalizeStringList(raw.risks),
+    ...(typeof raw.purpose === "string" && raw.purpose.trim()
+      ? { purpose: raw.purpose.trim() }
+      : {}),
+    ...(Array.isArray(raw.dependencies) && raw.dependencies.length > 0
+      ? { dependencies: normalizeStringList(raw.dependencies) }
+      : {}),
   };
 }
 
