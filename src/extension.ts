@@ -144,16 +144,13 @@ export function activate(context: vscode.ExtensionContext): void {
       aiTestConnection,
     ),
     vscode.commands.registerCommand(
-      "svnWorkbench.aiSelectScope",
-      aiSelectScope,
+      "svnWorkbench.understandScope",
+      openUnderstanding,
     ),
-    vscode.commands.registerCommand("svnWorkbench.aiReviewScope", openAiReview),
-    vscode.commands.registerCommand("svnWorkbench.analyzeImpact", openImpact),
     vscode.commands.registerCommand(
       "svnWorkbench.openChangelists",
       openChangelists,
     ),
-    vscode.commands.registerCommand("svnWorkbench.openAgent", openAgent),
     vscode.commands.registerCommand(
       "svnWorkbench.openAcceptanceChecklist",
       openAcceptanceChecklist,
@@ -839,11 +836,8 @@ async function openSupportModule(
   });
 }
 
-async function aiSelectScope(resource?: unknown): Promise<void> {
-  await openAiReview(resource);
-}
-
-async function openAiReview(
+/** v0.0.12：解读所选变更（统一变更解读入口）。 */
+async function openUnderstanding(
   resource?: unknown,
   selectedResources?: unknown[],
 ): Promise<void> {
@@ -853,24 +847,8 @@ async function openAiReview(
   );
   if (!prepared || !workbenchWindowManager) return;
   await workbenchWindowManager.open({
-    moduleId: "ai-review",
-    taskId: "ai-review/review",
-    ...prepared,
-  });
-}
-
-async function openImpact(
-  resource?: unknown,
-  selectedResources?: unknown[],
-): Promise<void> {
-  const prepared = await prepareWorkbenchRequest(
-    resourceUri(resource),
-    resourceUris(selectedResources),
-  );
-  if (!prepared || !workbenchWindowManager) return;
-  await workbenchWindowManager.open({
-    moduleId: "impact",
-    taskId: "impact/analyze",
+    moduleId: "understanding",
+    taskId: "understanding/analyze",
     ...prepared,
   });
 }
@@ -887,22 +865,6 @@ async function openChangelists(
   await workbenchWindowManager.open({
     moduleId: "changelists",
     taskId: "changelists/manage",
-    ...prepared,
-  });
-}
-
-async function openAgent(
-  resource?: unknown,
-  selectedResources?: unknown[],
-): Promise<void> {
-  const prepared = await prepareWorkbenchRequest(
-    resourceUri(resource),
-    resourceUris(selectedResources),
-  );
-  if (!prepared || !workbenchWindowManager) return;
-  await workbenchWindowManager.open({
-    moduleId: "agent",
-    taskId: "agent/plan",
     ...prepared,
   });
 }

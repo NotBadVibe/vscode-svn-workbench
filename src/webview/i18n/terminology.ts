@@ -43,8 +43,6 @@ export const localOnlyEngineLabel = "本地规则引擎";
 
 /** v0.0.9 §5：纯本地能力不得表述为“AI 已审查 / 智能分析”。 */
 export const localPurposeHeading = {
-  review: "本地变更检查",
-  impact: "影响与测试建议",
   split: "按目录和文件类型分组",
 } as const;
 
@@ -68,6 +66,29 @@ export const findingCategoryLabels = {
   testing: "测试覆盖",
 } as const;
 
+/** v0.0.12：变更解读专项术语。 */
+export const understandingLabels = {
+  task: "变更解读",
+  action: "解读所选变更",
+  purpose: "理解当前修改、找出需要确认的风险，并准备验证与提交说明。",
+  changes: "这次改了什么",
+  findings: "需要你确认",
+  verification: "影响与验证",
+  draft: "准备提交",
+  runLocal: "只运行本地检查",
+  startAnalysis: "查看并开始分析",
+  aiNoWrite: "AI 不会修改文件或执行提交。",
+  confirmed: "已证实",
+  inferred: "推断",
+  toConfirm: "待确认",
+  needsReview: "待复核",
+  localRule: "本地检查",
+  configuredModel: "模型建议",
+  localFallback: "模型不可用，已保留本地结果",
+  user: "用户确认",
+  mixed: "混合来源",
+} as const;
+
 export const taskLabels: Record<WorkbenchTaskId, string> = {
   "changes/overview": "工作副本修改",
   "commit/compose": "提交当前范围",
@@ -75,9 +96,7 @@ export const taskLabels: Record<WorkbenchTaskId, string> = {
   "history/revisions": "查看历史记录",
   "conflicts/resolve": "处理文件冲突",
   "changelists/manage": "管理变更集",
-  "ai-review/review": "本地变更检查",
-  "impact/analyze": "影响与测试建议",
-  "agent/plan": "本地检查流水线",
+  "understanding/analyze": "变更解读",
   "repository/update": "更新当前范围",
   "repository/recovery": "清理与恢复工作副本",
   "repository/browse": "浏览 SVN 仓库",

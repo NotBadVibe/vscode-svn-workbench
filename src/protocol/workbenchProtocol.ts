@@ -15,6 +15,10 @@ import type {
   EvidenceReference,
   ValidatedCommitMessageClaim,
 } from "../commit/commitDiffEvidence";
+import type { ChangeUnderstandingSnapshot } from "../understanding/changeUnderstanding";
+
+export type { ChangeUnderstandingSnapshot } from "../understanding/changeUnderstanding";
+export type { EvidenceReference } from "../commit/commitDiffEvidence";
 import type { DisplayPath } from "../scope/pathBrands";
 import type { SelectionKey } from "../selection/selectionCore";
 
@@ -27,9 +31,7 @@ export type WorkbenchModuleId =
   | "history"
   | "conflicts"
   | "changelists"
-  | "ai-review"
-  | "impact"
-  | "agent"
+  | "understanding"
   | "repository"
   | "settings"
   | "diagnostics"
@@ -42,9 +44,7 @@ export type WorkbenchTaskId =
   | "history/revisions"
   | "conflicts/resolve"
   | "changelists/manage"
-  | "ai-review/review"
-  | "impact/analyze"
-  | "agent/plan"
+  | "understanding/analyze"
   | "repository/update"
   | "repository/recovery"
   | "repository/browse"
@@ -71,9 +71,7 @@ const defaultTasks: Record<WorkbenchModuleId, WorkbenchTaskId> = {
   history: "history/revisions",
   conflicts: "conflicts/resolve",
   changelists: "changelists/manage",
-  "ai-review": "ai-review/review",
-  impact: "impact/analyze",
-  agent: "agent/plan",
+  understanding: "understanding/analyze",
   repository: "repository/update",
   settings: "settings/ai",
   diagnostics: "diagnostics/environment",
@@ -87,9 +85,7 @@ const taskModules: Record<WorkbenchTaskId, WorkbenchModuleId> = {
   "history/revisions": "history",
   "conflicts/resolve": "conflicts",
   "changelists/manage": "changelists",
-  "ai-review/review": "ai-review",
-  "impact/analyze": "impact",
-  "agent/plan": "agent",
+  "understanding/analyze": "understanding",
   "repository/update": "repository",
   "repository/recovery": "repository",
   "repository/browse": "repository",
@@ -332,6 +328,11 @@ export interface CommitMessageSuggestion {
   }>;
   /** v0.0.11 §3 动作级外发回执：本次生成实际外发的数据范围与预算。 */
   receipt?: AnalysisReceipt;
+  /**
+   * v0.0.12 批次 B：生成时使用到的变更解读会话内确认事实（仍有效）。
+   * 过期/待复核确认不会进入；采用/替换契约与 v0.0.11 不变。
+   */
+  userConfirmations?: string[];
   /** 生成/降级过程中的提醒（如文件过多、团队规范提示、降级原因）。 */
   warnings: string[];
   /**
@@ -388,6 +389,59 @@ export interface CommitReceiptView {
   /** 明确不会发送的数据（固定中文说明）。 */
   notSent: string[];
   /** 无法由插件证明的服务商保留策略提示。 */
+  retentionNote: string;
+}
+
+/**
+ * v0.0.12 批次 A：变更解读外发回执视图（与 commit/receipt 形状一致，
+ * 任务固定 understand-changes；独立消息，不改动已发布 commit/receipt）。
+ */
+export interface UnderstandingReceiptView {
+  /** 一次性回执令牌（确认生成 / 放弃回执时回传，Host 校验）。 */
+  token: string;
+  receipt: AnalysisReceipt;
+  coverage: DiffCoverageSummary;
+  files: CommitDiffFileCoverageView[];
+  excludedCount: number;
+  historyIncluded: boolean;
+  historyCount?: number;
+  notSent: string[];
+  retentionNote: string;
+}
+
+/**
+ * v0.0.12 批次 B：语义拆分外发回执视图（独立于 commit/understanding receipt，
+ * 任务 changelist-split；脱敏与预算沿用 v0.0.11 的 6000/40000）。
+ *//**
+ * v0.0.12 批次 C：冲突意图解释外发回执视图（任务 conflict-interpret；
+ * 明确冲突正文与逐文件字符预算）。
+ */
+export interface ConflictReceiptView {
+  /** 一次性回执令牌（确认解释/放弃回执时回传，Host 校验）。 */
+  token: string;
+  receipt: AnalysisReceipt;
+  /** 逐文件预算与合计字符数（base/mine/theirs/working）。 */
+  files: Array<{
+    name: string;
+    characters: number;
+    maxCharacters: number;
+    truncated: boolean;
+    readError?: string;
+  }>;
+  notSent: string[];
+  retentionNote: string;
+}
+
+export interface ChangelistReceiptView {
+  /** 一次性回执令牌（确认语义拆分/放弃回执时回传，Host 校验）。 */
+  token: string;
+  receipt: AnalysisReceipt;
+  coverage: DiffCoverageSummary;
+  files: CommitDiffFileCoverageView[];
+  excludedCount: number;
+  historyIncluded: boolean;
+  historyCount?: number;
+  notSent: string[];
   retentionNote: string;
 }
 
@@ -552,6 +606,38 @@ export interface ConflictSnapshot {
     steps: string[];
     source: "local-rule" | "configured-model" | "local-rule-fallback";
     fallbackReason?: string;
+  };
+  /**
+   * v0.0.12 批次 C：冲突意图解释（§7 六段）。结果只辅助用户编辑工作副本；
+   * 保存与 Resolve 仍走既有 token/预览/确认契约。
+   */
+  interpretation?: {
+    myIntent: string;
+    theirIntent: string;
+    commonPoints: string[];
+    conflictPoints: string[];
+    recommendedHandling: {
+      summary: string;
+      recommendation:
+        | "acceptWorking"
+        | "acceptMine"
+        | "acceptTheirs"
+        | "manualMerge"
+        | "noSafeSuggestion";
+      evidence: string[];
+    };
+    businessUnknowns: string[];
+    postSaveVerification: Array<{ title: string; command?: string }>;
+    warnings: string[];
+    source: "local-rule" | "configured-model" | "local-rule-fallback";
+    fallbackReason?: string;
+    binding?: {
+      scopeHash: string;
+      conflictHash: string;
+      revision?: string;
+      generatedAt: string;
+    };
+    stale?: boolean;
   };
   resolvePreview?: {
     token: string;
@@ -839,55 +925,6 @@ export interface RepositorySnapshot {
   };
 }
 
-export interface AiReviewSnapshot {
-  kind: "ai-review";
-  state: "ready" | "empty" | "stale";
-  source: "local-rule" | "configured-model" | "local-rule-fallback";
-  generatedAt: string;
-  privacy: {
-    files: number;
-    characters: number;
-    maxCharacters: number;
-    historyIncluded: boolean;
-    model: string;
-  };
-  summary: { critical: number; warning: number; note: number };
-  findings: Array<{
-    id: string;
-    severity: "critical" | "warning" | "note";
-    category: "security" | "debug" | "generated" | "quality" | "testing";
-    relativePath?: string;
-    line?: number;
-    title: string;
-    evidence: string;
-    recommendation: string;
-    confidence: "low" | "medium" | "high";
-  }>;
-  warnings: string[];
-}
-
-export interface ImpactSnapshot {
-  kind: "impact";
-  generatedAt: string;
-  source: "local-rule" | "configured-model" | "local-rule-fallback";
-  changedFiles: number;
-  areas: Array<{
-    id: string;
-    title: string;
-    detail: string;
-    paths: string[];
-    risk: "low" | "medium" | "high";
-  }>;
-  tests: Array<{ title: string; reason: string; command?: string }>;
-  observations: string[];
-  warnings: string[];
-}
-
-/**
- * v0.0.10：变更集内文件视图。由 Host 用当前候选富化（状态、类型、
- * 决策）；无法建立身份键或候选缺失的文件仍展示（不可进入选择与
- * 批量动作），不得从变更集中消失。
- */
 export interface ChangelistGroupFileView {
   relativePath: string;
   /** Host 身份键；缺失时该行只展示，不可选择。 */
@@ -923,6 +960,10 @@ export interface ChangelistsSnapshot {
     paths: string[];
     reason: string;
     risks: string[];
+    /** v0.0.12 批次 B：拆分目的（语义拆分时）。 */
+    purpose?: string;
+    /** v0.0.12 批次 B：依赖项说明（语义拆分时）。 */
+    dependencies?: string[];
   }>;
   warnings: string[];
   preview?: {
@@ -937,28 +978,6 @@ export interface ChangelistsSnapshot {
   feedback?: string;
 }
 
-export interface AgentSnapshot {
-  kind: "agent";
-  status: "idle" | "planned" | "running" | "completed" | "cancelled" | "failed";
-  objective: string;
-  guardrails: string[];
-  steps: Array<{
-    id: string;
-    title: string;
-    detail: string;
-    capability: "svn-read" | "local-analysis";
-    command?: string;
-    scope: string;
-    risk: string;
-    reversibility: string;
-    status: "pending" | "running" | "completed" | "failed" | "cancelled";
-    output?: string;
-    requiresApproval: boolean;
-  }>;
-  nextStepId?: string;
-  message?: string;
-}
-
 export type WorkbenchModuleSnapshot =
   | ChangesSnapshot
   | DiffSnapshot
@@ -968,11 +987,9 @@ export type WorkbenchModuleSnapshot =
   | SettingsSnapshot
   | DiagnosticsSnapshot
   | RepositorySnapshot
-  | AiReviewSnapshot
-  | ImpactSnapshot
   | ChangelistsSnapshot
-  | AgentSnapshot
-  | ProjectsSnapshot;
+  | ProjectsSnapshot
+  | ChangeUnderstandingSnapshot;
 
 /**
  * v0.0.7 项目总览（§6.1）：只读优先的项目列表。允许聚合数量，但不得
@@ -1147,7 +1164,10 @@ export type HostToWebviewMessage =
   | MessageEnvelope<"operation/result", { title: string; message: string }>
   | MessageEnvelope<"operation/cancelled", { title: string; message: string }>
   | MessageEnvelope<"scope/changed", { scope: WorkbenchScopeView }>
-  | MessageEnvelope<"commit/receipt", CommitReceiptView>;
+  | MessageEnvelope<"commit/receipt", CommitReceiptView>
+  | MessageEnvelope<"understanding/receipt", UnderstandingReceiptView>
+  | MessageEnvelope<"changelist/receipt", ChangelistReceiptView>
+  | MessageEnvelope<"conflict/receipt", ConflictReceiptView>;
 
 export type WebviewAction =
   | "refresh"
@@ -1181,6 +1201,14 @@ export type WebviewAction =
   | "commit/discard-suggestion"
   | "commit/preview"
   | "commit/execute"
+  | "understanding/run-local"
+  | "understanding/preview-receipt"
+  | "understanding/receipt-dismiss"
+  | "understanding/run-model"
+  | "understanding/open-evidence"
+  | "understanding/retry-failed"
+  | "understanding/confirm-fact"
+  | "understanding/clear-confirmations"
   | "history/select"
   | "history/compare"
   | "history/blame"
@@ -1188,6 +1216,9 @@ export type WebviewAction =
   | "history/execute-restore"
   | "conflict/select"
   | "conflict/advise"
+  | "conflict/preview-receipt"
+  | "conflict/receipt-dismiss"
+  | "conflict/interpret"
   | "conflict/save-working"
   | "conflict/preview-resolve"
   | "conflict/resolve"
@@ -1219,14 +1250,12 @@ export type WebviewAction =
   | "repository/export-patch"
   | "repository/select-patch"
   | "repository/generate-release-notes"
-  | "ai-review/run"
-  | "impact/run"
   | "changelist/suggest"
+  | "changelist/preview-receipt"
+  | "changelist/receipt-dismiss"
+  | "changelist/run-semantic"
   | "changelist/preview-apply"
   | "changelist/execute-apply"
-  | "agent/create-plan"
-  | "agent/approve-step"
-  | "agent/cancel"
   | "changes/preview-operation"
   | "changes/execute-operation"
   | "changes/copy-url"
@@ -1254,9 +1283,7 @@ const moduleIds = new Set<WorkbenchModuleId>([
   "history",
   "conflicts",
   "changelists",
-  "ai-review",
-  "impact",
-  "agent",
+  "understanding",
   "repository",
   "settings",
   "diagnostics",
@@ -1299,6 +1326,14 @@ export const webviewActions = [
   "commit/discard-suggestion",
   "commit/preview",
   "commit/execute",
+  "understanding/run-local",
+  "understanding/preview-receipt",
+  "understanding/receipt-dismiss",
+  "understanding/run-model",
+  "understanding/open-evidence",
+  "understanding/retry-failed",
+  "understanding/confirm-fact",
+  "understanding/clear-confirmations",
   "history/select",
   "history/compare",
   "history/blame",
@@ -1306,6 +1341,9 @@ export const webviewActions = [
   "history/execute-restore",
   "conflict/select",
   "conflict/advise",
+  "conflict/preview-receipt",
+  "conflict/receipt-dismiss",
+  "conflict/interpret",
   "conflict/save-working",
   "conflict/preview-resolve",
   "conflict/resolve",
@@ -1337,14 +1375,12 @@ export const webviewActions = [
   "repository/export-patch",
   "repository/select-patch",
   "repository/generate-release-notes",
-  "ai-review/run",
-  "impact/run",
   "changelist/suggest",
+  "changelist/preview-receipt",
+  "changelist/receipt-dismiss",
+  "changelist/run-semantic",
   "changelist/preview-apply",
   "changelist/execute-apply",
-  "agent/create-plan",
-  "agent/approve-step",
-  "agent/cancel",
   "changes/preview-operation",
   "changes/execute-operation",
   "changes/copy-url",

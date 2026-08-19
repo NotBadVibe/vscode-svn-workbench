@@ -1,8 +1,8 @@
 {
   "name": "svn-workbench",
-  "displayName": "SVN \u5de5\u4f5c\u53f0",
-  "description": "\u9762\u5411\u4e2d\u6587\u7528\u6237\u7684 AI \u539f\u751f SVN \u5de5\u4f5c\u53f0\u3002",
-  "version": "0.0.11",
+  "displayName": "SVN 工作台",
+  "description": "面向中文用户的 AI 原生 SVN 工作台。",
+  "version": "0.0.12",
   "publisher": "local",
   "private": true,
   "license": "MIT",
@@ -56,18 +56,15 @@
     "onCommand:svnWorkbench.showOutput",
     "onCommand:svnWorkbench.aiConfigure",
     "onCommand:svnWorkbench.aiTestConnection",
-    "onCommand:svnWorkbench.aiSelectScope",
-    "onCommand:svnWorkbench.aiReviewScope",
-    "onCommand:svnWorkbench.analyzeImpact",
     "onCommand:svnWorkbench.openChangelists",
-    "onCommand:svnWorkbench.openAgent",
     "onCommand:svnWorkbench.openAcceptanceChecklist",
-    "onCommand:svnWorkbench.openProjects"
+    "onCommand:svnWorkbench.openProjects",
+    "onCommand:svnWorkbench.understandScope"
   ],
   "main": "./out/extension.js",
   "contributes": {
     "configuration": {
-      "title": "SVN \u5de5\u4f5c\u53f0",
+      "title": "SVN 工作台",
       "properties": {
         "svnWorkbench.svn.path": {
           "type": [
@@ -75,7 +72,7 @@
             "null"
           ],
           "default": null,
-          "description": "svn \u53ef\u6267\u884c\u6587\u4ef6\u8def\u5f84\u3002\u7559\u7a7a\u65f6\u81ea\u52a8\u641c\u7d22 PATH \u548c\u5404\u5e73\u53f0\u5e38\u89c1\u5b89\u88c5\u4f4d\u7f6e\u3002"
+          "description": "svn 可执行文件路径。留空时自动搜索 PATH 和各平台常见安装位置。"
         },
         "svnWorkbench.diff.openMode": {
           "type": "string",
@@ -85,15 +82,15 @@
             "beside"
           ],
           "enumDescriptions": [
-            "\u5728\u5f53\u524d\u7f16\u8f91\u7ec4\u4e2d\u6fc0\u6d3b SVN Diff \u6807\u7b7e\u3002",
-            "\u5728\u5f53\u524d\u7f16\u8f91\u7ec4\u65c1\u65b0\u5efa\u7ec4\u5e76\u6fc0\u6d3b SVN Diff \u6807\u7b7e\u3002"
+            "在当前编辑组中激活 SVN Diff 标签。",
+            "在当前编辑组旁新建组并激活 SVN Diff 标签。"
           ],
-          "markdownDescription": "\u5dee\u5f02\u7a97\u53e3\u6253\u5f00\u4f4d\u7f6e\u3002`sameGroup` \u9ed8\u8ba4\u590d\u7528\u5f53\u524d\u7f16\u8f91\u7ec4\uff1b`beside` \u4fdd\u7559\u5e76\u6392\u67e5\u770b\u4e60\u60ef\u3002"
+          "markdownDescription": "差异窗口打开位置。`sameGroup` 默认复用当前编辑组；`beside` 保留并排查看习惯。"
         },
         "svnWorkbench.ai.baseUrl": {
           "type": "string",
           "default": "",
-          "description": "OpenAI \u517c\u5bb9 API Base URL\u3002\u5efa\u8bae\u901a\u8fc7\u201cSVN\uff1aAI \u914d\u7f6e\u6a21\u578b\u201d\u914d\u7f6e\u3002"
+          "description": "OpenAI 兼容 API Base URL。建议通过“SVN：AI 配置模型”配置。"
         },
         "svnWorkbench.ai.providerPreset": {
           "type": "string",
@@ -106,12 +103,12 @@
             "kimi",
             "custom"
           ],
-          "description": "AI \u670d\u52a1\u5546\u9884\u8bbe\u3002\u9884\u8bbe\u53ea\u662f\u53ef\u7f16\u8f91\u6a21\u677f\uff0c\u63a5\u53e3\u5730\u5740\u548c\u6a21\u578b\u4ecd\u53ef\u81ea\u884c\u4fee\u6539\u3002"
+          "description": "AI 服务商预设。预设只是可编辑模板，接口地址和模型仍可自行修改。"
         },
         "svnWorkbench.ai.model": {
           "type": "string",
           "default": "",
-          "description": "OpenAI \u517c\u5bb9\u670d\u52a1\u4f7f\u7528\u7684\u9ed8\u8ba4\u6a21\u578b\u540d\u79f0\u3002"
+          "description": "OpenAI 兼容服务使用的默认模型名称。"
         },
         "svnWorkbench.ai.scenarioModels": {
           "type": "object",
@@ -119,62 +116,62 @@
           "properties": {
             "commitSelection": {
               "type": "string",
-              "description": "\u53ef\u9009\uff1a\u5355\u72ec\u6307\u5b9a AI \u63d0\u4ea4\u6587\u4ef6\u9009\u62e9\u6a21\u578b\u3002"
+              "description": "可选：单独指定 AI 提交文件选择模型。"
             },
             "conflictAdvice": {
               "type": "string",
-              "description": "\u53ef\u9009\uff1a\u5355\u72ec\u6307\u5b9a AI \u51b2\u7a81\u5efa\u8bae\u6a21\u578b\u3002"
+              "description": "可选：单独指定 AI 冲突建议模型。"
             },
             "commitMessage": {
               "type": "string",
-              "description": "\u53ef\u9009\uff1a\u5355\u72ec\u6307\u5b9a AI \u63d0\u4ea4\u8bf4\u660e\u751f\u6210\u6a21\u578b\u3002"
+              "description": "可选：单独指定 AI 提交说明生成模型。"
             },
             "commitSplit": {
               "type": "string",
-              "description": "\u53ef\u9009\uff1a\u5355\u72ec\u6307\u5b9a AI \u63d0\u4ea4\u62c6\u5206\u5efa\u8bae\u6a21\u578b\u3002"
+              "description": "可选：单独指定 AI 提交拆分建议模型。"
             },
             "teamRules": {
               "type": "string",
-              "description": "\u53ef\u9009\uff1a\u5355\u72ec\u6307\u5b9a AI \u56e2\u961f\u89c4\u5219\u63a8\u8350\u6a21\u578b\u3002"
+              "description": "可选：单独指定 AI 团队规则推荐模型。"
             },
             "conflictMerge": {
               "type": "string",
-              "description": "\u53ef\u9009\uff1a\u5355\u72ec\u6307\u5b9a AI \u51b2\u7a81\u5408\u5e76\u5019\u9009\u751f\u6210\u6a21\u578b\u3002"
+              "description": "可选：单独指定 AI 冲突合并候选生成模型。"
             }
           },
-          "description": "\u6309\u5de5\u4f5c\u53f0\u4f7f\u7528\u573a\u666f\u8986\u76d6 AI \u6a21\u578b\uff1b\u7559\u7a7a\u65f6\u7ee7\u627f\u9ed8\u8ba4\u6a21\u578b\u8bbe\u7f6e\u3002"
+          "description": "按工作台使用场景覆盖 AI 模型；留空时继承默认模型设置。"
         },
         "svnWorkbench.ai.includeCommitHistory": {
           "type": "boolean",
           "default": false,
-          "description": "\u5141\u8bb8\u751f\u6210\u63d0\u4ea4\u8bf4\u660e\u65f6\u4f7f\u7528\u5df2\u8131\u654f\u7684\u672c\u5730\u6210\u529f\u63d0\u4ea4\u6458\u8981\u3002"
+          "description": "允许生成提交说明时使用已脱敏的本地成功提交摘要。"
         },
         "svnWorkbench.ai.historyLimit": {
           "type": "number",
           "default": 10,
           "minimum": 1,
           "maximum": 20,
-          "description": "\u542f\u7528\u5386\u53f2\u540e\u6700\u591a\u4f7f\u7528\u7684\u8131\u654f\u63d0\u4ea4\u6458\u8981\u6761\u6570\u3002"
+          "description": "启用历史后最多使用的脱敏提交摘要条数。"
         },
         "svnWorkbench.commitConvention.enabled": {
           "type": "boolean",
           "default": false,
-          "description": "\u5728 SVN \u63d0\u4ea4\u524d\u542f\u7528\u56e2\u961f\u63d0\u4ea4\u8bf4\u660e\u89c4\u8303\u68c0\u67e5\u3002"
+          "description": "在 SVN 提交前启用团队提交说明规范检查。"
         },
         "svnWorkbench.commitConvention.requiredIssueId": {
           "type": "boolean",
           "default": false,
-          "description": "\u542f\u7528\u63d0\u4ea4\u89c4\u8303\u540e\uff0c\u8981\u6c42\u63d0\u4ea4\u8bf4\u660e\u5305\u542b\u4efb\u52a1\u7f16\u53f7\u3002"
+          "description": "启用提交规范后，要求提交说明包含任务编号。"
         },
         "svnWorkbench.commitConvention.issueIdPattern": {
           "type": "string",
           "default": "[A-Z]+-\\d+|#\\d+",
-          "description": "\u7528\u4e8e\u6821\u9a8c\u63d0\u4ea4\u8bf4\u660e\u4e2d\u4efb\u52a1\u7f16\u53f7\u7684\u6b63\u5219\u8868\u8fbe\u5f0f\u3002"
+          "description": "用于校验提交说明中任务编号的正则表达式。"
         },
         "svnWorkbench.commitConvention.requiredModule": {
           "type": "boolean",
           "default": false,
-          "description": "\u8981\u6c42\u63d0\u4ea4\u8bf4\u660e\u9996\u884c\u5305\u542b\u6a21\u5757\uff0c\u4f8b\u5982 feat(order): message\u3002"
+          "description": "要求提交说明首行包含模块，例如 feat(order): message。"
         },
         "svnWorkbench.commitConvention.allowedModules": {
           "type": "array",
@@ -187,12 +184,12 @@
           "items": {
             "type": "string"
           },
-          "description": "\u63d0\u4ea4\u8bf4\u660e\u9996\u884c\u5141\u8bb8\u4f7f\u7528\u7684\u6a21\u5757\u540d\u79f0\u3002"
+          "description": "提交说明首行允许使用的模块名称。"
         },
         "svnWorkbench.commitConvention.requiredPrefix": {
           "type": "boolean",
           "default": false,
-          "description": "\u8981\u6c42\u63d0\u4ea4\u8bf4\u660e\u9996\u884c\u4f7f\u7528\u7ea6\u5b9a\u524d\u7f00\u3002"
+          "description": "要求提交说明首行使用约定前缀。"
         },
         "svnWorkbench.commitConvention.allowedPrefixes": {
           "type": "array",
@@ -208,7 +205,7 @@
           "items": {
             "type": "string"
           },
-          "description": "\u63d0\u4ea4\u8bf4\u660e\u9996\u884c\u5141\u8bb8\u4f7f\u7528\u7684\u7ea6\u5b9a\u524d\u7f00\u3002"
+          "description": "提交说明首行允许使用的约定前缀。"
         },
         "svnWorkbench.commitSelection.statusRules": {
           "type": "object",
@@ -221,7 +218,7 @@
                 "needsReview",
                 "excluded"
               ],
-              "description": "modified \u72b6\u6001\u7684\u9ed8\u8ba4\u51b3\u7b56\u3002"
+              "description": "modified 状态的默认决策。"
             },
             "added": {
               "type": "string",
@@ -230,7 +227,7 @@
                 "needsReview",
                 "excluded"
               ],
-              "description": "added \u72b6\u6001\u7684\u9ed8\u8ba4\u51b3\u7b56\u3002"
+              "description": "added 状态的默认决策。"
             },
             "deleted": {
               "type": "string",
@@ -239,7 +236,7 @@
                 "needsReview",
                 "excluded"
               ],
-              "description": "deleted \u72b6\u6001\u7684\u9ed8\u8ba4\u51b3\u7b56\u3002"
+              "description": "deleted 状态的默认决策。"
             },
             "replaced": {
               "type": "string",
@@ -248,7 +245,7 @@
                 "needsReview",
                 "excluded"
               ],
-              "description": "replaced \u72b6\u6001\u7684\u9ed8\u8ba4\u51b3\u7b56\u3002"
+              "description": "replaced 状态的默认决策。"
             },
             "propertyModified": {
               "type": "string",
@@ -257,7 +254,7 @@
                 "needsReview",
                 "excluded"
               ],
-              "description": "\u4ec5 SVN \u5c5e\u6027\u53d8\u5316\uff08status=normal \u4e14 propStatus=modified\uff09\u7684\u9ed8\u8ba4\u51b3\u7b56\u3002"
+              "description": "仅 SVN 属性变化（status=normal 且 propStatus=modified）的默认决策。"
             },
             "missing": {
               "type": "string",
@@ -266,7 +263,7 @@
                 "needsReview",
                 "excluded"
               ],
-              "description": "missing \u72b6\u6001\u7684\u9ed8\u8ba4\u51b3\u7b56\u3002"
+              "description": "missing 状态的默认决策。"
             },
             "unversioned": {
               "type": "string",
@@ -275,7 +272,7 @@
                 "needsReview",
                 "excluded"
               ],
-              "description": "unversioned \u72b6\u6001\u7684\u9ed8\u8ba4\u51b3\u7b56\u3002"
+              "description": "unversioned 状态的默认决策。"
             },
             "unknown": {
               "type": "string",
@@ -284,7 +281,7 @@
                 "needsReview",
                 "excluded"
               ],
-              "description": "unknown \u72b6\u6001\u7684\u9ed8\u8ba4\u51b3\u7b56\u3002"
+              "description": "unknown 状态的默认决策。"
             },
             "normal": {
               "type": "string",
@@ -293,10 +290,10 @@
                 "needsReview",
                 "excluded"
               ],
-              "description": "normal \u72b6\u6001\u7684\u9ed8\u8ba4\u51b3\u7b56\uff1b\u4e0d\u5f71\u54cd\u4ec5\u5c5e\u6027\u53d8\u5316\u7684\u5224\u65ad\u3002"
+              "description": "normal 状态的默认决策；不影响仅属性变化的判断。"
             }
           },
-          "description": "\u63d0\u4ea4\u6587\u4ef6\u9009\u62e9\u7684 SVN \u72b6\u6001\u9ed8\u8ba4\u7b56\u7565\u3002\u51b3\u7b56\u503c\uff1arecommended\uff08\u63a8\u8350\u63d0\u4ea4\uff09\u3001needsReview\uff08\u9700\u8981\u786e\u8ba4\uff09\u3001excluded\uff08\u6392\u9664\uff09\u3002ignored\u3001external\u3001conflicted\u3001obstructed\u3001incomplete \u4e3a\u5b89\u5168\u72b6\u6001\uff0c\u4e0d\u53ef\u914d\u7f6e\u3002\u4ed3\u5e93\u7ea7\u89c4\u5219\u89c1 .svn-workbench.json \u7684 commitSelection \u952e\u3002"
+          "description": "提交文件选择的 SVN 状态默认策略。决策值：recommended（推荐提交）、needsReview（需要确认）、excluded（排除）。ignored、external、conflicted、obstructed、incomplete 为安全状态，不可配置。仓库级规则见 .svn-workbench.json 的 commitSelection 键。"
         },
         "svnWorkbench.commitSelection.pathRules": {
           "type": "array",
@@ -313,17 +310,17 @@
               "id": {
                 "type": "string",
                 "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$",
-                "description": "\u7a33\u5b9a\u89c4\u5219 ID\uff1b\u4e0e\u5185\u7f6e\u89c4\u5219\u540c ID \u65f6\u8986\u76d6\u5185\u7f6e\u5b9a\u4e49\u3002"
+                "description": "稳定规则 ID；与内置规则同 ID 时覆盖内置定义。"
               },
               "enabled": {
                 "type": "boolean",
                 "default": true,
-                "description": "\u662f\u5426\u542f\u7528\u8be5\u89c4\u5219\u3002"
+                "description": "是否启用该规则。"
               },
               "pattern": {
                 "type": "string",
                 "maxLength": 200,
-                "description": "Glob \u8def\u5f84\u8868\u8fbe\u5f0f\uff1a\u76f8\u5bf9\u4ed3\u5e93\u6839\u3001\u7edf\u4e00 / \u5206\u9694\u3001\u652f\u6301 **\u3002"
+                "description": "Glob 路径表达式：相对仓库根、统一 / 分隔、支持 **。"
               },
               "decision": {
                 "type": "string",
@@ -332,21 +329,21 @@
                   "needsReview",
                   "excluded"
                 ],
-                "description": "\u547d\u4e2d\u540e\u7684\u51b3\u7b56\uff1arecommended\uff08\u63a8\u8350\u63d0\u4ea4\uff09\u3001needsReview\uff08\u9700\u8981\u786e\u8ba4\uff09\u3001excluded\uff08\u6392\u9664\uff09\u3002"
+                "description": "命中后的决策：recommended（推荐提交）、needsReview（需要确认）、excluded（排除）。"
               },
               "reason": {
                 "type": "string",
                 "default": "",
-                "description": "\u8be5\u89c4\u5219\u7684\u4e2d\u6587\u539f\u56e0\u8bf4\u660e\u3002"
+                "description": "该规则的中文原因说明。"
               },
               "caseSensitive": {
                 "type": "boolean",
                 "default": true,
-                "description": "\u5339\u914d\u662f\u5426\u5927\u5c0f\u5199\u654f\u611f\u3002"
+                "description": "匹配是否大小写敏感。"
               }
             }
           },
-          "description": "\u63d0\u4ea4\u6587\u4ef6\u9009\u62e9\u7684 Glob \u8def\u5f84\u89c4\u5219\uff0c\u7b2c\u4e00\u6761\u547d\u4e2d\u751f\u6548\uff0c\u4f18\u5148\u7ea7\u9ad8\u4e8e\u72b6\u6001\u9ed8\u8ba4\u7b56\u7565\uff1b\u81ea\u5b9a\u4e49\u89c4\u5219\u6309\u987a\u5e8f\u5728\u5185\u7f6e\u89c4\u5219\u4e4b\u524d\u8bc4\u4f30\u3002blocked \u51b3\u7b56\u4e0d\u53ef\u914d\u7f6e\u3002\u4ed3\u5e93\u7ea7\u89c4\u5219\u89c1 .svn-workbench.json \u7684 commitSelection \u952e\u3002"
+          "description": "提交文件选择的 Glob 路径规则，第一条命中生效，优先级高于状态默认策略；自定义规则按顺序在内置规则之前评估。blocked 决策不可配置。仓库级规则见 .svn-workbench.json 的 commitSelection 键。"
         }
       }
     },
@@ -359,170 +356,158 @@
     "commands": [
       {
         "command": "svnWorkbench.openWorkbench",
-        "title": "SVN\uff1a\u67e5\u770b\u5de5\u4f5c\u526f\u672c\u4fee\u6539"
+        "title": "SVN：查看工作副本修改"
       },
       {
         "command": "svnWorkbench.checkEnvironment",
-        "title": "SVN\uff1a\u68c0\u67e5\u73af\u5883"
+        "title": "SVN：检查环境"
       },
       {
         "command": "svnWorkbench.refreshStatus",
-        "title": "SVN\uff1a\u5237\u65b0\u72b6\u6001"
+        "title": "SVN：刷新状态"
       },
       {
         "command": "svnWorkbench.updateScope",
-        "title": "SVN\uff1a\u66f4\u65b0\u5f53\u524d\u8303\u56f4"
+        "title": "SVN：更新当前范围"
       },
       {
         "command": "svnWorkbench.openProperties",
-        "title": "SVN\uff1a\u67e5\u770b\u4e0e\u7f16\u8f91\u5c5e\u6027"
+        "title": "SVN：查看与编辑属性"
       },
       {
         "command": "svnWorkbench.openCleanup",
-        "title": "SVN\uff1a\u6e05\u7406\u5de5\u4f5c\u526f\u672c"
+        "title": "SVN：清理工作副本"
       },
       {
         "command": "svnWorkbench.openRepositoryBrowser",
-        "title": "SVN\uff1a\u6d4f\u89c8\u4ed3\u5e93"
+        "title": "SVN：浏览仓库"
       },
       {
         "command": "svnWorkbench.createBranch",
-        "title": "SVN\uff1a\u521b\u5efa\u5206\u652f"
+        "title": "SVN：创建分支"
       },
       {
         "command": "svnWorkbench.createTag",
-        "title": "SVN\uff1a\u521b\u5efa\u6807\u7b7e"
+        "title": "SVN：创建标签"
       },
       {
         "command": "svnWorkbench.switchWorkingCopy",
-        "title": "SVN\uff1a\u5207\u6362\u5de5\u4f5c\u526f\u672c"
+        "title": "SVN：切换工作副本"
       },
       {
         "command": "svnWorkbench.relocateWorkingCopy",
-        "title": "SVN\uff1a\u91cd\u5b9a\u4f4d\u4ed3\u5e93\u5730\u5740"
+        "title": "SVN：重定位仓库地址"
       },
       {
         "command": "svnWorkbench.mergeToWorkingCopy",
-        "title": "SVN\uff1a\u5408\u5e76\u5230\u5de5\u4f5c\u526f\u672c"
+        "title": "SVN：合并到工作副本"
       },
       {
         "command": "svnWorkbench.openPatchShelf",
-        "title": "SVN\uff1a\u8865\u4e01\u4e0e\u672c\u5730\u6401\u7f6e"
+        "title": "SVN：补丁与本地搁置"
       },
       {
         "command": "svnWorkbench.openReleaseNotes",
-        "title": "SVN\uff1a\u751f\u6210\u53d1\u5e03\u8bf4\u660e"
+        "title": "SVN：生成发布说明"
       },
       {
         "command": "svnWorkbench.commitFolder",
-        "title": "SVN\uff1a\u63d0\u4ea4\u5f53\u524d\u8303\u56f4"
+        "title": "SVN：提交当前范围"
       },
       {
         "command": "svnWorkbench.openConflictCenter",
-        "title": "SVN\uff1a\u6253\u5f00\u51b2\u7a81\u4e2d\u5fc3"
+        "title": "SVN：打开冲突中心"
       },
       {
         "command": "svnWorkbench.openDiff",
-        "title": "SVN\uff1a\u6253\u5f00\u5dee\u5f02\u5bf9\u6bd4"
+        "title": "SVN：打开差异对比"
       },
       {
         "command": "svnWorkbench.openHistory",
-        "title": "SVN\uff1a\u67e5\u770b\u5386\u53f2"
+        "title": "SVN：查看历史"
       },
       {
         "command": "svnWorkbench.openTeamConfig",
-        "title": "SVN\uff1a\u6253\u5f00\u56e2\u961f\u914d\u7f6e"
+        "title": "SVN：打开团队配置"
       },
       {
         "command": "svnWorkbench.configureTeamConfig",
-        "title": "SVN\uff1a\u914d\u7f6e\u56e2\u961f\u89c4\u5219"
+        "title": "SVN：配置团队规则"
       },
       {
         "command": "svnWorkbench.showOutput",
-        "title": "SVN\uff1a\u663e\u793a\u8f93\u51fa"
+        "title": "SVN：显示输出"
       },
       {
         "command": "svnWorkbench.aiConfigure",
-        "title": "SVN\uff1aAI \u914d\u7f6e\u6a21\u578b"
+        "title": "SVN：AI 配置模型"
       },
       {
         "command": "svnWorkbench.aiTestConnection",
-        "title": "SVN\uff1aAI \u6d4b\u8bd5\u8fde\u63a5"
-      },
-      {
-        "command": "svnWorkbench.aiSelectScope",
-        "title": "SVN\uff1a\u672c\u5730\u53d8\u66f4\u68c0\u67e5\u5f53\u524d\u8303\u56f4"
-      },
-      {
-        "command": "svnWorkbench.aiReviewScope",
-        "title": "SVN\uff1a\u672c\u5730\u53d8\u66f4\u68c0\u67e5"
-      },
-      {
-        "command": "svnWorkbench.analyzeImpact",
-        "title": "SVN\uff1a\u5206\u6790\u5f71\u54cd\u4e0e\u6d4b\u8bd5\u5efa\u8bae"
+        "title": "SVN：AI 测试连接"
       },
       {
         "command": "svnWorkbench.openChangelists",
-        "title": "SVN\uff1a\u53d8\u66f4\u96c6\u7ba1\u7406"
-      },
-      {
-        "command": "svnWorkbench.openAgent",
-        "title": "SVN\uff1a\u672c\u5730\u68c0\u67e5\u6d41\u6c34\u7ebf"
+        "title": "SVN：变更集管理"
       },
       {
         "command": "svnWorkbench.openAcceptanceChecklist",
-        "title": "SVN\uff1a\u6253\u5f00\u9a8c\u6536\u6e05\u5355"
+        "title": "SVN：打开验收清单"
       },
       {
         "command": "svnWorkbench.openProjects",
-        "title": "SVN\uff1a\u9879\u76ee\u603b\u89c8"
+        "title": "SVN：项目总览"
       },
       {
         "command": "svnWorkbench.scmRefresh",
-        "title": "SVN\uff1a\u5237\u65b0\u6240\u6709\u5de5\u4f5c\u526f\u672c",
+        "title": "SVN：刷新所有工作副本",
         "icon": "$(refresh)"
       },
       {
         "command": "svnWorkbench.add",
-        "title": "SVN\uff1a\u52a0\u5165\u7248\u672c\u63a7\u5236\uff08\u5148\u9884\u89c8\uff09"
+        "title": "SVN：加入版本控制（先预览）"
       },
       {
         "command": "svnWorkbench.ignore",
-        "title": "SVN\uff1a\u6dfb\u52a0\u5230\u5ffd\u7565\u5217\u8868\uff08\u5148\u9884\u89c8\uff09"
+        "title": "SVN：添加到忽略列表（先预览）"
       },
       {
         "command": "svnWorkbench.revert",
-        "title": "SVN\uff1a\u8fd8\u539f\u672c\u5730\u4fee\u6539\uff08\u5148\u9884\u89c8\uff09"
+        "title": "SVN：还原本地修改（先预览）"
       },
       {
         "command": "svnWorkbench.lock",
-        "title": "SVN\uff1a\u9501\u5b9a\u6587\u4ef6\uff08\u5148\u9884\u89c8\uff09"
+        "title": "SVN：锁定文件（先预览）"
       },
       {
         "command": "svnWorkbench.unlock",
-        "title": "SVN\uff1a\u89e3\u9501\u6587\u4ef6\uff08\u5148\u9884\u89c8\uff09"
+        "title": "SVN：解锁文件（先预览）"
+      },
+      {
+        "command": "svnWorkbench.understandScope",
+        "title": "SVN：解读所选变更"
       }
     ],
     "submenus": [
       {
         "id": "svnWorkbench.explorer",
-        "label": "SVN \u5de5\u4f5c\u53f0"
+        "label": "SVN 工作台"
       },
       {
         "id": "svnWorkbench.ai",
-        "label": "AI \u52a9\u624b"
+        "label": "AI 助手"
       },
       {
         "id": "svnWorkbench.recovery",
-        "label": "\u51b2\u7a81\u4e0e\u6062\u590d"
+        "label": "冲突与恢复"
       },
       {
         "id": "svnWorkbench.repository",
-        "label": "\u66f4\u591a SVN \u64cd\u4f5c"
+        "label": "更多 SVN 操作"
       },
       {
         "id": "svnWorkbench.settings",
-        "label": "\u8bbe\u7f6e\u4e0e\u8bca\u65ad"
+        "label": "设置与诊断"
       }
     ],
     "menus": {
@@ -581,20 +566,12 @@
       ],
       "svnWorkbench.ai": [
         {
-          "command": "svnWorkbench.aiReviewScope",
-          "group": "1_ai@1"
-        },
-        {
-          "command": "svnWorkbench.analyzeImpact",
-          "group": "1_ai@2"
+          "command": "svnWorkbench.understandScope",
+          "group": "1_ai@0"
         },
         {
           "command": "svnWorkbench.openChangelists",
           "group": "1_ai@3"
-        },
-        {
-          "command": "svnWorkbench.openAgent",
-          "group": "1_ai@4"
         }
       ],
       "svnWorkbench.recovery": [

@@ -267,8 +267,7 @@ test("ZH-01/02/03/04/09：公共状态、数量、时间和 AI 外发说明符�
     "提交",
     "历史",
     "冲突",
-    "AI 审查",
-    "影响分析",
+    "变更解读",
     "仓库操作",
     "设置",
     "诊断",
@@ -292,11 +291,11 @@ test("ZH-01/02/03/04/09：公共状态、数量、时间和 AI 外发说明符�
   }
   await openModule(page, "提交");
   await expect(page.getByText(/已选 \d+ \/ 候选 \d+ 个文件/)).toBeVisible();
-  await openModule(page, "AI 审查");
-  await expect(page.locator(".privacy-strip")).toContainText("个文件");
-  await expect(page.locator(".privacy-strip")).toContainText("个字符");
-  await expect(page.locator(".privacy-strip")).toContainText("历史：不包含");
-  await expect(page.locator(".privacy-strip")).toContainText("模型：");
+  await openModule(page, "变更解读");
+  await expect(page.getByText(/AI 不会修改文件或执行提交/)).toBeVisible();
+  await expect(
+    page.getByText(/理解当前修改、找出需要确认的风险/),
+  ).toBeVisible();
 });
 
 test("SCR-12/13/14/15 与 ZH-10：高度和 100%～200% 缩放矩阵无永久裁切", async ({

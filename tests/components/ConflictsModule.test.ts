@@ -233,3 +233,89 @@ describe("ConflictsModule 列表迁移（v0.0.10）", () => {
     ).not.toBeInTheDocument();
   });
 });
+
+describe("ConflictsModule 冲突意图解释（v0.0.12 批次 C）", () => {
+  const interpretation = {
+    myIntent: "我的版本调整了初始化顺序。",
+    theirIntent: "对方版本修改了挂载逻辑。",
+    commonPoints: ["两侧均在入口文件同一区域修改。"],
+    conflictPoints: ["初始化顺序与挂载逻辑相互影响。"],
+    recommendedHandling: {
+      summary: "建议人工合并，保留两侧意图。",
+      recommendation: "manualMerge" as const,
+      evidence: ["我的版本：初始化顺序", "对方版本：挂载逻辑"],
+    },
+    businessUnknowns: ["哪个初始化顺序符合当前业务需求。"],
+    postSaveVerification: [
+      { title: "完成工作副本合并" },
+      { title: "运行类型检查", command: "npm run check" },
+    ],
+    warnings: [],
+    source: "configured-model" as const,
+    binding: {
+      scopeHash: "scope-1",
+      conflictHash: "conflict-1",
+      revision: "7",
+      generatedAt: "2026-08-18T00:00:00.000Z",
+    },
+  };
+  const receipt = {
+    token: "conflict-receipt-1",
+    receipt: {
+      task: "conflict-interpret" as const,
+      projectId: "p",
+      model: "deepseek-v4-flash",
+      dataTypes: ["冲突文件受限正文（base/mine/theirs/working）"],
+      files: 4,
+      totalBudget: 32000,
+      perFileBudget: 8000,
+      historyIncluded: false,
+    },
+    files: [
+      { name: "base", characters: 1200, maxCharacters: 8000, truncated: false },
+      { name: "mine", characters: 1500, maxCharacters: 8000, truncated: false },
+    ],
+    notSent: ["本地绝对路径（只发送项目内相对路径）"],
+    retentionNote:
+      "数据保留策略由模型服务商策略决定，本插件无法证明其保留期限。",
+  };
+
+  it("展示六段解释（意图/共同点/冲突点/证据/未知/验证命令仅展示）", () => {
+    const { container } = render(ConflictsModule, {
+      snapshot: { ...snapshot, interpretation },
+      onAction: vi.fn(),
+    });
+    expect(
+      container.querySelector('[aria-label="冲突意图解释"]'),
+    ).toBeInTheDocument();
+    expect(screen.getByText("我的修改意图")).toBeInTheDocument();
+    expect(screen.getByText("对方修改意图")).toBeInTheDocument();
+    expect(screen.getByText("无法判断的业务选择")).toBeInTheDocument();
+    expect(
+      screen.getByText("哪个初始化顺序符合当前业务需求。"),
+    ).toBeInTheDocument();
+    // 验证命令以 <code> 展示，不执行。
+    expect(container.querySelector("code.conflict-command")?.textContent).toBe(
+      "npm run check",
+    );
+  });
+
+  it("回执展示任务/预算，确认后发送 conflict/interpret", async () => {
+    const onAction = vi.fn();
+    render(ConflictsModule, {
+      snapshot,
+      onAction,
+      conflictReceipt: receipt,
+    });
+    expect(
+      screen.getByRole("region", { name: "冲突意图解释回执" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("冲突意图解释（conflict-interpret）"),
+    ).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "开始解释" }));
+    expect(onAction).toHaveBeenCalledWith("conflict/interpret", {
+      receiptToken: "conflict-receipt-1",
+    });
+  });
+});

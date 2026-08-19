@@ -293,10 +293,8 @@ function createInitialMockSnapshot(
     history: historySnapshot,
     conflicts: conflictSnapshot,
     repository: repositorySnapshot,
-    "ai-review": aiReviewSnapshot,
-    impact: impactSnapshot,
     changelists: changelistsSnapshot,
-    agent: agentSnapshot,
+    understanding: understandingSnapshot,
     settings: settingsSnapshot,
     diagnostics: diagnosticsSnapshot,
     projects: projectsSnapshot,
@@ -372,7 +370,6 @@ export function startMockWorkbench(): void {
   const initialModuleId = initialMockModule();
   activeMockModuleId = initialModuleId;
   activeMockTaskId = defaultWorkbenchTask(initialModuleId);
-  let mockAgentCompleted = 0;
   const initial: HostToWebviewMessage = {
     protocolVersion: WORKBENCH_PROTOCOL_VERSION,
     type: "app/initialize",
@@ -462,10 +459,7 @@ export function startMockWorkbench(): void {
         history: historySnapshot,
         conflicts: conflictSnapshot,
         repository: repositorySnapshot,
-        "ai-review": aiReviewSnapshot,
-        impact: impactSnapshot,
         changelists: changelistsSnapshot,
-        agent: agentSnapshot,
         settings: settingsSnapshot,
         diagnostics: diagnosticsSnapshot,
         projects: projectsSnapshot,
@@ -669,10 +663,8 @@ export function startMockWorkbench(): void {
         history: historySnapshot,
         conflicts: conflictSnapshot,
         repository: repositorySnapshot,
-        "ai-review": aiReviewSnapshot,
-        impact: impactSnapshot,
         changelists: changelistsSnapshot,
-        agent: agentSnapshot,
+        understanding: understandingSnapshot,
         settings: settingsSnapshot,
         diagnostics: diagnosticsSnapshot,
         projects: projectsSnapshot,
@@ -717,6 +709,7 @@ export function startMockWorkbench(): void {
         model: "deepseek-v4-flash",
         metadataOnly: diffMode === "metadata-only",
         diffMode: diffMode as "metadata-only" | "limited-diff",
+        userConfirmations: ["确认 src/extension.ts 仅影响命令注册。"],
         ...(evidence ? { evidence } : {}),
         ...(diffMode === "limited-diff"
           ? {
@@ -859,6 +852,102 @@ export function startMockWorkbench(): void {
           },
         }),
       );
+    }
+    if (action === "understanding/run-local") {
+      // v0.0.12：只运行本地检查（来源 local-rule，声明标记推断）。
+      const base = understandingSnapshot() as {
+        changes: Array<{ status: string }>;
+      };
+      injectSnapshot(
+        "understanding",
+        understandingSnapshot({
+          state: "ready",
+          source: "local-rule",
+          changes: base.changes.map((item) => ({
+            ...item,
+            status: "inferred",
+          })),
+          findings: [],
+          verification: [],
+        }),
+      );
+    }
+    if (action === "understanding/preview-receipt") {
+      injectMockUnderstandingReceipt();
+    }
+    if (action === "understanding/retry-failed") {
+      injectMockUnderstandingReceipt(
+        "本次重试仅覆盖上次读取失败或预算外的文件。",
+      );
+    }
+    if (action === "understanding/receipt-dismiss") {
+      injectSnapshot(
+        "understanding",
+        understandingSnapshot({
+          feedback: {
+            tone: "warning",
+            message:
+              "已放弃变更解读回执；未发送任何差异内容，本地结果保持不变。",
+          },
+        }),
+      );
+    }
+    if (action === "understanding/run-model") {
+      injectSnapshot(
+        "understanding",
+        understandingSnapshot({
+          state: "ready",
+          source: "mixed",
+          userConfirmations: [
+            {
+              id: "mock-confirm-1",
+              statement: "确认 src/extension.ts 的修改仅影响命令注册。",
+              confirmedAt: "2026-08-18T10:01:00.000Z",
+              candidateHash: "mock-candidate-hash",
+              needsReview: false,
+            },
+          ],
+        }),
+      );
+    }
+    if (action === "understanding/confirm-fact") {
+      const statement =
+        typeof data.statement === "string" ? data.statement : "确认内容";
+      injectSnapshot(
+        "understanding",
+        understandingSnapshot({
+          userConfirmations: [
+            {
+              id: `mock-confirm-${Date.now()}`,
+              statement,
+              confirmedAt: "2026-08-18T10:02:00.000Z",
+              candidateHash: "mock-candidate-hash",
+              needsReview: false,
+            },
+          ],
+          feedback: {
+            tone: "success",
+            message:
+              "已记录确认（仅当前会话有效）；切换项目或工作副本变化后需复核。",
+          },
+        }),
+      );
+    }
+    if (action === "understanding/clear-confirmations") {
+      injectSnapshot(
+        "understanding",
+        understandingSnapshot({
+          userConfirmations: [],
+          feedback: { tone: "success", message: "已清除会话内的用户确认。" },
+        }),
+      );
+    }
+    if (action === "understanding/open-evidence") {
+      const referencePath =
+        typeof data.projectRelativePath === "string"
+          ? data.projectRelativePath
+          : activeMockDiffPath;
+      injectSnapshot("diff", mockDiffSnapshot(referencePath));
     }
     if (action === "commit/adopt-suggestion") {
       const mode = (data && data.mode) || "replace";
@@ -1061,6 +1150,25 @@ export function startMockWorkbench(): void {
         "conflicts",
         conflictSnapshot({
           advice: mockConflictAdvice(),
+        }),
+      );
+    }
+    if (action === "conflict/preview-receipt") {
+      injectMockConflictReceipt();
+    }
+    if (action === "conflict/receipt-dismiss") {
+      injectSnapshot(
+        "conflicts",
+        conflictSnapshot({
+          feedback: "已放弃冲突意图解释回执；未发送任何内容。",
+        }),
+      );
+    }
+    if (action === "conflict/interpret") {
+      injectSnapshot(
+        "conflicts",
+        conflictSnapshot({
+          interpretation: mockConflictInterpretation(),
         }),
       );
     }
@@ -1519,14 +1627,33 @@ export function startMockWorkbench(): void {
         }),
       );
     }
-    if (action === "ai-review/run")
-      injectSnapshot("ai-review", aiReviewSnapshot());
-    if (action === "impact/run") injectSnapshot("impact", impactSnapshot());
     if (action === "changelist/suggest")
       injectSnapshot(
         "changelists",
         changelistsSnapshot({ suggestions: changelistSuggestions() }),
       );
+    if (
+      action === "changelist/preview-receipt" ||
+      (action === "changelist/suggest" && data?.mode === "semantic")
+    )
+      injectMockChangelistReceipt();
+    if (action === "changelist/receipt-dismiss") {
+      injectSnapshot(
+        "changelists",
+        changelistsSnapshot({
+          feedback: "已放弃语义拆分回执；未发送任何差异内容。",
+        }),
+      );
+    }
+    if (action === "changelist/run-semantic") {
+      injectSnapshot(
+        "changelists",
+        changelistsSnapshot({
+          suggestions: changelistSemanticSuggestions(),
+          feedback: "已按改动意图完成语义拆分；确认后仍经预览与确认写入 SVN。",
+        }),
+      );
+    }
     if (action === "changelist/preview-apply") {
       const paths = Array.isArray(data.paths)
         ? data.paths.filter(
@@ -1573,25 +1700,6 @@ export function startMockWorkbench(): void {
           feedback: "文件已加入 webview。",
         }),
       );
-    if (action === "agent/create-plan") {
-      mockAgentCompleted = 0;
-      injectSnapshot(
-        "agent",
-        agentSnapshot(
-          0,
-          typeof data.objective === "string" ? data.objective : "检查当前范围",
-        ),
-      );
-    }
-    if (action === "agent/approve-step") {
-      mockAgentCompleted += 1;
-      injectSnapshot(
-        "agent",
-        agentSnapshot(mockAgentCompleted, "检查当前范围并形成测试建议"),
-      );
-    }
-    if (action === "agent/cancel")
-      injectSnapshot("agent", agentSnapshot(-1, "检查当前范围"));
     if (action === "changes/preview-operation") {
       const paths = Array.isArray(data.paths)
         ? data.paths.filter(
@@ -1930,6 +2038,89 @@ function mockConflictAdvice() {
     steps: ["完成工作副本合并", "运行类型检查和真实 SVN 测试"],
     source: "local-rule" as const,
   };
+}
+
+function mockConflictInterpretation() {
+  return {
+    myIntent: "我的版本调整了工作台入口的初始化顺序。",
+    theirIntent: "对方版本修改了同一文件的 Svelte 挂载逻辑。",
+    commonPoints: ["两侧均在入口文件同一区域修改。"],
+    conflictPoints: [
+      "初始化顺序与挂载逻辑相互影响，直接接受任一侧会丢失另一侧修改。",
+    ],
+    recommendedHandling: {
+      summary: "建议人工合并，保留两侧意图后核对初始化顺序。",
+      recommendation: "manualMerge" as const,
+      evidence: ["我的版本：初始化顺序调整", "对方版本：Svelte 挂载逻辑"],
+    },
+    businessUnknowns: ["哪个初始化顺序符合当前业务需求（需人工或业务确认）。"],
+    postSaveVerification: [
+      { title: "完成工作副本合并" },
+      { title: "运行类型检查", command: "npm run check" },
+    ],
+    warnings: [],
+    source: "configured-model" as const,
+    binding: {
+      scopeHash: "mock-scope-hash",
+      conflictHash: "mock-conflict-hash",
+      revision: "42",
+      generatedAt: "2026-08-18T12:00:00.000Z",
+    },
+  };
+}
+
+function injectMockConflictReceipt(): void {
+  workbenchBridge.injectMock({
+    protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+    type: "conflict/receipt",
+    moduleId: "conflicts",
+    taskId: "conflicts/resolve",
+    sessionId: "mock-session-id",
+    repositoryUuid: "mock-repository-uuid",
+    scopeHash: "mock-scope-hash",
+    payload: {
+      token: "mock-conflict-receipt-token",
+      receipt: {
+        task: "conflict-interpret",
+        projectId: "mock-project",
+        model: "deepseek-v4-flash",
+        dataTypes: ["冲突文件受限正文（base/mine/theirs/working）"],
+        files: 4,
+        totalBudget: 32000,
+        perFileBudget: 8000,
+        historyIncluded: false,
+      },
+      files: [
+        {
+          name: "base",
+          characters: 1200,
+          maxCharacters: 8000,
+          truncated: false,
+        },
+        {
+          name: "mine",
+          characters: 1500,
+          maxCharacters: 8000,
+          truncated: false,
+        },
+        {
+          name: "theirs",
+          characters: 1500,
+          maxCharacters: 8000,
+          truncated: false,
+        },
+        {
+          name: "working",
+          characters: 3200,
+          maxCharacters: 8000,
+          truncated: false,
+        },
+      ],
+      notSent: ["本地绝对路径（只发送项目内相对路径）", "范围外文件内容"],
+      retentionNote:
+        "数据保留策略由模型服务商策略决定，本插件无法证明其保留期限。",
+    },
+  });
 }
 
 /**
@@ -2434,93 +2625,6 @@ function repositorySnapshot(
   } as WorkbenchModuleSnapshot;
 }
 
-function aiReviewSnapshot(): WorkbenchModuleSnapshot {
-  const baseFindings = [
-    {
-      id: "security:env",
-      severity: "critical" as const,
-      category: "security" as const,
-      relativePath: "src/config.ts",
-      line: 8,
-      title: "疑似敏感信息",
-      evidence: "检测到疑似凭据，具体值已隐藏。",
-      recommendation: "移除并轮换凭据。",
-      confidence: "high" as const,
-    },
-    {
-      id: "debug:extension",
-      severity: "warning" as const,
-      category: "debug" as const,
-      relativePath: "src/extension.ts",
-      line: 12,
-      title: "检测到调试代码",
-      evidence: "console.log(result)",
-      recommendation: "确认调试输出是否应保留。",
-      confidence: "high" as const,
-    },
-    {
-      id: "testing",
-      severity: "note" as const,
-      category: "testing" as const,
-      title: "未检测到测试文件变更",
-      evidence: "2 个源文件发生变化。",
-      recommendation: "执行回归测试。",
-      confidence: "medium" as const,
-    },
-  ];
-  const findings = isScrollDataset()
-    ? Array.from({ length: 36 }, (_, index) => ({
-        ...baseFindings[index % baseFindings.length],
-        id: `finding-${index}`,
-        title: `第 ${index + 1} 条审查发现`,
-        relativePath: `项目资料/模块-${index + 1}.ts`,
-      }))
-    : baseFindings;
-  return {
-    kind: "ai-review",
-    state: "ready",
-    source: "local-rule",
-    generatedAt: new Date().toISOString(),
-    privacy: {
-      files: 3,
-      characters: 4280,
-      maxCharacters: 2000000,
-      historyIncluded: false,
-      model: "本地规则引擎",
-    },
-    summary: { critical: 1, warning: 1, note: 1 },
-    findings,
-    warnings: [],
-  };
-}
-
-function impactSnapshot(): WorkbenchModuleSnapshot {
-  return {
-    kind: "impact",
-    generatedAt: new Date().toISOString(),
-    source: "local-rule",
-    changedFiles: 4,
-    areas: [
-      {
-        id: "src/webview",
-        title: "Svelte Webview",
-        detail: "2 个变更文件",
-        paths: ["src/webview/App.svelte", "src/webview/styles/global.css"],
-        risk: "medium",
-      },
-    ],
-    tests: [
-      {
-        title: "Webview 浏览器验收",
-        reason: "UI 和样式发生变化。",
-        command: "npm run test:webview",
-      },
-    ],
-    observations: ["抽查 Light、Dark 和 High Contrast。"],
-    warnings: [],
-  };
-}
-
 function changelistSuggestions() {
   const paths = isScrollDataset()
     ? Array.from(
@@ -2542,6 +2646,72 @@ function changelistSuggestions() {
         title: `分组建议 ${index + 1}：工作台模块`,
       }))
     : [{ ...base, id: "split-1", title: "分组 1：webview" }];
+}
+
+function changelistSemanticSuggestions() {
+  return [
+    {
+      id: "split-1",
+      title: "拆分 1：命令注册",
+      summary: "1 个文件，状态：modified",
+      message:
+        "feat: 调整命令注册\n\n已确认事实：\n- 确认 src/webview/App.svelte 仅影响路由。",
+      paths: ["src/webview/App.svelte"],
+      reason: "基于受限差异与已确认事实推断提交意图。",
+      risks: [],
+      purpose: "基于受限差异与已确认事实推断提交意图。",
+      dependencies: ["依赖 1 条已确认事实"],
+    },
+  ];
+}
+
+function injectMockChangelistReceipt(): void {
+  workbenchBridge.injectMock({
+    protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+    type: "changelist/receipt",
+    moduleId: "changelists",
+    taskId: "changelists/manage",
+    sessionId: "mock-session-id",
+    repositoryUuid: "mock-repository-uuid",
+    scopeHash: "mock-scope-hash",
+    payload: {
+      token: "mock-changelist-receipt-token",
+      receipt: {
+        task: "changelist-split",
+        projectId: "mock-project",
+        model: "deepseek-v4-flash",
+        dataTypes: ["项目内相对路径、SVN 状态、脱敏差异片段"],
+        files: 1,
+        totalBudget: 40000,
+        perFileBudget: 6000,
+        historyIncluded: false,
+      },
+      coverage: {
+        total: 1,
+        analyzed: 1,
+        truncated: 0,
+        binary: 0,
+        readFailed: 0,
+        budgetExcluded: 0,
+      },
+      files: [
+        {
+          candidateId: "mock-candidate-a",
+          projectRelativePath: "src/webview/App.svelte" as never,
+          status: "modified",
+          state: "analyzed",
+          diffHash: "deadbeef",
+          charCount: 120,
+          hunkCount: 1,
+        },
+      ],
+      excludedCount: 0,
+      historyIncluded: false,
+      notSent: ["本地绝对路径（只发送项目内相对路径）"],
+      retentionNote:
+        "数据保留策略由模型服务商策略决定，本插件无法证明其保留期限。",
+    },
+  });
 }
 
 function changelistsSnapshot(
@@ -2587,81 +2757,107 @@ function changelistsSnapshot(
   } as WorkbenchModuleSnapshot;
 }
 
-function agentSnapshot(
-  completed = -2,
-  objective = "",
+function understandingSnapshot(
+  overrides: Record<string, unknown> = {},
 ): WorkbenchModuleSnapshot {
-  if (completed === -2)
-    return {
-      kind: "agent",
-      status: "idle",
-      objective: "",
-      steps: [],
-      guardrails: [
-        "只访问当前右键范围",
-        "只执行只读采集与本地分析",
-        "不自动修改文件、不自动提交",
-      ],
-    };
-  const definitions = [
-    [
-      "status",
-      "重新采集 SVN 状态",
-      "svn-read",
-      "已采集 4 个候选，其中 1 个阻止项。",
-    ],
-    [
-      "review",
-      "执行本地证据检查",
-      "local-analysis",
-      "发现 1 个高风险、1 个提醒、1 个建议。",
-    ],
-    [
-      "impact",
-      "生成影响与测试计划",
-      "local-analysis",
-      "识别 2 个影响区域，生成 3 条测试建议。",
-    ],
-  ] as const;
-  const cancelled = completed === -1;
-  const steps = definitions.map(([id, title, capability, output], index) => ({
-    id,
-    title,
-    detail: `${title}的固定只读步骤。`,
-    capability,
-    command: id === "status" ? "svn status --xml <current-scope>" : undefined,
-    scope: "当前右键范围",
-    risk: "低 · 只读或本地分析",
-    reversibility: "不产生工作副本修改",
-    status: cancelled
-      ? ("cancelled" as const)
-      : index < completed
-        ? ("completed" as const)
-        : ("pending" as const),
-    output: index < completed ? output : undefined,
-    requiresApproval: true,
-  }));
   return {
-    kind: "agent",
-    status: cancelled
-      ? "cancelled"
-      : completed >= steps.length
-        ? "completed"
-        : "planned",
-    objective,
-    guardrails: [
-      "只访问当前右键范围",
-      "只执行只读采集与本地分析",
-      "不自动修改文件、不自动提交",
+    kind: "change-understanding",
+    state: "ready",
+    source: "mixed",
+    binding: {
+      repositoryUuid: "mock-repository-uuid",
+      scopeHash: "mock-scope-hash",
+      candidateHash: "mock-candidate-hash",
+      revision: "42",
+      generatedAt: "2026-08-18T10:00:00.000Z",
+      model: "deepseek-v4-flash",
+    },
+    receipt: {
+      task: "understand-changes",
+      projectId: "mock-project",
+      model: "deepseek-v4-flash",
+      dataTypes: ["项目内相对路径、SVN 状态、脱敏差异片段"],
+      files: 1,
+      totalBudget: 40000,
+      perFileBudget: 6000,
+      historyIncluded: false,
+    },
+    coverage: {
+      total: 2,
+      analyzed: 1,
+      truncated: 1,
+      binary: 0,
+      readFailed: 0,
+      budgetExcluded: 0,
+    },
+    coverageFiles: [
+      {
+        candidateId: "mock-candidate-a",
+        projectRelativePath: "src/extension.ts" as never,
+        status: "modified",
+        state: "analyzed",
+        diffHash: "deadbeef",
+        charCount: 320,
+        hunkCount: 2,
+      },
+      {
+        candidateId: "mock-candidate-b",
+        projectRelativePath: "dist/out.js" as never,
+        status: "modified",
+        state: "truncated",
+        diffHash: "deadbeef",
+        charCount: 6000,
+        hunkCount: 1,
+        reason: "差异超过单文件预算，已截断",
+      },
     ],
-    steps,
-    nextStepId:
-      cancelled || completed >= steps.length ? undefined : steps[completed].id,
-    message:
-      completed >= steps.length
-        ? "只读流水线已完成，可以进入本地检查、影响或提交模块继续操作。"
-        : undefined,
-  };
+    changes: [
+      {
+        id: "local-modified",
+        statement: "修改了 2 个文件：src/extension.ts、dist/out.js。",
+        source: "local-rule",
+        status: "confirmed",
+        confidenceReason: "差异正文已本地核对，证据为逐文件差异块。",
+        evidence: [
+          {
+            candidateId: "mock-candidate-a",
+            hunkId: "mock-hunk-1",
+            projectRelativePath: "src/extension.ts",
+          },
+        ],
+        invalidEvidence: [],
+        limitations: [],
+        nextAction: "打开证据核对具体改动。",
+      },
+    ],
+    findings: [
+      {
+        id: "model-finding-0",
+        category: "evidence-gap",
+        statement: "dist/out.js 差异被截断，具体行为无法判断。",
+        source: "configured-model",
+        severity: "warning",
+        consequence: "提交说明可能遗漏该文件的行为变化。",
+        evidence: [],
+        invalidEvidence: [],
+        limitations: ["差异超过预算已截断。"],
+        nextAction: "重试失败项或人工查看该文件差异。",
+      },
+    ],
+    verification: [
+      {
+        id: "verify-类型与组件回归",
+        title: "类型与组件回归",
+        reason: "检测到 TypeScript / Svelte 变更。",
+        command: "npm run check && npm run test:unit",
+        gate: "general",
+      },
+    ],
+    userConfirmations: [],
+    limitations: [],
+    warnings: [],
+    ...overrides,
+  } as WorkbenchModuleSnapshot;
 }
 
 function injectMockCommitReceipt(retryNote?: string): void {
@@ -2722,6 +2918,71 @@ function injectMockCommitReceipt(retryNote?: string): void {
             retryNote,
           }
         : {}),
+      notSent: [
+        "本地绝对路径（只发送项目内相对路径）",
+        "范围外文件内容",
+        "API 密钥、SVN 凭据与证书私密材料",
+      ],
+      retentionNote:
+        "数据保留策略由模型服务商策略决定，本插件无法证明其保留期限。",
+    },
+  });
+}
+
+function injectMockUnderstandingReceipt(retryNote?: string): void {
+  // v0.0.12：变更解读外发回执（任务 understand-changes；独立消息）。
+  workbenchBridge.injectMock({
+    protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+    type: "understanding/receipt",
+    moduleId: "understanding",
+    taskId: "understanding/analyze",
+    sessionId: "mock-session-id",
+    repositoryUuid: "mock-repository-uuid",
+    scopeHash: "mock-scope-hash",
+    payload: {
+      token: "mock-understanding-receipt-token",
+      receipt: {
+        task: "understand-changes",
+        projectId: "mock-project",
+        model: "deepseek-v4-flash",
+        dataTypes: ["项目内相对路径、SVN 状态、脱敏差异片段"],
+        files: 1,
+        totalBudget: 40000,
+        perFileBudget: 6000,
+        historyIncluded: false,
+      },
+      coverage: {
+        total: 2,
+        analyzed: 1,
+        truncated: 1,
+        binary: 0,
+        readFailed: 0,
+        budgetExcluded: 0,
+      },
+      files: [
+        {
+          candidateId: "mock-candidate-a",
+          projectRelativePath: "src/extension.ts" as never,
+          status: "modified",
+          state: "analyzed",
+          diffHash: "deadbeef",
+          charCount: 320,
+          hunkCount: 2,
+        },
+        {
+          candidateId: "mock-candidate-b",
+          projectRelativePath: "dist/out.js" as never,
+          status: "modified",
+          state: "truncated",
+          diffHash: "deadbeef",
+          charCount: 6000,
+          hunkCount: 1,
+          reason: "差异超过单文件预算，已截断",
+        },
+      ],
+      excludedCount: 1,
+      historyIncluded: false,
+      ...(retryNote ? { retryNote } : {}),
       notSent: [
         "本地绝对路径（只发送项目内相对路径）",
         "范围外文件内容",

@@ -25,6 +25,8 @@ export interface UnfinishedContentInput {
   hasConflictAdvice?: boolean;
   /** Diff 页内编辑草稿。 */
   hasDiffDraft?: boolean;
+  /** v0.0.12：变更解读的会话内用户确认（切换项目即失效）。 */
+  hasUnderstandingConfirmations?: boolean;
 }
 
 export interface UnfinishedContentResult {
@@ -50,6 +52,8 @@ export function collectUnfinishedContent(
   if (input.hasConflictResolvePreview) reasons.push("待确认的冲突解决预览");
   if (input.hasConflictAdvice) reasons.push("冲突 AI 建议");
   if (input.hasDiffDraft) reasons.push("Diff 编辑草稿");
+  if (input.hasUnderstandingConfirmations)
+    reasons.push("变更解读的会话内确认（仅本会话有效）");
   return { hasContent: reasons.length > 0, reasons };
 }
 

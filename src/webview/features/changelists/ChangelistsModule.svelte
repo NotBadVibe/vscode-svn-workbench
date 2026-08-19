@@ -53,6 +53,7 @@
     snapshot,
     onAction,
     pathDetail,
+    changelistReceipt,
   }: {
     snapshot: ChangelistsSnapshot;
     onAction: (action: WebviewAction, data?: Record<string, unknown>) => void;
@@ -60,6 +61,11 @@
     pathDetail?: Extract<
       HostToWebviewMessage,
       { type: "file/path-detail-result" }
+    >["payload"];
+    /** v0.0.12 批次 B：语义拆分外发回执（changelist/receipt 一次性）。 */
+    changelistReceipt?: Extract<
+      HostToWebviewMessage,
+      { type: "changelist/receipt" }
     >["payload"];
   } = $props();
 
@@ -328,6 +334,38 @@
     applyPaths = [...suggestion.paths];
   }
 
+  /** v0.0.12 批次 B：语义拆分（先展示受限差异回执，确认后调用模型）。 */
+  function requestSemanticSplit(): void {
+    onAction("changelist/preview-receipt", {});
+  }
+
+  function confirmSemanticSplit(): void {
+    if (!changelistReceipt) return;
+    onAction("changelist/run-semantic", {
+      receiptToken: changelistReceipt.token,
+    });
+    changelistReceipt = undefined;
+  }
+
+  function continueMetadataSplit(): void {
+    const receipt = changelistReceipt;
+    if (receipt) {
+      onAction("changelist/receipt-dismiss", { token: receipt.token });
+    }
+    changelistReceipt = undefined;
+    onAction("changelist/suggest", { mode: "metadata" });
+  }
+
+  function dismissSplitReceipt(): void {
+    const receipt = changelistReceipt;
+    if (receipt) {
+      onAction("changelist/receipt-dismiss", { token: receipt.token });
+    }
+    changelistReceipt = undefined;
+  }
+
+  let receiptExpanded = $state(false);
+
   function sanitizeName(value: string): string {
     return (
       value
@@ -380,9 +418,13 @@
     </div>
     <button
       class="button button--primary"
-      onclick={() => onAction("changelist/suggest")}
+      onclick={() => onAction("changelist/suggest", { mode: "metadata" })}
       ><span class="codicon codicon-sparkle" aria-hidden="true"
       ></span>生成分组建议</button
+    >
+    <button class="button button--secondary" onclick={requestSemanticSplit}
+      ><span class="codicon codicon-sparkle" aria-hidden="true"
+      ></span>按改动意图拆分（含差异需确认）</button
     >
   </header>
   {#if snapshot.feedback}<div class="notice notice--success" role="status">
@@ -394,6 +436,91 @@
       {snapshot.aiPrivacy.model}；不含历史。点击“生成分组建议”才会发送。</span
     >
   </div>
+  {#if changelistReceipt}
+    <div class="commit-receipt" role="region" aria-label="语义拆分外发回执">
+      <div class="commit-receipt__head">
+        <span class="codicon codicon-arrow-up" aria-hidden="true"></span>
+        <strong>语义拆分外发回执（尚未发送）</strong>
+        <span class="commit-receipt__tag" role="status">等待确认</span>
+      </div>
+      <dl class="commit-receipt__meta">
+        <div>
+          <dt>任务</dt>
+          <dd>语义拆分（{changelistReceipt.receipt.task}）</dd>
+        </div>
+        <div>
+          <dt>模型</dt>
+          <dd>{changelistReceipt.receipt.model}</dd>
+        </div>
+        <div>
+          <dt>数据类型</dt>
+          <dd>{changelistReceipt.receipt.dataTypes.join("、")}</dd>
+        </div>
+        <div>
+          <dt>文件数</dt>
+          <dd>{changelistReceipt.receipt.files} 个已发送候选</dd>
+        </div>
+        <div>
+          <dt>预算</dt>
+          <dd>
+            单文件 {changelistReceipt.receipt.perFileBudget} 字符 / 总计 {changelistReceipt
+              .receipt.totalBudget} 字符
+          </dd>
+        </div>
+      </dl>
+      <p class="commit-receipt__coverage">
+        覆盖率：已分析 {changelistReceipt.coverage.analyzed} · 截断
+        {changelistReceipt.coverage.truncated} · 二进制
+        {changelistReceipt.coverage.binary} · 读取失败
+        {changelistReceipt.coverage.readFailed} · 预算外
+        {changelistReceipt.coverage.budgetExcluded}（共
+        {changelistReceipt.coverage.total} 个候选）
+      </p>
+      <button
+        type="button"
+        class="commit-receipt__toggle"
+        aria-expanded={receiptExpanded}
+        onclick={() => (receiptExpanded = !receiptExpanded)}
+        >{receiptExpanded ? "收起" : "展开"}包含 / 排除文件清单</button
+      >
+      {#if receiptExpanded}
+        <ul class="commit-receipt__files" aria-label="包含与排除文件清单">
+          {#each changelistReceipt.files as file (file.candidateId)}
+            <li
+              class="commit-receipt__file"
+              class:commit-receipt__file--excluded={file.state !== "analyzed"}
+            >
+              <span>{file.projectRelativePath}</span>
+              <small
+                >{file.state}{file.reason ? `（${file.reason}）` : ""}</small
+              >
+            </li>
+          {/each}
+        </ul>
+      {/if}
+      <p class="commit-receipt__note">
+        不会发送：{changelistReceipt.notSent.join("；")}。
+      </p>
+      <p class="commit-receipt__note">{changelistReceipt.retentionNote}</p>
+      <div class="commit-receipt__actions">
+        <button
+          type="button"
+          class="button button--primary"
+          onclick={confirmSemanticSplit}>开始语义拆分</button
+        >
+        <button
+          type="button"
+          class="button button--secondary"
+          onclick={continueMetadataSplit}>继续仅目录分组</button
+        >
+        <button
+          type="button"
+          class="button button--secondary"
+          onclick={dismissSplitReceipt}>放弃</button
+        >
+      </div>
+    </div>
+  {/if}
   {#if snapshot.suggestions.length > 0}<div class="ai-source">
       建议来源：{sourceLabels[snapshot.source]}
     </div>{/if}
@@ -659,7 +786,18 @@
             >
           </div>
           <p>{suggestion.summary}</p>
-          <small>{suggestion.reason}</small>{#if suggestion.risks.length}<ul>
+          <small>{suggestion.reason}</small>{#if suggestion.purpose}<p
+              class="split-purpose"
+            >
+              目的：{suggestion.purpose}
+            </p>{/if}{#if suggestion.dependencies?.length}<ul
+              class="split-dependencies"
+            >
+              {#each suggestion.dependencies as dep, depIndex (`${suggestion.id}:dep:${depIndex}`)}<li
+                >
+                  {dep}
+                </li>{/each}
+            </ul>{/if}{#if suggestion.risks.length}<ul>
               {#each suggestion.risks as risk, riskIndex (`${suggestion.id}:${riskIndex}`)}<li
                 >
                   {risk}

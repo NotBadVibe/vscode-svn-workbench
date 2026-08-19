@@ -103,12 +103,11 @@ export const acceptanceChecklistSections: AcceptanceChecklistSection[] = [
       {
         id: "explorer-ai-actions",
         title: "右键 AI 操作入口",
-        description:
-          "验证本地变更检查、影响与测试建议、变更集管理和本地检查流水线可以从资源管理器当前范围触发。",
+        description: "验证变更解读与变更集管理可以从资源管理器当前范围触发。",
         steps: [
           "在资源管理器中右键 SVN 工作副本内的文件或文件夹。",
           "展开“SVN 工作台”中的“AI 助手”。",
-          "分别确认本地变更检查、影响与测试建议、变更集管理、本地检查流水线入口。",
+          "确认“解读所选变更”与“变更集”入口。",
           "从“设置与诊断”打开 AI 模型设置。",
         ],
         expected: [
@@ -173,7 +172,7 @@ export const acceptanceChecklistSections: AcceptanceChecklistSection[] = [
         description:
           "确认 AI 在调用前解释外发内容，并且失败时不阻断 SVN 主流程。",
         steps: [
-          "打开 AI 审查、提交说明与影响分析。",
+          "打开变更解读、提交说明与冲突意图解释。",
           "检查模型、文件数、数据类型、字符预算和历史范围。",
           "关闭或清空 AI 配置后重复基础 SVN 浏览、Diff、历史与提交预览。",
         ],

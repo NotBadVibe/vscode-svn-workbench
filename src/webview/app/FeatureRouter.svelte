@@ -14,6 +14,9 @@
     targetSwitchRequest,
     pathDetail,
     commitReceipt,
+    understandingReceipt,
+    changelistReceipt,
+    conflictReceipt,
     onAction,
   }: {
     snapshot: WorkbenchModuleSnapshot;
@@ -41,6 +44,18 @@
     commitReceipt?: Extract<
       HostToWebviewMessage,
       { type: "commit/receipt" }
+    >["payload"];
+    understandingReceipt?: Extract<
+      HostToWebviewMessage,
+      { type: "understanding/receipt" }
+    >["payload"];
+    changelistReceipt?: Extract<
+      HostToWebviewMessage,
+      { type: "changelist/receipt" }
+    >["payload"];
+    conflictReceipt?: Extract<
+      HostToWebviewMessage,
+      { type: "conflict/receipt" }
     >["payload"];
     onAction: (action: WebviewAction, data?: Record<string, unknown>) => void;
   } = $props();
@@ -83,7 +98,12 @@
       module.default}<Feature {snapshot} {onAction} {pathDetail} />{/await}
 {:else if snapshot.kind === "conflicts"}
   {#await import("../features/conflicts/ConflictsModule.svelte")}{@render loadingModule()}{:then module}{@const Feature =
-      module.default}<Feature {snapshot} {onAction} {pathDetail} />{/await}
+      module.default}<Feature
+      {snapshot}
+      {onAction}
+      {pathDetail}
+      {conflictReceipt}
+    />{/await}
 {:else if snapshot.kind === "settings"}
   {#await import("../features/settings/SettingsModule.svelte")}{@render loadingModule()}{:then module}{@const Feature =
       module.default}<Feature {snapshot} {taskId} {onAction} />{/await}
@@ -98,18 +118,22 @@
       {onAction}
       {pathDetail}
     />{/await}
-{:else if snapshot.kind === "ai-review"}
-  {#await import("../features/ai-review/AiReviewModule.svelte")}{@render loadingModule()}{:then module}{@const Feature =
-      module.default}<Feature {snapshot} {onAction} />{/await}
-{:else if snapshot.kind === "impact"}
-  {#await import("../features/impact/ImpactModule.svelte")}{@render loadingModule()}{:then module}{@const Feature =
-      module.default}<Feature {snapshot} {onAction} {pathDetail} />{/await}
+{:else if snapshot.kind === "change-understanding"}
+  {#await import("../features/understanding/UnderstandingModule.svelte")}{@render loadingModule()}{:then module}{@const Feature =
+      module.default}<Feature
+      {snapshot}
+      {onAction}
+      {pathDetail}
+      {understandingReceipt}
+    />{/await}
 {:else if snapshot.kind === "changelists"}
   {#await import("../features/changelists/ChangelistsModule.svelte")}{@render loadingModule()}{:then module}{@const Feature =
-      module.default}<Feature {snapshot} {onAction} {pathDetail} />{/await}
-{:else if snapshot.kind === "agent"}
-  {#await import("../features/agent/AgentModule.svelte")}{@render loadingModule()}{:then module}{@const Feature =
-      module.default}<Feature {snapshot} {onAction} />{/await}
+      module.default}<Feature
+      {snapshot}
+      {onAction}
+      {pathDetail}
+      {changelistReceipt}
+    />{/await}
 {:else if snapshot.kind === "projects"}
   {#await import("../features/projects/ProjectsModule.svelte")}{@render loadingModule()}{:then module}{@const Feature =
       module.default}<Feature {snapshot} {onAction} />{/await}

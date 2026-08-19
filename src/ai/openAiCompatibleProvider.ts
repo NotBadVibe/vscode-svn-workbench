@@ -12,12 +12,19 @@ import {
   AiSelectionResult,
   AiTeamRulesRecommendation,
   AiTeamRulesRequest,
+  type AiUnderstandingRequest,
+  type AiUnderstandingResult,
 } from "./aiProvider";
 import { normalizeCommitMessageResult } from "./commitMessageAiGenerator";
 import { normalizeCommitSplitResult } from "./commitSplitAi";
 import { normalizeConflictAdvice } from "./conflictAiAdvisor";
+import {
+  normalizeConflictInterpretation,
+  type AiConflictInterpretation,
+} from "./conflictInterpretation";
 import { normalizeAiSelectionResult } from "./aiResultValidator";
 import { normalizeTeamRulesRecommendation } from "./teamRulesAiRecommender";
+import { normalizeUnderstandingResult } from "../understanding/understandingAi";
 
 export class OpenAiCompatibleProvider implements AiProvider {
   constructor(private readonly config: AiProviderConfig) {}
@@ -131,6 +138,43 @@ export class OpenAiCompatibleProvider implements AiProvider {
     const text = await this.complete(content);
     return normalizeConflictAdvice(
       parseJsonObject(text) as Partial<AiConflictAdvice>,
+    );
+  }
+
+  async interpretConflict(
+    request: AiConflictRequest,
+  ): Promise<AiConflictInterpretation> {
+    const content = [
+      "You help a developer understand an SVN text conflict before they edit the working copy.",
+      "Never modify files, never run commands; postSaveVerification commands are display-only suggestions.",
+      "Return strict JSON only with keys myIntent, theirIntent, commonPoints, conflictPoints, recommendedHandling, businessUnknowns, postSaveVerification, warnings.",
+      "recommendedHandling: { summary, recommendation (acceptWorking|acceptMine|acceptTheirs|manualMerge|noSafeSuggestion), evidence (display-only paths/notes) }.",
+      "You must state what cannot be determined (businessUnknowns) instead of inventing it.",
+      JSON.stringify(request),
+    ].join("\n\n");
+    const text = await this.complete(content);
+    return normalizeConflictInterpretation(
+      parseJsonObject(text) as Partial<AiConflictInterpretation>,
+    );
+  }
+
+  async understandChanges(
+    request: AiUnderstandingRequest,
+  ): Promise<AiUnderstandingResult> {
+    const content = [
+      "You are helping a developer understand the changes in their SVN working copy.",
+      "Only use the provided sanitized diff fragments and file metadata. Never invent files or hunks.",
+      "Do not write files, do not run commands; commands in verification are display-only suggestions.",
+      "Return strict JSON only with keys summary, changes, findings, verification, warnings.",
+      "Each change: statement (object + change + result), status (confirmed|inferred|toConfirm), confidenceReason, evidence (candidateId+hunkId+projectRelativePath only from the provided diffs), limitations, nextAction.",
+      "A change may be marked confirmed ONLY when backed by an evidence reference in the provided diffs.",
+      "Each finding: statement, category (local-blocked|model|evidence-gap|business-unknown), severity (critical|warning|note), consequence, evidence, limitations, nextAction.",
+      "Each verification item: title, reason (which risk it validates), command (display-only).",
+      JSON.stringify(request),
+    ].join("\n\n");
+    const text = await this.complete(content);
+    return normalizeUnderstandingResult(
+      parseJsonObject(text) as Partial<AiUnderstandingResult>,
     );
   }
 

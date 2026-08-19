@@ -6,7 +6,7 @@
   "releaseDate": null,
   "gitTag": null,
   "gitCommit": null,
-  "sourceState": "未形成 v0.0.12 候选源码；当前仅有有证据变更解读、验证关联、语义拆分、冲突意图解释和入口收敛规划，前序依赖尚未形成候选版本",
+  "sourceState": "候选源码已落地：批次 A（变更解读主闭环）、批次 B（提交说明接入有效确认 + 按改动意图拆分）、批次 C（冲突意图解释 + 旧 ai-review/impact/agent 入口收敛）已全部落地；npm run verify 全链路通过；发布 evidence 与 VSIX 指纹待生成（记录提交时置 clean）",
   "vsix": null,
   "tests": null,
   "acceptedEvidenceRun": null,

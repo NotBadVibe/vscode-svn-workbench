@@ -29,6 +29,7 @@
     snapshot,
     onAction,
     pathDetail,
+    conflictReceipt,
   }: {
     snapshot: ConflictSnapshot;
     onAction: (action: WebviewAction, data?: Record<string, unknown>) => void;
@@ -37,9 +38,44 @@
       HostToWebviewMessage,
       { type: "file/path-detail-result" }
     >["payload"];
+    /** v0.0.12 批次 C：冲突意图解释外发回执（conflict/receipt 一次性）。 */
+    conflictReceipt?: Extract<
+      HostToWebviewMessage,
+      { type: "conflict/receipt" }
+    >["payload"];
   } = $props();
 
   let activePane = $state<"mine" | "theirs" | "base" | "working">("working");
+  let receiptExpanded = $state(false);
+
+  /** v0.0.12 批次 C：解释冲突意图（先展示受限回执，确认后调用模型）。 */
+  function requestInterpret(): void {
+    onAction("conflict/preview-receipt", {
+      relativePath: snapshot.selected?.relativePath,
+    });
+  }
+  function confirmInterpret(): void {
+    if (!conflictReceipt) return;
+    onAction("conflict/interpret", { receiptToken: conflictReceipt.token });
+    conflictReceipt = undefined;
+  }
+  function continueLocalAdvice(): void {
+    const receipt = conflictReceipt;
+    if (receipt) {
+      onAction("conflict/receipt-dismiss", { token: receipt.token });
+    }
+    conflictReceipt = undefined;
+    onAction("conflict/advise", {
+      relativePath: snapshot.selected?.relativePath,
+    });
+  }
+  function dismissInterpretReceipt(): void {
+    const receipt = conflictReceipt;
+    if (receipt) {
+      onAction("conflict/receipt-dismiss", { token: receipt.token });
+    }
+    conflictReceipt = undefined;
+  }
   let query = $state("");
   let typeFilter = $state("all");
   let operationFilter = $state("all");
@@ -447,6 +483,9 @@
             ><span class="codicon codicon-sparkle"
             ></span>{conflictAdviceConfigured ? "AI 分析" : "本地建议"}</button
           >
+          <button class="button button--secondary" onclick={requestInterpret}
+            ><span class="codicon codicon-sparkle"></span>解释冲突意图</button
+          >
           <button
             class="button button--secondary"
             onclick={() =>
@@ -456,6 +495,84 @@
           >
         </div>
       </div>
+      {#if conflictReceipt}
+        <div class="commit-receipt" role="region" aria-label="冲突意图解释回执">
+          <div class="commit-receipt__head">
+            <span class="codicon codicon-arrow-up" aria-hidden="true"></span>
+            <strong>冲突意图解释回执（尚未发送）</strong>
+            <span class="commit-receipt__tag" role="status">等待确认</span>
+          </div>
+          <dl class="commit-receipt__meta">
+            <div>
+              <dt>任务</dt>
+              <dd>冲突意图解释（{conflictReceipt.receipt.task}）</dd>
+            </div>
+            <div>
+              <dt>模型</dt>
+              <dd>{conflictReceipt.receipt.model}</dd>
+            </div>
+            <div>
+              <dt>数据类型</dt>
+              <dd>{conflictReceipt.receipt.dataTypes.join("、")}</dd>
+            </div>
+            <div>
+              <dt>文件数</dt>
+              <dd>{conflictReceipt.receipt.files} 个冲突正文</dd>
+            </div>
+            <div>
+              <dt>预算</dt>
+              <dd>
+                单文件 {conflictReceipt.receipt.perFileBudget} 字符 / 总计 {conflictReceipt
+                  .receipt.totalBudget} 字符
+              </dd>
+            </div>
+          </dl>
+          <button
+            type="button"
+            class="commit-receipt__toggle"
+            aria-expanded={receiptExpanded}
+            onclick={() => (receiptExpanded = !receiptExpanded)}
+            >{receiptExpanded ? "收起" : "展开"}冲突正文预算清单</button
+          >
+          {#if receiptExpanded}
+            <ul class="commit-receipt__files" aria-label="冲突正文预算清单">
+              {#each conflictReceipt.files as file (file.name)}
+                <li class="commit-receipt__file">
+                  <span>{file.name}</span>
+                  <small
+                    >{file.characters} / {file.maxCharacters} 字符{file.truncated
+                      ? "（已截断）"
+                      : ""}{file.readError
+                      ? `（${file.readError}）`
+                      : ""}</small
+                  >
+                </li>
+              {/each}
+            </ul>
+          {/if}
+          <p class="commit-receipt__note">
+            不会发送：{conflictReceipt.notSent.join("；")}。
+          </p>
+          <p class="commit-receipt__note">{conflictReceipt.retentionNote}</p>
+          <div class="commit-receipt__actions">
+            <button
+              type="button"
+              class="button button--primary"
+              onclick={confirmInterpret}>开始解释</button
+            >
+            <button
+              type="button"
+              class="button button--secondary"
+              onclick={continueLocalAdvice}>继续仅本地建议</button
+            >
+            <button
+              type="button"
+              class="button button--secondary"
+              onclick={dismissInterpretReceipt}>放弃</button
+            >
+          </div>
+        </div>
+      {/if}
       <div class="conflict-tabs" role="tablist" aria-label="冲突版本">
         {#each ["working", "mine", "theirs", "base"] as pane (pane)}
           <button
@@ -630,6 +747,70 @@
             </div>
           {/if}
         </section>
+        {#if snapshot.interpretation}
+          <section class="conflict-advice" aria-label="冲突意图解释">
+            <div class="section-heading">
+              <div>
+                <span class="eyebrow">冲突意图解释（§7 六段）</span>
+                <h2>意图解释</h2>
+              </div>
+              <span class="conflict-advice__source"
+                >来源：{sourceLabels[
+                  snapshot.interpretation.source
+                ]}{#if snapshot.interpretation.stale}
+                  · 已过期（冲突或修订已变化，只读）{/if}</span
+              >
+            </div>
+            {#if snapshot.interpretation.fallbackReason}<div
+                class="notice notice--warning"
+              >
+                降级原因：{snapshot.interpretation.fallbackReason}
+              </div>{/if}
+            <h3>我的修改意图</h3>
+            <p>{snapshot.interpretation.myIntent}</p>
+            <h3>对方修改意图</h3>
+            <p>{snapshot.interpretation.theirIntent}</p>
+            <h3>共同点</h3>
+            <ul>
+              {#each snapshot.interpretation.commonPoints as point, pointIndex (pointIndex)}<li
+                >
+                  {point}
+                </li>{/each}
+            </ul>
+            <h3>冲突点</h3>
+            <ul>
+              {#each snapshot.interpretation.conflictPoints as point, pointIndex (pointIndex)}<li
+                >
+                  {point}
+                </li>{/each}
+            </ul>
+            <h3>推荐处理方式及证据</h3>
+            <p>{snapshot.interpretation.recommendedHandling.summary}</p>
+            {#if snapshot.interpretation.recommendedHandling.evidence.length}<ul
+              >
+                {#each snapshot.interpretation.recommendedHandling.evidence as evidence, evidenceIndex (evidenceIndex)}<li
+                  >
+                    {evidence}
+                  </li>{/each}
+              </ul>{/if}
+            <h3>无法判断的业务选择</h3>
+            <ul>
+              {#each snapshot.interpretation.businessUnknowns as unknown, unknownIndex (unknownIndex)}<li
+                >
+                  {unknown}
+                </li>{/each}
+            </ul>
+            <h3>保存后应运行的验证</h3>
+            <ol>
+              {#each snapshot.interpretation.postSaveVerification as item, itemIndex (itemIndex)}<li
+                >
+                  {item.title}{#if item.command}<code class="conflict-command"
+                      >{item.command}</code
+                    >{/if}
+                </li>{/each}
+            </ol>
+          </section>
+        {/if}
         <section class="resolve-panel">
           <div class="section-heading">
             <div>

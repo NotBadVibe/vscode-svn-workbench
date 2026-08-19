@@ -2,9 +2,9 @@
 
 > 文档身份：`planned-version-specification`
 >
-> 状态：规划中（draft）。本文只定义 v0.0.12 的目标、信息架构和候选验收，不表示功能已经实现、测试通过或可以发布。
+> 状态：候选（candidate）。批次 A（变更解读主闭环）、批次 B（提交说明接入有效确认 + 按改动意图拆分）、批次 C（冲突意图解释 + 旧 ai-review/impact/agent 入口收敛）已全部落地并通过本地完整门禁（`npm run verify` 全链路）；候选源码提交、发布 evidence 与 VSIX 指纹见 [`manifest.json`](./manifest.json)。真实读屏 / 200% 目视 / 真实 SVN 人工主路径与三平台 CI 保留为非阻断观察项。
 >
-> 规划基线：[`v0.0.11`](../v0.0.11/)。前序依赖尚未形成候选版本；当前事实以源码、测试和 [`../../current/`](../../current/) 为准。
+> 规划基线：[`v0.0.11`](../v0.0.11/)。v0.0.11 已于 2026-08-18 正式发布；当前开发事实继续以源码、测试和 [`../../current/`](../../current/) 为准。
 >
 > 优先级：P2，在范围、列表、真实性与证据基础稳定后实施。
 >
@@ -14,7 +14,21 @@
 
 用户不是为了“使用 AI”进入工作台，而是要理解改动、发现风险、决定验证方式、准备说明或拆分提交。v0.0.12 将分散的 Review、Impact 与固定 Agent 收敛为任务内的“解读当前变更”，并复用 v0.0.11 的回执、coverage、证据和时效模型。
 
-结果必须回答：
+## 1.1 实施状态（2026-08-19）
+
+- 已完成（源码 + 测试，详见 `docs/current/实现与代码映射.md` §8.9-§8.11）：
+  - 批次 A：统一 Snapshot 与本地/模型/用户合并、受限差异回执与证据、变更解读
+    页面（understanding）、会话内确认（待复核、切换守卫）、入口；
+  - 批次 B：提交说明接入仍有效确认事实、按改动意图拆分（无差异降级为目录/文件
+    类型分组、同文件不跨实际 Changelist、preview→confirm→写入链路）；
+  - 批次 C：冲突意图解释（§7 六段、受限回执、stale 只读），并移除旧
+    ai-review/impact/agent 一级入口（understanding 为唯一主路径）；
+  - 候选验收：`npm run verify` 全链路通过（静态检查、双平台契约、覆盖率门禁
+    1160 项单元/组件测试、75 项 Webview/视觉/无障碍 E2E、性能预算、Extension
+    Host 真实 SVN 验收，行覆盖率 91.48%），并同步 `docs/current/`。
+- 非阻断观察项（沿用惯例）：真实读屏、200% 缩放与 High Contrast 目视复验；
+  人工主路径验收记录；三平台 CI 在标签推送后运行。
+  结果必须回答：
 
 1. 改了什么；
 2. 为什么值得关注；
@@ -229,3 +243,109 @@ interface ChangeUnderstandingSnapshot {
 ## 13. 是否继续扩展的门槛
 
 只有候选验收证明用户能更快理解真实改动、发现至少一项有用未知或风险，并在不损害原输入的情况下继续提交，才考虑后续更强的任务代理能力。否则停止扩展 Agent，优先修正输入、证据和结果质量。
+
+## 14. 开源作品研究结论（批次 A 前）
+
+采用低风险结论：逐条 Host 证据（主证据 + 额外数量）、来源与限制明确展示、
+confirmed/inferred/toConfirm + confidenceReason、coverage/部分失败/重试与
+运行阶段诚实呈现。不采纳：全仓库上下文、自动应用/提交、模型置信驱动写操作、
+聊天/diagram/Code Peek。
+
+## 15. 批次 A 实施记录（2026-08-18，开发中）
+
+范围固定：统一 Snapshot、本地/模型合并、受限差异回执与证据、understanding
+页面、会话内确认、入口与测试；不接入 Commit 写回、不做语义拆分/冲突解释、
+不移除旧入口。
+
+已落地（源码 + 测试，详见 `docs/current/实现与代码映射.md` §8.9）：
+
+- 新 moduleId `understanding`（任务 `understanding/analyze`）与统一
+  `ChangeUnderstandingSnapshot`（state/binding/receipt/coverage/changes/
+  findings/verification/userConfirmations/limitations/draftProposal）；
+- 本地/模型/用户合并 `mergeUnderstandingResults`：来源逐条标记，本地硬阻止项
+  不被模型降级；`AiUsageScenario` 增加 `changeUnderstanding`（设置页可见场景）；
+- 受限差异回执与证据复用 v0.0.11：`AnalysisReceipt.task` 扩为
+  `commit-draft|understand-changes`，pending receipt/token 显式绑定任务、
+  跨任务一律拒绝；独立 `understanding/receipt` 消息（不改动已发布 commit/receipt）；
+- `understanding` 页面：首屏用途/范围/来源/状态、回执三动作、四段结果、证据
+  打开差异、会话内确认（IME 保护）、过期只读；`understanding/open-evidence`
+  复验 token/时效/候选/范围后路由 Diff；`understanding/retry-failed` 只重采失败项；
+- 会话内确认：绑定候选 hash，scope/候选/revision 变化标待复核且绝不静默沿用；
+  `projectSwitchGuard` 计入切换提示；
+- 入口：`svnWorkbench.understandScope`（“SVN：解读所选变更”）+ Explorer
+  `svnWorkbench.ai` 子菜单；
+- 测试：单元（changeUnderstanding）、Controller（workbenchUnderstanding：
+  run-local 不调用模型、回执/跨任务拒绝/确认待复核/open-evidence/retry-failed）、
+  组件（UnderstandingModule）、Webview E2E（主闭环/证据打开）；协议三处清单同步。
+
+未实施（后续批次）：语义拆分（§6）、冲突意图解释（§7）、旧 Review/Impact/Agent
+入口移除（§10 step 7）、提交说明写回 Commit 建议区、设置页变更解读高级字段。
+
+## 16. 批次 B 实施记录（2026-08-18，开发中）
+
+范围固定：将有效用户确认事实接入提交说明，并完成按改动意图拆分；不重做
+commit/understanding receipt；实际 Changelist 套用保留既有预览→确认→写入链路。
+
+已落地（源码 + 测试，详见 `docs/current/实现与代码映射.md` §8.10）：
+
+- 跨模块会话内共享确认：`understandingConfirmations.ts`（项目键隔离、候选 hash
+  一致的仍有效事实，仅会话内），commit 生成提交说明与 changelists 语义拆分复用；
+- 提交说明接入确认：`commit/generate-message` 只使用仍有效确认，建议如实标注
+  “已使用 N 条变更解读确认事实”；v0.0.11 不覆盖/采用/撤销/时效/证据契约不变；
+- 按改动意图拆分：`changelist/preview-receipt`（任务 changelist-split 独立回执、
+  脱敏与预算沿用 6000/40000）→ `changelist/run-semantic`（校验任务/token/范围/
+  候选后携带差异 + 确认事实语义拆分）；无差异时 `changelist/suggest` 明确降级为
+  目录/文件类型分组；模型永不加入 scope 外文件、同文件不跨拆分重复；
+- 同文件不得进入两个实际 Changelist：`changelist/preview-apply` 与 `execute-apply`
+  均复验（fail-closed）；实际套用保留 preview→确认→写入链路；
+- Webview：变更集页语义拆分入口 + 回执三动作 + purpose/依赖展示；提交页确认事实
+  提示；变更解读“准备提交”区“按改动意图拆分”入口；
+- 测试：单元（commitSplitSemantic）、Controller（workbenchChangelistSemantic：
+  回执/跨任务拒绝/重复文件阻止/确认事实有效与过期排除）、组件（ChangelistsSemantic）、
+  Webview E2E（语义拆分主闭环/确认事实提示）。
+
+未实施（后续批次）：冲突意图解释（§7）、旧 Review/Impact/Agent 入口移除
+（§10 step 7）、变更解读/提交页间确认的跨窗口自动同步刷新。
+
+## 17. 批次 C 实施记录（2026-08-18，开发中）
+
+范围固定：冲突意图解释主功能（§7 六段）；不启用 conflictMerge 场景；不自动
+编辑/保存/Resolve/扩大 scope；保存与 Resolve 保留既有 token/预览/确认/失败恢复。
+
+已落地（源码 + 测试，详见 `docs/current/实现与代码映射.md` §8.11）：
+
+- 领域 `src/ai/conflictInterpretation.ts`：六段 `AiConflictInterpretation`、
+  复用受限文本预算、本地回退如实声明无法判断、严格结构校验；
+- 模型 `AiProvider.interpretConflict`（复用 conflictAdvice 场景配置，不启用
+  conflictMerge）；Prompt 只读、验证命令仅建议、业务未知如实列出；
+- 协议：任务 `conflict-interpret`、`conflict/preview-receipt`/`receipt-dismiss`/
+  `interpret`、`conflict/receipt` 消息、`ConflictSnapshot.interpretation`；
+- Host：preview-receipt 只读正文算预算；interpret 校验任务/token/scope/冲突集
+  hash 后调用模型并绑定；冲突集/revision 变化标 stale 只读；dismiss 放弃；
+- Webview：解释入口 + 回执三动作 + 六段展示（验证命令仅展示）；保存与 Resolve
+  契约不变；
+- 测试：单元（conflictInterpretation）、Controller（workbenchConflictInterpret：
+  回执/跨任务拒绝/冲突集变化 stale/dismiss）、组件（ConflictsModule 六段/回执）、
+  Webview E2E（冲突意图解释主闭环）。
+
+未实施（后续批次）：旧 Review/Impact/Agent 入口移除（§10 step 7，等待 ds1 清单）；
+冲突解释与冲突文件的跨窗口证据跳转细化。
+
+## 18. 批次 C 入口收敛记录（2026-08-18）
+
+按 ds1 调研建议直接删除（不保留别名）旧 `ai-review`、`impact`、`agent`
+一级模块/任务/命令/菜单/动作/Mock/组件/测试；`understanding`（变更解读）为
+唯一变更解读主路径。
+
+- 保留：`src/ai/changeIntelligence.ts` 与 `AiReviewSnapshot`/`ImpactSnapshot`
+  领域契约（供 understanding 本地适配）；changelists、understanding、冲突
+  意图解释与所有 receipt；保存/Resolve 契约。
+- 删除：协议 module/task/action/moduleIds 三处清单中 ai-review/impact/agent；
+  `AgentSnapshot`；controller 对应 case 与 helper；extension.ts 命令与入口；
+  package.json 命令/菜单/activationEvent；FeatureRouter 分支与三个 feature
+  目录；Mock 快照/动作；AgentModule/IntelligenceModules 组件测试与相关 e2e；
+  i18n 术语与旧模块专属 CSS（保留共享类）。
+- 迁移：`AiReviewSnapshot`/`ImpactSnapshot` 从协议移入 `changeIntelligence.ts`
+  （领域契约）；旧深链经运行时 moduleIds 清单移除安全失效/回退。
+- 文档：README 命令与能力说明、CHANGELOG（Unreleased）、docs/current 基线、
+  acceptanceChecklist、chinese-scroll 与 navigation 同步。
