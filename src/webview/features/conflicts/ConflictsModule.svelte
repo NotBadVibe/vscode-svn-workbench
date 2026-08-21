@@ -14,6 +14,7 @@
   import ScrollArea from "../../components/ui/ScrollArea.svelte";
   import SearchInput from "../../components/list/SearchInput.svelte";
   import ResultCount from "../../components/list/ResultCount.svelte";
+  import OperationIntentDialog from "../../components/operation/OperationIntentDialog.svelte";
   import FilePathDetail from "../../components/svn/FilePathDetail.svelte";
   import { useFileList } from "../../components/list/useFileList.svelte";
   import { naturalCompare } from "../../../selection/selectionSort";
@@ -30,6 +31,8 @@
     onAction,
     pathDetail,
     conflictReceipt,
+    conflictDraftAck,
+    conflictSwitchRequest,
   }: {
     snapshot: ConflictSnapshot;
     onAction: (action: WebviewAction, data?: Record<string, unknown>) => void;
@@ -42,6 +45,16 @@
     conflictReceipt?: Extract<
       HostToWebviewMessage,
       { type: "conflict/receipt" }
+    >["payload"];
+    /** v0.0.13 批次 B：冲突草稿检查点 ACK。 */
+    conflictDraftAck?: Extract<
+      HostToWebviewMessage,
+      { type: "conflict/draft-checkpointed" }
+    >["payload"];
+    /** v0.0.13 批次 B：冲突草稿三选一守卫请求。 */
+    conflictSwitchRequest?: Extract<
+      HostToWebviewMessage,
+      { type: "conflict/draft-switch-confirm" }
     >["payload"];
   } = $props();
 
@@ -81,6 +94,33 @@
   let operationFilter = $state("all");
   let sortField = $state<"path" | "type" | "operation">("path");
   let navAnnouncement = $state("");
+  // v0.0.13 中文 IME 保护与三选一对话框焦点管理
+  let isComposing = $state(false);
+  let switchDialogEl = $state<HTMLDialogElement>();
+  let switchTriggerEl: HTMLElement | undefined;
+  let conflictDraftFeedback = $state("");
+  // v0.0.14 通用操作意向单：Resolve 确认对话框（批次 C）
+  let resolveIntentOpen = $state(false);
+  let resolveTriggerEl = $state<HTMLElement | null>(null);
+  const resolveIntent = $derived.by(() => {
+    const preview = snapshot.resolvePreview;
+    if (!preview || !snapshot.selected) return undefined;
+    const title = `标记解决 1 个冲突`;
+    const summary = `标记解决 ${snapshot.selected.relativePath} · 执行前将重新校验工作副本内容`;
+    const stale = false;
+    return {
+      token: preview.token,
+      kind: "resolve" as const,
+      title,
+      summary,
+      paths: [snapshot.selected.relativePath],
+      createdAt: new Date().toISOString(),
+      canExecute: preview.canResolve && !stale,
+      issues: preview.issues,
+      commands: [preview.command],
+      stale,
+    };
+  });
   /** v0.0.9：模型未配置时按钮不标“AI”，如实指向本地建议（AI09-TRUTH-01）。 */
   const conflictAdviceConfigured = $derived(
     snapshot.aiPrivacy?.model !== undefined &&
@@ -215,8 +255,32 @@
     const token = snapshot.selected?.mergeEditor.token ?? "";
     if (token !== editorToken) {
       editorToken = token;
-      mergeDraft = snapshot.selected?.contents.working?.content ?? "";
-      savedWorking = mergeDraft;
+      // v0.0.13：优先展示 Host 内存草稿（不写盘、不触发 Resolve），否则回落到工作副本内容
+      mergeDraft =
+        snapshot.selected?.draft?.content ??
+        snapshot.selected?.contents.working?.content ??
+        "";
+      savedWorking = snapshot.selected?.contents.working?.content ?? "";
+      if (snapshot.selected?.draft?.hasDraft) {
+        conflictDraftFeedback = `草稿已同步（修订 ${snapshot.selected.draft.revision}，${new Date(snapshot.selected.draft.updatedAt).toLocaleString("zh-CN")}）`;
+      }
+    }
+  });
+  // 检查点 ACK 内联提示（编辑器与草稿保留）
+  $effect(() => {
+    if (conflictDraftAck) {
+      conflictDraftFeedback = `检查点已保存（修订 ${conflictDraftAck.revision}）`;
+    }
+  });
+  // 三选一守卫对话框：打开时焦点进入首个按钮，关闭后回到触发按钮（键盘可达、焦点返回）
+  $effect(() => {
+    if (conflictSwitchRequest) {
+      switchTriggerEl = document.activeElement as HTMLElement | undefined;
+      queueMicrotask(() => switchDialogEl?.showModal?.());
+      queueMicrotask(() => switchDialogEl?.querySelector("button")?.focus());
+    } else {
+      switchDialogEl?.close?.();
+      switchTriggerEl?.focus?.();
     }
   });
 
@@ -236,7 +300,16 @@
             "aria-label": `${snapshot.selected?.relativePath ?? ""} 可编辑工作副本合并结果`,
           }),
           EditorView.updateListener.of((update) => {
-            if (update.docChanged) mergeDraft = update.state.doc.toString();
+            if (update.docChanged) {
+              mergeDraft = update.state.doc.toString();
+              // v0.0.13：编辑时同步到 Host 内存（不写盘、不触发 Resolve），中文 IME 候选阶段不触发
+              if (!isComposing) {
+                onAction("conflict/draft-update", {
+                  relativePath: snapshot.selected?.relativePath,
+                  content: mergeDraft,
+                });
+              }
+            }
           }),
           EditorView.theme({
             "&": {
@@ -643,13 +716,31 @@
           class="conflict-editor conflict-editor--editable"
           role="region"
           aria-label="可编辑工作副本合并区域"
+          oncompositionstart={() => (isComposing = true)}
+          oncompositionend={() => (isComposing = false)}
         >
           <div class="conflict-codemirror-host" bind:this={editorHost}></div>
         </div>
+        {#if snapshot.selected.draft?.hasDraft}<div
+            class="notice notice--info"
+            role="status"
+          >
+            <span class="codicon codicon-save" aria-hidden="true"></span>Host
+            内存草稿已同步（修订 {snapshot.selected.draft.revision}，{snapshot
+              .selected.draft.dirty
+              ? "有未保存变更"
+              : "干净"}），关闭任务前可复制/导出逃生。
+          </div>{/if}
+        {#if conflictDraftFeedback}<div
+            class="notice notice--success"
+            role="status"
+          >
+            {conflictDraftFeedback}
+          </div>{/if}
         <div class="merge-save-bar">
           <span
             >{workingDirty
-              ? "有尚未保存的合并修改"
+              ? "有尚未保存的合并修改（Host 草稿已同步）"
               : "工作副本与已保存内容一致"}</span
           ><button
             class="button button--primary"
@@ -659,6 +750,27 @@
                 editToken: snapshot.selected?.mergeEditor.token,
                 content: mergeDraft,
               })}>保存工作副本合并结果</button
+          ><button
+            class="button button--secondary"
+            disabled={!snapshot.selected.draft?.hasDraft}
+            onclick={() =>
+              onAction("conflict/draft-copy", {
+                relativePath: snapshot.selected?.relativePath,
+              })}>复制草稿</button
+          ><button
+            class="button button--secondary"
+            disabled={!snapshot.selected.draft?.hasDraft}
+            onclick={() =>
+              onAction("conflict/draft-export", {
+                relativePath: snapshot.selected?.relativePath,
+              })}>导出草稿</button
+          ><button
+            class="button button--secondary"
+            disabled={!snapshot.selected.draft?.hasDraft}
+            onclick={() =>
+              onAction("conflict/draft-abandon", {
+                relativePath: snapshot.selected?.relativePath,
+              })}>放弃草稿</button
           >
         </div>
       {:else}
@@ -832,10 +944,10 @@
             <button
               class="button button--primary commit-button"
               disabled={!snapshot.resolvePreview.canResolve}
-              onclick={() =>
-                onAction("conflict/resolve", {
-                  previewToken: snapshot.resolvePreview?.token,
-                })}>确认使用当前工作副本内容并标记解决</button
+              onclick={(event) => {
+                resolveTriggerEl = event.currentTarget as HTMLElement;
+                resolveIntentOpen = true;
+              }}>确认使用当前工作副本内容并标记解决</button
             >
           {:else}
             <p class="muted">
@@ -861,4 +973,87 @@
       </div>
     {/if}
   </ScrollArea>
+  <!-- v0.0.14 通用操作意向单：Resolve 确认（复用列表底座、可搜索/复制、焦点锁定、IME 保护） -->
+  <OperationIntentDialog
+    intent={resolveIntent}
+    open={resolveIntentOpen && Boolean(resolveIntent)}
+    confirmLabel="确认标记解决"
+    cancelLabel="取消"
+    triggerElement={resolveTriggerEl}
+    {onAction}
+    {pathDetail}
+    onConfirm={(token) => {
+      resolveIntentOpen = false;
+      onAction("conflict/resolve", { previewToken: token });
+    }}
+    onCancel={() => (resolveIntentOpen = false)}
+  />
+  {#if conflictSwitchRequest}
+    <dialog
+      bind:this={switchDialogEl}
+      class="conflict-switch-dialog"
+      aria-label="未保存草稿处理"
+      aria-modal="true"
+      onkeydown={(e) => {
+        if (isComposing) return;
+        if (e.key === "Escape") {
+          e.preventDefault();
+          onAction("conflict/draft-switch-decision", { decision: "stay" });
+        }
+      }}
+      oncompositionstart={() => (isComposing = true)}
+      oncompositionend={() => (isComposing = false)}
+    >
+      <form method="dialog" class="dialog-card">
+        <h3>有未保存的合并草稿</h3>
+        <p>
+          文件 <strong>{conflictSwitchRequest.currentRelativePath}</strong> 的合并草稿仅保存在
+          Host 内存（未写入工作副本，未标记解决）。请选择：
+        </p>
+        <p class="dialog-timer-notice">
+          <span class="codicon codicon-clock" aria-hidden="true"></span> 30 秒未选择将自动保存检查点并继续（草稿不丢）
+        </p>
+        <ul class="dialog-options">
+          <li>
+            <strong>保存检查点并继续</strong>：将当前草稿保存为 Host
+            检查点（不写盘），切换到
+            <code>{conflictSwitchRequest.nextRelativePath}</code
+            >，可在返回后继续编辑或复制/导出逃生。
+          </li>
+          <li><strong>留在当前文件</strong>：取消切换，保留编辑器与草稿。</li>
+          <li><strong>放弃草稿</strong>：丢弃 Host 草稿并切换。</li>
+        </ul>
+        <div class="toolbar-actions" role="group" aria-label="草稿处理选项">
+          <button
+            type="button"
+            class="button button--primary"
+            onkeydown={(e) =>
+              isComposing && e.key === "Enter" && e.preventDefault()}
+            onclick={() =>
+              onAction("conflict/draft-switch-decision", { decision: "save" })}
+            >保存检查点并继续</button
+          >
+          <button
+            type="button"
+            class="button button--secondary"
+            onkeydown={(e) =>
+              isComposing && e.key === "Enter" && e.preventDefault()}
+            onclick={() =>
+              onAction("conflict/draft-switch-decision", { decision: "stay" })}
+            >留在当前文件</button
+          >
+          <button
+            type="button"
+            class="button button--secondary"
+            onkeydown={(e) =>
+              isComposing && e.key === "Enter" && e.preventDefault()}
+            onclick={() =>
+              onAction("conflict/draft-switch-decision", {
+                decision: "discard",
+              })}>放弃草稿</button
+          >
+        </div>
+      </form>
+    </dialog>
+  {/if}
 </section>

@@ -3,6 +3,7 @@
     RepositorySnapshot,
     WebviewAction,
   } from "@protocol/workbenchProtocol";
+  import OperationIntentDialog from "../../../components/operation/OperationIntentDialog.svelte";
   import { formatZhDateTime } from "../../../i18n/formatters";
 
   let {
@@ -12,6 +13,28 @@
     snapshot: RepositorySnapshot;
     onAction: (action: WebviewAction, data?: Record<string, unknown>) => void;
   } = $props();
+
+  // v0.0.14 批次 D：清理意向单
+  let cleanupIntentOpen = $state(false);
+  let cleanupTriggerEl = $state<HTMLElement | null>(null);
+  const cleanupIntent = $derived.by(() => {
+    const preview = snapshot.cleanup.preview;
+    if (!preview) return undefined;
+    const title = "清理工作副本";
+    const summary = `清理工作副本 · 目标：${snapshot.cleanup.target}，执行前将重新校验`;
+    return {
+      token: preview.token,
+      kind: "cleanup" as const,
+      title,
+      summary,
+      paths: [snapshot.cleanup.target],
+      createdAt: new Date().toISOString(),
+      canExecute: preview.canExecute,
+      issues: preview.issues,
+      commands: [preview.command],
+      stale: false,
+    };
+  });
 </script>
 
 <section class="operation-card operation-card--wide repository-task-card">
@@ -69,11 +92,24 @@
           </div>{/each}<button
           class="button button--primary"
           disabled={!snapshot.cleanup.preview.canExecute}
-          onclick={() =>
-            onAction("repository/execute-cleanup", {
-              previewToken: snapshot.cleanup.preview?.token,
-            })}>确认清理工作副本</button
+          onclick={(event) => {
+            cleanupTriggerEl = event.currentTarget as HTMLElement;
+            cleanupIntentOpen = true;
+          }}>确认清理工作副本</button
         >
+        <OperationIntentDialog
+          intent={cleanupIntent}
+          open={cleanupIntentOpen && Boolean(cleanupIntent)}
+          confirmLabel="确认清理工作副本"
+          cancelLabel="取消"
+          triggerElement={cleanupTriggerEl}
+          onAction={(a, d) => onAction(a, d)}
+          onConfirm={(token) => {
+            cleanupIntentOpen = false;
+            onAction("repository/execute-cleanup", { previewToken: token });
+          }}
+          onCancel={() => (cleanupIntentOpen = false)}
+        />
       </div>{:else}<button
         class="button button--primary"
         disabled={!snapshot.cleanup.available}

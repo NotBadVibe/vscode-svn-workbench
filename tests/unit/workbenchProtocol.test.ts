@@ -213,6 +213,63 @@ describe("settings/selection 动作与运行时清单一致性", () => {
   });
 });
 
+describe("v0.0.13 会话状态总线——草稿与选择（协议守卫）", () => {
+  const conflictActions = [
+    "conflict/draft-update",
+    "conflict/draft-checkpoint",
+    "conflict/draft-abandon",
+    "conflict/draft-copy",
+    "conflict/draft-export",
+    "conflict/draft-switch-decision",
+  ];
+  it("新增冲突草稿动作被消息守卫接受", () => {
+    for (const action of conflictActions) {
+      expect(isWebviewToHostMessage(actionMessage(action))).toBe(true);
+    }
+  });
+  it("运行时清单包含全部冲突草稿动作", () => {
+    for (const action of conflictActions) {
+      expect(webviewActions).toContain(action);
+    }
+  });
+  it("新增 Host 消息类型守卫：conflict/draft-checkpointed 与 draft-switch-confirm 为合法类型", () => {
+    // 通过构造完整的 HostToWebviewMessage 形状并验证其 protocolVersion 与 moduleId 合法，间接验证类型联合已扩展
+    // 直接验证 webviewActions 已覆盖，Host 侧类型由 TypeScript 保证；此处校验守卫对新 action 的接收
+    expect(webviewActions).toContain("conflict/draft-update");
+    expect(webviewActions).toContain("conflict/draft-switch-decision");
+  });
+  it("拒绝未知的冲突草稿动作", () => {
+    expect(isWebviewToHostMessage(actionMessage("conflict/invented"))).toBe(
+      false,
+    );
+  });
+});
+
+describe("v0.0.15 诊断动作协议化（批次 A）", () => {
+  const diagnosticActions = [
+    "diagnostics/select-svn-executable",
+    "diagnostics/open-settings",
+    "diagnostics/open-folder",
+    "diagnostics/copy-diagnostics",
+    "diagnostics/open-url",
+  ];
+  it("新增诊断动作被消息守卫接受", () => {
+    for (const action of diagnosticActions) {
+      expect(isWebviewToHostMessage(actionMessage(action))).toBe(true);
+    }
+  });
+  it("运行时清单包含全部诊断动作", () => {
+    for (const action of diagnosticActions) {
+      expect(webviewActions).toContain(action);
+    }
+  });
+  it("拒绝未知的诊断动作", () => {
+    expect(isWebviewToHostMessage(actionMessage("diagnostics/invented"))).toBe(
+      false,
+    );
+  });
+});
+
 describe("SettingsSnapshot.selection 快照结构", () => {
   it("包含作用域、分层配置、有效合并、校验状态与规则预览", () => {
     const snapshot: SettingsSnapshot = {

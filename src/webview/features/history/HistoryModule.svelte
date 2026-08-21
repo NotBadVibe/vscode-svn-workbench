@@ -77,6 +77,15 @@
     ) ?? snapshot.revisions[0],
   );
 
+  const staleness = $derived.by(() => {
+    if (!snapshot.freshness) return { stale: false, minutesAgo: 0 };
+    const minutesAgo = Math.floor(
+      (Date.now() - new Date(snapshot.freshness.capturedAt).getTime()) / 60000,
+    );
+    const isStale = minutesAgo >= 5;
+    return { stale: isStale, minutesAgo };
+  });
+
   const changeActionLabels: Record<string, string> = {
     A: "新增",
     M: "修改",
@@ -272,6 +281,12 @@
           <span class="status-badge">{selected.author}</span>
         </div>
       </div>
+      {#if staleness.stale}<div class="notice notice--warning" role="status">
+          <span class="codicon codicon-warning" aria-hidden="true"></span>
+          <span
+            >此结果基于 {staleness.minutesAgo} 分钟前的状态，工作副本可能已变化，建议刷新</span
+          >
+        </div>{/if}
       {#if snapshot.feedback}<div class="notice notice--success" role="status">
           {snapshot.feedback}
         </div>{/if}

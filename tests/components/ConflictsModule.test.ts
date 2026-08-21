@@ -33,6 +33,18 @@ describe("ConflictsModule", () => {
         name: "确认使用当前工作副本内容并标记解决",
       }),
     );
+    // 批次 C：标记解决先打开通用操作意向单对话框
+    expect(
+      screen.getByRole("dialog", { name: "标记解决 1 个冲突" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("标记解决 src/a.ts · 执行前将重新校验工作副本内容"),
+    ).toBeInTheDocument();
+    const dialog = screen.getByRole("dialog", { name: "标记解决 1 个冲突" });
+    const confirmInDialog = Array.from(dialog.querySelectorAll("button")).find(
+      (b) => b.textContent?.includes("确认标记解决"),
+    ) as HTMLElement;
+    await fireEvent.click(confirmInDialog);
     expect(onAction).toHaveBeenCalledWith("conflict/resolve", {
       previewToken: "resolve-1",
     });

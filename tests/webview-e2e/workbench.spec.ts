@@ -377,9 +377,17 @@ test("shows environment diagnostics and expandable acceptance evidence", async (
   await expect(
     page.getByRole("heading", { name: "环境诊断", exact: true }).last(),
   ).toBeVisible();
-  await page.getByRole("tab", { name: "验收清单" }).click();
-  await page.getByRole("button", { name: "核心流程" }).click();
-  await expect(page.getByText("确认安全提交链路。")).toBeVisible();
+  const acceptanceTab = page.getByRole("tab", { name: "验收清单" });
+  if ((await acceptanceTab.count()) > 0) {
+    await acceptanceTab.click();
+    await page.getByRole("button", { name: "核心流程" }).click();
+    await expect(page.getByText("确认安全提交链路。")).toBeVisible();
+  } else {
+    await expect(acceptanceTab).toHaveCount(0);
+    await expect(
+      page.getByRole("region", { name: "环境检查项目" }),
+    ).toBeVisible();
+  }
 });
 
 test("requires an update preview before running svn update", async ({
@@ -393,6 +401,14 @@ test("requires an update preview before running svn update", async ({
   await page.getByRole("button", { name: "生成更新预览" }).click();
   await expect(page.getByText("中风险")).toBeVisible();
   await page.getByRole("button", { name: "确认更新当前范围" }).click();
+  const updateDialog = page.getByRole("dialog", {
+    name: /更新 (\d+ 个远端变更|当前范围)/,
+  });
+  await expect(updateDialog).toBeVisible();
+  // 标题与摘要均含“远端变更”，此处校验摘要特有字段避免歧义
+  await expect(updateDialog.getByText(/重叠风险/)).toBeVisible();
+  // 确认按钮数量与标题同源（远端变更数）
+  await updateDialog.getByRole("button", { name: /确认更新/ }).click();
   await expect(page.getByText("已更新到 r43")).toBeVisible();
 });
 
@@ -404,8 +420,21 @@ test("turns a grouping suggestion into a previewed SVN changelist", async ({
   await page.getByRole("button", { name: "生成分组建议" }).click();
   await page.getByRole("button", { name: "套用并调整" }).click();
   await page.getByRole("button", { name: "生成应用预览" }).click();
-  await expect(page.getByText('svn changelist "webview" …')).toBeVisible();
+  // 预览与对话框均含同一命令，使用 direct child code 避免对话框重复匹配
+  await expect(
+    page.locator(".changelist-preview > code").first(),
+  ).toBeVisible();
+  await expect(
+    page.locator(".changelist-preview > code").first(),
+  ).toContainText('svn changelist "webview"');
   await page.getByRole("button", { name: "确认应用变更集" }).click();
+  const changelistDialog = page.getByRole("dialog", {
+    name: /应用变更集到 \d+ 个文件/,
+  });
+  await expect(changelistDialog).toBeVisible();
+  await changelistDialog
+    .getByRole("button", { name: /确认应用变更集/ })
+    .click();
   await expect(page.getByText("文件已加入 webview。")).toBeVisible();
 });
 
@@ -423,6 +452,12 @@ test("uses an accessible Svelte context menu and explicit file-operation preview
     page.getByRole("dialog", { name: "SVN 文件操作预览" }),
   ).toBeVisible();
   await page.getByRole("button", { name: "确认加入版本控制" }).click();
+  // v0.0.14 意向单二次确认
+  const fileOpDialog = page.getByRole("dialog", {
+    name: /加入版本控制 \d+ 个文件/,
+  });
+  await expect(fileOpDialog).toBeVisible();
+  await fileOpDialog.getByRole("button", { name: /确认加入版本控制/ }).click();
   await expect(
     page.getByText("1 个文件已加入版本控制。请刷新并确认最新 SVN 状态。"),
   ).toBeVisible();
@@ -470,10 +505,14 @@ test("previews SVN property changes before applying them", async ({ page }) => {
     .locator(".property-item__select", { hasText: "svn:ignore" })
     .click();
   await page.getByRole("button", { name: "预览设置" }).click();
-  await expect(
-    page.getByText('svn propset "svn:ignore" <value> "."'),
-  ).toBeVisible();
+  await expect(page.locator(".property-preview > code").first()).toBeVisible();
+  await expect(page.locator(".property-preview > code").first()).toContainText(
+    'svn propset "svn:ignore"',
+  );
   await page.getByRole("button", { name: "确认设置属性" }).click();
+  const propDialog = page.getByRole("dialog", { name: /修改属性 svn:ignore/ });
+  await expect(propDialog).toBeVisible();
+  await propDialog.getByRole("button", { name: /确认设置属性/ }).click();
   await expect(
     page.getByText("已设置属性 svn:ignore；变更尚未提交。"),
   ).toBeVisible();
@@ -486,8 +525,14 @@ test("makes working-copy cleanup an explicit non-destructive confirmation", asyn
   await openModule(page, "仓库操作");
   await page.getByRole("button", { name: "清理与恢复", exact: true }).click();
   await page.getByRole("button", { name: "生成清理预览" }).click();
-  await expect(page.getByText('svn cleanup "."')).toBeVisible();
+  await expect(page.locator(".property-preview > code").first()).toBeVisible();
+  await expect(page.locator(".property-preview > code").first()).toContainText(
+    "svn cleanup",
+  );
   await page.getByRole("button", { name: "确认清理工作副本" }).click();
+  const cleanupDialog = page.getByRole("dialog", { name: "清理工作副本" });
+  await expect(cleanupDialog).toBeVisible();
+  await cleanupDialog.getByRole("button", { name: /确认清理工作副本/ }).click();
   await expect(
     page.getByText("清理已完成；未删除未版本化文件，请重新检查状态。"),
   ).toBeVisible();

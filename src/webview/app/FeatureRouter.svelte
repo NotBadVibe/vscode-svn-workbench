@@ -17,6 +17,8 @@
     understandingReceipt,
     changelistReceipt,
     conflictReceipt,
+    conflictDraftAck,
+    conflictSwitchRequest,
     onAction,
   }: {
     snapshot: WorkbenchModuleSnapshot;
@@ -56,6 +58,14 @@
     conflictReceipt?: Extract<
       HostToWebviewMessage,
       { type: "conflict/receipt" }
+    >["payload"];
+    conflictDraftAck?: Extract<
+      HostToWebviewMessage,
+      { type: "conflict/draft-checkpointed" }
+    >["payload"];
+    conflictSwitchRequest?: Extract<
+      HostToWebviewMessage,
+      { type: "conflict/draft-switch-confirm" }
     >["payload"];
     onAction: (action: WebviewAction, data?: Record<string, unknown>) => void;
   } = $props();
@@ -103,6 +113,8 @@
       {onAction}
       {pathDetail}
       {conflictReceipt}
+      {conflictDraftAck}
+      {conflictSwitchRequest}
     />{/await}
 {:else if snapshot.kind === "settings"}
   {#await import("../features/settings/SettingsModule.svelte")}{@render loadingModule()}{:then module}{@const Feature =
@@ -136,5 +148,8 @@
     />{/await}
 {:else if snapshot.kind === "projects"}
   {#await import("../features/projects/ProjectsModule.svelte")}{@render loadingModule()}{:then module}{@const Feature =
+      module.default}<Feature {snapshot} {onAction} />{/await}
+{:else if snapshot.kind === "activity"}
+  {#await import("../features/activity/ActivityModule.svelte")}{@render loadingModule()}{:then module}{@const Feature =
       module.default}<Feature {snapshot} {onAction} />{/await}
 {/if}

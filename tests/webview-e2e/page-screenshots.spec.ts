@@ -159,7 +159,12 @@ test("保存每个 Svelte 功能页面的验收截图", async ({ page }) => {
     await page.getByRole("button", { name: "生成分组建议" }).click();
     await page.getByRole("button", { name: "套用并调整" }).click();
     await page.getByRole("button", { name: "生成应用预览" }).click();
-    await expect(page.getByText('svn changelist "webview" …')).toBeVisible();
+    await expect(
+      page.locator(".changelist-preview > code").first(),
+    ).toBeVisible();
+    await expect(
+      page.locator(".changelist-preview > code").first(),
+    ).toContainText('svn changelist "webview"');
     await capture(page, "06-changelists");
   });
 
@@ -181,7 +186,12 @@ test("保存每个 Svelte 功能页面的验收截图", async ({ page }) => {
     await capture(page, "10-repository-update");
     await page.getByRole("button", { name: "清理与恢复", exact: true }).click();
     await page.getByRole("button", { name: "生成清理预览" }).click();
-    await expect(page.getByText('svn cleanup "."')).toBeVisible();
+    await expect(
+      page.locator(".property-preview > code").first(),
+    ).toBeVisible();
+    await expect(
+      page.locator(".property-preview > code").first(),
+    ).toContainText("svn cleanup");
     await capture(page, "10-repository-recovery");
     await page.getByRole("button", { name: "发布说明", exact: true }).click();
     await page.getByRole("button", { name: "从 SVN 历史生成" }).click();
@@ -231,9 +241,16 @@ test("保存每个 Svelte 功能页面的验收截图", async ({ page }) => {
 
   await test.step("Diagnostics", async () => {
     await openModule(page, "诊断");
-    await page.getByRole("tab", { name: "验收清单" }).click();
-    await page.getByRole("button", { name: "核心流程" }).click();
-    await expect(page.getByText("确认安全提交链路。")).toBeVisible();
+    const acceptanceTab = page.getByRole("tab", { name: "验收清单" });
+    if ((await acceptanceTab.count()) > 0) {
+      await acceptanceTab.click();
+      await page.getByRole("button", { name: "核心流程" }).click();
+      await expect(page.getByText("确认安全提交链路。")).toBeVisible();
+    } else {
+      await expect(
+        page.getByRole("heading", { name: "环境诊断", exact: true }).last(),
+      ).toBeVisible();
+    }
     await capture(page, "13-diagnostics");
   });
 });

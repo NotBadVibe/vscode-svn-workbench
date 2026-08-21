@@ -27,6 +27,85 @@
     "all" | "needsAttention" | "pass" | "warn" | "fail"
   >("all");
   const statusLabels = { pass: "通过", warn: "提醒", fail: "失败" };
+  // C-11：人工验收清单入口对普通用户隐藏，开发/测试环境保留
+  const showAcceptance = $derived(import.meta.env.DEV);
+  // C-10/C 四状态收敛：根据 svn-cli 与 workspace 检查结果展示主、次动作
+  const firstRunState = $derived.by(() => {
+    const svnCheck = snapshot.checks.find((c) => c.id === "svn-cli");
+    const workspaceCheck = snapshot.checks.find((c) => c.id === "workspace");
+    if (!svnCheck || !workspaceCheck) return null;
+    if (svnCheck.status === "pass" && workspaceCheck.status === "pass") {
+      return {
+        title: "SVN 可用且当前目录是工作副本",
+        detail: "可以开始查看修改、提交、更新与冲突处理。",
+        primary: {
+          label: "查看修改",
+          action: "open-module" as const,
+          params: { moduleId: "changes", taskId: "changes/overview" },
+        },
+        secondary: {
+          label: "查看工作副本状态",
+          action: "diagnostics/run" as const,
+          params: {},
+        },
+      };
+    }
+    if (svnCheck.status === "fail" && svnCheck.detail.includes("未找到 svn")) {
+      return {
+        title: "SVN CLI 未找到",
+        detail: "需要安装 SVN 或选择可执行文件路径。",
+        primary: {
+          label: "选择 SVN 可执行文件",
+          action: "diagnostics/select-svn-executable" as const,
+          params: {},
+        },
+        secondary: {
+          label: "打开设置",
+          action: "diagnostics/open-settings" as const,
+          params: { query: "svnWorkbench.svn.path" },
+        },
+      };
+    }
+    if (
+      svnCheck.status === "fail" &&
+      svnCheck.detail.includes("未找到配置路径")
+    ) {
+      return {
+        title: "路径无效或无权限",
+        detail: "配置的 SVN 路径无法访问，请重新选择并检测。",
+        primary: {
+          label: "重新选择并检测",
+          action: "diagnostics/select-svn-executable" as const,
+          params: {},
+        },
+        secondary: {
+          label: "复制诊断信息",
+          action: "diagnostics/copy-diagnostics" as const,
+          params: { text: snapshot.reportText },
+        },
+      };
+    }
+    if (
+      workspaceCheck.status === "warn" &&
+      workspaceCheck.detail.includes("均未检测到 SVN 工作副本")
+    ) {
+      return {
+        title: "当前目录不是工作副本",
+        detail: "请打开已有的 SVN 工作副本，或检出到新目录。",
+        primary: {
+          label: "打开文件夹",
+          action: "diagnostics/open-folder" as const,
+          params: {},
+        },
+        secondary: {
+          label: "复制诊断信息",
+          action: "diagnostics/copy-diagnostics" as const,
+          params: { text: snapshot.reportText },
+        },
+      };
+    }
+    return null;
+  });
 
   const visibleChecks = $derived(
     snapshot.checks.filter((check) => {
@@ -43,6 +122,36 @@
       check.action ? `建议：${check.action}` : undefined,
     ].filter((line): line is string => line !== undefined);
     onAction("copy-text", { text: lines.join("\n") });
+  }
+
+  function handleDiagnosticAction(
+    action: NonNullable<(typeof snapshot.checks)[number]["actions"]>[number],
+  ): void {
+    switch (action.id) {
+      case "selectSvnExecutable":
+        onAction("diagnostics/select-svn-executable", {});
+        break;
+      case "openSettings":
+        onAction("diagnostics/open-settings", action.params ?? {});
+        break;
+      case "rerunDiagnostics":
+        onAction("diagnostics/run", {});
+        break;
+      case "openFolder":
+        onAction("diagnostics/open-folder", action.params ?? {});
+        break;
+      case "copyDiagnostics":
+        onAction("diagnostics/copy-diagnostics", {
+          text: snapshot.reportText,
+          ...(action.params ?? {}),
+        });
+        break;
+      case "openUrl":
+        onAction("diagnostics/open-url", action.params ?? {});
+        break;
+      default:
+        break;
+    }
   }
 </script>
 
@@ -77,19 +186,21 @@
           taskId: "diagnostics/environment",
         })}>运行环境</button
     >
-    <button
-      role="tab"
-      aria-selected={taskId === "diagnostics/acceptance"}
-      class:active={taskId === "diagnostics/acceptance"}
-      onclick={() =>
-        onAction("open-module", {
-          moduleId: "diagnostics",
-          taskId: "diagnostics/acceptance",
-        })}>验收清单</button
-    >
+    {#if showAcceptance}
+      <button
+        role="tab"
+        aria-selected={taskId === "diagnostics/acceptance"}
+        class:active={taskId === "diagnostics/acceptance"}
+        onclick={() =>
+          onAction("open-module", {
+            moduleId: "diagnostics",
+            taskId: "diagnostics/acceptance",
+          })}>验收清单</button
+      >
+    {/if}
   </div>
 
-  {#if taskId === "diagnostics/environment"}
+  {#if taskId === "diagnostics/environment" || (taskId === "diagnostics/acceptance" && !showAcceptance)}
     <div class="diagnostic-summary diagnostic-summary--{snapshot.status}">
       <span
         class={`codicon codicon-${snapshot.status === "pass" ? "pass-filled" : snapshot.status === "warn" ? "warning" : "error"}`}
@@ -104,6 +215,43 @@
         </p>
       </div>
     </div>
+    {#if firstRunState}
+      <div
+        class="first-run-card"
+        role="region"
+        aria-label={firstRunState.title}
+      >
+        <h2>{firstRunState.title}</h2>
+        <p>{firstRunState.detail}</p>
+        <div class="first-run-actions">
+          <button
+            class="button button--primary"
+            onclick={() =>
+              onAction(
+                firstRunState.primary.action as WebviewAction,
+                firstRunState.primary.params,
+              )}>{firstRunState.primary.label}</button
+          >
+          <button
+            class="button button--secondary"
+            onclick={() =>
+              onAction(
+                firstRunState.secondary.action as WebviewAction,
+                firstRunState.secondary.params,
+              )}>{firstRunState.secondary.label}</button
+          >
+          <button
+            class="button button--secondary"
+            onclick={() => onAction("diagnostics/run", {})}>重新检测</button
+          >
+          <button
+            class="button button--secondary"
+            onclick={() => onAction("copy-text", { text: snapshot.reportText })}
+            >复制诊断信息</button
+          >
+        </div>
+      </div>
+    {/if}
 
     <div class="diagnostics-layout diagnostics-layout--single">
       <section>
@@ -156,6 +304,17 @@
                 <strong>{check.label}</strong>
                 <p>{check.detail}</p>
                 {#if check.action}<small>{check.action}</small>{/if}
+                {#if check.actions}
+                  <div class="diagnostic-actions">
+                    {#each check.actions as action (action.id)}
+                      <button
+                        class="button button--secondary"
+                        onclick={() => handleDiagnosticAction(action)}
+                        >{action.label}</button
+                      >
+                    {/each}
+                  </div>
+                {/if}
               </div>
               <button
                 type="button"
@@ -171,7 +330,7 @@
         </ScrollArea>
       </section>
     </div>
-  {:else}
+  {:else if showAcceptance}
     <div class="diagnostics-layout diagnostics-layout--single">
       <section>
         <div class="section-heading">

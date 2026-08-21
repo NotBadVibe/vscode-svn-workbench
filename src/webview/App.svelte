@@ -138,6 +138,8 @@
       understandingReceipt={state.understandingReceipt}
       changelistReceipt={state.changelistReceipt}
       conflictReceipt={state.conflictReceipt}
+      conflictDraftAck={state.conflictDraftAck}
+      conflictSwitchRequest={state.conflictSwitchRequest}
       onAction={(action, data) => state.action(action, data)}
     />
   {:else}

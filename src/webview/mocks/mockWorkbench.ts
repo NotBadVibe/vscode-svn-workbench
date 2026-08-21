@@ -233,6 +233,11 @@ let activeMockTaskId: WorkbenchTaskId = defaultWorkbenchTask("changes");
 let activeMockDiffPath = "src/extension.ts";
 /** 持有草稿的 mock 路径（dirty 与 Host cleanContent 语义一致）。 */
 const mockDrafts = new Map<string, { dirty: boolean }>();
+/** v0.0.13：mock 的冲突合并草稿脏状态（按相对路径跟踪，模拟 Host 内存草稿）。 */
+const mockConflictDrafts = new Map<string, { dirty: boolean }>();
+/** v0.0.13：mock 待确认的冲突文件切换（脏草稿三选一）。 */
+let mockPendingConflictSwitch:
+  { currentRelativePath: string; nextRelativePath: string } | undefined;
 /** 等待三选一决定的 mock 切换目标。 */
 let pendingMockSwitch: string | undefined;
 /** mock Host 的编辑基准（保存轮换；用于校验第二次保存负载）。 */
@@ -298,6 +303,7 @@ function createInitialMockSnapshot(
     settings: settingsSnapshot,
     diagnostics: diagnosticsSnapshot,
     projects: projectsSnapshot,
+    activity: activitySnapshot,
   };
   return factories[moduleId]();
 }
@@ -344,14 +350,7 @@ function mockDiffDraft(
 
 /** 向 Webview 注入一条 Host 消息（编辑会话/保存结果等）。 */
 function injectHostMessage(
-  type:
-    | "diff/edit-opened"
-    | "diff/save-result"
-    | "diff/draft-checkpointed"
-    | "diff/target-switch-confirm"
-    | "module/loading"
-    | "file/path-detail-result"
-    | "operation/result",
+  type: HostToWebviewMessage["type"],
   payload: Record<string, unknown>,
 ): void {
   workbenchBridge.injectMock({
@@ -463,6 +462,7 @@ export function startMockWorkbench(): void {
         settings: settingsSnapshot,
         diagnostics: diagnosticsSnapshot,
         projects: projectsSnapshot,
+        activity: activitySnapshot,
       };
       const createSnapshot = snapshots[moduleId];
       const taskId = isWorkbenchTaskForModule(data.taskId, moduleId)
@@ -476,6 +476,19 @@ export function startMockWorkbench(): void {
       ) {
         const selectedPaths = data.selectedPaths as string[];
         injectSnapshot(moduleId, commitSnapshot({ selectedPaths }), taskId);
+      } else if (
+        moduleId === "changelists" &&
+        createSnapshot &&
+        Array.isArray(data.selectedPaths)
+      ) {
+        const selectedPaths = data.selectedPaths as string[];
+        injectSnapshot(
+          moduleId,
+          changelistsSnapshot({
+            preselected: { count: selectedPaths.length, paths: selectedPaths },
+          }),
+          taskId,
+        );
       } else if (createSnapshot) {
         injectSnapshot(moduleId, createSnapshot(), taskId);
       }
@@ -668,6 +681,7 @@ export function startMockWorkbench(): void {
         settings: settingsSnapshot,
         diagnostics: diagnosticsSnapshot,
         projects: projectsSnapshot,
+        activity: activitySnapshot,
       };
       if (activeMockModuleId === "diff") {
         injectSnapshot("diff", mockDiffSnapshot(activeMockDiffPath));
@@ -1143,7 +1157,23 @@ export function startMockWorkbench(): void {
         }),
       );
     if (action === "conflict/select" && typeof data.relativePath === "string") {
-      injectSnapshot("conflicts", conflictSnapshot());
+      // v0.0.13：与 Host 行为一致——当前文件有脏草稿时不直接切换，下发三选一确认
+      const currentRelativePath = "src/conflict/example.ts";
+      if (
+        data.relativePath !== currentRelativePath &&
+        mockConflictDrafts.get(currentRelativePath)?.dirty === true
+      ) {
+        mockPendingConflictSwitch = {
+          currentRelativePath,
+          nextRelativePath: data.relativePath,
+        };
+        injectHostMessage("conflict/draft-switch-confirm", {
+          currentRelativePath,
+          nextRelativePath: data.relativePath,
+        });
+      } else {
+        injectSnapshot("conflicts", conflictSnapshot());
+      }
     }
     if (action === "conflict/advise") {
       injectSnapshot(
@@ -1173,6 +1203,49 @@ export function startMockWorkbench(): void {
       );
     }
     if (action === "conflict/save-working") {
+      // 模拟保存失败场景（通过 ?conflictSave=fail）
+      const saveScenario = new URLSearchParams(window.location.search).get(
+        "conflictSave",
+      );
+      if (saveScenario === "fail") {
+        injectHostMessage("operation/error", {
+          title: "保存失败",
+          message: "模拟保存失败：磁盘写入失败；草稿已保留在 Host 内存。",
+          recoverable: true,
+        });
+        // 保留草稿的快照（编辑器与草稿保留）
+        injectSnapshot(
+          "conflicts",
+          conflictSnapshot({
+            selected: {
+              ...(
+                conflictSnapshot() as Extract<
+                  WorkbenchModuleSnapshot,
+                  { kind: "conflicts" }
+                >
+              ).selected!,
+              draft: {
+                content:
+                  typeof data.content === "string" ? data.content : "draft",
+                revision: 2,
+                updatedAt: Date.now(),
+                hasDraft: true,
+                dirty: true,
+              },
+              mergeEditor: {
+                token: "mock-edit",
+                editable: true,
+                issues: [],
+                feedback:
+                  "保存失败：模拟磁盘写入失败；草稿已保留，可重试或复制/导出。",
+              },
+            },
+          }),
+        );
+        return;
+      }
+      // 保存成功：草稿落盘，清除 mock 脏状态
+      mockConflictDrafts.delete("src/conflict/example.ts");
       injectSnapshot(
         "conflicts",
         conflictSnapshot({
@@ -1213,6 +1286,77 @@ export function startMockWorkbench(): void {
           },
         }),
       );
+    }
+    if (
+      action === "conflict/draft-update" ||
+      action === "conflict/draft-checkpoint"
+    ) {
+      const content =
+        typeof data.content === "string" ? data.content : "draft content";
+      const draftPath =
+        (data.relativePath as string) ?? "src/conflict/example.ts";
+      mockConflictDrafts.set(draftPath, { dirty: true });
+      injectHostMessage("conflict/draft-checkpointed", {
+        relativePath: draftPath,
+        revision: 2,
+        updatedAt: Date.now(),
+      });
+      injectSnapshot(
+        "conflicts",
+        conflictSnapshot({
+          selected: {
+            ...(
+              conflictSnapshot() as Extract<
+                WorkbenchModuleSnapshot,
+                { kind: "conflicts" }
+              >
+            ).selected!,
+            draft: {
+              content,
+              revision: 2,
+              updatedAt: Date.now(),
+              hasDraft: true,
+              dirty: content !== "export const mode = 'local';\n",
+            },
+          },
+        }),
+      );
+    }
+    if (action === "conflict/draft-abandon") {
+      const abandonPath =
+        (data.relativePath as string) ?? "src/conflict/example.ts";
+      mockConflictDrafts.delete(abandonPath);
+      injectHostMessage("operation/result", {
+        title: "草稿已放弃",
+        message: "草稿已清除。",
+      });
+      injectSnapshot("conflicts", conflictSnapshot());
+    }
+    if (
+      action === "conflict/draft-copy" ||
+      action === "conflict/draft-export"
+    ) {
+      injectHostMessage("operation/result", {
+        title: action === "conflict/draft-copy" ? "草稿已复制" : "草稿已导出",
+        message: "草稿内容已复制到剪贴板（模拟）。",
+      });
+    }
+    if (action === "conflict/draft-switch-decision") {
+      const pending = mockPendingConflictSwitch;
+      mockPendingConflictSwitch = undefined;
+      if (data.decision === "stay") {
+        injectHostMessage("operation/result", {
+          title: "已留在当前文件",
+          message: "已取消切换；草稿保留。",
+        });
+      } else if (data.decision === "discard") {
+        // 放弃草稿：清除 mock 脏状态后切换
+        if (pending) mockConflictDrafts.delete(pending.currentRelativePath);
+        injectSnapshot("conflicts", conflictSnapshot());
+      } else {
+        // save：草稿已保留在 mock 内存，直接切换
+        injectSnapshot("conflicts", conflictSnapshot());
+      }
     }
     if (action === "conflict/preview-resolve") {
       injectSnapshot(
@@ -1393,6 +1537,16 @@ export function startMockWorkbench(): void {
       // 与 security/open-proxy-settings 惯例一致：Mock 环境不打开 VS Code 设置页，无响应。
     }
     if (action === "diagnostics/run") {
+      injectSnapshot("diagnostics", diagnosticsSnapshot());
+    }
+    if (
+      action === "diagnostics/select-svn-executable" ||
+      action === "diagnostics/open-settings" ||
+      action === "diagnostics/open-folder" ||
+      action === "diagnostics/copy-diagnostics" ||
+      action === "diagnostics/open-url"
+    ) {
+      // Mock 原地重检：选择可执行文件后重新检测
       injectSnapshot("diagnostics", diagnosticsSnapshot());
     }
     if (action === "repository/preview-update") {
@@ -2499,6 +2653,14 @@ function diagnosticsSnapshot(): WorkbenchModuleSnapshot {
         status: index % 9 === 0 ? ("warn" as const) : ("pass" as const),
         detail: `第 ${index + 1} 项中文检查结果`,
         action: index % 9 === 0 ? "打开对应设置并修复。" : undefined,
+        actions:
+          index % 9 === 0
+            ? [
+                { id: "openSettings" as const, label: "打开设置" },
+                { id: "rerunDiagnostics" as const, label: "重新检测" },
+                { id: "copyDiagnostics" as const, label: "复制诊断信息" },
+              ]
+            : undefined,
       }))
     : [
         {
@@ -2508,11 +2670,54 @@ function diagnosticsSnapshot(): WorkbenchModuleSnapshot {
           detail: "macOS",
         },
         {
+          id: "svn-cli",
+          label: "SVN CLI",
+          status: "fail" as const,
+          detail: "未找到 svn 可执行文件",
+          action:
+            "安装 SVN CLI，或配置 svnWorkbench.svn.path 指向 svn 可执行文件。",
+          actions: [
+            {
+              id: "selectSvnExecutable" as const,
+              label: "选择 SVN 可执行文件",
+            },
+            {
+              id: "openSettings" as const,
+              label: "打开设置",
+              params: { query: "svnWorkbench.svn.path" },
+            },
+            { id: "copyDiagnostics" as const, label: "复制诊断信息" },
+            { id: "rerunDiagnostics" as const, label: "重新检测" },
+          ],
+        },
+        {
+          id: "workspace",
+          label: "工作区",
+          status: "warn" as const,
+          detail: "1 个工作区均未检测到 SVN 工作副本",
+          action:
+            "确认打开的是 SVN 工作副本内的目录；位于上层工作副本的项目会被自动识别，非 SVN 目录请先检出（Checkout）。",
+          actions: [
+            { id: "openFolder" as const, label: "打开文件夹" },
+            { id: "copyDiagnostics" as const, label: "复制诊断信息" },
+            { id: "rerunDiagnostics" as const, label: "重新检测" },
+          ],
+        },
+        {
           id: "ai-config",
           label: "AI 配置",
           status: "warn" as const,
           detail: "尚未设置 API 密钥",
           action: "在设置模块中配置。",
+          actions: [
+            {
+              id: "openSettings" as const,
+              label: "打开 AI 设置",
+              params: { query: "svnWorkbench.ai" },
+            },
+            { id: "copyDiagnostics" as const, label: "复制诊断信息" },
+            { id: "rerunDiagnostics" as const, label: "重新检测" },
+          ],
         },
       ];
   const acceptanceSections = isScrollDataset()
@@ -2560,6 +2765,49 @@ function diagnosticsSnapshot(): WorkbenchModuleSnapshot {
     generatedAt: new Date().toISOString(),
     reportText: "SVN 工作台环境诊断：提醒",
   };
+}
+
+function activitySnapshot(): WorkbenchModuleSnapshot {
+  return {
+    kind: "activity",
+    records: [
+      {
+        id: "mock-activity-1",
+        capturedAt: new Date(Date.now() - 2 * 60000).toISOString(),
+        kind: "operation-execution",
+        moduleId: "commit",
+        taskId: "commit/compose",
+        scopeHash: "mock-scope-hash",
+        repositoryUuid: "mock-repository-uuid",
+        scopeLabel: "提交 3 个文件",
+        impactedCount: 3,
+        previewSummary: "svn commit 3 个文件",
+        result: "failed",
+        errorReason: "提交失败：远端已更新",
+        nextActions: [
+          { id: "retry", label: "重试" },
+          { id: "open-output", label: "打开日志" },
+          { id: "copy-diagnostics", label: "复制诊断信息" },
+        ],
+        nonRecoverable: true,
+        nonRecoverableReason: "此操作不能在工作台中一键撤销",
+      },
+      {
+        id: "mock-activity-2",
+        capturedAt: new Date(Date.now() - 10 * 60000).toISOString(),
+        kind: "draft-checkpoint",
+        moduleId: "conflicts",
+        taskId: "conflicts/resolve",
+        scopeHash: "mock-scope-hash",
+        repositoryUuid: "mock-repository-uuid",
+        scopeLabel: "冲突草稿 src/conflict/example.ts",
+        impactedCount: 1,
+        previewSummary: "已保存冲突合并草稿（仅内存）",
+        nextActions: [{ id: "open-output", label: "打开日志" }],
+      },
+    ],
+    generatedAt: new Date().toISOString(),
+  } as unknown as WorkbenchModuleSnapshot;
 }
 
 function repositorySnapshot(

@@ -33,18 +33,33 @@ SVN Workbench 是面向 VS Code 的 AI-first Subversion 工作台。正式业务
 
 ## 常用命令
 
-- `SVN：检查环境`
-- `SVN：打开工作台`
-- `SVN：刷新状态`
-- `SVN：更新当前范围`
-- `SVN：提交当前范围`
-- `SVN：打开差异对比`
-- `SVN：查看历史`
-- `SVN：打开冲突中心`
-- `SVN：变更集管理`
-- `SVN：解读所选变更`
-- `SVN：AI 配置模型`
-- `SVN：检查环境`
+- `SVN：查看工作副本修改`（`svnWorkbench.openWorkbench`）
+- `SVN：检查环境`（`svnWorkbench.checkEnvironment`）
+- `SVN：刷新状态`（`svnWorkbench.refreshStatus`）
+- `SVN：更新当前范围`（`svnWorkbench.updateScope`）
+- `SVN：查看与编辑属性`（`svnWorkbench.openProperties`）
+- `SVN：清理工作副本`（`svnWorkbench.openCleanup`）
+- `SVN：浏览仓库`（`svnWorkbench.openRepositoryBrowser`）
+- `SVN：创建分支`（`svnWorkbench.createBranch`）
+- `SVN：创建标签`（`svnWorkbench.createTag`）
+- `SVN：切换工作副本`（`svnWorkbench.switchWorkingCopy`）
+- `SVN：重定位仓库地址`（`svnWorkbench.relocateWorkingCopy`）
+- `SVN：合并到工作副本`（`svnWorkbench.mergeToWorkingCopy`）
+- `SVN：补丁与本地搁置`（`svnWorkbench.openPatchShelf`）
+- `SVN：生成发布说明`（`svnWorkbench.openReleaseNotes`）
+- `SVN：提交当前范围`（`svnWorkbench.commitFolder`）
+- `SVN：打开冲突中心`（`svnWorkbench.openConflictCenter`）
+- `SVN：打开差异对比`（`svnWorkbench.openDiff`）
+- `SVN：查看历史`（`svnWorkbench.openHistory`）
+- `SVN：打开团队配置`（`svnWorkbench.openTeamConfig`）
+- `SVN：配置团队规则`（`svnWorkbench.configureTeamConfig`）
+- `SVN：显示输出`（`svnWorkbench.showOutput`）
+- `SVN：AI 配置模型`（`svnWorkbench.aiConfigure`）
+- `SVN：AI 测试连接`（`svnWorkbench.aiTestConnection`）
+- `SVN：变更集管理`（`svnWorkbench.openChangelists`）
+- `SVN：解读所选变更`（`svnWorkbench.understandScope`）
+- `SVN：项目总览`（`svnWorkbench.openProjects`）
+- `SVN：打开验收清单`（`svnWorkbench.openAcceptanceChecklist`，仅开发/测试环境可见）
 
 ## 基本流程
 

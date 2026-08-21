@@ -6,6 +6,7 @@
   import ScrollArea from "../../../components/ui/ScrollArea.svelte";
   import SearchInput from "../../../components/list/SearchInput.svelte";
   import ResultCount from "../../../components/list/ResultCount.svelte";
+  import OperationIntentDialog from "../../../components/operation/OperationIntentDialog.svelte";
   import { naturalCompare } from "../../../../selection/selectionSort";
 
   /*
@@ -43,6 +44,35 @@
       const cmp = naturalCompare(left.name, right.name);
       return sortDirection === "asc" ? cmp : -cmp;
     });
+  });
+
+  // v0.0.14 批次 D：属性修改意向单
+  let propertyIntentOpen = $state(false);
+  let propertyTriggerEl = $state<HTMLElement | null>(null);
+  const propertyIntent = $derived.by(() => {
+    const preview = snapshot.properties.preview;
+    if (!preview) return undefined;
+    const title = preview.remove
+      ? `删除属性 ${preview.name}`
+      : `修改属性 ${preview.name}（1 个路径）`;
+    const summary = `${title} · 目标：${snapshot.properties.target}，执行前将重新校验`;
+    return {
+      token: preview.token,
+      kind: "property" as const,
+      title,
+      summary,
+      paths: [snapshot.properties.target],
+      createdAt: new Date().toISOString(),
+      canExecute: preview.canExecute,
+      issues: preview.issues,
+      commands: [preview.command],
+      stale: false,
+    };
+  });
+  const propertyConfirmLabel = $derived.by(() => {
+    const preview = snapshot.properties.preview;
+    if (!preview) return "确认";
+    return preview.remove ? "确认删除属性" : "确认设置属性";
   });
 </script>
 
@@ -188,14 +218,27 @@
             </div>{/each}<button
             class="button button--primary commit-button"
             disabled={!snapshot.properties.preview.canExecute}
-            onclick={() =>
-              onAction("repository/execute-property", {
-                previewToken: snapshot.properties.preview?.token,
-              })}
+            onclick={(event) => {
+              propertyTriggerEl = event.currentTarget as HTMLElement;
+              propertyIntentOpen = true;
+            }}
             >{snapshot.properties.preview.remove
               ? "确认删除属性"
               : "确认设置属性"}</button
           >
+          <OperationIntentDialog
+            intent={propertyIntent}
+            open={propertyIntentOpen && Boolean(propertyIntent)}
+            confirmLabel={propertyConfirmLabel}
+            cancelLabel="取消"
+            triggerElement={propertyTriggerEl}
+            onAction={(a, d) => onAction(a, d)}
+            onConfirm={(token) => {
+              propertyIntentOpen = false;
+              onAction("repository/execute-property", { previewToken: token });
+            }}
+            onCancel={() => (propertyIntentOpen = false)}
+          />
         </div>{/if}
     </div>
   </div>

@@ -17,6 +17,7 @@
   import SearchInput from "../../components/list/SearchInput.svelte";
   import ResultCount from "../../components/list/ResultCount.svelte";
   import PreviewPathList from "../../components/list/PreviewPathList.svelte";
+  import OperationIntentDialog from "../../components/operation/OperationIntentDialog.svelte";
   import { useFileList } from "../../components/list/useFileList.svelte";
   import {
     computeTriState,
@@ -86,6 +87,33 @@
   let draftExpanded = $state(false);
   let destructiveConfirmed = $state(false);
   let operationPreviewToken = $state<string | undefined>();
+  // v0.0.14 批次 D：文件操作意向单（还原/删除等）
+  let fileOpIntentOpen = $state(false);
+  let fileOpTriggerEl = $state<HTMLElement | null>(null);
+  const fileOpIntent = $derived.by(() => {
+    const preview = snapshot.operationPreview;
+    if (!preview) return undefined;
+    const count = preview.paths.length;
+    const actionLabel = operationLabels[preview.operation] ?? preview.operation;
+    const title = `${actionLabel} ${count} 个文件`;
+    const summary = `${title} · 执行前将重新校验范围与候选状态`;
+    const stale = previewSelectionOutOfSync;
+    return {
+      token: preview.token,
+      kind: "file-operation" as const,
+      title,
+      summary,
+      paths: preview.paths,
+      createdAt: new Date().toISOString(),
+      canExecute:
+        preview.canExecute &&
+        !stale &&
+        (!preview.destructive || destructiveConfirmed),
+      issues: preview.issues,
+      commands: [preview.command],
+      stale,
+    };
+  });
 
   // 列表偏好按模块本地保存（workspace 容器 + module），不跨模块串用。
   const savedPreferences = loadListPreferences("changes");
@@ -895,11 +923,25 @@
         disabled={!snapshot.operationPreview.canExecute ||
           previewSelectionOutOfSync ||
           (snapshot.operationPreview.destructive && !destructiveConfirmed)}
-        onclick={() =>
-          onAction("changes/execute-operation", {
-            previewToken: snapshot.operationPreview?.token,
-          })}>确认{operationLabels[snapshot.operationPreview.operation]}</button
+        onclick={(event) => {
+          fileOpTriggerEl = event.currentTarget as HTMLElement;
+          fileOpIntentOpen = true;
+        }}>确认{operationLabels[snapshot.operationPreview.operation]}</button
       >
+      <OperationIntentDialog
+        intent={fileOpIntent}
+        open={fileOpIntentOpen && Boolean(fileOpIntent)}
+        confirmLabel={`确认${snapshot.operationPreview ? operationLabels[snapshot.operationPreview.operation] : ""}（${fileOpIntent?.paths.length ?? 0}）`}
+        cancelLabel="取消"
+        triggerElement={fileOpTriggerEl}
+        {onAction}
+        {pathDetail}
+        onConfirm={(token) => {
+          fileOpIntentOpen = false;
+          onAction("changes/execute-operation", { previewToken: token });
+        }}
+        onCancel={() => (fileOpIntentOpen = false)}
+      />
     </div>
   {/if}
 </section>

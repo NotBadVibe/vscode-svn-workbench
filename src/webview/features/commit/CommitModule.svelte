@@ -56,6 +56,7 @@
     rangeItems,
     sortFileViews,
   } from "../../components/list/listModel";
+  import OperationIntentDialog from "../../components/operation/OperationIntentDialog.svelte";
   import {
     loadListPreferences,
     saveListPreferences,
@@ -531,6 +532,30 @@
     excluded: "排除",
     blocked: "阻止",
   };
+
+  // v0.0.14 通用操作意向单：提交确认对话框（批次 C）
+  let intentOpen = $state(false);
+  let intentTriggerEl = $state<HTMLElement | null>(null);
+  const commitIntent = $derived.by(() => {
+    const preview = usablePreview;
+    if (!preview) return undefined;
+    const count = preview.selectedPaths.length;
+    const title = `提交 ${count} 个文件`;
+    const summary = `提交 ${count} 个文件 · 执行前将重新校验范围、文件状态与远端更新`;
+    const stale = selectionOutOfSync;
+    return {
+      token: preview.token,
+      kind: "commit" as const,
+      title,
+      summary,
+      paths: preview.selectedPaths,
+      createdAt: preview.createdAt,
+      canExecute: preview.canExecute && !stale,
+      issues: preview.issues,
+      commands: preview.commands,
+      stale,
+    };
+  });
 </script>
 
 <section class="commit-layout">
@@ -1377,10 +1402,10 @@
         <button
           class="button button--primary commit-button"
           disabled={!usablePreview.canExecute}
-          onclick={() =>
-            onAction("commit/execute", {
-              previewToken: usablePreview?.token,
-            })}
+          onclick={(event) => {
+            intentTriggerEl = event.currentTarget as HTMLElement;
+            intentOpen = true;
+          }}
         >
           <span class="codicon codicon-cloud-upload" aria-hidden="true"></span>
           确认提交（{usablePreview.selectedPaths.length}）
@@ -1407,4 +1432,18 @@
       {/if}
     </div>
   </ScrollArea>
+  <OperationIntentDialog
+    intent={commitIntent}
+    open={intentOpen && Boolean(commitIntent)}
+    confirmLabel={`确认提交（${commitIntent?.paths.length ?? 0}）`}
+    cancelLabel="取消"
+    triggerElement={intentTriggerEl}
+    {onAction}
+    {pathDetail}
+    onConfirm={(token) => {
+      intentOpen = false;
+      onAction("commit/execute", { previewToken: token });
+    }}
+    onCancel={() => (intentOpen = false)}
+  />
 </section>

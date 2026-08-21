@@ -32,12 +32,31 @@ export interface EnvironmentDiagnosticInput {
   ai?: EnvironmentDiagnosticAiConfig;
 }
 
+export type DiagnosticActionId =
+  | "selectSvnExecutable"
+  | "openSettings"
+  | "rerunDiagnostics"
+  | "openFolder"
+  | "copyDiagnostics"
+  | "openUrl";
+
+export interface DiagnosticAction {
+  id: DiagnosticActionId;
+  /** 按钮展示文案（中文）。 */
+  label: string;
+  /** 动作参数：openSettings 的 query、openFolder 的 path、openUrl 的 url 等。 */
+  params?: Record<string, unknown>;
+}
+
 export interface EnvironmentDiagnosticCheck {
   id: string;
   label: string;
   status: EnvironmentDiagnosticStatus;
   detail: string;
+  /** 人可读建议文案（保留兼容）。 */
   action?: string;
+  /** 可执行动作（批次 A 协议化）。 */
+  actions?: DiagnosticAction[];
 }
 
 export interface EnvironmentDiagnosticReport {
@@ -59,6 +78,13 @@ export function buildEnvironmentDiagnosticReport(
         input.arch === "x64" || input.arch === "arm64"
           ? undefined
           : "建议在 x64 或 arm64 环境完成正式验收。",
+      actions:
+        input.arch === "x64" || input.arch === "arm64"
+          ? undefined
+          : [
+              { id: "rerunDiagnostics", label: "重新检测" },
+              { id: "copyDiagnostics", label: "复制诊断信息" },
+            ],
     },
     {
       id: "vscode",
@@ -68,6 +94,12 @@ export function buildEnvironmentDiagnosticReport(
       action: input.vscodeVersion
         ? undefined
         : "需要在 VS Code Extension Host 中运行。",
+      actions: input.vscodeVersion
+        ? undefined
+        : [
+            { id: "rerunDiagnostics", label: "重新检测" },
+            { id: "copyDiagnostics", label: "复制诊断信息" },
+          ],
     },
     buildSvnCliCheck(input.svnExecutable, input.configuredSvnPath),
     buildWorkspaceCheck(input.workspaces),
@@ -136,6 +168,10 @@ function buildPlatformCheck(
     status: "warn",
     detail: platform,
     action: "当前产品验收标准优先覆盖 Windows 和 macOS。",
+    actions: [
+      { id: "rerunDiagnostics", label: "重新检测" },
+      { id: "copyDiagnostics", label: "复制诊断信息" },
+    ],
   };
 }
 
@@ -161,6 +197,21 @@ function buildSvnCliCheck(
       ? `未找到配置路径：${configuredSvnPath}`
       : "未找到 svn 可执行文件",
     action: "安装 SVN CLI，或配置 svnWorkbench.svn.path 指向 svn 可执行文件。",
+    actions: [
+      { id: "selectSvnExecutable", label: "选择 SVN 可执行文件" },
+      {
+        id: "openSettings",
+        label: "打开设置",
+        params: { query: "svnWorkbench.svn.path" },
+      },
+      { id: "copyDiagnostics", label: "复制诊断信息" },
+      { id: "rerunDiagnostics", label: "重新检测" },
+      {
+        id: "openUrl",
+        label: "查看安装帮助",
+        params: { url: "https://subversion.apache.org/packages.html" },
+      },
+    ],
   };
 }
 
@@ -174,6 +225,11 @@ function buildWorkspaceCheck(
       status: "warn",
       detail: "未打开工作区",
       action: "打开 SVN 工作副本目录后再执行提交、更新和冲突处理。",
+      actions: [
+        { id: "openFolder", label: "打开文件夹" },
+        { id: "copyDiagnostics", label: "复制诊断信息" },
+        { id: "rerunDiagnostics", label: "重新检测" },
+      ],
     };
   }
 
@@ -197,6 +253,11 @@ function buildWorkspaceCheck(
     detail: `${workspaces.length} 个工作区均未检测到 SVN 工作副本${describeWorkspaceBindings(workspaces)}`,
     action:
       "确认打开的是 SVN 工作副本内的目录；位于上层工作副本的项目会被自动识别，非 SVN 目录请先检出（Checkout）。",
+    actions: [
+      { id: "openFolder", label: "打开文件夹" },
+      { id: "copyDiagnostics", label: "复制诊断信息" },
+      { id: "rerunDiagnostics", label: "重新检测" },
+    ],
   };
 }
 
@@ -224,6 +285,15 @@ function buildAiCheck(
       status: "warn",
       detail: "未读取 AI 配置",
       action: "需要 AI 能力时，执行 SVN：AI 配置模型。",
+      actions: [
+        {
+          id: "openSettings",
+          label: "打开 AI 设置",
+          params: { query: "svnWorkbench.ai" },
+        },
+        { id: "copyDiagnostics", label: "复制诊断信息" },
+        { id: "rerunDiagnostics", label: "重新检测" },
+      ],
     };
   }
 
@@ -250,6 +320,15 @@ function buildAiCheck(
     detail: `${ai.providerPreset} 缺少 ${missing.join("、")}`,
     action:
       "需要 AI 筛选、AI 拆分提交或 AI 冲突建议时，执行 SVN：AI 配置模型。",
+    actions: [
+      {
+        id: "openSettings",
+        label: "打开 AI 设置",
+        params: { query: "svnWorkbench.ai" },
+      },
+      { id: "copyDiagnostics", label: "复制诊断信息" },
+      { id: "rerunDiagnostics", label: "重新检测" },
+    ],
   };
 }
 
