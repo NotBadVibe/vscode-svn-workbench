@@ -98,6 +98,22 @@ export class WorkbenchState {
     | Extract<HostToWebviewMessage, { type: "conflict/receipt" }>["payload"]
     | undefined
   >();
+  /** v0.0.13 批次 B：冲突草稿检查点 ACK。 */
+  conflictDraftAck = $state<
+    | Extract<
+        HostToWebviewMessage,
+        { type: "conflict/draft-checkpointed" }
+      >["payload"]
+    | undefined
+  >();
+  /** v0.0.13 批次 B：冲突草稿三选一守卫请求。 */
+  conflictSwitchRequest = $state<
+    | Extract<
+        HostToWebviewMessage,
+        { type: "conflict/draft-switch-confirm" }
+      >["payload"]
+    | undefined
+  >();
 
   readonly dispose: () => void;
 
@@ -122,6 +138,9 @@ export class WorkbenchState {
     // 三选一决定已发出：本地确认请求立即关闭（Host 会按决定推进或回发错误）。
     if (action === "diff/target-switch-decision") {
       this.targetSwitchRequest = undefined;
+    }
+    if (action === "conflict/draft-switch-decision") {
+      this.conflictSwitchRequest = undefined;
     }
     workbenchBridge.post({
       protocolVersion: WORKBENCH_PROTOCOL_VERSION,
@@ -170,6 +189,11 @@ export class WorkbenchState {
     if (message.type === "app/initialize") {
       this.sessionId = message.sessionId;
     }
+    // v0.0.13：冲突草稿与切换守卫的一次性消息在会话初始化时清除
+    if (message.type === "app/initialize") {
+      this.conflictDraftAck = undefined;
+      this.conflictSwitchRequest = undefined;
+    }
     this.repositoryUuid = message.repositoryUuid ?? this.repositoryUuid;
     this.scopeHash = message.scopeHash ?? this.scopeHash;
     this.moduleId = message.moduleId;
@@ -186,6 +210,8 @@ export class WorkbenchState {
         this.diffSaveResult = undefined;
         this.draftAck = undefined;
         this.targetSwitchRequest = undefined;
+        this.conflictDraftAck = undefined;
+        this.conflictSwitchRequest = undefined;
         this.pathDetail = undefined;
         this.commitReceipt = undefined;
         this.understandingReceipt = undefined;
@@ -202,6 +228,7 @@ export class WorkbenchState {
         this.understandingReceipt = undefined;
         this.changelistReceipt = undefined;
         this.conflictReceipt = undefined;
+        this.conflictDraftAck = undefined;
         break;
       case "module/snapshot":
         this.snapshot = message.payload.snapshot;
@@ -223,6 +250,7 @@ export class WorkbenchState {
         this.understandingReceipt = undefined;
         this.changelistReceipt = undefined;
         this.conflictReceipt = undefined;
+        // 冲突草稿保存失败不清空切换守卫（编辑器与草稿保留）
         break;
       case "operation/progress":
         this.progress = {
@@ -271,6 +299,12 @@ export class WorkbenchState {
         break;
       case "diff/target-switch-confirm":
         this.targetSwitchRequest = message.payload;
+        break;
+      case "conflict/draft-checkpointed":
+        this.conflictDraftAck = message.payload;
+        break;
+      case "conflict/draft-switch-confirm":
+        this.conflictSwitchRequest = message.payload;
         break;
       case "file/path-detail-result":
         this.pathDetail = message.payload;

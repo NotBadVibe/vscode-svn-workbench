@@ -142,7 +142,20 @@ describe("ChangesModule", () => {
     await fireEvent.click(
       screen.getByRole("checkbox", { name: /逐项核对文件清单/ }),
     );
+    expect(execute).toBeEnabled();
     await fireEvent.click(execute);
+    // 批次 D：确认还原先打开通用操作意向单对话框
+    expect(
+      screen.getByRole("dialog", { name: "还原本地修改 1 个文件" }),
+    ).toBeInTheDocument();
+    const dialog = screen.getByRole("dialog", {
+      name: "还原本地修改 1 个文件",
+    });
+    const confirmInDialog = Array.from(dialog.querySelectorAll("button")).find(
+      (b) => b.textContent?.includes("确认还原本地修改（1）"),
+    ) as HTMLElement;
+    expect(confirmInDialog).toBeInTheDocument();
+    await fireEvent.click(confirmInDialog);
     expect(onAction).toHaveBeenCalledWith("changes/execute-operation", {
       previewToken: "revert-1",
     });

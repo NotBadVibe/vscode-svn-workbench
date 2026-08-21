@@ -8,6 +8,8 @@
   } from "@protocol/workbenchProtocol";
   import ScrollArea from "../../components/ui/ScrollArea.svelte";
   import PreviewPathList from "../../components/list/PreviewPathList.svelte";
+  import OperationIntentDialog from "../../components/operation/OperationIntentDialog.svelte";
+  import type { OperationIntentKind } from "../../../operation/operationIntent";
   import { taskLabels } from "../../i18n/terminology";
 
   type RepositoryTaskId = Extract<WorkbenchTaskId, `repository/${string}`>;
@@ -110,6 +112,51 @@
 
   let advancedConfirmed = $state(false);
   let previewToken = $state<string | undefined>();
+  // v0.0.14 批次 D：高级操作意向单（Switch/Relocate/Merge 等）
+  let advancedIntentOpen = $state(false);
+  let advancedTriggerEl = $state<HTMLElement | null>(null);
+  const advancedIntent = $derived.by(() => {
+    const preview = snapshot.advanced.preview;
+    if (!preview || !showsAdvancedPreview) return undefined;
+    // 按 Lead 规则：标题写"动作 + 真实影响对象"，数量来自最终候选/计划值
+    const title = preview.title;
+    // Switch/Relocate/Merge 等已由 Host 生成具体标题（如“切换工作副本到 ...”），直接复用；
+    // 为满足通用校验，summary 附加执行前复验说明
+    const summary = `${title} · 执行前将重新校验范围与目标状态`;
+    // 清单：details 来自预览详情（可能包含旧 URL/新 URL、revision 等）
+    const paths = preview.details ?? [];
+    // kind 诚实映射：preview.operation → OperationIntentKind，patch/shelf 复用 file-operation
+    const kind: OperationIntentKind =
+      preview.operation === "branch"
+        ? "branch"
+        : preview.operation === "tag"
+          ? "tag"
+          : preview.operation === "relocate"
+            ? "relocate"
+            : preview.operation === "merge"
+              ? "merge"
+              : preview.operation === "switch"
+                ? "switch"
+                : "file-operation";
+    return {
+      token: preview.token,
+      kind,
+      title,
+      summary,
+      paths,
+      createdAt: new Date().toISOString(),
+      canExecute:
+        preview.canExecute && (!preview.destructive || advancedConfirmed),
+      issues: preview.issues,
+      commands: preview.commands,
+      stale: false,
+    };
+  });
+  const advancedConfirmLabel = $derived.by(() => {
+    const preview = snapshot.advanced.preview;
+    if (!preview) return "确认执行";
+    return `确认执行${previewOperationLabels[preview.operation]}`;
+  });
 
   $effect(() => {
     const token = snapshot.advanced.preview?.token;
@@ -246,14 +293,28 @@
         class="button button--primary"
         disabled={!snapshot.advanced.preview.canExecute ||
           (snapshot.advanced.preview.destructive && !advancedConfirmed)}
-        onclick={() =>
-          onAction("repository/execute-advanced", {
-            previewToken: snapshot.advanced.preview?.token,
-          })}
+        onclick={(event) => {
+          advancedTriggerEl = event.currentTarget as HTMLElement;
+          advancedIntentOpen = true;
+        }}
         >确认执行{previewOperationLabels[
           snapshot.advanced.preview.operation
         ]}</button
       >
+      <OperationIntentDialog
+        intent={advancedIntent}
+        open={advancedIntentOpen && Boolean(advancedIntent)}
+        confirmLabel={advancedConfirmLabel}
+        cancelLabel="取消"
+        triggerElement={advancedTriggerEl}
+        {onAction}
+        {pathDetail}
+        onConfirm={(token) => {
+          advancedIntentOpen = false;
+          onAction("repository/execute-advanced", { previewToken: token });
+        }}
+        onCancel={() => (advancedIntentOpen = false)}
+      />
     </section>
   {/if}
 </section>

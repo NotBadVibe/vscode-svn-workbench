@@ -44,6 +44,10 @@ import {
   MAX_DIFF_BYTES,
   MAX_PATCH_BYTES,
 } from "./workbenchSupport";
+import {
+  validateOperationIntentForExecute,
+  type OperationIntentKind,
+} from "../../operation/operationIntent";
 import type { WorkbenchSession } from "./workbenchSession";
 
 export interface RepositoryWorkbenchHost {
@@ -468,7 +472,57 @@ export class RepositoryWorkbenchActions {
       return;
     }
     const candidates = await this.host.collectScopeCandidates(session);
-    if (hashCandidateState(candidates, "", []) !== preview.candidateHash) {
+    // v0.0.14 批次 B：高级操作通用意向单校验（scope/candidate 变化只读失效）
+    // kind 诚实映射：preview.operation → OperationIntentKind（branch/tag/switch/relocate/merge 等），patch/shelf 复用 file-operation
+    const candidateHash = hashCandidateState(candidates, "", []);
+    const advancedKind: OperationIntentKind =
+      preview.operation === "branch"
+        ? "branch"
+        : preview.operation === "tag"
+          ? "tag"
+          : preview.operation === "relocate"
+            ? "relocate"
+            : preview.operation === "merge"
+              ? "merge"
+              : preview.operation === "switch"
+                ? "switch"
+                : "file-operation";
+    const advancedIntent = {
+      token: preview.token,
+      kind: advancedKind,
+      title: preview.title,
+      summary: preview.title,
+      paths: preview.details,
+      scopeHash: session.scopeHash,
+      candidateHash: preview.candidateHash,
+      repositoryUuid: session.repositoryUuid,
+      createdAt: new Date().toISOString(),
+      canExecute: preview.issues.length === 0,
+      issues: preview.issues,
+      commands: preview.commands,
+      stale: false,
+    };
+    const genericCheck = validateOperationIntentForExecute(
+      advancedIntent,
+      previewToken,
+      {
+        repositoryUuid: session.repositoryUuid,
+        scopeHash: session.scopeHash,
+        candidateHash,
+      },
+    );
+    if (!genericCheck.ok) {
+      state.preview = undefined;
+      await this.host.sendError(
+        "repository",
+        "高级操作预览已失效",
+        genericCheck.reason,
+        true,
+        requestId,
+      );
+      return;
+    }
+    if (candidateHash !== preview.candidateHash) {
       state.preview = undefined;
       await this.host.sendError(
         "repository",

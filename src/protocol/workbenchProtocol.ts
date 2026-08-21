@@ -19,6 +19,10 @@ import type { ChangeUnderstandingSnapshot } from "../understanding/changeUnderst
 
 export type { ChangeUnderstandingSnapshot } from "../understanding/changeUnderstanding";
 export type { EvidenceReference } from "../commit/commitDiffEvidence";
+export type {
+  OperationIntentKind,
+  OperationIntentView,
+} from "../operation/operationIntent";
 import type { DisplayPath } from "../scope/pathBrands";
 import type { SelectionKey } from "../selection/selectionCore";
 
@@ -35,7 +39,8 @@ export type WorkbenchModuleId =
   | "repository"
   | "settings"
   | "diagnostics"
-  | "projects";
+  | "projects"
+  | "activity";
 
 export type WorkbenchTaskId =
   | "changes/overview"
@@ -62,7 +67,8 @@ export type WorkbenchTaskId =
   | "settings/selection"
   | "diagnostics/environment"
   | "diagnostics/acceptance"
-  | "projects/overview";
+  | "projects/overview"
+  | "activity/timeline";
 
 const defaultTasks: Record<WorkbenchModuleId, WorkbenchTaskId> = {
   changes: "changes/overview",
@@ -76,6 +82,7 @@ const defaultTasks: Record<WorkbenchModuleId, WorkbenchTaskId> = {
   settings: "settings/ai",
   diagnostics: "diagnostics/environment",
   projects: "projects/overview",
+  activity: "activity/timeline",
 };
 
 const taskModules: Record<WorkbenchTaskId, WorkbenchModuleId> = {
@@ -104,6 +111,7 @@ const taskModules: Record<WorkbenchTaskId, WorkbenchModuleId> = {
   "diagnostics/environment": "diagnostics",
   "diagnostics/acceptance": "diagnostics",
   "projects/overview": "projects",
+  "activity/timeline": "activity",
 };
 
 export function defaultWorkbenchTask(
@@ -526,6 +534,12 @@ export interface HistoryRevisionView {
   }>;
 }
 
+export interface SnapshotFreshness {
+  capturedAt: string;
+  scopeHash: string;
+  revision?: string;
+}
+
 export interface HistorySnapshot {
   kind: "history";
   revisions: HistoryRevisionView[];
@@ -548,6 +562,40 @@ export interface HistorySnapshot {
     issues: string[];
   };
   feedback?: string;
+  freshness?: SnapshotFreshness;
+}
+
+export interface ActivitySnapshot {
+  kind: "activity";
+  records: Array<{
+    id: string;
+    capturedAt: string;
+    kind:
+      "draft-checkpoint" | "understanding-confirmation" | "operation-execution";
+    moduleId: WorkbenchModuleId;
+    taskId: WorkbenchTaskId;
+    projectName?: string;
+    scopeHash: string;
+    repositoryUuid: string;
+    scopeLabel: string;
+    impactedCount: number;
+    previewSummary?: string;
+    result?: "success" | "failed" | "pending";
+    errorReason?: string;
+    nextActions: Array<{
+      id:
+        | "retry"
+        | "view-conflicts"
+        | "open-output"
+        | "copy-diagnostics"
+        | "view-history";
+      label: string;
+      params?: Record<string, unknown>;
+    }>;
+    nonRecoverable?: boolean;
+    nonRecoverableReason?: string;
+  }>;
+  generatedAt: string;
 }
 
 export interface ConflictFileContentView {
@@ -591,6 +639,17 @@ export interface ConflictSnapshot {
       editable: boolean;
       issues: string[];
       feedback?: string;
+    };
+    /**
+     * v0.0.13 批次 B：Host 侧冲突合并草稿（不写磁盘、不触发 Resolve）。
+     * 存在时编辑器展示草稿内容；切换文件/刷新/关闭时由 Host 三选一守卫。
+     */
+    draft?: {
+      content: string;
+      revision: number;
+      updatedAt: number;
+      hasDraft: boolean;
+      dirty: boolean;
     };
   };
   advice?: {
@@ -790,6 +849,20 @@ export interface SettingsSnapshot {
   selection: CommitSelectionSettingsSection;
 }
 
+export type DiagnosticActionId =
+  | "selectSvnExecutable"
+  | "openSettings"
+  | "rerunDiagnostics"
+  | "openFolder"
+  | "copyDiagnostics"
+  | "openUrl";
+
+export interface DiagnosticAction {
+  id: DiagnosticActionId;
+  label: string;
+  params?: Record<string, unknown>;
+}
+
 export interface DiagnosticsSnapshot {
   kind: "diagnostics";
   status: "pass" | "warn" | "fail";
@@ -799,6 +872,7 @@ export interface DiagnosticsSnapshot {
     status: "pass" | "warn" | "fail";
     detail: string;
     action?: string;
+    actions?: DiagnosticAction[];
   }>;
   acceptance: {
     summary: {
@@ -976,6 +1050,17 @@ export interface ChangelistsSnapshot {
     issues: string[];
   };
   feedback?: string;
+  /**
+   * v0.0.13 批次 C：会话级共享选择带入提示（不静默扩大）。
+   * 当 Changes/Commit 的已选通过 session.selectedPaths 带入时，
+   * 展示“已带入 N 个文件”并提供查看清单。
+   */
+  preselected?: {
+    count: number;
+    paths: string[];
+  };
+  /** 筛选变化仅提示的警告（不静默扩大选择）。 */
+  preselectedFeedback?: string;
 }
 
 export type WorkbenchModuleSnapshot =
@@ -989,7 +1074,8 @@ export type WorkbenchModuleSnapshot =
   | RepositorySnapshot
   | ChangelistsSnapshot
   | ProjectsSnapshot
-  | ChangeUnderstandingSnapshot;
+  | ChangeUnderstandingSnapshot
+  | ActivitySnapshot;
 
 /**
  * v0.0.7 项目总览（§6.1）：只读优先的项目列表。允许聚合数量，但不得
@@ -1051,6 +1137,21 @@ export type HostToWebviewMessage =
     >
   | MessageEnvelope<"module/loading", { moduleId: WorkbenchModuleId }>
   | MessageEnvelope<"module/snapshot", { snapshot: WorkbenchModuleSnapshot }>
+  | MessageEnvelope<
+      "conflict/draft-checkpointed",
+      {
+        relativePath: string;
+        revision: number;
+        updatedAt: number;
+      }
+    >
+  | MessageEnvelope<
+      "conflict/draft-switch-confirm",
+      {
+        currentRelativePath: string;
+        nextRelativePath: string;
+      }
+    >
   | MessageEnvelope<
       "operation/error",
       {
@@ -1170,6 +1271,11 @@ export type HostToWebviewMessage =
   | MessageEnvelope<"conflict/receipt", ConflictReceiptView>;
 
 export type WebviewAction =
+  | "diagnostics/select-svn-executable"
+  | "diagnostics/open-settings"
+  | "diagnostics/open-folder"
+  | "diagnostics/copy-diagnostics"
+  | "diagnostics/open-url"
   | "refresh"
   | "open-module"
   | "open-diff"
@@ -1222,6 +1328,12 @@ export type WebviewAction =
   | "conflict/save-working"
   | "conflict/preview-resolve"
   | "conflict/resolve"
+  | "conflict/draft-update"
+  | "conflict/draft-checkpoint"
+  | "conflict/draft-abandon"
+  | "conflict/draft-copy"
+  | "conflict/draft-export"
+  | "conflict/draft-switch-decision"
   | "settings/save-ai"
   | "settings/test-ai"
   | "settings/list-models"
@@ -1264,6 +1376,12 @@ export type WebviewAction =
   | "file/copy-path"
   | "projects/open-task"
   | "projects/switch"
+  | "activity/refresh"
+  | "activity/retry"
+  | "activity/open-output"
+  | "activity/copy-diagnostics"
+  | "activity/view-conflicts"
+  | "activity/view-history"
   | "operation/cancel";
 
 export type WebviewToHostMessage =
@@ -1288,6 +1406,7 @@ const moduleIds = new Set<WorkbenchModuleId>([
   "settings",
   "diagnostics",
   "projects",
+  "activity",
 ]);
 
 /**
@@ -1295,6 +1414,11 @@ const moduleIds = new Set<WorkbenchModuleId>([
  * 下方 WebviewActionListConsistency 在编译期断言两侧同步，防止遗漏。
  */
 export const webviewActions = [
+  "diagnostics/select-svn-executable",
+  "diagnostics/open-settings",
+  "diagnostics/open-folder",
+  "diagnostics/copy-diagnostics",
+  "diagnostics/open-url",
   "refresh",
   "open-module",
   "open-diff",
@@ -1347,6 +1471,12 @@ export const webviewActions = [
   "conflict/save-working",
   "conflict/preview-resolve",
   "conflict/resolve",
+  "conflict/draft-update",
+  "conflict/draft-checkpoint",
+  "conflict/draft-abandon",
+  "conflict/draft-copy",
+  "conflict/draft-export",
+  "conflict/draft-switch-decision",
   "settings/save-ai",
   "settings/test-ai",
   "settings/list-models",
@@ -1389,6 +1519,12 @@ export const webviewActions = [
   "file/copy-path",
   "projects/open-task",
   "projects/switch",
+  "activity/refresh",
+  "activity/retry",
+  "activity/open-output",
+  "activity/copy-diagnostics",
+  "activity/view-conflicts",
+  "activity/view-history",
   "operation/cancel",
 ] as const satisfies readonly WebviewAction[];
 

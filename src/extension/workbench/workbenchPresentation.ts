@@ -80,6 +80,7 @@ export function getModuleTitle(
     "diagnostics/environment": "环境诊断",
     "diagnostics/acceptance": "验收清单",
     "projects/overview": "项目总览",
+    "activity/timeline": "操作时间线",
   };
   const task = isWorkbenchTaskForModule(taskId, moduleId)
     ? taskId

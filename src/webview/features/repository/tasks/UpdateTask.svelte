@@ -5,6 +5,7 @@
     WebviewAction,
   } from "@protocol/workbenchProtocol";
   import PreviewPathList from "../../../components/list/PreviewPathList.svelte";
+  import OperationIntentDialog from "../../../components/operation/OperationIntentDialog.svelte";
   import { riskLabels } from "../../../i18n/terminology";
 
   let {
@@ -20,6 +21,42 @@
       { type: "file/path-detail-result" }
     >["payload"];
   } = $props();
+
+  // v0.0.14 批次 D：更新确认意向单（远端为操作对象，重叠为风险提示）
+  let updateIntentOpen = $state(false);
+  let updateTriggerEl = $state<HTMLElement | null>(null);
+  const updateIntent = $derived.by(() => {
+    const upd = snapshot.update;
+    if (!upd) return undefined;
+    const remoteCount = upd.remoteCount;
+    const hasRemoteCount = typeof remoteCount === "number";
+    const title = hasRemoteCount
+      ? `更新 ${remoteCount} 个远端变更`
+      : "更新当前范围";
+    const summary = hasRemoteCount
+      ? `更新 ${remoteCount} 个远端变更 · 重叠风险 ${upd.overlapPaths.length} 个路径，执行前将重新校验范围与远端状态`
+      : "更新当前范围 · 远端数量待检测，执行前将重新校验范围与远端状态";
+    return {
+      token: upd.token,
+      kind: "update" as const,
+      title,
+      summary,
+      paths: upd.overlapPaths,
+      createdAt: new Date().toISOString(),
+      canExecute: upd.canExecute,
+      issues: [],
+      commands: upd.commands,
+      stale: false,
+    };
+  });
+  const updateConfirmLabel = $derived.by(() => {
+    const upd = snapshot.update;
+    if (!upd) return "确认更新当前范围";
+    const remoteCount = upd.remoteCount;
+    return typeof remoteCount === "number"
+      ? `确认更新（${remoteCount}）`
+      : "确认更新当前范围";
+  });
 </script>
 
 <section class="operation-card operation-card--wide repository-task-card">
@@ -84,12 +121,26 @@
       ><button
         class="button button--primary"
         disabled={!snapshot.update.canExecute}
-        onclick={() =>
-          onAction("repository/execute-update", {
-            previewToken: snapshot.update?.token,
-          })}>确认更新当前范围</button
+        onclick={(event) => {
+          updateTriggerEl = event.currentTarget as HTMLElement;
+          updateIntentOpen = true;
+        }}>确认更新当前范围</button
       >
     </div>
+    <OperationIntentDialog
+      intent={updateIntent}
+      open={updateIntentOpen && Boolean(updateIntent)}
+      confirmLabel={updateConfirmLabel}
+      cancelLabel="取消"
+      triggerElement={updateTriggerEl}
+      {onAction}
+      {pathDetail}
+      onConfirm={(token) => {
+        updateIntentOpen = false;
+        onAction("repository/execute-update", { previewToken: token });
+      }}
+      onCancel={() => (updateIntentOpen = false)}
+    />
   {:else}
     <div class="preview-empty">
       <span class="codicon codicon-sync" aria-hidden="true"></span>

@@ -40,6 +40,7 @@
     saveListPreferences,
   } from "../../app/listPreferences";
   import { SvelteMap, SvelteSet } from "svelte/reactivity";
+  import OperationIntentDialog from "../../components/operation/OperationIntentDialog.svelte";
   import { fileStatusLabels, sourceLabels } from "../../i18n/terminology";
 
   /*
@@ -260,6 +261,22 @@
       announcement = `刷新后移除 ${outcome.removed.length} 个失效选择（${reasons}）。`;
     }
   });
+  // v0.0.13：会话共享选择带入（已带入 N 个文件），首次加载时若本地无选择则同步 preselected
+  $effect(() => {
+    const preselected = snapshot.preselected;
+    if (!preselected || selected.size > 0) return;
+    const keyByPath = new Map(
+      allEntries().flatMap((e) =>
+        e.selectionKey ? ([[e.relativePath, e.selectionKey]] as const) : [],
+      ),
+    );
+    const next = new SvelteSet<SelectionKey>();
+    for (const p of preselected.paths) {
+      const k = keyByPath.get(p);
+      if (k) next.add(k);
+    }
+    if (next.size > 0) selected = next as unknown as ReadonlySet<SelectionKey>;
+  });
 
   const list = useFileList<ChangelistGroupFileView>({
     rows: () => allRows,
@@ -365,6 +382,30 @@
   }
 
   let receiptExpanded = $state(false);
+  // v0.0.14 批次 D：变更集应用意向单
+  let changelistIntentOpen = $state(false);
+  let changelistTriggerEl = $state<HTMLElement | null>(null);
+  const changelistIntent = $derived.by(() => {
+    const preview = snapshot.preview;
+    if (!preview) return undefined;
+    const count = preview.paths.length;
+    const title = preview.remove
+      ? `移出变更集 ${count} 个文件`
+      : `应用变更集到 ${count} 个文件`;
+    const summary = `${title} · 目标：${preview.name ?? "未命名"}，执行前将重新校验`;
+    return {
+      token: preview.token,
+      kind: "changelist-apply" as const,
+      title,
+      summary,
+      paths: preview.paths,
+      createdAt: new Date().toISOString(),
+      canExecute: preview.canExecute,
+      issues: preview.issues,
+      commands: [preview.command],
+      stale: false,
+    };
+  });
 
   function sanitizeName(value: string): string {
     return (
@@ -532,6 +573,22 @@
     >
       {warning}
     </div>{/each}
+  {#if snapshot.preselected}<div class="notice notice--info" role="status">
+      <span class="codicon codicon-info" aria-hidden="true"></span>已带入 {snapshot
+        .preselected.count} 个文件（来自会话共享选择，右键范围未扩大）
+      <small
+        >包含：{snapshot.preselected.paths.slice(0, 5).join("、")}{snapshot
+          .preselected.paths.length > 5
+          ? ` 等 ${snapshot.preselected.paths.length} 个`
+          : ""}</small
+      >
+    </div>{/if}
+  {#if snapshot.preselectedFeedback}<div
+      class="notice notice--warning"
+      role="status"
+    >
+      {snapshot.preselectedFeedback}
+    </div>{/if}
 
   <div class="changelist-layout">
     <div class="changelist-column changelist-column--files">
@@ -859,14 +916,30 @@
           <button
             class="button button--primary commit-button"
             disabled={!snapshot.preview.canExecute}
-            onclick={() =>
-              onAction("changelist/execute-apply", {
-                previewToken: snapshot.preview?.token,
-              })}
+            onclick={(event) => {
+              changelistTriggerEl = event.currentTarget as HTMLElement;
+              changelistIntentOpen = true;
+            }}
             >{snapshot.preview.remove
               ? "确认移出变更集"
               : "确认应用变更集"}</button
           >
+          <OperationIntentDialog
+            intent={changelistIntent}
+            open={changelistIntentOpen && Boolean(changelistIntent)}
+            confirmLabel={snapshot.preview.remove
+              ? "确认移出变更集"
+              : "确认应用变更集"}
+            cancelLabel="取消"
+            triggerElement={changelistTriggerEl}
+            {onAction}
+            {pathDetail}
+            onConfirm={(token) => {
+              changelistIntentOpen = false;
+              onAction("changelist/execute-apply", { previewToken: token });
+            }}
+            onCancel={() => (changelistIntentOpen = false)}
+          />
         </div>
       {/if}
     </ScrollArea>

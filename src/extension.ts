@@ -6,6 +6,10 @@ import {
 } from "./ai/aiModelConfiguration";
 import { OpenAiCompatibleProvider } from "./ai/openAiCompatibleProvider";
 import { appendOutput, showOutput } from "./diagnostics/outputChannel";
+import {
+  handleOpenSettings,
+  handleSelectSvnExecutable,
+} from "./diagnostics/diagnosticActions";
 import { ensureSvnWorkbenchProjectConfig } from "./commit/commitConvention";
 import {
   CommitSelectionRuleService,
@@ -898,9 +902,28 @@ async function getSvnPath(): Promise<string> {
       .getConfiguration("svnWorkbench")
       .get<string>("svn.path")
       ?.trim();
-    vscode.window.showWarningMessage(
-      "未找到 SVN CLI。工作台将打开错误与修复指引，请在设置或诊断中配置路径。",
+    const choice = await vscode.window.showWarningMessage(
+      configured
+        ? `未找到配置的 SVN 路径：${configured}。请选择有效的 svn 可执行文件。`
+        : "未找到 SVN CLI。请选择 svn 可执行文件或查看安装帮助。",
+      "选择 SVN 可执行文件",
+      "打开设置",
+      "重新检测",
     );
+    if (choice === "选择 SVN 可执行文件") {
+      // 复用诊断动作的共享实现（批次 B 统一，避免两份 showOpenDialog + 写设置代码）
+      const pickedPath = await handleSelectSvnExecutable();
+      if (pickedPath) {
+        cachedSvnPath = pickedPath;
+        return pickedPath;
+      }
+    } else if (choice === "打开设置") {
+      await handleOpenSettings("svnWorkbench.svn.path");
+    } else if (choice === "重新检测") {
+      cachedSvnPath = undefined;
+      return getSvnPath();
+    }
+    // 回退：保持原语义，返回已配置路径或 "svn" 占位，调用方将通过诊断页展示可执行修复指引
     return configured || "svn";
   }
   cachedSvnPath = executable.path;

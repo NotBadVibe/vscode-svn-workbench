@@ -31,6 +31,15 @@ describe("RepositoryModule", () => {
     await fireEvent.click(
       await screen.findByRole("button", { name: "确认更新当前范围" }),
     );
+    // 批次 D：确认更新先打开通用操作意向单对话框
+    expect(
+      screen.getByRole("dialog", { name: "更新 0 个远端变更" }),
+    ).toBeInTheDocument();
+    const dialog = screen.getByRole("dialog", { name: "更新 0 个远端变更" });
+    const confirmInDialog = Array.from(dialog.querySelectorAll("button")).find(
+      (b) => b.textContent?.includes("确认更新（0）"),
+    ) as HTMLElement;
+    await fireEvent.click(confirmInDialog);
     expect(onAction).toHaveBeenCalledWith("repository/execute-update", {
       previewToken: "update-1",
     });
@@ -131,6 +140,15 @@ describe("RepositoryModule", () => {
     await fireEvent.click(screen.getByRole("checkbox"));
     expect(execute).toBeEnabled();
     await fireEvent.click(execute);
+    // 批次 D：确认执行先打开通用操作意向单对话框
+    expect(
+      screen.getByRole("dialog", { name: "切换工作副本" }),
+    ).toBeInTheDocument();
+    const dialog = screen.getByRole("dialog", { name: "切换工作副本" });
+    const confirmInDialog = Array.from(dialog.querySelectorAll("button")).find(
+      (b) => b.textContent?.includes("确认执行切换工作副本"),
+    ) as HTMLElement;
+    await fireEvent.click(confirmInDialog);
     expect(onAction).toHaveBeenCalledWith("repository/execute-advanced", {
       previewToken: "switch-1",
     });

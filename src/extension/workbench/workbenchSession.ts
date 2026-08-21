@@ -88,6 +88,10 @@ export interface WorkbenchSession extends OpenWorkbenchRequest {
     selectedPath?: string;
     /** v0.0.10：会话内首次冲突总数（处理进度基线）。 */
     initialCount?: number;
+    /** v0.0.13 批次 B：缓存各冲突文件的原始工作副本内容，供 draft-update 无重采 */
+    workingBaseContents?: Record<string, string>;
+    /** v0.0.13 批次 B：缓存上次快照的冲突路径集合，供 draft-update 校验存在性无重采 */
+    conflictPaths?: string[];
     advice?: import("../../protocol/workbenchProtocol").ConflictSnapshot["advice"];
     /** v0.0.12 批次 C：冲突意图解释（§7 六段）。 */
     interpretation?: import("../../protocol/workbenchProtocol").ConflictSnapshot["interpretation"];

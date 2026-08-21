@@ -81,6 +81,17 @@ describe("ChangelistsModule", () => {
     await fireEvent.click(
       screen.getByRole("button", { name: "确认应用变更集" }),
     );
+    // 批次 D：确认应用先打开通用操作意向单对话框
+    expect(
+      screen.getByRole("dialog", { name: "应用变更集到 1 个文件" }),
+    ).toBeInTheDocument();
+    const dialog = screen.getByRole("dialog", {
+      name: "应用变更集到 1 个文件",
+    });
+    const confirmInDialog = Array.from(dialog.querySelectorAll("button")).find(
+      (b) => b.textContent?.includes("确认应用变更集"),
+    ) as HTMLElement;
+    await fireEvent.click(confirmInDialog);
     expect(onAction).toHaveBeenCalledWith("changelist/execute-apply", {
       previewToken: "cl-1",
     });

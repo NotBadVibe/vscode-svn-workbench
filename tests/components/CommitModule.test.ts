@@ -79,7 +79,25 @@ describe("CommitModule", () => {
     const onAction = renderCommit();
 
     expect(screen.getByLabelText("选择 dist/out.js")).toBeDisabled();
+    // 批次 C：确认提交先打开通用操作意向单对话框
     await fireEvent.click(screen.getByRole("button", { name: /确认提交/ }));
+    expect(
+      screen.getByRole("dialog", { name: "提交 1 个文件" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "提交 1 个文件 · 执行前将重新校验范围、文件状态与远端更新",
+      ),
+    ).toBeInTheDocument();
+    // 对话框内影响清单可搜索/复制（复用 PreviewPathList）
+    expect(screen.getByPlaceholderText("路径…")).toBeInTheDocument();
+    // 通过对话框确认后才携带 token 执行
+    const dialog = screen.getByRole("dialog", { name: "提交 1 个文件" });
+    const confirmInDialog = Array.from(dialog.querySelectorAll("button")).find(
+      (b) => b.textContent?.includes("确认提交"),
+    ) as HTMLElement;
+    expect(confirmInDialog).toBeInTheDocument();
+    await fireEvent.click(confirmInDialog);
     expect(onAction).toHaveBeenCalledWith("commit/execute", {
       previewToken: "preview-1",
     });
@@ -543,12 +561,18 @@ describe("CommitModule 受限差异外发回执（v0.0.11 §3）", () => {
 
   it("可展开包含 / 排除文件清单", async () => {
     const onAction = renderWithReceipt();
-    expect(screen.queryByText("src/a.ts")).not.toBeInTheDocument();
+    // 回执文件清单收起时不在 DOM，对话框隐藏清单不计入此断言
+    expect(document.querySelector(".commit-receipt__files")).toBeNull();
+    expect(screen.queryByText("dist/out.js")).not.toBeInTheDocument();
     await fireEvent.click(
       screen.getByRole("button", { name: "展开包含 / 排除文件清单" }),
     );
-    expect(screen.getByText("src/a.ts")).toBeInTheDocument();
-    expect(screen.getByText("dist/out.js")).toBeInTheDocument();
+    const files = document.querySelector(
+      ".commit-receipt__files",
+    ) as HTMLElement;
+    expect(files).toBeInTheDocument();
+    expect(files.textContent).toContain("src/a.ts");
+    expect(files.textContent).toContain("dist/out.js");
     expect(onAction).not.toHaveBeenCalled();
   });
 

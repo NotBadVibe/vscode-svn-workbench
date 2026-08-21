@@ -122,6 +122,7 @@ import {
   buildEnvironmentDiagnosticReport,
   formatEnvironmentDiagnosticReport,
 } from "../../diagnostics/environmentDiagnostics";
+import { dispatchDiagnosticAction } from "../../diagnostics/diagnosticActions";
 import {
   appendOutput,
   sanitizeDiagnostic,
@@ -263,8 +264,12 @@ import {
 } from "./projectSwitchGuard";
 import {
   deleteProjectDraft,
+  getConflictFileDraft,
+  isConflictFileDirty,
   projectDraftKey,
   readProjectDraft,
+  writeConflictFileDraft,
+  deleteConflictFileDraft,
   writeProjectDraft,
   type ProjectDraftMap,
 } from "./projectDraftStore";
@@ -345,6 +350,17 @@ import { buildDiffTargetId } from "../../diffEdit/diffEditingService";
 import { analyzeUtf8, MAX_EDITABLE_BYTES } from "../../diffEdit/diffPathGuard";
 import { SvnSecurityContextRegistry } from "../../security/svnSecurityContextRegistry";
 import { normalizeSvnRepositoryRoot } from "../../security/svnSecurityContext";
+import { validateOperationIntentForExecute } from "../../operation/operationIntent";
+import {
+  appendActivityRecord,
+  createActivityStore,
+  type ActivityStoreState,
+} from "../../activity/activityStore";
+import {
+  buildActivityNextActions,
+  isNonRecoverableKind,
+} from "../../activity/activityRecord";
+import { createSnapshotFreshness } from "../../activity/snapshotFreshness";
 
 /**
  * 统一模块窗口路由回调：
@@ -396,6 +412,15 @@ export class WorkbenchController implements vscode.Disposable {
    * 此标志抑制失效监听的重复模块刷新（仍保留提交预览/AI 结果清除）。
    */
   private suppressSelectionInvalidationReload = false;
+  /** v0.0.13 批次 B：Host 内存冲突合并草稿总线（纯内存、复用 projectDraftStore 纯领域逻辑，不写磁盘、不跨重启）。 */
+  private conflictDraftStore: ProjectDraftMap = {};
+  /** v0.0.13 批次 B：待确认的冲突文件切换（保存检查点/留在当前/放弃）。 */
+  private pendingConflictSwitch:
+    { currentRelativePath: string; nextRelativePath: string } | undefined;
+  private pendingConflictSwitchTimer: ReturnType<typeof setTimeout> | undefined;
+  private conflictSwitchBypass = false;
+  /** v0.0.16 批次 A：会话内操作时间线（纯内存，不写磁盘） */
+  private activityStore: ActivityStoreState = createActivityStore();
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -476,6 +501,38 @@ export class WorkbenchController implements vscode.Disposable {
       !(await this.confirmProjectSwitch(this.session, request))
     ) {
       return;
+    }
+    // v0.0.13 批次 B：关闭任务/切换模块时若冲突草稿未保存，三选一（保存检查点/留在当前/放弃）
+    // 脏判断直接用纯领域 store 的 baseContent，不重采 SVN
+    if (
+      this.session &&
+      this.session.moduleId === "conflicts" &&
+      this.session.conflictState?.selectedPath &&
+      request.moduleId !== "conflicts" &&
+      !this.conflictSwitchBypass
+    ) {
+      const currentPath = this.session.conflictState.selectedPath;
+      if (this.isConflictDraftDirty(this.session, currentPath)) {
+        const choice = await vscode.window.showWarningMessage(
+          `冲突文件 ${currentPath} 有未保存的合并草稿（仅 Host 内存，未写入工作副本）。`,
+          {
+            modal: true,
+            detail:
+              "保存检查点会保留在 Host 内存（不写盘、不标记解决）；留在当前文件可继续编辑；放弃将丢弃草稿。",
+          },
+          "保存检查点并继续",
+          "留在当前文件",
+          "放弃草稿并继续",
+        );
+        if (!choice || choice === "留在当前文件") {
+          this.revealPanel();
+          return;
+        }
+        if (choice === "放弃草稿并继续") {
+          this.clearConflictDraft(this.session, currentPath);
+        }
+        // 保存检查点：保留
+      }
     }
     const nextDiffTargetKey = this.isDiffWindow()
       ? buildDiffTargetKey({ ...request, taskId })
@@ -666,6 +723,7 @@ export class WorkbenchController implements vscode.Disposable {
     this.session = undefined;
     this.diffTargetKey = undefined;
     this.clearPendingDiffOpen();
+    this.clearPendingConflictSwitch();
     this.securityReferenceRoot = undefined;
     if (session) {
       this.nativeDiffContentProvider?.releaseSession(session.sessionId);
@@ -817,6 +875,7 @@ export class WorkbenchController implements vscode.Disposable {
         this.session = undefined;
         this.diffTargetKey = undefined;
         this.clearPendingDiffOpen();
+        this.clearPendingConflictSwitch();
         this.securityReferenceRoot = undefined;
         this.panel = undefined;
         this.ready = false;
@@ -895,13 +954,43 @@ export class WorkbenchController implements vscode.Disposable {
     const data = message.payload.data ?? {};
 
     switch (message.payload.action) {
-      case "refresh":
+      case "refresh": {
+        // v0.0.13 批次 B：冲突草稿未保存时刷新需三选一（保存检查点/留在当前/放弃）
+        // 脏判断用纯内存 store 的 baseContent，不重采 SVN；文案已告知 30s 超时自动保存
+        if (
+          session.moduleId === "conflicts" &&
+          session.conflictState?.selectedPath
+        ) {
+          const currentPath = session.conflictState.selectedPath;
+          if (this.isConflictDraftDirty(session, currentPath)) {
+            this.clearPendingConflictSwitch();
+            this.pendingConflictSwitch = {
+              currentRelativePath: currentPath,
+              nextRelativePath: currentPath,
+            };
+            this.pendingConflictSwitchTimer = setTimeout(() => {
+              void this.resolveConflictSwitchDecision("save", session);
+            }, 30_000);
+            await this.post({
+              protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+              type: "conflict/draft-switch-confirm",
+              moduleId: "conflicts",
+              payload: {
+                currentRelativePath: currentPath,
+                nextRelativePath: currentPath,
+              },
+            });
+            // 同时内联提示：编辑器与草稿保留，保存失败不丢失
+            return;
+          }
+        }
         await this.loadModule(
           session.moduleId,
           session.targetFile,
           message.requestId,
         );
         return;
+      }
       case "open-module": {
         const moduleId = data.moduleId;
         if (!isWorkbenchModuleId(moduleId)) {
@@ -1121,6 +1210,75 @@ export class WorkbenchController implements vscode.Disposable {
           "@id:http.proxy",
         );
         return;
+      case "activity/refresh": {
+        await this.sendActivitySnapshot(message.requestId);
+        return;
+      }
+      case "activity/retry": {
+        const recordId = asString(data.recordId);
+        const record = this.activityStore.records.find(
+          (r) => r.id === recordId,
+        );
+        if (!record) {
+          await this.sendError(
+            "activity",
+            "记录不存在",
+            "对应的操作记录已不存在或已过期。",
+            false,
+            message.requestId,
+          );
+          return;
+        }
+        // 重试走新预览：打开对应模块，由用户重新生成预览与确认（不复用旧 token）
+        session.moduleId = record.moduleId;
+        session.taskId = record.taskId as WorkbenchTaskId;
+        this.panel!.title = getModuleTitle(
+          record.moduleId,
+          record.taskId as WorkbenchTaskId,
+        );
+        await this.loadModule(record.moduleId, undefined, message.requestId);
+        return;
+      }
+      case "activity/open-output": {
+        showOutput();
+        return;
+      }
+      case "activity/copy-diagnostics": {
+        const recordId = asString(data.recordId);
+        const record = this.activityStore.records.find(
+          (r) => r.id === recordId,
+        );
+        const text = record
+          ? `${record.capturedAt} ${record.scopeLabel} ${record.result ?? ""} ${record.errorReason ?? ""}`.trim()
+          : this.buildActivitySnapshot()
+              .records.map(
+                (r) => `${r.capturedAt} ${r.scopeLabel} ${r.result ?? ""}`,
+              )
+              .join("\n");
+        await vscode.env.clipboard.writeText(text);
+        await this.post({
+          protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+          type: "operation/result",
+          requestId: message.requestId,
+          moduleId: "activity",
+          payload: { title: "已复制", message: "诊断信息已复制到剪贴板。" },
+        });
+        return;
+      }
+      case "activity/view-conflicts": {
+        session.moduleId = "conflicts";
+        session.taskId = "conflicts/resolve";
+        this.panel!.title = getModuleTitle("conflicts", "conflicts/resolve");
+        await this.loadModule("conflicts", undefined, message.requestId);
+        return;
+      }
+      case "activity/view-history": {
+        session.moduleId = "history";
+        session.taskId = "history/revisions";
+        this.panel!.title = getModuleTitle("history", "history/revisions");
+        await this.loadModule("history", undefined, message.requestId);
+        return;
+      }
       case "operation/cancel": {
         const active = session.activeOperation;
         if (active) {
@@ -1196,6 +1354,7 @@ export class WorkbenchController implements vscode.Disposable {
           (candidate) => candidate.selection === "needsReview",
         ).length;
         state.selectedPaths = recommended;
+        session.selectedPaths = [...recommended];
         state.manualSelectedPaths = undefined;
         state.preview = undefined;
         state.feedback = {
@@ -1257,6 +1416,7 @@ export class WorkbenchController implements vscode.Disposable {
                 candidate.selection !== "excluded",
             ),
           );
+        session.selectedPaths = [...state.selectedPaths];
         state.manualSelectedPaths = undefined;
         state.preview = undefined;
         state.ai = {
@@ -2198,6 +2358,18 @@ export class WorkbenchController implements vscode.Disposable {
           message:
             "已记录确认（仅当前会话有效）；切换项目或工作副本变化后需复核。",
         };
+        this.appendActivityRecord({
+          kind: "understanding-confirmation",
+          moduleId: "understanding",
+          taskId: "understanding/analyze",
+          scopeHash: session.scopeHash,
+          repositoryUuid: session.repositoryUuid,
+          scopeLabel: "确认事实",
+          impactedCount: 1,
+          previewSummary: statement.slice(0, 200),
+          projectName: session.scopeView.projectName,
+          capturedRevision: session.workingCopyRevision,
+        });
         await this.sendUnderstandingSnapshot(
           session,
           message.requestId,
@@ -2531,7 +2703,38 @@ export class WorkbenchController implements vscode.Disposable {
         if (!relativePath) {
           return;
         }
-        session.conflictState = { selectedPath: relativePath };
+        const currentPath = session.conflictState?.selectedPath;
+        if (
+          !this.conflictSwitchBypass &&
+          currentPath &&
+          currentPath !== relativePath
+        ) {
+          // v0.0.13：脏判断直接用纯领域 store 的 isDirty（已存 baseContent），不重采 SVN
+          if (this.isConflictDraftDirty(session, currentPath)) {
+            this.clearPendingConflictSwitch();
+            this.pendingConflictSwitch = {
+              currentRelativePath: currentPath,
+              nextRelativePath: relativePath,
+            };
+            this.pendingConflictSwitchTimer = setTimeout(() => {
+              void this.resolveConflictSwitchDecision("save", session);
+            }, 30_000);
+            await this.post({
+              protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+              type: "conflict/draft-switch-confirm",
+              moduleId: "conflicts",
+              payload: {
+                currentRelativePath: currentPath,
+                nextRelativePath: relativePath,
+              },
+            });
+            return;
+          }
+        }
+        session.conflictState = {
+          ...session.conflictState,
+          selectedPath: relativePath,
+        };
         await this.sendConflictSnapshot(session, message.requestId);
         return;
       }
@@ -2764,8 +2967,21 @@ export class WorkbenchController implements vscode.Disposable {
           );
           return;
         }
-        await fs.writeFile(absolutePath, buffer, { flag: "w" });
+        try {
+          await fs.writeFile(absolutePath, buffer, { flag: "w" });
+        } catch (error) {
+          // v0.0.13 批次 B：保存失败内联展示，编辑器与草稿保留（不写盘、不触发 Resolve）
+          const msg = error instanceof Error ? error.message : String(error);
+          session.conflictState!.editState = {
+            ...editState,
+            feedback: `保存失败：${msg}；草稿已保留在 Host 内存，可重试或复制/导出。`,
+          };
+          await this.sendConflictSnapshot(session, message.requestId);
+          return;
+        }
         session.conflictState!.resolvePreview = undefined;
+        // 保存成功后清除对应文件的 Host 草稿（已落盘，标记为干净）
+        this.clearConflictDraft(session, editState.relativePath);
         session.conflictState!.editState = {
           token: randomUUID(),
           contentHash: await hashFileContents(absolutePath),
@@ -2833,9 +3049,43 @@ export class WorkbenchController implements vscode.Disposable {
           session.scope.repositoryRoot,
           previewState.relativePath,
         );
-        if (
-          (await hashFileContents(absolutePath)) !== previewState.contentHash
-        ) {
+        // v0.0.14 批次 B：Resolve 通用意向单校验（scope/candidate 变化只读失效）
+        const currentResolveHash = await hashFileContents(absolutePath);
+        const resolveIntent = {
+          token: previewState.token,
+          kind: "resolve" as const,
+          title: `标记解决 1 个冲突`,
+          summary: `标记解决 ${previewState.relativePath} · 执行前将重新校验工作副本内容`,
+          paths: [previewState.relativePath],
+          scopeHash: session.scopeHash,
+          candidateHash: previewState.contentHash,
+          repositoryUuid: session.repositoryUuid,
+          createdAt: new Date().toISOString(),
+          canExecute: true,
+          issues: [] as string[],
+          stale: false,
+        };
+        const resolveGenericCheck = validateOperationIntentForExecute(
+          resolveIntent,
+          token,
+          {
+            repositoryUuid: session.repositoryUuid,
+            scopeHash: session.scopeHash,
+            candidateHash: currentResolveHash,
+          },
+        );
+        if (!resolveGenericCheck.ok) {
+          session.conflictState!.resolvePreview = undefined;
+          await this.sendError(
+            "conflicts",
+            "解决预览已失效",
+            resolveGenericCheck.reason,
+            true,
+            message.requestId,
+          );
+          return;
+        }
+        if (currentResolveHash !== previewState.contentHash) {
           session.conflictState!.resolvePreview = undefined;
           await this.sendError(
             "conflicts",
@@ -2852,13 +3102,29 @@ export class WorkbenchController implements vscode.Disposable {
           absolutePath,
         );
         if (!result.resolved) {
+          const errMsg =
+            result.result.stderr || result.result.stdout || "未知错误";
           await this.sendError(
             "conflicts",
             "标记解决失败",
-            result.result.stderr || result.result.stdout || "未知错误",
+            errMsg,
             true,
             message.requestId,
           );
+          this.appendActivityRecord({
+            kind: "operation-execution",
+            moduleId: "conflicts",
+            taskId: "conflicts/resolve",
+            scopeHash: session.scopeHash,
+            repositoryUuid: session.repositoryUuid,
+            scopeLabel: "标记解决 1 个冲突",
+            impactedCount: 1,
+            previewSummary: previewState.relativePath,
+            result: "failed",
+            errorReason: errMsg,
+            projectName: session.scopeView.projectName,
+            capturedRevision: session.workingCopyRevision,
+          });
           return;
         }
         session.conflictState = undefined;
@@ -2872,7 +3138,177 @@ export class WorkbenchController implements vscode.Disposable {
             message: previewState.relativePath,
           },
         });
+        this.appendActivityRecord({
+          kind: "operation-execution",
+          moduleId: "conflicts",
+          taskId: "conflicts/resolve",
+          scopeHash: session.scopeHash,
+          repositoryUuid: session.repositoryUuid,
+          scopeLabel: "标记解决 1 个冲突",
+          impactedCount: 1,
+          previewSummary: previewState.relativePath,
+          result: "success",
+          projectName: session.scopeView.projectName,
+          capturedRevision: session.workingCopyRevision,
+        });
         await this.sendConflictSnapshot(session, message.requestId);
+        return;
+      }
+      case "conflict/draft-update": {
+        const relativePath =
+          asString(data.relativePath) ?? session.conflictState?.selectedPath;
+        const content = asStringAllowEmpty(data.content) ?? "";
+        if (!relativePath) return;
+        // v0.0.13 性能：存在性与 baseContent 均读会话缓存，不为每次按键重采 SVN
+        const existsInCache =
+          session.conflictState?.conflictPaths?.includes(relativePath);
+        if (existsInCache === false) {
+          await this.sendError(
+            "conflicts",
+            "草稿更新失败",
+            "冲突文件已不在当前范围。",
+            true,
+            message.requestId,
+          );
+          return;
+        }
+        const existingDraft = this.getConflictDraft(session, relativePath);
+        const cachedBase =
+          session.conflictState?.workingBaseContents?.[relativePath];
+        const baseContent = existingDraft?.baseContent ?? cachedBase ?? "";
+        const { revision } = this.setConflictDraft(
+          session,
+          relativePath,
+          content,
+          baseContent,
+        );
+        await this.post({
+          protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+          type: "conflict/draft-checkpointed",
+          requestId: message.requestId,
+          moduleId: "conflicts",
+          payload: { relativePath, revision, updatedAt: Date.now() },
+        });
+        return;
+      }
+      case "conflict/draft-checkpoint": {
+        const relativePath =
+          asString(data.relativePath) ?? session.conflictState?.selectedPath;
+        const content = asStringAllowEmpty(data.content) ?? "";
+        if (!relativePath) return;
+        const existingDraft = this.getConflictDraft(session, relativePath);
+        const cachedBase =
+          session.conflictState?.workingBaseContents?.[relativePath];
+        const baseContent = existingDraft?.baseContent ?? cachedBase ?? "";
+        const { revision, updatedAt } = this.setConflictDraft(
+          session,
+          relativePath,
+          content,
+          baseContent,
+        );
+        await this.post({
+          protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+          type: "conflict/draft-checkpointed",
+          requestId: message.requestId,
+          moduleId: "conflicts",
+          payload: { relativePath, revision, updatedAt },
+        });
+        this.appendActivityRecord({
+          kind: "draft-checkpoint",
+          moduleId: "conflicts",
+          taskId: "conflicts/resolve",
+          scopeHash: session.scopeHash,
+          repositoryUuid: session.repositoryUuid,
+          scopeLabel: `冲突草稿 ${relativePath}`,
+          impactedCount: 1,
+          previewSummary: "已保存冲突合并草稿（仅内存）",
+          projectName: session.scopeView.projectName,
+          capturedRevision: session.workingCopyRevision,
+        });
+        return;
+      }
+      case "conflict/draft-abandon": {
+        const relativePath =
+          asString(data.relativePath) ?? session.conflictState?.selectedPath;
+        if (!relativePath) return;
+        this.clearConflictDraft(session, relativePath);
+        await this.post({
+          protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+          type: "operation/result",
+          requestId: message.requestId,
+          moduleId: "conflicts",
+          payload: {
+            title: "草稿已放弃",
+            message: `${relativePath} 的合并草稿已清除。`,
+          },
+        });
+        await this.sendConflictSnapshot(session, message.requestId);
+        return;
+      }
+      case "conflict/draft-copy": {
+        const relativePath =
+          asString(data.relativePath) ?? session.conflictState?.selectedPath;
+        if (!relativePath) return;
+        const draft = this.getConflictDraft(session, relativePath);
+        const content = draft?.content ?? "";
+        if (!content) {
+          await this.sendError(
+            "conflicts",
+            "没有可复制的草稿",
+            "当前文件没有合并草稿。",
+            true,
+            message.requestId,
+          );
+          return;
+        }
+        await vscode.env.clipboard.writeText(content);
+        await this.post({
+          protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+          type: "operation/result",
+          requestId: message.requestId,
+          moduleId: "conflicts",
+          payload: {
+            title: "草稿已复制",
+            message: `${relativePath} 的草稿内容已复制到剪贴板。`,
+          },
+        });
+        return;
+      }
+      case "conflict/draft-export": {
+        const relativePath =
+          asString(data.relativePath) ?? session.conflictState?.selectedPath;
+        if (!relativePath) return;
+        const draft = this.getConflictDraft(session, relativePath);
+        const content = draft?.content ?? "";
+        if (!content) {
+          await this.sendError(
+            "conflicts",
+            "没有可导出的草稿",
+            "当前文件没有合并草稿。",
+            true,
+            message.requestId,
+          );
+          return;
+        }
+        const patch = `--- a/${relativePath}\n+++ b/${relativePath}\n@@\n${content}`;
+        await vscode.env.clipboard.writeText(patch);
+        await this.post({
+          protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+          type: "operation/result",
+          requestId: message.requestId,
+          moduleId: "conflicts",
+          payload: {
+            title: "草稿已导出",
+            message: `${relativePath} 的草稿已导出为 Patch 并复制到剪贴板。`,
+          },
+        });
+        return;
+      }
+      case "conflict/draft-switch-decision": {
+        await this.resolveConflictSwitchDecision(
+          asString(data.decision),
+          session,
+        );
         return;
       }
       case "settings/save-ai": {
@@ -3171,6 +3607,48 @@ export class WorkbenchController implements vscode.Disposable {
       case "diagnostics/show-output":
         showOutput();
         return;
+      case "diagnostics/select-svn-executable": {
+        const shouldRerun = await dispatchDiagnosticAction(
+          "selectSvnExecutable",
+          data as Record<string, unknown> | undefined,
+          { reportText: (await this.buildDiagnosticsSnapshot()).reportText },
+        );
+        if (shouldRerun)
+          await this.sendDiagnosticsSnapshot(session, message.requestId);
+        return;
+      }
+      case "diagnostics/open-settings": {
+        await dispatchDiagnosticAction(
+          "openSettings",
+          data as Record<string, unknown> | undefined,
+          {},
+        );
+        return;
+      }
+      case "diagnostics/open-folder": {
+        await dispatchDiagnosticAction(
+          "openFolder",
+          data as Record<string, unknown> | undefined,
+          {},
+        );
+        return;
+      }
+      case "diagnostics/copy-diagnostics": {
+        await dispatchDiagnosticAction(
+          "copyDiagnostics",
+          data as Record<string, unknown> | undefined,
+          { reportText: (await this.buildDiagnosticsSnapshot()).reportText },
+        );
+        return;
+      }
+      case "diagnostics/open-url": {
+        await dispatchDiagnosticAction(
+          "openUrl",
+          data as Record<string, unknown> | undefined,
+          {},
+        );
+        return;
+      }
       case "repository/preview-update": {
         await this.createUpdatePreview(session, message.requestId);
         return;
@@ -3190,6 +3668,47 @@ export class WorkbenchController implements vscode.Disposable {
         }
         const candidates = await this.collectScopeCandidates(session);
         const currentHash = hashCandidateState(candidates, "", []);
+        // v0.0.14 批次 B：更新通用意向单校验（远端为操作对象）
+        const updateIntent = {
+          token: update.token,
+          kind: "update" as const,
+          title:
+            typeof update.remoteCount === "number"
+              ? `更新 ${update.remoteCount} 个远端变更`
+              : "更新当前范围",
+          summary:
+            typeof update.remoteCount === "number"
+              ? `更新 ${update.remoteCount} 个远端变更`
+              : "更新当前范围",
+          paths: update.overlapPaths,
+          scopeHash: session.scopeHash,
+          candidateHash: session.repositoryState?.candidateHash,
+          repositoryUuid: session.repositoryUuid,
+          createdAt: new Date().toISOString(),
+          canExecute: update.canExecute,
+          issues: [] as string[],
+          stale: false,
+        };
+        const updateGenericCheck = validateOperationIntentForExecute(
+          updateIntent,
+          token,
+          {
+            repositoryUuid: session.repositoryUuid,
+            scopeHash: session.scopeHash,
+            candidateHash: currentHash,
+          },
+        );
+        if (!updateGenericCheck.ok) {
+          session.repositoryState!.update = undefined;
+          await this.sendError(
+            "repository",
+            "更新预览已失效",
+            updateGenericCheck.reason,
+            true,
+            message.requestId,
+          );
+          return;
+        }
         if (currentHash !== session.repositoryState?.candidateHash) {
           session.repositoryState!.update = undefined;
           await this.sendError(
@@ -3244,21 +3763,39 @@ export class WorkbenchController implements vscode.Disposable {
           await this.sendRepositorySnapshot(session, message.requestId);
           return;
         }
+        const isUpdateSuccess = result.result.exitCode === 0;
+        const updateMsg = isUpdateSuccess
+          ? result.revision
+            ? `已更新到 r${result.revision}`
+            : "当前范围更新完成。"
+          : result.result.stderr || result.result.stdout || "SVN 更新失败。";
         session.repositoryState = {
           lastResult: {
-            ok: result.result.exitCode === 0,
+            ok: isUpdateSuccess,
             revision: result.revision,
             hasConflicts: result.hasConflicts,
-            message:
-              result.result.exitCode === 0
-                ? result.revision
-                  ? `已更新到 r${result.revision}`
-                  : "当前范围更新完成。"
-                : result.result.stderr ||
-                  result.result.stdout ||
-                  "SVN 更新失败。",
+            message: updateMsg,
           },
         };
+        this.appendActivityRecord({
+          kind: "operation-execution",
+          moduleId: "repository",
+          taskId: "repository/update",
+          scopeHash: session.scopeHash,
+          repositoryUuid: session.repositoryUuid,
+          scopeLabel:
+            typeof update.remoteCount === "number"
+              ? `更新 ${update.remoteCount} 个远端变更`
+              : "更新当前范围",
+          impactedCount:
+            typeof update.remoteCount === "number" ? update.remoteCount : 0,
+          previewSummary:
+            update.commands?.join(" ").slice(0, 200) ?? "svn update",
+          result: isUpdateSuccess ? "success" : "failed",
+          errorReason: isUpdateSuccess ? undefined : updateMsg,
+          projectName: session.scopeView.projectName,
+          capturedRevision: result.revision ?? session.workingCopyRevision,
+        });
         await this.sendRepositorySnapshot(session, message.requestId);
         return;
       }
@@ -3339,10 +3876,47 @@ export class WorkbenchController implements vscode.Disposable {
           preview.target,
           session.scope.repositoryRoot,
         );
-        if (
-          current.error ||
-          hashProperties(current.items) !== preview.stateHash
-        ) {
+        // v0.0.14 批次 B：属性通用意向单校验
+        const currentPropHash = hashProperties(current.items);
+        const propertyIntent = {
+          token: preview.token,
+          kind: "property" as const,
+          title: preview.remove
+            ? `删除属性 ${preview.name}`
+            : `修改属性 ${preview.name}（1 个路径）`,
+          summary: preview.remove
+            ? `删除属性 ${preview.name}`
+            : `修改属性 ${preview.name}`,
+          paths: [preview.target],
+          scopeHash: session.scopeHash,
+          candidateHash: preview.stateHash,
+          repositoryUuid: session.repositoryUuid,
+          createdAt: new Date().toISOString(),
+          canExecute: preview.issues.length === 0,
+          issues: preview.issues,
+          stale: false,
+        };
+        const propGenericCheck = validateOperationIntentForExecute(
+          propertyIntent,
+          token,
+          {
+            repositoryUuid: session.repositoryUuid,
+            scopeHash: session.scopeHash,
+            candidateHash: currentPropHash,
+          },
+        );
+        if (!propGenericCheck.ok) {
+          session.repositoryState!.propertyPreview = undefined;
+          await this.sendError(
+            "repository",
+            "属性预览已失效",
+            propGenericCheck.reason,
+            true,
+            message.requestId,
+          );
+          return;
+        }
+        if (current.error || currentPropHash !== preview.stateHash) {
           session.repositoryState!.propertyPreview = undefined;
           await this.sendError(
             "repository",
@@ -3362,19 +3936,51 @@ export class WorkbenchController implements vscode.Disposable {
           session.scope.repositoryRoot,
         );
         if (result.exitCode !== 0) {
+          const errMsg = result.stderr || result.stdout || "未知错误";
           await this.sendError(
             "repository",
             "属性更新失败",
-            result.stderr || result.stdout || "未知错误",
+            errMsg,
             true,
             message.requestId,
           );
+          this.appendActivityRecord({
+            kind: "operation-execution",
+            moduleId: "repository",
+            taskId: "repository/properties",
+            scopeHash: session.scopeHash,
+            repositoryUuid: session.repositoryUuid,
+            scopeLabel: preview.remove
+              ? `删除属性 ${preview.name}`
+              : `修改属性 ${preview.name}`,
+            impactedCount: 1,
+            previewSummary: args.join(" ").slice(0, 200),
+            result: "failed",
+            errorReason: errMsg,
+            projectName: session.scopeView.projectName,
+            capturedRevision: session.workingCopyRevision,
+          });
           return;
         }
         session.repositoryState!.propertyPreview = undefined;
         session.repositoryState!.propertyFeedback = preview.remove
           ? `已删除属性 ${preview.name}。`
           : `已设置属性 ${preview.name}；变更尚未提交。`;
+        this.appendActivityRecord({
+          kind: "operation-execution",
+          moduleId: "repository",
+          taskId: "repository/properties",
+          scopeHash: session.scopeHash,
+          repositoryUuid: session.repositoryUuid,
+          scopeLabel: preview.remove
+            ? `删除属性 ${preview.name}`
+            : `修改属性 ${preview.name}`,
+          impactedCount: 1,
+          previewSummary: args.join(" ").slice(0, 200),
+          result: "success",
+          projectName: session.scopeView.projectName,
+          capturedRevision: session.workingCopyRevision,
+        });
         await this.sendRepositorySnapshot(session, message.requestId);
         return;
       }
@@ -3407,6 +4013,39 @@ export class WorkbenchController implements vscode.Disposable {
             "repository",
             "清理预览已失效",
             "请从单个文件夹范围重新生成预览。",
+            true,
+            message.requestId,
+          );
+          return;
+        }
+        // v0.0.14 批次 B：清理通用意向单校验
+        const cleanupIntent = {
+          token: preview.token,
+          kind: "cleanup" as const,
+          title: "清理工作副本",
+          summary: "清理工作副本",
+          paths: [preview.target],
+          scopeHash: session.scopeHash,
+          repositoryUuid: session.repositoryUuid,
+          createdAt: new Date().toISOString(),
+          canExecute: preview.issues.length === 0,
+          issues: preview.issues,
+          stale: false,
+        };
+        const cleanupGenericCheck = validateOperationIntentForExecute(
+          cleanupIntent,
+          token,
+          {
+            repositoryUuid: session.repositoryUuid,
+            scopeHash: session.scopeHash,
+          },
+        );
+        if (!cleanupGenericCheck.ok) {
+          session.repositoryState!.cleanupPreview = undefined;
+          await this.sendError(
+            "repository",
+            "清理预览已失效",
+            cleanupGenericCheck.reason,
             true,
             message.requestId,
           );
@@ -3466,18 +4105,46 @@ export class WorkbenchController implements vscode.Disposable {
             },
           });
         } else if (result.exitCode !== 0) {
+          const errMsg = result.stderr || result.stdout || "未知错误";
           await this.sendError(
             "repository",
             "清理失败",
-            result.stderr || result.stdout || "未知错误",
+            errMsg,
             true,
             message.requestId,
           );
+          this.appendActivityRecord({
+            kind: "operation-execution",
+            moduleId: "repository",
+            taskId: "repository/recovery",
+            scopeHash: session.scopeHash,
+            repositoryUuid: session.repositoryUuid,
+            scopeLabel: "清理工作副本",
+            impactedCount: 1,
+            previewSummary: `svn cleanup ${preview.target}`,
+            result: "failed",
+            errorReason: errMsg,
+            projectName: session.scopeView.projectName,
+            capturedRevision: session.workingCopyRevision,
+          });
           return;
         } else {
           session.repositoryState!.cleanupFeedback =
             "清理已完成；未删除未版本化文件，请重新检查状态。";
           session.recoveryState = undefined;
+          this.appendActivityRecord({
+            kind: "operation-execution",
+            moduleId: "repository",
+            taskId: "repository/recovery",
+            scopeHash: session.scopeHash,
+            repositoryUuid: session.repositoryUuid,
+            scopeLabel: "清理工作副本",
+            impactedCount: 1,
+            previewSummary: `svn cleanup ${preview.target}`,
+            result: "success",
+            projectName: session.scopeView.projectName,
+            capturedRevision: session.workingCopyRevision,
+          });
         }
         await this.sendRepositorySnapshot(session, message.requestId);
         return;
@@ -3496,13 +4163,52 @@ export class WorkbenchController implements vscode.Disposable {
           message.requestId,
         );
         return;
-      case "repository/execute-advanced":
+      case "repository/execute-advanced": {
+        const previewBefore = session.repositoryState?.advanced?.preview;
         await this.executeAdvancedRepositoryOperation(
           session,
           asString(data.previewToken),
           message.requestId,
         );
+        const feedback = session.repositoryState?.advanced?.feedback ?? "";
+        const isFailed =
+          feedback.includes("失败") ||
+          feedback.includes("已失效") ||
+          feedback.includes("已阻止") ||
+          feedback.includes("已取消");
+        const operationLabel = previewBefore?.title ?? "高级仓库操作";
+        const op = previewBefore?.operation;
+        const taskId =
+          op === "branch"
+            ? "repository/branch"
+            : op === "tag"
+              ? "repository/tag"
+              : op === "switch"
+                ? "repository/switch"
+                : op === "relocate"
+                  ? "repository/relocate"
+                  : op === "merge"
+                    ? "repository/merge"
+                    : op === "apply-patch"
+                      ? "repository/patch-shelf"
+                      : "repository/patch-shelf";
+        this.appendActivityRecord({
+          kind: "operation-execution",
+          moduleId: "repository",
+          taskId: taskId as WorkbenchTaskId,
+          scopeHash: session.scopeHash,
+          repositoryUuid: session.repositoryUuid,
+          scopeLabel: operationLabel,
+          impactedCount: 1,
+          previewSummary:
+            previewBefore?.commands?.join(" ").slice(0, 200) ?? operationLabel,
+          result: isFailed ? "failed" : "success",
+          errorReason: isFailed ? feedback : undefined,
+          projectName: session.scopeView.projectName,
+          capturedRevision: session.workingCopyRevision,
+        });
         return;
+      }
       case "repository/export-patch":
         await this.exportScopePatch(session, message.requestId);
         return;
@@ -3713,7 +4419,49 @@ export class WorkbenchController implements vscode.Disposable {
           return;
         }
         const candidates = await this.collectScopeCandidates(session);
-        if (hashCandidateState(candidates, "", []) !== preview.candidateHash) {
+        // v0.0.14 批次 B：Changelist 通用意向单校验
+        const candidateHashForChangelist = hashCandidateState(
+          candidates,
+          "",
+          [],
+        );
+        const changelistIntent = {
+          token: preview.token,
+          kind: "changelist-apply" as const,
+          title: preview.remove
+            ? `移出变更集 ${preview.paths.length} 个文件`
+            : `应用变更集到 ${preview.paths.length} 个文件`,
+          summary: `${preview.remove ? "移出" : "应用"}变更集 ${preview.paths.length} 个文件`,
+          paths: preview.paths,
+          scopeHash: session.scopeHash,
+          candidateHash: preview.candidateHash,
+          repositoryUuid: session.repositoryUuid,
+          createdAt: new Date().toISOString(),
+          canExecute: preview.issues.length === 0,
+          issues: preview.issues,
+          stale: false,
+        };
+        const changelistGenericCheck = validateOperationIntentForExecute(
+          changelistIntent,
+          token,
+          {
+            repositoryUuid: session.repositoryUuid,
+            scopeHash: session.scopeHash,
+            candidateHash: candidateHashForChangelist,
+          },
+        );
+        if (!changelistGenericCheck.ok) {
+          session.changelistState!.preview = undefined;
+          await this.sendError(
+            "changelists",
+            "Changelist 预览已失效",
+            changelistGenericCheck.reason,
+            true,
+            message.requestId,
+          );
+          return;
+        }
+        if (candidateHashForChangelist !== preview.candidateHash) {
           session.changelistState!.preview = undefined;
           await this.sendError(
             "changelists",
@@ -3731,19 +4479,55 @@ export class WorkbenchController implements vscode.Disposable {
           preview.paths,
         );
         if (result.exitCode !== 0) {
+          const errMsg = result.stderr || result.stdout || "未知错误";
           await this.sendError(
             "changelists",
             "Changelist 更新失败",
-            result.stderr || result.stdout || "未知错误",
+            errMsg,
             true,
             message.requestId,
           );
+          this.appendActivityRecord({
+            kind: "operation-execution",
+            moduleId: "changelists",
+            taskId: "changelists/manage",
+            scopeHash: session.scopeHash,
+            repositoryUuid: session.repositoryUuid,
+            scopeLabel: preview.remove
+              ? `移出变更集 ${preview.paths.length} 个文件`
+              : `应用变更集 ${preview.paths.length} 个文件`,
+            impactedCount: preview.paths.length,
+            previewSummary: preview.remove
+              ? `移出 ${preview.name}`
+              : `加入 ${preview.name}`,
+            result: "failed",
+            errorReason: errMsg,
+            projectName: session.scopeView.projectName,
+            capturedRevision: session.workingCopyRevision,
+          });
           return;
         }
         session.changelistState!.preview = undefined;
         session.changelistState!.feedback = preview.remove
           ? "文件已移出 Changelist。"
           : `文件已加入 ${preview.name}。`;
+        this.appendActivityRecord({
+          kind: "operation-execution",
+          moduleId: "changelists",
+          taskId: "changelists/manage",
+          scopeHash: session.scopeHash,
+          repositoryUuid: session.repositoryUuid,
+          scopeLabel: preview.remove
+            ? `移出变更集 ${preview.paths.length} 个文件`
+            : `应用变更集 ${preview.paths.length} 个文件`,
+          impactedCount: preview.paths.length,
+          previewSummary: preview.remove
+            ? `移出 ${preview.name}`
+            : `加入 ${preview.name}`,
+          result: "success",
+          projectName: session.scopeView.projectName,
+          capturedRevision: session.workingCopyRevision,
+        });
         await this.sendChangelistsSnapshot(session, message.requestId);
         return;
       }
@@ -3804,6 +4588,42 @@ export class WorkbenchController implements vscode.Disposable {
           return;
         }
         const candidates = await this.collectScopeCandidates(session);
+        // v0.0.14 批次 B：文件操作通用意向单校验
+        const fileOpCandidateHash = hashCandidateState(candidates, "", []);
+        const fileOpIntent = {
+          token: preview.token,
+          kind: "file-operation" as const,
+          title: `${preview.operation} ${preview.paths.length} 个文件`,
+          summary: `${preview.operation} ${preview.paths.length} 个文件`,
+          paths: preview.paths,
+          scopeHash: session.scopeHash,
+          candidateHash: preview.candidateHash,
+          repositoryUuid: session.repositoryUuid,
+          createdAt: new Date().toISOString(),
+          canExecute: preview.issues.length === 0,
+          issues: preview.issues,
+          stale: false,
+        };
+        const fileOpGenericCheck = validateOperationIntentForExecute(
+          fileOpIntent,
+          token,
+          {
+            repositoryUuid: session.repositoryUuid,
+            scopeHash: session.scopeHash,
+            candidateHash: fileOpCandidateHash,
+          },
+        );
+        if (!fileOpGenericCheck.ok) {
+          session.changesState!.preview = undefined;
+          await this.sendError(
+            "changes",
+            "文件操作预览已失效",
+            fileOpGenericCheck.reason,
+            true,
+            message.requestId,
+          );
+          return;
+        }
         const currentIssues = validateFileOperation(
           candidates,
           preview.operation,
@@ -3812,7 +4632,7 @@ export class WorkbenchController implements vscode.Disposable {
           preview.ignoreMode,
         );
         if (
-          hashCandidateState(candidates, "", []) !== preview.candidateHash ||
+          fileOpCandidateHash !== preview.candidateHash ||
           currentIssues.length > 0
         ) {
           session.changesState!.preview = undefined;
@@ -3844,21 +4664,50 @@ export class WorkbenchController implements vscode.Disposable {
                 session.scope.repositoryRoot,
               );
         if (result.exitCode !== 0) {
+          const errMsg = result.stderr || result.stdout || "未知错误";
           await this.sendError(
             "changes",
             "SVN 文件操作失败",
-            result.stderr || result.stdout || "未知错误",
+            errMsg,
             true,
             message.requestId,
           );
+          this.appendActivityRecord({
+            kind: "operation-execution",
+            moduleId: "changes",
+            taskId: "changes/overview",
+            scopeHash: session.scopeHash,
+            repositoryUuid: session.repositoryUuid,
+            scopeLabel: `${preview.operation} ${preview.paths.length} 个文件`,
+            impactedCount: preview.paths.length,
+            previewSummary: preview.paths.join(", ").slice(0, 200),
+            result: "failed",
+            errorReason: errMsg,
+            projectName: session.scopeView.projectName,
+            capturedRevision: session.workingCopyRevision,
+          });
           return;
         }
+        const changesSuccessMsg = fileOperationSuccess(
+          preview.operation,
+          preview.paths.length,
+        );
         session.changesState = {
-          feedback: fileOperationSuccess(
-            preview.operation,
-            preview.paths.length,
-          ),
+          feedback: changesSuccessMsg,
         };
+        this.appendActivityRecord({
+          kind: "operation-execution",
+          moduleId: "changes",
+          taskId: "changes/overview",
+          scopeHash: session.scopeHash,
+          repositoryUuid: session.repositoryUuid,
+          scopeLabel: `${preview.operation} ${preview.paths.length} 个文件`,
+          impactedCount: preview.paths.length,
+          previewSummary: preview.paths.join(", ").slice(0, 200),
+          result: "success",
+          projectName: session.scopeView.projectName,
+          capturedRevision: session.workingCopyRevision,
+        });
         await this.sendChangesSnapshot(session, message.requestId);
         return;
       }
@@ -4106,6 +4955,10 @@ export class WorkbenchController implements vscode.Disposable {
 
     if (moduleId === "projects") {
       return this.buildProjectsSnapshot(session);
+    }
+
+    if (moduleId === "activity") {
+      return this.buildActivitySnapshot();
     }
 
     if (moduleId === "understanding") {
@@ -4497,6 +5350,128 @@ export class WorkbenchController implements vscode.Disposable {
     }
   }
 
+  private conflictDraftKey(session: WorkbenchSession): string {
+    const projectRoot =
+      session.scope.project?.projectRoot ?? session.scope.repositoryRoot;
+    return projectDraftKey(
+      projectRoot,
+      "conflicts",
+      session.scopeHash,
+      nativePathSemantics,
+    );
+  }
+
+  private getConflictDraft(
+    session: WorkbenchSession,
+    relativePath: string,
+  ):
+    | {
+        content: string;
+        revision: number;
+        updatedAt: number;
+        baseContent: string;
+      }
+    | undefined {
+    const key = this.conflictDraftKey(session);
+    const fileDraft = getConflictFileDraft(
+      this.conflictDraftStore,
+      key,
+      relativePath,
+    );
+    if (!fileDraft) return undefined;
+    return {
+      content: fileDraft.content,
+      revision: fileDraft.revision,
+      updatedAt: fileDraft.updatedAt,
+      baseContent: fileDraft.baseContent,
+    };
+  }
+
+  private setConflictDraft(
+    session: WorkbenchSession,
+    relativePath: string,
+    content: string,
+    baseContent: string,
+  ): { revision: number; updatedAt: number } {
+    const key = this.conflictDraftKey(session);
+    this.conflictDraftStore = writeConflictFileDraft(
+      this.conflictDraftStore,
+      key,
+      session.scopeHash,
+      relativePath,
+      content,
+      baseContent,
+    );
+    const draft = getConflictFileDraft(
+      this.conflictDraftStore,
+      key,
+      relativePath,
+    )!;
+    return { revision: draft.revision, updatedAt: draft.updatedAt };
+  }
+
+  private clearConflictDraft(
+    session: WorkbenchSession,
+    relativePath: string,
+  ): void {
+    const key = this.conflictDraftKey(session);
+    this.conflictDraftStore = deleteConflictFileDraft(
+      this.conflictDraftStore,
+      key,
+      relativePath,
+    );
+  }
+
+  private isConflictDraftDirty(
+    session: WorkbenchSession,
+    relativePath: string,
+  ): boolean {
+    const key = this.conflictDraftKey(session);
+    return isConflictFileDirty(this.conflictDraftStore, key, relativePath);
+  }
+
+  private clearPendingConflictSwitch(): void {
+    this.pendingConflictSwitch = undefined;
+    if (this.pendingConflictSwitchTimer !== undefined) {
+      clearTimeout(this.pendingConflictSwitchTimer);
+      this.pendingConflictSwitchTimer = undefined;
+    }
+  }
+
+  private async resolveConflictSwitchDecision(
+    decision: string | undefined,
+    session: WorkbenchSession | undefined,
+  ): Promise<void> {
+    const pending = this.pendingConflictSwitch;
+    this.clearPendingConflictSwitch();
+    if (!pending || !session) return;
+    if (decision === "stay" || decision === "留在当前文件") {
+      await this.post({
+        protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+        type: "operation/result",
+        moduleId: "conflicts",
+        payload: { title: "已留在当前文件", message: "已取消切换；草稿保留。" },
+      });
+      return;
+    }
+    if (decision === "discard" || decision === "放弃草稿") {
+      this.clearConflictDraft(session, pending.currentRelativePath);
+    }
+    // save-checkpoint：草稿已在内存，保留
+    // 切换到新文件
+    this.conflictSwitchBypass = true;
+    try {
+      session.conflictState = {
+        ...session.conflictState,
+        selectedPath: pending.nextRelativePath,
+        initialCount: session.conflictState?.initialCount,
+      };
+      await this.sendConflictSnapshot(session);
+    } finally {
+      this.conflictSwitchBypass = false;
+    }
+  }
+
   /**
    * 处理“脏草稿三选一”决定：save 先经 Host 安全链保存草稿，成功后打开新
    * 目标；stash 直接打开（草稿保留）；stay 取消切换。保存失败不切换，
@@ -4757,6 +5732,18 @@ export class WorkbenchController implements vscode.Disposable {
         moduleId: "diff",
         payload: { targetId, draftRevision: result.draftRevision },
       });
+      this.appendActivityRecord({
+        kind: "draft-checkpoint",
+        moduleId: "diff",
+        taskId: "diff/working",
+        scopeHash: session.scopeHash,
+        repositoryUuid: session.repositoryUuid,
+        scopeLabel: `草稿检查点 ${targetId.slice(0, 8)}`,
+        impactedCount: 1,
+        previewSummary: "已保存页内编辑草稿（仅内存）",
+        projectName: session.scopeView.projectName,
+        capturedRevision: session.workingCopyRevision,
+      });
     }
   }
 
@@ -4848,7 +5835,86 @@ export class WorkbenchController implements vscode.Disposable {
           }
         : undefined,
       feedback: session.historyState.feedback,
+      freshness: createSnapshotFreshness(
+        session.scopeHash,
+        session.workingCopyRevision,
+      ),
     };
+  }
+
+  private buildActivitySnapshot() {
+    return {
+      kind: "activity" as const,
+      records: this.activityStore.records,
+      generatedAt: new Date().toISOString(),
+    };
+  }
+
+  private async sendActivitySnapshot(
+    requestId?: string,
+    moduleId: WorkbenchModuleId = "activity",
+  ): Promise<void> {
+    const snapshot = this.buildActivitySnapshot();
+    await this.post({
+      protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+      type: "module/snapshot",
+      requestId,
+      moduleId,
+      payload: { snapshot },
+    });
+  }
+
+  private appendActivityRecord(params: {
+    kind:
+      "draft-checkpoint" | "understanding-confirmation" | "operation-execution";
+    moduleId: WorkbenchModuleId;
+    taskId: WorkbenchTaskId;
+    scopeHash: string;
+    repositoryUuid: string;
+    scopeLabel: string;
+    impactedCount: number;
+    previewSummary?: string;
+    result?: "success" | "failed" | "pending";
+    errorReason?: string;
+    projectName?: string;
+    capturedRevision?: string;
+  }): void {
+    const now = new Date().toISOString();
+    const nonRecoverable = isNonRecoverableKind(
+      params.kind,
+      params.moduleId,
+      params.taskId,
+    );
+    const nextActions = buildActivityNextActions({
+      kind: params.kind,
+      result: params.result,
+      errorReason: params.errorReason,
+    });
+    this.activityStore = appendActivityRecord(this.activityStore, {
+      id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+      capturedAt: now,
+      kind: params.kind,
+      moduleId: params.moduleId,
+      taskId: params.taskId,
+      scopeHash: params.scopeHash,
+      repositoryUuid: params.repositoryUuid,
+      scopeLabel: params.scopeLabel,
+      impactedCount: params.impactedCount,
+      previewSummary: params.previewSummary
+        ? params.previewSummary.slice(0, 200)
+        : undefined,
+      result: params.result,
+      errorReason: params.errorReason
+        ? params.errorReason.slice(0, 500)
+        : undefined,
+      projectName: params.projectName,
+      capturedRevision: params.capturedRevision,
+      nextActions,
+      nonRecoverable,
+      nonRecoverableReason: nonRecoverable
+        ? "此操作不能在工作台中一键撤销"
+        : undefined,
+    });
   }
 
   private async sendHistorySnapshot(
@@ -4882,6 +5948,8 @@ export class WorkbenchController implements vscode.Disposable {
     } else if (session.conflictState.initialCount === undefined) {
       session.conflictState.initialCount = conflicts.length;
     }
+    // v0.0.13 批次 B：缓存冲突路径集合（供 draft-update 校验存在性无重采），快照重建时刷新
+    session.conflictState.conflictPaths = conflicts.map((c) => c.relativePath);
     if (
       session.conflictState.selectedPath &&
       !conflicts.some(
@@ -4900,6 +5968,13 @@ export class WorkbenchController implements vscode.Disposable {
     const request = selected
       ? await buildConflictAiRequest(selected)
       : undefined;
+    // v0.0.13 缓存选中文件的工作副本原始内容（供后续 draft-update 无重采）
+    if (selected && request) {
+      session.conflictState.workingBaseContents = {
+        ...(session.conflictState.workingBaseContents ?? {}),
+        [selected.relativePath]: request.contents.working?.content ?? "",
+      };
+    }
     if (
       selected &&
       (!session.conflictState?.editState ||
@@ -4941,31 +6016,58 @@ export class WorkbenchController implements vscode.Disposable {
       },
       selected:
         selected && request
-          ? {
-              relativePath: selected.relativePath,
-              operation: selected.operation,
-              type: selected.type,
-              sourceLeftRevision: selected.sourceLeftRevision,
-              sourceRightRevision: selected.sourceRightRevision,
-              contents: {
-                base: toConflictContentView(request.contents.base),
-                mine: toConflictContentView(request.contents.mine),
-                theirs: toConflictContentView(request.contents.theirs),
-                working: toConflictContentView(request.contents.working),
-              },
-              mergeEditor: {
-                token: session.conflictState!.editState!.token,
-                editable:
-                  !request.contents.working?.truncated &&
-                  !request.contents.working?.readError,
-                issues: request.contents.working?.truncated
-                  ? ["工作副本内容超过 5 MB，内嵌编辑已禁用。"]
-                  : request.contents.working?.readError
-                    ? [request.contents.working.readError]
-                    : [],
-                feedback: session.conflictState!.editState!.feedback,
-              },
-            }
+          ? (() => {
+              const draft = this.getConflictDraft(
+                session,
+                selected.relativePath,
+              );
+              const workingView = draft
+                ? {
+                    content: draft.content,
+                    truncated: false as const,
+                    readError: undefined as string | undefined,
+                  }
+                : request.contents.working;
+              const baseContent = request.contents.working?.content ?? "";
+              const hasDraft = draft !== undefined;
+              const dirty = hasDraft
+                ? draft.content !== (baseContent ?? "")
+                : false;
+              return {
+                relativePath: selected.relativePath,
+                operation: selected.operation,
+                type: selected.type,
+                sourceLeftRevision: selected.sourceLeftRevision,
+                sourceRightRevision: selected.sourceRightRevision,
+                contents: {
+                  base: toConflictContentView(request.contents.base),
+                  mine: toConflictContentView(request.contents.mine),
+                  theirs: toConflictContentView(request.contents.theirs),
+                  working: toConflictContentView(workingView),
+                },
+                mergeEditor: {
+                  token: session.conflictState!.editState!.token,
+                  editable:
+                    !request.contents.working?.truncated &&
+                    !request.contents.working?.readError,
+                  issues: request.contents.working?.truncated
+                    ? ["工作副本内容超过 5 MB，内嵌编辑已禁用。"]
+                    : request.contents.working?.readError
+                      ? [request.contents.working.readError]
+                      : [],
+                  feedback: session.conflictState!.editState!.feedback,
+                },
+                draft: hasDraft
+                  ? {
+                      content: draft.content,
+                      revision: draft.revision,
+                      updatedAt: draft.updatedAt,
+                      hasDraft: true,
+                      dirty,
+                    }
+                  : undefined,
+              };
+            })()
           : undefined,
       advice: session.conflictState?.advice,
       // v0.0.12 批次 C：冲突意图解释；scope/冲突集/revision 变化后标 stale 只读。
@@ -6426,6 +7528,19 @@ export class WorkbenchController implements vscode.Disposable {
     };
     session.changelistState = state;
     const preview = state.preview;
+    // v0.0.13 批次 C：消费会话级共享选择，展示“已带入 N 个文件”；筛选变化只提示不扩大
+    const sharedPaths = session.selectedPaths ?? [];
+    const candidateSet = new Set(candidates.map((c) => c.relativePath));
+    const validPreselected = sharedPaths.filter((p) => candidateSet.has(p));
+    const filteredPreselected = filterCommitSelectionByCandidates(
+      validPreselected,
+      candidates,
+    );
+    const preselectedPaths = filteredPreselected.kept;
+    const preselectedFeedback =
+      filteredPreselected.removedReasons.length > 0
+        ? `筛选变化：${filteredPreselected.removedReasons.length} 个已带入路径已失效，已提示不静默扩大选择。`
+        : undefined;
     return {
       kind: "changelists" as const,
       aiPrivacy: {
@@ -6474,6 +7589,11 @@ export class WorkbenchController implements vscode.Disposable {
           }
         : undefined,
       feedback: state.feedback,
+      preselected:
+        preselectedPaths.length > 0
+          ? { count: preselectedPaths.length, paths: preselectedPaths }
+          : undefined,
+      preselectedFeedback,
     };
   }
 
@@ -7405,6 +8525,8 @@ export class WorkbenchController implements vscode.Disposable {
       candidates,
     );
     state.selectedPaths = filtered.kept;
+    // v0.0.13 批次 C：每次快照确保共享选择与 Commit 内部选择一致（不静默扩大）。
+    session.selectedPaths = [...state.selectedPaths];
     // manualSelectedPaths 同步收敛到“仍保留的当前选择”（保持原手动顺序、
     // 去重）：被刷新移除/失效的路径不得继续污染后续规则/AI provenance 摘要。
     if (state.manualSelectedPaths) {
@@ -7609,6 +8731,9 @@ export class WorkbenchController implements vscode.Disposable {
     }
     const state = this.ensureCommitState(session);
     state.selectedPaths = validation.selectedPaths;
+    // v0.0.13 批次 C：会话级共享选择——Commit 的选择同步到 session.selectedPaths，
+    // 供 Changes/Commit/Changelists/Patch 共读；右键范围只缩小不扩大（validate 已保证）。
+    session.selectedPaths = [...validation.selectedPaths];
     // trackManualSelection：只有 commit/update-selection=true（用户逐项
     // 勾选）；preview/generate-message 即使带回相同 selectedPaths 也只是
     // 回放当前选择，不得创建/覆盖 manualSelectedPaths（否则“应用本地规则/
@@ -7742,6 +8867,42 @@ export class WorkbenchController implements vscode.Disposable {
       state.message,
       state.selectedPaths ?? [],
     );
+    // v0.0.14 批次 B：receipt token 泛化——SVN 写操作同样经通用操作意向单校验（scope/candidate/revision 变化自动失效，只读）
+    const commitIntentForCheck = {
+      token: preview.token,
+      kind: "commit" as const,
+      title: `提交 ${preview.view.selectedPaths.length} 个文件`,
+      summary: `提交 ${preview.view.selectedPaths.length} 个文件`,
+      paths: preview.view.selectedPaths,
+      scopeHash: session.scopeHash,
+      candidateHash: preview.stateHash,
+      repositoryUuid: session.repositoryUuid,
+      createdAt: preview.view.createdAt,
+      canExecute: preview.view.canExecute,
+      issues: preview.view.issues,
+      stale: false,
+    };
+    const genericCheck = validateOperationIntentForExecute(
+      commitIntentForCheck,
+      previewToken,
+      {
+        repositoryUuid: session.repositoryUuid,
+        scopeHash: session.scopeHash,
+        candidateHash: stateHash,
+        revision: session.workingCopyRevision,
+      },
+    );
+    if (!genericCheck.ok) {
+      state.preview = undefined;
+      await this.sendError(
+        "commit",
+        "提交预览已失效",
+        genericCheck.reason,
+        true,
+        requestId,
+      );
+      return;
+    }
     if (stateHash !== preview.stateHash) {
       state.preview = undefined;
       await this.sendError(
@@ -7830,13 +8991,23 @@ export class WorkbenchController implements vscode.Disposable {
     }
     if (result.commitResult.exitCode !== 0) {
       state.preview = undefined;
-      await this.sendError(
-        "commit",
-        "SVN 提交失败",
-        result.commitResult.stderr || result.commitResult.stdout || "未知错误",
-        true,
-        requestId,
-      );
+      const errMsg =
+        result.commitResult.stderr || result.commitResult.stdout || "未知错误";
+      await this.sendError("commit", "SVN 提交失败", errMsg, true, requestId);
+      this.appendActivityRecord({
+        kind: "operation-execution",
+        moduleId: "commit",
+        taskId: "commit/compose",
+        scopeHash: session.scopeHash,
+        repositoryUuid: session.repositoryUuid,
+        scopeLabel: `提交 ${preview.view.selectedPaths.length} 个文件`,
+        impactedCount: preview.view.selectedPaths.length,
+        previewSummary: preview.view.commands.join(" ").slice(0, 200),
+        result: "failed",
+        errorReason: errMsg,
+        projectName: session.scopeView.projectName,
+        capturedRevision: session.workingCopyRevision,
+      });
       return;
     }
 
@@ -7872,6 +9043,21 @@ export class WorkbenchController implements vscode.Disposable {
           ? `已提交为 r${result.revision}`
           : "SVN 提交已完成。",
       },
+    });
+    this.appendActivityRecord({
+      kind: "operation-execution",
+      moduleId: "commit",
+      taskId: "commit/compose",
+      scopeHash: session.scopeHash,
+      repositoryUuid: session.repositoryUuid,
+      scopeLabel: `提交 ${preview.view.selectedPaths.length} 个文件`,
+      impactedCount: preview.view.selectedPaths.length,
+      previewSummary: result.revision
+        ? `已提交为 r${result.revision}`
+        : "提交完成",
+      result: "success",
+      projectName: session.scopeView.projectName,
+      capturedRevision: result.revision ?? session.workingCopyRevision,
     });
     await this.sendCommitSnapshot(session, requestId);
   }
