@@ -718,7 +718,7 @@
     "prepare:manual-test-env": "node scripts/create-manual-acceptance-env.js"
   },
   "devDependencies": {
-    "@axe-core/playwright": "^4.12.1",
+    "@axe-core/playwright": "^4.13.0",
     "@codemirror/language": "^6.12.4",
     "@codemirror/merge": "^6.12.2",
     "@codemirror/search": "^6.7.1",
