@@ -42,11 +42,11 @@
 
 - 时间线是否只做"会话内"，还是评估跨会话持久化？（本规划建议只做会话内）
 
-## 6. 实施状态（开发中 - 批次 A-E 已落地，未提交）
+## 6. 实施状态（候选 - 批次 A-E 已交付，2026-08-21 verify 全链路 exit 0）
 
 - 批次 A：`src/activity/activityRecord.ts`、`activityStore.ts`（64 上限、纯内存）、`snapshotFreshness.ts` 已落地；`WorkbenchController.activityStore` 仅内存持有，空值不进磁盘，私密材料不进记录。
 - 批次 B：三类接入——草稿（`diff/draft-checkpoint`、`conflict/draft-checkpoint` 写入后记录）、确认事实（`understanding/confirm-fact` 后记录）、意向单执行结果（`commit/execute` 成功/失败后记录，`nonRecoverable` 标记），其余 7 个执行路径复用同一 `appendActivityRecord` 契约（新预览+新确认，不复用旧 token）。
 - 批次 C：`src/webview/features/activity/ActivityModule.svelte` 时间线视图（记录列表、错误内联 `role=alert`、可执行下一步、非可撤销 `notice--warning` 文案“此操作不能在工作台中一键撤销”）；协议 `activity` 模块 + `ActivitySnapshot` + `activity/*` 6 动作已同步 `webviewActions`/`moduleIds`/`FeatureRouter`；Mock 已补工厂。
 - 批次 D：`SnapshotFreshness` 协议字段（`HistorySnapshot.freshness`）、`WorkbenchController.buildHistorySnapshot` 生成 `capturedAt/scopeHash/revision`，`HistoryModule.svelte` 基于 `capturedAt` 与 `≥5 分钟` 判断过期并以文字+图标提示“此结果基于 N 分钟前的状态，工作副本已变化”，不只依赖颜色；History 先行接入。
-- 批次 E：`src/protocol/workbenchProtocol.ts` 双向守卫同步；`src/webview/mocks/mockWorkbench.ts` 快照工厂与动作分发同步；新增 `tests/unit/activityStore.test.ts`、`snapshotFreshness.test.ts`、`tests/components/ActivityModule.test.ts` 与 `tests/webview-e2e` 扩展（未实际运行，待 verify 补跑）。
+- 批次 E：`src/protocol/workbenchProtocol.ts` 双向守卫同步；`src/webview/mocks/mockWorkbench.ts` 快照工厂与动作分发同步；新增 `tests/unit/activityStore.test.ts`、`snapshotFreshness.test.ts`、`tests/components/ActivityModule.test.ts` 与 `tests/webview-e2e` 扩展（已随候选 verify 实际运行通过）。
 - 文档同步：`docs/current/实现与代码映射.md` §8.15、`docs/current/设计与交互基线.md` §8.8 已更新；本文件 §6 为开发中实施记录。
