@@ -18,7 +18,7 @@ import {
   summarizeUpdateScopeRisk,
 } from "../../update/updateFlow";
 import { validateOperationIntentForExecute } from "../../operation/operationIntent";
-import { errorMessage, normalizeRelative } from "./workbenchPresentation";
+import { errorMessage, quoteRelative } from "./workbenchPresentation";
 import { hashCandidateState } from "./workbenchSupport";
 import type { WorkbenchSession } from "./workbenchSession";
 
@@ -148,7 +148,7 @@ export class UpdateWorkbenchActions {
         overlapPaths: risk.overlapPaths,
         messages: risk.messages,
         commands: [
-          `svn update --accept postpone ${session.scope.roots.map((root) => `"${normalizeRelative(root.relativePath).replace(/"/g, '\\"')}"`).join(" ")}`,
+          `svn update --accept postpone ${session.scope.roots.map((root) => quoteRelative(root.relativePath)).join(" ")}`,
         ],
         error: remoteCheckError,
       },

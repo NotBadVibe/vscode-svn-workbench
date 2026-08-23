@@ -221,5 +221,9 @@ export function buildScenarioModelMap(
 }
 
 export function quoteRelative(value: string): string {
-  return `"${normalizeRelative(value).replace(/"/g, '\\"')}"`;
+  return quoteCommandPreviewArgument(normalizeRelative(value));
+}
+
+export function quoteCommandPreviewArgument(value: string): string {
+  return JSON.stringify(value);
 }
