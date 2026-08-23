@@ -1,10 +1,10 @@
 # SVN Workbench v0.0.14：通用操作意向单——危险操作确认一致性
 
-> 文档身份：`planned-version-record`
+> 文档身份：`released-version-record`
 >
-> 状态：规划中，不代表已实现。范围已随 v0.0.16 候选包交付，发版时同包转 released。当前开发事实以源码、测试和 [`../../current/`](../../current/) 为准。
+> 状态：已发布。范围随 v0.0.16 同包交付并发布；源码提交 `e506a608efc73020f1f03e2b654878fe8c8913f1`、标签 `v0.0.16`、VSIX 指纹、本地完整门禁与发布 evidence 均已绑定（产物与证据记录见 [`../v0.0.16/manifest.json`](../v0.0.16/manifest.json)，本版 manifest 同包引用）。当前开发事实以源码、测试和 [`../../current/`](../../current/) 为准。
 >
-> 规划基线：[`v0.0.13`](../v0.0.13/)（规划中）。
+> 规划基线：[`v0.0.13`](../v0.0.13/)（已发布，同包）。
 >
 > 优先级：P0。关闭易用性审查条目 U-08（确认对话框不完整）、C-04 收尾（动作数量写进按钮）。
 >
@@ -43,7 +43,7 @@ v0.0.11/0.0.12 已为 AI 外发建立 `preview-receipt → receipt → execute` 
 - 各写操作预览文案差异大，批次 C 先验证模式再推广，避免一次性改全部任务窗口。
 - 焦点锁定实现需与既有 Dialog/ContextMenu 底座（v0.0.10 列表组件体系）共存，不另建平行 UI。
 
-## 6. 实施状态（开发中，批次 A-C 已落地，D-E 部分）
+## 6. 实施状态（已发布，批次 A-E 随 v0.0.16 同包交付）
 
 - 批次 A：通用意向单组件 `src/operation/operationIntent.ts`（`OperationIntentKind/View`、`operationIntentTitle`（动作+数量，如“提交 N 个文件”）、`buildOperationIntentSummary`、`isOperationIntentStale`、`validateOperationIntentForExecute` 纯领域）与 `src/webview/components/operation/OperationIntentDialog.svelte`（意图摘要+影响清单复用 `PreviewPathList` 可搜索/复制 + 确认 token + 范围/revision 变化自动失效只读；`role=dialog`+`aria-modal`+`showModal` 背景不可交互，Esc 关闭、显式取消、Tab 焦点锁定循环、打开时焦点进入首个主操作按钮、关闭后焦点返回触发按钮、IME composition 保护，状态不只靠颜色）。
 - 批次 B：`src/protocol/workbenchProtocol.ts` 导出 `OperationIntentView/OperationIntentKind`（单一来源 `src/operation/operationIntent.ts`），`WorkbenchController` 在 `commit/execute` 等执行前以 `validateOperationIntentForExecute` 复验 token/范围/revision/candidateHash（数量来自最终候选集合），旧意向单只读失效不得凭旧 token 执行，与 v0.0.11/0.0.12 的 `preview-receipt → receipt → execute` 同构，保持预览→确认→执行前复验契约。

@@ -1,10 +1,10 @@
 # SVN Workbench v0.0.15：首次上手与异常可恢复
 
-> 文档身份：`planned-version-record`
+> 文档身份：`released-version-record`
 >
-> 状态：规划中，不代表已实现。范围已随 v0.0.16 候选包交付，发版时同包转 released。当前开发事实以源码、测试和 [`../../current/`](../../current/) 为准。
+> 状态：已发布。范围随 v0.0.16 同包交付并发布；源码提交 `e506a608efc73020f1f03e2b654878fe8c8913f1`、标签 `v0.0.16`、VSIX 指纹、本地完整门禁与发布 evidence 均已绑定（产物与证据记录见 [`../v0.0.16/manifest.json`](../v0.0.16/manifest.json)，本版 manifest 同包引用）。当前开发事实以源码、测试和 [`../../current/`](../../current/) 为准。
 >
-> 规划基线：[`v0.0.14`](../v0.0.14/)（规划中）。不依赖 v0.0.13/0.0.14 的机制，可与二者并行开发。
+> 规划基线：[`v0.0.14`](../v0.0.14/)（已发布，同包）。不依赖 v0.0.13/0.0.14 的机制，可与二者并行开发。
 >
 > 优先级：P0。关闭易用性审查条目 U-02（环境诊断不可执行）、C-11（隐藏开发者验收入口）、C-12（README 与命令统一）；C-10（Checkout 向导）为可选项。
 >
@@ -51,7 +51,7 @@
 
 - C-10 Checkout 向导：纳入本版本，还是单独排期？（成本高、涉及凭据与写入流程）
 
-## 6. 实施状态（开发中，批次 A-D 已落地，待门禁）
+## 6. 实施状态（已发布，批次 A-E 随 v0.0.16 同包交付）
 
 - 批次 A：诊断 action 协议化——`environmentDiagnostics.ts` 检查项携带 `actions`（动作 ID + 参数），`DiagnosticsModule.svelte` 渲染为可点击动作；Host 经 `diagnosticActions.ts` 执行并原地重检（选择可执行文件写入 `svnWorkbench.svn.path`、打开设置、重新检测、打开文件夹、复制诊断信息、打开 URL 仅 `https`/`http` 白名单）。
 - 批次 B：`src/extension.ts` `getSvnPath` 失败路径改为可执行三选一（选择可执行文件 / 打开设置 / 重新检测）替代纯警告文案，满足“发生了什么、可能原因、恢复动作”三要素；复用 `diagnosticActions.ts` 共享实现，修复 `filters: ["exe",""]` 空串问题为不设 filters。
