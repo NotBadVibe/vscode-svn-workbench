@@ -65,7 +65,11 @@ describe("工作台职责拆分后的纯逻辑", () => {
       roots: [{ kind: "folder", relativePath: "src" }],
       source: "editor",
     });
+    // v0.0.17 批次 A：repository 默认任务不再是更新（update 已独立成模块）。
     expect(getModuleTitle("repository", "commit/compose")).toBe(
+      "SVN · 浏览 SVN 仓库",
+    );
+    expect(getModuleTitle("update", "update/preview")).toBe(
       "SVN · 更新当前范围",
     );
     expect(inferLanguage("Component.svelte")).toBe("svelte");

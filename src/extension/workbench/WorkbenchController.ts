@@ -128,7 +128,12 @@ import {
   sanitizeDiagnostic,
   showOutput,
 } from "../../diagnostics/outputChannel";
-import { collectSvnHistory } from "../../history/svnHistory";
+import {
+  collectSvnHistoryPage,
+  normalizeSvnHistoryQuery,
+  type SvnHistoryPage,
+  type SvnHistoryQuery,
+} from "../../history/svnHistory";
 import { collectConflictItems } from "../../conflict/conflictCollector";
 import {
   buildResolveConflictPreview,
@@ -246,7 +251,6 @@ import {
   extractSvnCertificateDetails,
 } from "../../svn/svnErrorClassifier";
 import { resolveSvnExecutable } from "../../svn/svnExecutableResolver";
-import { runUpdateScope } from "../../update/updateFlow";
 import { readWebviewAssets } from "./WebviewAssetManifest";
 import {
   renderWebviewBuildError,
@@ -329,6 +333,14 @@ import {
   RepositoryWorkbenchActions,
   type RepositoryWorkbenchHost,
 } from "./repositoryWorkbenchActions";
+import {
+  UpdateWorkbenchActions,
+  type UpdateWorkbenchHost,
+} from "./updateWorkbenchActions";
+import {
+  deriveScopeRecommendation,
+  recommendationInputFromSnapshot,
+} from "./nextStepRecommendation";
 import { applyCommitSelectionRulesInvalidation } from "./commitSelectionInvalidation";
 import {
   assertServedModuleRequest,
@@ -383,6 +395,8 @@ export class WorkbenchController implements vscode.Disposable {
   private disposed = false;
   private readonly latestModuleRequests = new Map<WorkbenchModuleId, string>();
   private readonly repositoryActions: RepositoryWorkbenchActions;
+  /** v0.0.17 批次 A：Update 独立模块动作（预览/执行/快照）。 */
+  private readonly updateActions: UpdateWorkbenchActions;
   private readonly commitSelectionRuleService: CommitSelectionRuleService;
   private readonly ruleInvalidationSubscription: vscode.Disposable;
   /** 该控制器服务的工作台模块；其他模块请求经窗口管理器跨模块路由。 */
@@ -429,6 +443,9 @@ export class WorkbenchController implements vscode.Disposable {
   ) {
     this.repositoryActions = new RepositoryWorkbenchActions(
       this as unknown as RepositoryWorkbenchHost,
+    );
+    this.updateActions = new UpdateWorkbenchActions(
+      this as unknown as UpdateWorkbenchHost,
     );
     this.commitSelectionRuleService =
       commitSelectionRuleService ?? new CommitSelectionRuleService();
@@ -2598,6 +2615,89 @@ export class WorkbenchController implements vscode.Disposable {
         await this.sendHistorySnapshot(session, message.requestId);
         return;
       }
+      case "history/load-more": {
+        // v0.0.18 批次 C（C-06）：每次加载前都重新校验 Webview 的只读
+        // 查询条件；条件变化时从首批开始，未变化时才继续扩大上限。
+        const normalizedQuery = normalizeSvnHistoryQuery(data);
+        if (normalizedQuery.issues.length > 0) {
+          await this.sendError(
+            "history",
+            "历史条件无效",
+            normalizedQuery.issues.join(" "),
+            true,
+            message.requestId,
+          );
+          return;
+        }
+        const previousQuery = session.historyState?.historyQuery ?? {};
+        const queryChanged = !sameHistoryQuery(
+          previousQuery,
+          normalizedQuery.query,
+        );
+        const previousLimit = queryChanged
+          ? 0
+          : (session.historyState?.historyLimit ?? 100);
+        const nextLimit = previousLimit === 0 ? 100 : previousLimit + 200;
+        const controller = new AbortController();
+        session.activeOperation = { moduleId: "history", controller };
+        await this.post({
+          protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+          type: "operation/progress",
+          requestId: message.requestId,
+          moduleId: "history",
+          payload: {
+            title: `正在加载更早修订（最多 ${nextLimit} 条）`,
+            message: "svn log --limit",
+            cancellable: true,
+          },
+        });
+        let page: SvnHistoryPage;
+        try {
+          page = await collectSvnHistoryPage(
+            session.svnPath,
+            session.scope,
+            nextLimit,
+            normalizedQuery.query,
+            controller.signal,
+          );
+          const state = session.historyState ?? { compareRevisions: [] };
+          state.historyLimit = nextLimit;
+          state.historyQuery = normalizedQuery.query;
+          const condition = describeHistoryQuery(normalizedQuery.query);
+          state.feedback = condition
+            ? `已按${condition}读取 ${page.revisions.length} 条修订。`
+            : `已加载最近 ${page.revisions.length} 条修订。`;
+          session.historyState = state;
+        } catch (error) {
+          if (controller.signal.aborted) {
+            await this.post({
+              protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+              type: "operation/cancelled",
+              requestId: message.requestId,
+              moduleId: "history",
+              payload: {
+                title: "已取消加载更早修订",
+                message: "已保留当前列表；可再次点击“加载更早”重试。",
+              },
+            });
+            return;
+          }
+          await this.sendError(
+            "history",
+            "加载更早修订失败",
+            errorMessage(error),
+            true,
+            message.requestId,
+          );
+          return;
+        } finally {
+          if (session.activeOperation?.controller === controller)
+            session.activeOperation = undefined;
+        }
+        // 将同一可取消请求的结果直接下发，避免完成后无提示地再次 svn log。
+        await this.sendHistorySnapshot(session, message.requestId, page);
+        return;
+      }
       case "history/preview-restore": {
         const fileRoot = getSingleFileScopeRoot(session.scope);
         const revision =
@@ -3649,154 +3749,29 @@ export class WorkbenchController implements vscode.Disposable {
         );
         return;
       }
-      case "repository/preview-update": {
-        await this.createUpdatePreview(session, message.requestId);
+      case "update/preview": {
+        await this.updateActions.createUpdatePreview(
+          session,
+          message.requestId,
+        );
         return;
       }
-      case "repository/execute-update": {
-        const token = asString(data.previewToken);
-        const update = session.repositoryState?.update;
-        if (!token || !update || token !== update.token || !update.canExecute) {
-          await this.sendError(
-            "repository",
-            "更新预览已失效",
-            "请重新检查远端更新与本地风险。",
-            true,
-            message.requestId,
-          );
-          return;
-        }
-        const candidates = await this.collectScopeCandidates(session);
-        const currentHash = hashCandidateState(candidates, "", []);
-        // v0.0.14 批次 B：更新通用意向单校验（远端为操作对象）
-        const updateIntent = {
-          token: update.token,
-          kind: "update" as const,
-          title:
-            typeof update.remoteCount === "number"
-              ? `更新 ${update.remoteCount} 个远端变更`
-              : "更新当前范围",
-          summary:
-            typeof update.remoteCount === "number"
-              ? `更新 ${update.remoteCount} 个远端变更`
-              : "更新当前范围",
-          paths: update.overlapPaths,
-          scopeHash: session.scopeHash,
-          candidateHash: session.repositoryState?.candidateHash,
-          repositoryUuid: session.repositoryUuid,
-          createdAt: new Date().toISOString(),
-          canExecute: update.canExecute,
-          issues: [] as string[],
-          stale: false,
-        };
-        const updateGenericCheck = validateOperationIntentForExecute(
-          updateIntent,
-          token,
-          {
-            repositoryUuid: session.repositoryUuid,
-            scopeHash: session.scopeHash,
-            candidateHash: currentHash,
-          },
+      case "update/execute": {
+        // v0.0.17 批次 A：更新执行迁入 updateWorkbenchActions（意向单校验、
+        // 执行前复验 token/范围/候选、结果与活动记录均保持原契约）。
+        await this.updateActions.executeUpdate(
+          session,
+          asString(data.previewToken),
+          message.requestId,
         );
-        if (!updateGenericCheck.ok) {
-          session.repositoryState!.update = undefined;
-          await this.sendError(
-            "repository",
-            "更新预览已失效",
-            updateGenericCheck.reason,
-            true,
-            message.requestId,
-          );
-          return;
-        }
-        if (currentHash !== session.repositoryState?.candidateHash) {
-          session.repositoryState!.update = undefined;
-          await this.sendError(
-            "repository",
-            "工作副本已变化",
-            "本地状态已变化，请重新生成更新预览。",
-            true,
-            message.requestId,
-          );
-          return;
-        }
-        await this.post({
-          protocolVersion: WORKBENCH_PROTOCOL_VERSION,
-          type: "operation/progress",
-          requestId: message.requestId,
-          moduleId: "repository",
-          payload: {
-            title: "正在更新当前范围",
-            message: "SVN update --accept postpone",
-            cancellable: true,
-          },
-        });
-        const controller = new AbortController();
-        session.activeOperation = { moduleId: "repository", controller };
-        let result: Awaited<ReturnType<typeof runUpdateScope>>;
-        try {
-          result = await runUpdateScope(session.svnPath, session.scope, {
-            signal: controller.signal,
-          });
-        } finally {
-          if (session.activeOperation?.controller === controller)
-            session.activeOperation = undefined;
-        }
-        if (result.result.cancelled) {
-          session.repositoryState = {
-            lastResult: {
-              ok: false,
-              hasConflicts: false,
-              message: "更新已取消；请重新检查工作副本状态。",
-            },
-          };
-          await this.post({
-            protocolVersion: WORKBENCH_PROTOCOL_VERSION,
-            type: "operation/cancelled",
-            requestId: message.requestId,
-            moduleId: "repository",
-            payload: {
-              title: "更新已取消",
-              message: "SVN 进程已停止，当前状态将重新采集。",
-            },
-          });
-          await this.sendRepositorySnapshot(session, message.requestId);
-          return;
-        }
-        const isUpdateSuccess = result.result.exitCode === 0;
-        const updateMsg = isUpdateSuccess
-          ? result.revision
-            ? `已更新到 r${result.revision}`
-            : "当前范围更新完成。"
-          : result.result.stderr || result.result.stdout || "SVN 更新失败。";
-        session.repositoryState = {
-          lastResult: {
-            ok: isUpdateSuccess,
-            revision: result.revision,
-            hasConflicts: result.hasConflicts,
-            message: updateMsg,
-          },
-        };
-        this.appendActivityRecord({
-          kind: "operation-execution",
-          moduleId: "repository",
-          taskId: "repository/update",
-          scopeHash: session.scopeHash,
-          repositoryUuid: session.repositoryUuid,
-          scopeLabel:
-            typeof update.remoteCount === "number"
-              ? `更新 ${update.remoteCount} 个远端变更`
-              : "更新当前范围",
-          impactedCount:
-            typeof update.remoteCount === "number" ? update.remoteCount : 0,
-          previewSummary:
-            update.commands?.join(" ").slice(0, 200) ?? "svn update",
-          result: isUpdateSuccess ? "success" : "failed",
-          errorReason: isUpdateSuccess ? undefined : updateMsg,
-          projectName: session.scopeView.projectName,
-          capturedRevision: result.revision ?? session.workingCopyRevision,
-        });
-        await this.sendRepositorySnapshot(session, message.requestId);
+        return;
+      }
+      case "list/save-filter-preset": {
+        this.saveFilterPreset(session, data);
+        return;
+      }
+      case "list/delete-filter-preset": {
+        this.deleteFilterPreset(session, data);
         return;
       }
       case "repository/preview-property": {
@@ -4817,6 +4792,7 @@ export class WorkbenchController implements vscode.Disposable {
       payload: {
         moduleId: this.session.moduleId,
         scope: this.session.scopeView,
+        restartGuide: this.session.restartGuide === true,
       },
     });
   }
@@ -4856,6 +4832,8 @@ export class WorkbenchController implements vscode.Disposable {
         moduleId,
         payload: { snapshot },
       });
+      // v0.0.17 批次 C：模块快照后按最新候选状态更新全局推荐下一步。
+      await this.refreshScopeRecommendation(session, snapshot);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       appendOutput(`加载 Svelte 模块 ${moduleId} 失败：${message}`);
@@ -4869,6 +4847,105 @@ export class WorkbenchController implements vscode.Disposable {
         );
       }
     }
+  }
+
+  /**
+   * v0.0.17 批次 C / v0.0.18 批次 E：模块快照后按最新候选状态更新全局
+   * 推荐下一步与范围栏快捷事实（候选数、工作副本 revision）。事实未
+   * 变化时不重复下发。推荐只是推荐：不替用户执行、不扩大右键范围、
+   * 不自动开始写操作。
+   */
+  private async refreshScopeRecommendation(
+    session: WorkbenchSession,
+    snapshot: WorkbenchModuleSnapshot,
+  ): Promise<void> {
+    if (!this.panel) {
+      return;
+    }
+    const aiConfigured = Object.keys(session.aiModels ?? {}).length > 0;
+    const nextInput = recommendationInputFromSnapshot(
+      snapshot,
+      aiConfigured,
+      session.recommendationInput,
+    );
+    if (nextInput === undefined) {
+      return;
+    }
+    session.recommendationInput = nextInput;
+    const recommendation = deriveScopeRecommendation(nextInput);
+    const current = session.scopeView;
+    const candidateCount = nextInput.totalCandidates;
+    const workingCopyRevision = session.workingCopyRevision;
+    if (
+      current.recommendation?.key === recommendation?.key &&
+      current.candidateCount === candidateCount &&
+      current.workingCopyRevision === workingCopyRevision
+    ) {
+      return;
+    }
+    session.scopeView = {
+      ...current,
+      recommendation,
+      candidateCount,
+      workingCopyRevision,
+    };
+    await this.post({
+      protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+      type: "scope/changed",
+      sessionId: session.sessionId,
+      moduleId: session.moduleId,
+      taskId: session.taskId,
+      repositoryUuid: session.repositoryUuid,
+      scopeHash: session.scopeHash,
+      payload: { scope: session.scopeView },
+    });
+  }
+
+  /**
+   * v0.0.17 批次 E：保存命名筛选预设（会话状态总线，Changes/Commit 共读）。
+   * 预设只影响视图筛选；名称非空、patterns 去重，同名覆盖。
+   */
+  private saveFilterPreset(
+    session: WorkbenchSession,
+    data: Record<string, unknown>,
+  ): void {
+    const name = asString(data.name)?.trim();
+    const patterns = Array.isArray(data.patterns)
+      ? [
+          ...new Set(
+            data.patterns.filter(
+              (item): item is string =>
+                typeof item === "string" && item.trim().length > 0,
+            ),
+          ),
+        ]
+      : [];
+    if (!name || patterns.length === 0) {
+      return;
+    }
+    const presets = [...(session.filterPresets ?? [])];
+    const existingIndex = presets.findIndex((preset) => preset.name === name);
+    const preset = { id: randomUUID(), name, patterns };
+    if (existingIndex >= 0) {
+      presets[existingIndex] = preset;
+    } else {
+      presets.push(preset);
+    }
+    session.filterPresets = presets;
+  }
+
+  /** v0.0.17 批次 E：删除命名筛选预设；未知 id 静默忽略。 */
+  private deleteFilterPreset(
+    session: WorkbenchSession,
+    data: Record<string, unknown>,
+  ): void {
+    const id = asString(data.id);
+    if (!id || !session.filterPresets) {
+      return;
+    }
+    session.filterPresets = session.filterPresets.filter(
+      (preset) => preset.id !== id,
+    );
   }
 
   private async buildSnapshot(
@@ -4891,6 +4968,7 @@ export class WorkbenchController implements vscode.Disposable {
         files,
         summary: summary.statuses,
         refreshedAt: new Date().toISOString(),
+        filterPresets: session.filterPresets,
         operationPreview: preview
           ? {
               token: preview.token,
@@ -4943,6 +5021,10 @@ export class WorkbenchController implements vscode.Disposable {
 
     if (moduleId === "diagnostics") {
       return this.buildDiagnosticsSnapshot();
+    }
+
+    if (moduleId === "update") {
+      return this.updateActions.buildUpdateSnapshot(session);
     }
 
     if (moduleId === "repository") {
@@ -5796,12 +5878,23 @@ export class WorkbenchController implements vscode.Disposable {
     }
   }
 
-  private async buildHistorySnapshot(session: WorkbenchSession) {
-    const revisions = await collectSvnHistory(
-      session.svnPath,
-      session.scope,
-      100,
-    );
+  private async buildHistorySnapshot(
+    session: WorkbenchSession,
+    providedPage?: SvnHistoryPage,
+  ) {
+    // v0.0.18 批次 C（C-06）：limit 来自会话状态（“加载更早”逐步增大），
+    // 不再硬编码；hasMore 区分“没有更多”与“尚未加载”。
+    const historyLimit = session.historyState?.historyLimit ?? 100;
+    const historyQuery = session.historyState?.historyQuery ?? {};
+    const page =
+      providedPage ??
+      (await collectSvnHistoryPage(
+        session.svnPath,
+        session.scope,
+        historyLimit,
+        historyQuery,
+      ));
+    const revisions = page.revisions;
     if (!session.historyState) {
       session.historyState = {
         selectedRevision: revisions[0]?.revision,
@@ -5821,7 +5914,9 @@ export class WorkbenchController implements vscode.Disposable {
       revisions,
       selectedRevision: session.historyState.selectedRevision,
       compareRevisions: session.historyState.compareRevisions,
-      limit: 100,
+      limit: historyLimit,
+      query: historyQuery,
+      hasMore: page.hasMore,
       fileActionsAvailable: Boolean(getSingleFileScopeRoot(session.scope)),
       blame: session.historyState.blame,
       restorePreview: session.historyState.restorePreview
@@ -5920,8 +6015,9 @@ export class WorkbenchController implements vscode.Disposable {
   private async sendHistorySnapshot(
     session: WorkbenchSession,
     requestId?: string,
+    providedPage?: SvnHistoryPage,
   ): Promise<void> {
-    const snapshot = await this.buildHistorySnapshot(session);
+    const snapshot = await this.buildHistorySnapshot(session, providedPage);
     await this.post({
       protocolVersion: WORKBENCH_PROTOCOL_VERSION,
       type: "module/snapshot",
@@ -6808,7 +6904,7 @@ export class WorkbenchController implements vscode.Disposable {
     > = {
       changes: { moduleId: "changes", taskId: "changes/overview" },
       commit: { moduleId: "commit", taskId: "commit/compose" },
-      update: { moduleId: "repository", taskId: "repository/update" },
+      update: { moduleId: "update", taskId: "update/preview" },
     };
     const entry = task ? taskMap[task] : undefined;
     const folder = (vscode.workspace.workspaceFolders ?? []).find(
@@ -7478,7 +7574,7 @@ export class WorkbenchController implements vscode.Disposable {
     session: WorkbenchSession,
     requestId?: string,
   ): Promise<void> {
-    await this.repositoryActions.createUpdatePreview(session, requestId);
+    await this.updateActions.createUpdatePreview(session, requestId);
   }
 
   private async buildChangelistsSnapshot(
@@ -8671,6 +8767,7 @@ export class WorkbenchController implements vscode.Disposable {
         configured: selectionAiConfigured,
         model: selectionModel || undefined,
       },
+      filterPresets: session.filterPresets,
       feedback,
       ai,
       messageSuggestion,
@@ -9090,8 +9187,8 @@ export class WorkbenchController implements vscode.Disposable {
       };
       if (this.session.commitState)
         this.session.commitState.preview = undefined;
-      if (this.session.repositoryState)
-        this.session.repositoryState.update = undefined;
+      if (this.session.updateState)
+        this.session.updateState.preview = undefined;
     }
     await this.post({
       protocolVersion: WORKBENCH_PROTOCOL_VERSION,
@@ -9146,4 +9243,31 @@ function hashConflictSet(
     )
     .sort()
     .join("\n");
+}
+
+function sameHistoryQuery(
+  left: Partial<SvnHistoryQuery>,
+  right: Partial<SvnHistoryQuery>,
+): boolean {
+  return (
+    left.revisionFrom === right.revisionFrom &&
+    left.revisionTo === right.revisionTo &&
+    left.author === right.author &&
+    left.dateFrom === right.dateFrom &&
+    left.dateTo === right.dateTo
+  );
+}
+
+function describeHistoryQuery(query: Partial<SvnHistoryQuery>): string {
+  const parts: string[] = [];
+  if (query.revisionFrom || query.revisionTo) {
+    parts.push(
+      `修订 r${query.revisionFrom ?? "1"} 至 r${query.revisionTo ?? "HEAD"}`,
+    );
+  }
+  if (query.author) parts.push(`作者“${query.author}”`);
+  if (query.dateFrom || query.dateTo) {
+    parts.push(`日期 ${query.dateFrom ?? "最早"} 至 ${query.dateTo ?? "今天"}`);
+  }
+  return parts.join("、");
 }

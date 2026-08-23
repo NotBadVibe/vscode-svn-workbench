@@ -13,6 +13,11 @@ export interface ListPreferences {
   sortField?: SortField;
   sortDirection?: SortDirection;
   density?: ListDensity;
+  /**
+   * v0.0.17 批次 D：任务导航分组展开记忆（组 id 集合；缺省表示全部默认
+   * 折叠状态，由调用方决定哪些组默认展开）。
+   */
+  expandedGroups?: string[];
 }
 
 const STATE_KEY = "svnWorkbench.listPreferences.v1";

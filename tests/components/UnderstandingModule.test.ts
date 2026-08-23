@@ -113,6 +113,32 @@ function renderUnderstanding(
 }
 
 describe("UnderstandingModule 变更解读", () => {
+  it("逐条已看/未看：任意顺序标记并更新进度（C-08，v0.0.18）", async () => {
+    renderUnderstanding({
+      state: "local",
+      changes: [
+        snapshot.changes[0],
+        {
+          ...snapshot.changes[0],
+          id: "local-2",
+          statement: "修改了 1 个文件：src/b.ts。",
+        },
+      ],
+    });
+    expect(
+      screen.getByText(/已看 0\/2 条；可按任意顺序标记/),
+    ).toBeInTheDocument();
+    const toggle = screen.getByLabelText(
+      "标记已看：修改了 1 个文件：src/b.ts。",
+    );
+    await fireEvent.click(toggle);
+    expect(screen.getByText(/已看 1\/2 条/)).toBeInTheDocument();
+    expect(toggle).toBeChecked();
+    // 再点一次取消标记。
+    await fireEvent.click(toggle);
+    expect(screen.getByText(/已看 0\/2 条/)).toBeInTheDocument();
+  });
+
   it("首屏展示用途、范围与“只运行本地检查 / 查看并开始分析”", () => {
     renderUnderstanding();
     expect(

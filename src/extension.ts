@@ -162,6 +162,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("svnWorkbench.openProjects", () =>
       openSupportModule("projects", "projects/overview"),
     ),
+    vscode.commands.registerCommand("svnWorkbench.openGuide", openGuide),
     vscode.commands.registerCommand("svnWorkbench.scmRefresh", () =>
       sourceControlManager?.refreshAll(),
     ),
@@ -360,6 +361,24 @@ async function openWorkbench(
   });
 }
 
+/**
+ * v0.0.18 批次 A（C-03）：打开/重新打开三分钟新手引导。
+ * 引导复用真实任务窗口（从本地修改开始），restartGuide 经
+ * app/initialize 通知 Webview 重置引导状态。
+ */
+async function openGuide(resource?: unknown): Promise<void> {
+  const prepared = await prepareWorkbenchRequest(resourceUri(resource));
+  if (!prepared || !workbenchWindowManager) {
+    return;
+  }
+  await workbenchWindowManager.open({
+    moduleId: "changes",
+    taskId: "changes/overview",
+    restartGuide: true,
+    ...prepared,
+  });
+}
+
 async function checkEnvironment(): Promise<void> {
   await openSupportModule("diagnostics", "diagnostics/environment");
 }
@@ -380,8 +399,8 @@ async function updateScope(
     return;
   }
   await workbenchWindowManager.open({
-    moduleId: "repository",
-    taskId: "repository/update",
+    moduleId: "update",
+    taskId: "update/preview",
     ...prepared,
   });
 }

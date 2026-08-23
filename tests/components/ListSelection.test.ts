@@ -368,7 +368,7 @@ describe("Changes 选择闭环（v0.0.8）", () => {
     });
     expect(screen.getByText("没有匹配的文件")).toBeInTheDocument();
     expect(
-      screen.getByText(/调整搜索词或状态筛选，或清除搜索后重试/),
+      screen.getByText(/调整搜索词、状态或类型筛选即可/),
     ).toBeInTheDocument();
     // 恢复动作：清除搜索后列表恢复。
     await fireEvent.click(screen.getByRole("button", { name: "清除筛选" }));
@@ -388,7 +388,7 @@ describe("Changes 选择闭环（v0.0.8）", () => {
     });
     expect(screen.getByText("已选文件不在当前筛选中")).toBeInTheDocument();
     expect(
-      screen.getByText(/关闭“只看已选”或调整筛选条件/),
+      screen.getByText(/关闭“只看已选”或调整筛选即可看到/),
     ).toBeInTheDocument();
   });
 

@@ -122,6 +122,9 @@
 {:else if snapshot.kind === "diagnostics"}
   {#await import("../features/diagnostics/DiagnosticsModule.svelte")}{@render loadingModule()}{:then module}{@const Feature =
       module.default}<Feature {snapshot} {taskId} {onAction} />{/await}
+{:else if snapshot.kind === "update"}
+  {#await import("../features/update/UpdateModule.svelte")}{@render loadingModule()}{:then module}{@const Feature =
+      module.default}<Feature {snapshot} {onAction} {pathDetail} />{/await}
 {:else if snapshot.kind === "repository"}
   {#await import("../features/repository/RepositoryModule.svelte")}{@render loadingModule()}{:then module}{@const Feature =
       module.default}<Feature

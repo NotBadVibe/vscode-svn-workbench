@@ -55,11 +55,7 @@ describe("activityExecutionRecords（8 个意向单执行路径）", () => {
       ),
     ).toBe(true);
     expect(
-      isNonRecoverableKind(
-        "operation-execution",
-        "repository",
-        "repository/update",
-      ),
+      isNonRecoverableKind("operation-execution", "update", "update/preview"),
     ).toBe(false);
     expect(
       isNonRecoverableKind(
@@ -165,8 +161,8 @@ describe("activityExecutionRecords（8 个意向单执行路径）", () => {
       id: "fail-1",
       capturedAt: new Date().toISOString(),
       kind: "operation-execution",
-      moduleId: "repository",
-      taskId: "repository/update",
+      moduleId: "update",
+      taskId: "update/preview",
       scopeHash,
       repositoryUuid,
       scopeLabel: "更新当前范围",

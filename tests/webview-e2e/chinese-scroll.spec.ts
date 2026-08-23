@@ -168,19 +168,17 @@ test("SCR-06：变更集三栏拥有独立滚动归属且选择不丢失", async
   await expect(editor.getByText(/将分组的文件（36）/)).toBeVisible();
 });
 
-test("SCR-07：仓库子任务按需显示，目录与属性列表均可滚到末项", async ({
+test("SCR-07：更新独立成模块；仓库任务分组按需显示，目录与属性列表均可滚到末项", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1024, height: 600 });
   await page.goto("/?dataset=scroll");
-  await openModule(page, "仓库操作");
-  await expect(
-    page.locator('[data-repository-task="repository/update"]'),
-  ).toBeVisible();
+  // v0.0.17 批次 A：update 拆分为独立模块（与 Changes/Commit 平级）。
+  await openModule(page, "更新");
   await expect(
     page.getByRole("heading", { name: "更新当前范围", exact: true }).last(),
   ).toBeVisible();
-  await expect(page.getByRole("heading", { name: "仓库浏览器" })).toHaveCount(
+  await expect(page.getByRole("region", { name: "仓库目录内容" })).toHaveCount(
     0,
   );
   await expect
@@ -188,38 +186,37 @@ test("SCR-07：仓库子任务按需显示，目录与属性列表均可滚到�
       page.evaluate(() =>
         performance
           .getEntriesByType("resource")
-          .some((entry) => /UpdateTask-.*\.js/.test(entry.name)),
+          .some((entry) => /UpdateModule-.*\.js/.test(entry.name)),
       ),
     )
     .toBe(true);
+
+  // 仓库模块：默认浏览仓库，其余任务分组按需展开（v0.0.17 批次 D）。
+  await openModule(page, "仓库操作");
+  await expect(
+    page.getByRole("region", { name: "仓库目录内容" }),
+  ).toBeVisible();
+  const dangerousGroup = page.locator('[data-task-group="dangerous"]');
+  await expect(dangerousGroup).toBeVisible();
+  await expect(dangerousGroup.locator(".task-group__toggle")).toHaveAttribute(
+    "aria-expanded",
+    "false",
+  );
+  await dangerousGroup.getByRole("button", { name: /危险操作/ }).click();
+  await expect(dangerousGroup.locator(".task-group__toggle")).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
   const loadedTaskChunks = await page.evaluate(() =>
     performance.getEntriesByType("resource").map((entry) => entry.name),
   );
-  for (const taskChunk of [
-    "BrowseTask",
-    "PropertiesTask",
-    "AdvancedTask",
-    "PatchShelfTask",
-    "ReleaseNotesTask",
-  ]) {
-    expect(
-      loadedTaskChunks.some((name) => name.includes(`${taskChunk}-`)),
-      `${taskChunk} 不应随更新任务加载`,
-    ).toBe(false);
-  }
+  expect(
+    loadedTaskChunks.some((name) => name.includes("UpdateModule-")),
+    "更新已拆分为独立模块，不应随仓库任务加载",
+  ).toBe(false);
 
-  await page.getByRole("button", { name: "浏览仓库", exact: true }).click();
   const browser = page.getByRole("region", { name: "仓库目录内容" });
   await assertScrollable(browser, browser.getByRole("button").last());
-  await expect
-    .poll(() =>
-      page.evaluate(() =>
-        performance
-          .getEntriesByType("resource")
-          .some((entry) => /BrowseTask-.*\.js/.test(entry.name)),
-      ),
-    )
-    .toBe(true);
   await page.getByRole("button", { name: "SVN 属性", exact: true }).click();
   const properties = page.getByRole("region", { name: "当前 SVN 属性" });
   await assertScrollable(properties, properties.getByRole("button").last());

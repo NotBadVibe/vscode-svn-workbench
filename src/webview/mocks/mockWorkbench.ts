@@ -7,6 +7,7 @@ import {
   type CommitSelectionPreviewItem,
   type CommitSelectionSettingsLayerView,
   type CommitSelectionSettingsSection,
+  type FilterPresetView,
   type HostToWebviewMessage,
   type WorkbenchModuleId,
   type WorkbenchModuleSnapshot,
@@ -26,6 +27,7 @@ import {
 import { createCommitSelectionEvaluator } from "../../commit/commitSelectionRuleEvaluator";
 import type { SvnStatus } from "../../svn/svnTypes";
 import { workbenchBridge } from "../bridge/vscodeBridge";
+import { onboarding } from "../app/onboarding.svelte";
 
 /*
  * Diff 模块 mock 数据：内容包含一段足够长的未变更代码，用于在
@@ -246,6 +248,13 @@ let mockEditToken = "mock-edit-token";
 let mockEditRevision = 1;
 /** 目标切换后的 mock 会话序号（模拟 Host 会话替换）。 */
 let mockSessionCounter = 0;
+/** v0.0.17 批次 E：会话共享筛选预设（mock 内存，与 Host 会话状态总线语义一致）。 */
+let mockFilterPresets: FilterPresetView[] = [];
+
+/** 重建当前模块快照（预设存取后回发，模拟 Host 下发新快照）。 */
+function currentModuleSnapshot(): WorkbenchModuleSnapshot {
+  return createInitialMockSnapshot(activeMockModuleId);
+}
 
 /** 模拟 Host 的目标切换：新会话 app/initialize + 新快照。 */
 function injectDiffTargetSwitch(relativePath: string): void {
@@ -295,6 +304,7 @@ function createInitialMockSnapshot(
   > = {
     changes: changesSnapshot,
     commit: commitSnapshot,
+    update: updateSnapshot,
     history: historySnapshot,
     conflicts: conflictSnapshot,
     repository: repositorySnapshot,
@@ -306,6 +316,28 @@ function createInitialMockSnapshot(
     activity: activitySnapshot,
   };
   return factories[moduleId]();
+}
+
+/**
+ * v0.0.17 批次 A/B：update 独立模块 Mock 快照（含常驻冲突 CTA 演示数据）。
+ */
+function updateSnapshot(
+  overrides: Record<string, unknown> = {},
+): WorkbenchModuleSnapshot {
+  return {
+    kind: "update",
+    info: {
+      name: "vscode-svn",
+      url: "https://svn.example.test/repos/workbench/trunk",
+      repositoryRoot: "https://svn.example.test/repos/workbench",
+      revision: "42",
+    },
+    conflicts: {
+      count: 2,
+      paths: ["src/conflict/OrderList.tsx", "src/conflict/README.md"],
+    },
+    ...overrides,
+  } as WorkbenchModuleSnapshot;
 }
 
 /**
@@ -369,6 +401,11 @@ export function startMockWorkbench(): void {
   const initialModuleId = initialMockModule();
   activeMockModuleId = initialModuleId;
   activeMockTaskId = defaultWorkbenchTask(initialModuleId);
+  // v0.0.18 批次 A：mock/测试环境默认关闭新手引导（真实 Host 首次进入
+  // 才展示）；引导专项测试与演示用 ?guide=1 开启。
+  if (new URLSearchParams(window.location.search).get("guide") !== "1") {
+    onboarding.skip();
+  }
   const initial: HostToWebviewMessage = {
     protocolVersion: WORKBENCH_PROTOCOL_VERSION,
     type: "app/initialize",
@@ -384,6 +421,21 @@ export function startMockWorkbench(): void {
         projectName: "vscode-svn",
         roots: [{ kind: "folder", relativePath: toDisplayPath(".") }],
         source: "internal",
+        // v0.0.18 批次 E：范围栏快捷事实演示（候选数/revision）。
+        candidateCount: 4,
+        workingCopyRevision: "42",
+        // v0.0.17 批次 C：mock 推荐带演示（与 Host 推导规则一致的示例）。
+        recommendation:
+          initialModuleId === "conflicts"
+            ? undefined
+            : {
+                key: "commit:3",
+                title: "检查建议的 3 个文件",
+                reason: "当前范围有 3 个本地修改，建议逐项检查后提交。",
+                actionLabel: "前往检查并提交",
+                target: { moduleId: "commit", taskId: "commit/compose" },
+                count: 3,
+              },
       },
       snapshot: createInitialMockSnapshot(initialModuleId),
     },
@@ -455,6 +507,7 @@ export function startMockWorkbench(): void {
       > = {
         changes: changesSnapshot,
         commit: commitSnapshot,
+        update: updateSnapshot,
         history: historySnapshot,
         conflicts: conflictSnapshot,
         repository: repositorySnapshot,
@@ -493,6 +546,33 @@ export function startMockWorkbench(): void {
         injectSnapshot(moduleId, createSnapshot(), taskId);
       }
     }
+    if (action === "list/save-filter-preset") {
+      // v0.0.17 批次 E：会话共享预设的 Mock 存取（同名覆盖，与 Host 一致）。
+      const name = typeof data.name === "string" ? data.name.trim() : "";
+      const patterns = Array.isArray(data.patterns)
+        ? (data.patterns as unknown[]).filter(
+            (item): item is string =>
+              typeof item === "string" && item.trim().length > 0,
+          )
+        : [];
+      if (name && patterns.length > 0) {
+        const rest = mockFilterPresets.filter((preset) => preset.name !== name);
+        mockFilterPresets = [
+          ...rest,
+          { id: `mock-preset-${name}`, name, patterns },
+        ];
+      }
+      injectSnapshot(activeMockModuleId, currentModuleSnapshot());
+    }
+    if (action === "list/delete-filter-preset") {
+      const id = typeof data.id === "string" ? data.id : undefined;
+      if (id) {
+        mockFilterPresets = mockFilterPresets.filter(
+          (preset) => preset.id !== id,
+        );
+      }
+      injectSnapshot(activeMockModuleId, currentModuleSnapshot());
+    }
     if (
       action === "file/path-detail" &&
       typeof data.relativePath === "string"
@@ -524,7 +604,7 @@ export function startMockWorkbench(): void {
       > = {
         changes: ["changes", changesSnapshot],
         commit: ["commit", commitSnapshot],
-        update: ["repository", repositorySnapshot],
+        update: ["update", updateSnapshot],
       };
       const entry = taskSnapshots[data.task];
       if (entry) injectSnapshot(entry[0], entry[1]());
@@ -673,6 +753,7 @@ export function startMockWorkbench(): void {
       > = {
         changes: changesSnapshot,
         commit: commitSnapshot,
+        update: updateSnapshot,
         history: historySnapshot,
         conflicts: conflictSnapshot,
         repository: repositorySnapshot,
@@ -1110,6 +1191,37 @@ export function startMockWorkbench(): void {
         binary: false,
         message: "修订比较 r41 → r42",
       });
+    }
+    if (action === "history/load-more") {
+      // v0.0.18 批次 C：模拟加载更早修订（追加更早编号，limit 增大）。
+      const base = historySnapshot() as { revisions: unknown[] };
+      const query = Object.fromEntries(
+        ["revisionFrom", "revisionTo", "author", "dateFrom", "dateTo"]
+          .map((key) => [key, data[key]])
+          .filter(([, value]) => typeof value === "string" && value.trim()),
+      );
+      injectSnapshot(
+        "history",
+        historySnapshot({
+          revisions: [
+            ...base.revisions,
+            {
+              revision: "3",
+              author: "早期作者",
+              date: "2026-01-05T10:00:00.000Z",
+              message: "更早期的修订（加载更早演示）",
+              changedPaths: [{ action: "A", path: "/trunk/README.md" }],
+            },
+          ],
+          limit: 300,
+          hasMore: false,
+          query,
+          feedback:
+            Object.keys(query).length > 0
+              ? "已按条件加载更早修订；更早历史已全部加载。"
+              : "已加载更早修订；更早历史已全部加载。",
+        }),
+      );
     }
     if (action === "history/blame") {
       const blame = isScrollDataset()
@@ -1549,11 +1661,11 @@ export function startMockWorkbench(): void {
       // Mock 原地重检：选择可执行文件后重新检测
       injectSnapshot("diagnostics", diagnosticsSnapshot());
     }
-    if (action === "repository/preview-update") {
+    if (action === "update/preview") {
       injectSnapshot(
-        "repository",
-        repositorySnapshot({
-          update: {
+        "update",
+        updateSnapshot({
+          preview: {
             token: "mock-update",
             canExecute: true,
             localCount: 4,
@@ -1567,14 +1679,15 @@ export function startMockWorkbench(): void {
         }),
       );
     }
-    if (action === "repository/execute-update") {
+    if (action === "update/execute") {
       injectSnapshot(
-        "repository",
-        repositorySnapshot({
-          lastResult: {
+        "update",
+        updateSnapshot({
+          preview: undefined,
+          result: {
             ok: true,
             revision: "43",
-            hasConflicts: false,
+            hasConflicts: true,
             message: "已更新到 r43",
           },
         }),
@@ -1932,6 +2045,7 @@ function changesSnapshot(
     kind: "changes",
     commitDraft: "feat(workbench): 完善统一 Svelte 工作台",
     files: snapshotFiles,
+    filterPresets: mockFilterPresets,
     summary:
       snapshotFiles === files
         ? { modified: 1, added: 1, unversioned: 1, conflicted: 1 }
@@ -2006,6 +2120,7 @@ function commitSnapshot(
   return {
     kind: "commit",
     files: snapshotFiles,
+    filterPresets: mockFilterPresets,
     summary: {
       total: snapshotFiles.length,
       selected: snapshotFiles.length,
@@ -2115,6 +2230,8 @@ function historySnapshot(
     selectedRevision: revisions[0]?.revision,
     compareRevisions: [],
     limit: 100,
+    // v0.0.18 批次 C：mock 演示“可能还有更早修订”与加载更早交互。
+    hasMore: true,
     fileActionsAvailable: true,
     ...overrides,
   } as WorkbenchModuleSnapshot;

@@ -9,7 +9,11 @@ import {
   applySvnChangelist,
   collectSvnChangelists,
 } from "../../src/changelist/svnChangelists";
-import { collectSvnHistory } from "../../src/history/svnHistory";
+import {
+  collectSvnHistory,
+  collectSvnHistoryPage,
+  normalizeSvnHistoryQuery,
+} from "../../src/history/svnHistory";
 import {
   collectSvnProperties,
   parseSvnExternalsTargetNames,
@@ -132,6 +136,50 @@ describe("领域 SVN I/O 适配器", () => {
       stderr: "",
     });
     await expect(collectSvnHistory("svn", scope)).rejects.toThrow("无法读取 a");
+  });
+
+  it("校验历史加载条件，并将安全的修订范围传给 svn log", async () => {
+    expect(
+      normalizeSvnHistoryQuery({
+        revisionFrom: "20",
+        revisionTo: "10",
+        dateFrom: "2026-02-30",
+        author: "x".repeat(121),
+      }).issues,
+    ).toEqual([
+      "作者筛选不能超过 120 个字符。",
+      "开始日期必须是有效的 YYYY-MM-DD 日期。",
+      "较早修订号不能大于较晚修订号。",
+    ]);
+    runSvnCommand.mockResolvedValueOnce({
+      exitCode: 0,
+      stderr: "",
+      stdout:
+        '<log><logentry revision="12"><author>Alice</author><date>2026-07-30T08:00:00Z</date><msg>m</msg></logentry><logentry revision="11"><author>bob</author><date>2026-07-01T08:00:00Z</date><msg>n</msg></logentry></log>',
+    });
+
+    const page = await collectSvnHistoryPage("svn", scope, 2, {
+      revisionFrom: "10",
+      revisionTo: "12",
+      author: "alice",
+      dateFrom: "2026-07-01",
+      dateTo: "2026-07-31",
+    });
+
+    expect(runSvnCommand.mock.calls[0]?.[1]).toEqual([
+      "log",
+      "--xml",
+      "-v",
+      "--limit",
+      "2",
+      "--revision",
+      "12:10",
+      inRepository("a"),
+    ]);
+    expect(page).toMatchObject({
+      hasMore: true,
+      revisions: [{ revision: "12", author: "Alice" }],
+    });
   });
 
   it("解析属性 XML、实体、校验边界并表达读取失败", async () => {

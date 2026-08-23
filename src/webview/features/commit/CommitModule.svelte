@@ -20,7 +20,9 @@
     describeCommitSelectionEvaluation,
     fileStatusLabels,
     sourceLabels,
+    statusExplanations,
   } from "../../i18n/terminology";
+  import StatusExplanation from "../../components/svn/StatusExplanation.svelte";
   import {
     diffDraftAgainstSuggestion,
     insertSuggestionBlankFields,
@@ -56,7 +58,14 @@
     rangeItems,
     sortFileViews,
   } from "../../components/list/listModel";
+  import {
+    deriveFileTypeOptions,
+    fileTypeToPattern,
+    matchesFilePatterns,
+    NO_EXTENSION_KEY,
+  } from "../../components/list/filterPresets";
   import OperationIntentDialog from "../../components/operation/OperationIntentDialog.svelte";
+  import { onboarding } from "../../app/onboarding.svelte";
   import {
     loadListPreferences,
     saveListPreferences,
@@ -102,6 +111,12 @@
   let sortDirection = $state<SortDirection>("asc");
   let announcement = $state("");
   let density = $state<ListDensity>("comfortable");
+  // v0.0.17 批次 E（C-13）：文件类型筛选与命名预设（与 Changes 共读同一份会话预设）。
+  let activeFileType = $state("all");
+  let activePresetId = $state<string | undefined>();
+  let presetNameInput = $state("");
+  let presetNameComposing = $state(false);
+  let presetFeedback = $state("");
   /** v0.0.9 §4：替换前确认态（展示字符数，等待用户确认）。 */
   let replaceConfirmOpen = $state(false);
   /** 替换确认对应的目标字符数（打开时计算）。 */
@@ -114,6 +129,36 @@
 
   const rowHeight = $derived(density === "compact" ? 36 : 48);
   const virtualizeAfter = 300;
+
+  // v0.0.17 批次 E：类型选项从当前候选推导；预设与 Changes 共读。
+  const fileTypeOptions = $derived(deriveFileTypeOptions(snapshot.files));
+  const filterPresets = $derived(snapshot.filterPresets ?? []);
+  const activePreset = $derived(
+    filterPresets.find((preset) => preset.id === activePresetId),
+  );
+
+  function saveCurrentPreset(): void {
+    const name = presetNameInput.trim();
+    if (!name) {
+      presetFeedback = "请先填写预设名称。";
+      return;
+    }
+    const patterns = activePreset
+      ? activePreset.patterns
+      : fileTypeToPattern(activeFileType);
+    if (patterns.length === 0) {
+      presetFeedback = "“无扩展名”筛选暂不支持保存为预设；请选择具体文件类型。";
+      return;
+    }
+    onAction("list/save-filter-preset", { name, patterns });
+    presetNameInput = "";
+    presetFeedback = `已保存筛选预设“${name}”。`;
+  }
+
+  function deletePreset(presetId: string): void {
+    if (activePresetId === presetId) activePresetId = undefined;
+    onAction("list/delete-filter-preset", { id: presetId });
+  }
 
   /*
    * v0.0.10 共享列表行控制器：键盘导航、活动行焦点、窗口化与路径详情
@@ -155,6 +200,19 @@
       if (filter === "excluded" && file.selection !== "excluded") return false;
       if (filter === "blocked" && file.selection !== "blocked") return false;
       if (onlySelected && !selected.has(file.selectionKey)) return false;
+      // v0.0.17 批次 E：类型/预设是视图维度，不改变选择与提交范围。
+      if (
+        activePreset &&
+        !matchesFilePatterns(file.relativePath, activePreset.patterns)
+      )
+        return false;
+      if (!activePreset && activeFileType !== "all") {
+        const fileName = file.relativePath.split("/").pop() ?? "";
+        const dot = fileName.lastIndexOf(".");
+        const ext =
+          dot > 0 ? fileName.slice(dot).toLowerCase() : NO_EXTENSION_KEY;
+        if (ext !== activeFileType) return false;
+      }
       return matchesFileQuery(file, query);
     }),
   );
@@ -255,6 +313,12 @@
   const usablePreview = $derived(
     snapshot.preview && !selectionOutOfSync ? snapshot.preview : undefined,
   );
+
+  // v0.0.18 批次 A（C-03）：看到有效提交预览即完成引导第 4 步；
+  // 第 5 步（最终确认前结束）只做说明，不出现在何执行按钮。
+  $effect(() => {
+    if (usablePreview) onboarding.recordStep("preview-commit");
+  });
 
   function syncSelectionToHost(): void {
     const paths = selectedPaths();
@@ -620,6 +684,80 @@
         >
       {/each}
     </div>
+    <!-- v0.0.17 批次 E（C-13）：文件类型筛选与命名筛选预设（只影响视图）。 -->
+    <div class="filter-preset-row" aria-label="文件类型与筛选预设">
+      <select
+        class="sort-menu"
+        aria-label="文件类型筛选"
+        disabled={Boolean(activePreset)}
+        value={activePreset ? "preset" : activeFileType}
+        onchange={(event) => {
+          activeFileType = (event.currentTarget as HTMLSelectElement).value;
+          presetFeedback = "";
+        }}
+      >
+        {#if activePreset}
+          <option value="preset">预设：{activePreset.name}</option>
+        {:else}
+          <option value="all">全部类型</option>
+          {#each fileTypeOptions as option (option.value)}
+            <option value={option.value}
+              >{option.label}（{option.count}）</option
+            >
+          {/each}
+        {/if}
+      </select>
+      {#if filterPresets.length > 0}
+        <select
+          class="sort-menu"
+          aria-label="筛选预设"
+          value={activePresetId ?? ""}
+          onchange={(event) => {
+            const value = (event.currentTarget as HTMLSelectElement).value;
+            activePresetId = value || undefined;
+            presetFeedback = "";
+          }}
+        >
+          <option value="">不使用预设</option>
+          {#each filterPresets as preset (preset.id)}
+            <option value={preset.id}
+              >{preset.name}（{preset.patterns.join("、")}）</option
+            >
+          {/each}
+        </select>
+        {#if activePreset}
+          <button
+            class="button button--secondary"
+            aria-label={`删除筛选预设 ${activePreset.name}`}
+            onclick={() => deletePreset(activePreset.id)}>删除预设</button
+          >
+        {/if}
+      {/if}
+      <input
+        class="filter-preset-name"
+        aria-label="筛选预设名称"
+        placeholder="预设名称…"
+        bind:value={presetNameInput}
+        oncompositionstart={() => (presetNameComposing = true)}
+        oncompositionend={() => (presetNameComposing = false)}
+        onkeydown={(event) => {
+          // IME 候选阶段的 Enter 不触发保存。
+          if (event.key === "Enter" && !presetNameComposing) {
+            event.preventDefault();
+            saveCurrentPreset();
+          }
+        }}
+      />
+      <button
+        class="button button--secondary"
+        disabled={activeFileType === "all" && !activePreset}
+        title={activeFileType === "all" && !activePreset
+          ? "先选择文件类型或预设，再保存"
+          : undefined}
+        onclick={saveCurrentPreset}>保存为预设</button
+      >
+      {#if presetFeedback}<span role="status">{presetFeedback}</span>{/if}
+    </div>
     <div class="commit-summary">
       <span>推荐 {snapshot.summary.selected}</span>
       <span>待确认 {snapshot.summary.needsReview}</span>
@@ -826,6 +964,11 @@
           <span class={`status-badge status-badge--${file.status}`}
             >{fileStatusLabels[file.status]}</span
           >
+          <!-- v0.0.18 批次 B（C-05）：状态词键盘可达的就地解释。 -->
+          <StatusExplanation
+            term={fileStatusLabels[file.status]}
+            explanation={statusExplanations[file.status]}
+          />
           <button
             type="button"
             class="icon-button icon-button--small"
@@ -1415,8 +1558,11 @@
           <span class="codicon codicon-shield" aria-hidden="true"></span>
           <p>执行前将重新校验范围、文件状态、团队规范和远端更新。</p>
           {#if selected.size === 0}
+            <!-- v0.0.17 批次 F（C-02）：空态回答发生了什么/是否正常/能做什么。 -->
             <p class="preview-empty__hint" role="note">
-              先选择至少 1 个可提交文件。
+              {snapshot.files.length === 0
+                ? "当前范围没有可提交的候选文件——如果工作副本很干净，这是正常状态。可回到“本地修改”确认范围，或检查远端更新。"
+                : "先选择至少 1 个可提交文件；也可以点击“选择推荐项”按本地规则补全选择。"}
             </p>
           {/if}
           <button

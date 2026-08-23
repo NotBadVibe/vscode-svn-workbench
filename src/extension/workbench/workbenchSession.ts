@@ -8,9 +8,13 @@ import type {
   CommitMessageSuggestion,
   CommitPlanView,
   CommitSnapshot,
+  FilterPresetView,
+  HistoryQueryView,
   HistorySnapshot,
   RepositorySnapshot,
   SettingsSnapshot,
+  UpdatePreviewView,
+  UpdateResultView,
   WorkbenchModuleId,
   WorkbenchScopeView,
   WorkbenchTaskId,
@@ -42,6 +46,11 @@ export interface OpenWorkbenchRequest {
     operation: "add" | "ignore" | "revert" | "lock" | "unlock";
     ignoreMode?: "directory" | "repository";
   };
+  /**
+   * v0.0.18 批次 A（C-03）：由“打开新手引导”命令进入时置 true，
+   * 随 app/initialize 下发，Webview 重置引导状态。
+   */
+  restartGuide?: boolean;
 }
 
 export interface WorkbenchSession extends OpenWorkbenchRequest {
@@ -50,6 +59,14 @@ export interface WorkbenchSession extends OpenWorkbenchRequest {
   taskId: WorkbenchTaskId;
   scopeView: WorkbenchScopeView;
   repositoryUuid: string;
+  /**
+   * v0.0.17 批次 E：会话共享的命名筛选预设（v0.0.13 会话状态总线模式，
+   * 仅会话内、不落盘）。Changes/Commit 共读；预设只影响视图筛选，
+   * 不改变真实操作范围。
+   */
+  filterPresets?: FilterPresetView[];
+  /** v0.0.17 批次 C：推荐推导输入缓存（随模块快照更新，会话内）。 */
+  recommendationInput?: import("./nextStepRecommendation").ScopeRecommendationInput;
   /** v0.0.7：仓库根 URL，仅用于路径详情推导仓库内路径。 */
   repositoryRootUrl?: string;
   /** v0.0.7：工作副本根检出 URL，是推导文件 SVN URL 的唯一合法基础。 */
@@ -74,6 +91,13 @@ export interface WorkbenchSession extends OpenWorkbenchRequest {
   historyState?: {
     selectedRevision?: string;
     compareRevisions: string[];
+    /**
+     * v0.0.18 批次 C（C-06）：会话内已请求的历史条数上限；默认 100，
+     * “加载更早”逐步增大并重采（可取消）。
+     */
+    historyLimit?: number;
+    /** v0.0.18 C-06：已应用于当前历史列表的只读查询条件。 */
+    historyQuery?: HistoryQueryView;
     blame?: HistorySnapshot["blame"];
     restorePreview?: {
       token: string;
@@ -148,10 +172,16 @@ export interface WorkbenchSession extends OpenWorkbenchRequest {
     /** 团队规则动作一次性反馈。 */
     teamFeedback?: { tone: "success" | "warning" | "error"; message: string };
   };
-  repositoryState?: {
-    update?: RepositorySnapshot["update"];
+  /**
+   * v0.0.17 批次 A：Update 独立模块的会话状态（自 repositoryState 拆出）。
+   * 预览与结果契约不变：token + candidateHash 绑定，范围/候选变化后失效。
+   */
+  updateState?: {
+    preview?: UpdatePreviewView;
     candidateHash?: string;
-    lastResult?: RepositorySnapshot["lastResult"];
+    result?: UpdateResultView;
+  };
+  repositoryState?: {
     propertyPreview?: {
       token: string;
       stateHash: string;

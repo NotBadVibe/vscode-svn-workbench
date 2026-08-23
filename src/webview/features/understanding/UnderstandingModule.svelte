@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { SvelteSet } from "svelte/reactivity";
   import type {
     ChangeUnderstandingSnapshot,
     EvidenceReference,
@@ -54,6 +55,30 @@
     inferred: understandingLabels.inferred,
     toConfirm: understandingLabels.toConfirm,
   };
+
+  /*
+   * v0.0.18 批次 D（C-08）：逐条已看/未看进度——大范围分析可按任意顺序
+   * 标记，不强迫线性流程；已看状态仅本地（会话内），快照刷新只保留仍
+   * 存在的条目，新分析（新 id）自然从“未看”开始。
+   */
+  const viewedChanges = new SvelteSet<string>();
+  $effect(() => {
+    const validIds = new Set(snapshot.changes.map((change) => change.id));
+    for (const id of [...viewedChanges]) {
+      if (!validIds.has(id)) viewedChanges.delete(id);
+    }
+  });
+  const viewedCount = $derived(
+    snapshot.changes.filter((change) => viewedChanges.has(change.id)).length,
+  );
+
+  function toggleViewed(changeId: string): void {
+    if (viewedChanges.has(changeId)) {
+      viewedChanges.delete(changeId);
+    } else {
+      viewedChanges.add(changeId);
+    }
+  }
 
   const findingCategoryLabels: Record<string, string> = {
     "local-blocked": "本地阻止项",
@@ -303,6 +328,12 @@
       aria-label={understandingLabels.changes}
     >
       <h3>{understandingLabels.changes}</h3>
+      {#if snapshot.changes.length > 0}
+        <!-- v0.0.18 批次 D：逐条已看进度，不强迫线性流程。 -->
+        <p class="understanding-muted" role="status">
+          已看 {viewedCount}/{snapshot.changes.length} 条；可按任意顺序标记。
+        </p>
+      {/if}
       {#if snapshot.changes.length === 0}
         <p class="understanding-muted">没有可展示的变更陈述。</p>
       {:else}
@@ -312,8 +343,16 @@
               class="understanding-item"
               class:understanding-item--toConfirm={change.status ===
                 "toConfirm"}
+              class:understanding-item--viewed={viewedChanges.has(change.id)}
             >
               <div class="understanding-item__head">
+                <input
+                  type="checkbox"
+                  class="understanding-viewed-toggle"
+                  aria-label={`标记已看：${change.statement}`}
+                  checked={viewedChanges.has(change.id)}
+                  onchange={() => toggleViewed(change.id)}
+                />
                 <span class="understanding-claim"
                   >{claimStatusLabels[change.status]}</span
                 >
@@ -576,6 +615,15 @@
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
     background: var(--surface-1);
+  }
+  /* v0.0.18 批次 D：已看条目轻微弱化；已看状态本身由勾选框表达，不只靠颜色。 */
+  .understanding-item--viewed {
+    opacity: 0.78;
+  }
+  .understanding-viewed-toggle {
+    flex: 0 0 auto;
+    align-self: flex-start;
+    margin-top: 2px;
   }
   .understanding-item--blocked {
     border-left: 3px solid var(--danger);

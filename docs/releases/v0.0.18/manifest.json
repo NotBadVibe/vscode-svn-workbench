@@ -6,7 +6,7 @@
   "releaseDate": null,
   "gitTag": null,
   "gitCommit": null,
-  "sourceState": "规划中，未开始实现；源码仍处 v0.0.12 已发布基线",
+  "sourceState": "批次 A-E 已在开发工作区实现并通过定向自动化；package 仍为 0.0.17，v0.0.17/v0.0.18 均未候选或发布",
   "vsix": null,
   "tests": null,
   "acceptedEvidenceRun": null,

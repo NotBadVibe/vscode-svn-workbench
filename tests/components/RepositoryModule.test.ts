@@ -1,10 +1,10 @@
-import { fireEvent, render, screen } from "@testing-library/svelte";
+import { fireEvent, render, screen, within } from "@testing-library/svelte";
 import { describe, expect, it, vi } from "vitest";
 import RepositoryModule from "../../src/webview/features/repository/RepositoryModule.svelte";
 import type { RepositorySnapshot } from "../../src/protocol/workbenchProtocol";
 
 describe("RepositoryModule", () => {
-  it("更新执行只携带 Host 签发的预览令牌", async () => {
+  it("任务导航按三组展示；危险操作默认折叠、点击展开（v0.0.17 批次 D）", async () => {
     const onAction = vi.fn();
     const snapshot: RepositorySnapshot = {
       kind: "repository",
@@ -12,36 +12,43 @@ describe("RepositoryModule", () => {
       properties: { available: true, target: ".", items: [] },
       cleanup: { available: true, target: "." },
       advanced: {},
-      update: {
-        token: "update-1",
-        canExecute: true,
-        localCount: 1,
-        remoteCount: 0,
-        risk: "low",
-        overlapPaths: [],
-        messages: ["没有明显风险。"],
-        commands: ['svn update --accept postpone "."'],
-      },
     };
     render(RepositoryModule, {
       snapshot,
-      taskId: "repository/update",
+      taskId: "repository/browse",
       onAction,
     });
-    await fireEvent.click(
-      await screen.findByRole("button", { name: "确认更新当前范围" }),
-    );
-    // 批次 D：确认更新先打开通用操作意向单对话框
+    // 三组都以组标签呈现，页面保持单一主标题层级。
     expect(
-      screen.getByRole("dialog", { name: "更新 0 个远端变更" }),
+      screen.getByRole("group", { name: /分支与集成（3 个任务）/ }),
     ).toBeInTheDocument();
-    const dialog = screen.getByRole("dialog", { name: "更新 0 个远端变更" });
-    const confirmInDialog = Array.from(dialog.querySelectorAll("button")).find(
-      (b) => b.textContent?.includes("确认更新（0）"),
-    ) as HTMLElement;
-    await fireEvent.click(confirmInDialog);
-    expect(onAction).toHaveBeenCalledWith("repository/execute-update", {
-      previewToken: "update-1",
+    expect(
+      screen.getByRole("group", { name: /维护与迁移（5 个任务）/ }),
+    ).toBeInTheDocument();
+    const dangerous = screen.getByRole("group", {
+      name: /危险操作（2 个任务）/,
+    });
+    // 默认展开“分支与集成”，危险操作折叠但可展开。
+    expect(
+      dangerous
+        .querySelector(".task-group__toggle")
+        ?.getAttribute("aria-expanded"),
+    ).toBe("false");
+    await fireEvent.click(
+      within(dangerous).getByRole("button", { name: /危险操作/ }),
+    );
+    expect(
+      dangerous
+        .querySelector(".task-group__toggle")
+        ?.getAttribute("aria-expanded"),
+    ).toBe("true");
+    // 分组内点击任务直达对应 module/task（范围不变）。
+    await fireEvent.click(
+      within(dangerous).getByRole("button", { name: "切换" }),
+    );
+    expect(onAction).toHaveBeenCalledWith("open-module", {
+      moduleId: "repository",
+      taskId: "repository/switch",
     });
   });
 
