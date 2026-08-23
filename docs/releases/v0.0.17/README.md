@@ -1,8 +1,8 @@
 # SVN Workbench v0.0.17：发现性与核心任务效率
 
-> 文档身份：`candidate-version-record`
+> 文档身份：`released-version-record`
 >
-> 状态：候选验收中。批次 A–F 已实现；源码提交 `5707a1e71e59df8d629997c7b8201c03bcd4e1f8`、VSIX 指纹与已接受 evidence 已绑定于 [`manifest.json`](./manifest.json)。本版本将随 `v0.0.18` 同包发布，不单独创建标签。当前开发事实以源码、测试和 [`../../current/`](../../current/) 为准。
+> 状态：已发布。范围随 `v0.0.18` 同包交付并发布；源码提交 `d187676acc1a7ed69c6de9adc50603841805e475`、标签 `v0.0.18`、VSIX 指纹、本地完整门禁与发布 evidence 均已绑定于 [`manifest.json`](./manifest.json)。本版本不单独创建标签。当前开发事实以源码、测试和 [`../../current/`](../../current/) 为准。
 >
 > 规划基线：[`v0.0.16`](../v0.0.16/)。依赖 v0.0.13 机制 A（会话状态总线，用于筛选预设存取）。
 >
@@ -39,7 +39,7 @@
 - **Repository 分组默认展开**："分支与集成"默认展开，"维护与迁移"/"危险操作"默认折叠；当前任务所在组强制可见；不按最近使用动态排序（保持稳定层级）。
 - **C-13 筛选预设归属**：当前项目会话级（`WorkbenchSession` 内存，不落盘、不跨重启），Changes/Commit 共读；不做用户级全局预设。
 
-## 5. 候选验收证据
+## 5. 发布验收事实
 
 - `npm run verify` 已通过：1339 个覆盖率门禁测试、82 个 Webview E2E、性能预算与 Extension Host 验收均通过；VSIX 在独立 VS Code 配置中完成安装、卸载与重装。可追溯字段、工件和树指纹以 [`manifest.json`](./manifest.json) 为准。
 - 性能预算同步：UpdateTask 随 update 独立模块拆出为 UpdateModule chunk（计入 lazyChunks 总量，实测 19 ≥ 17），`minimumRepositoryTaskChunks` 随架构由 7 调整为 6（`scripts/measure-webview-performance.js` 正则与预算同步更新）；其余预算（首屏体积、交互 P95、5000 项窗口化）实测均在限内。

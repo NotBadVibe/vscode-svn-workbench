@@ -340,12 +340,12 @@
   },
   {
    "version": "0.0.17",
-   "status": "candidate",
-   "phase": "candidate",
+   "status": "released",
+   "phase": "released",
    "baseVersion": "0.0.16",
    "canonicalEntry": "releases/v0.0.17/README.md",
    "manifest": "releases/v0.0.17/manifest.json",
-   "releasedFact": false,
+   "releasedFact": true,
    "topics": [
     "next-step-recommendation",
     "update-module-split",
@@ -357,12 +357,12 @@
   },
   {
    "version": "0.0.18",
-   "status": "candidate",
-   "phase": "candidate",
+   "status": "released",
+   "phase": "released",
    "baseVersion": "0.0.17",
    "canonicalEntry": "releases/v0.0.18/README.md",
    "manifest": "releases/v0.0.18/manifest.json",
-   "releasedFact": false,
+   "releasedFact": true,
    "topics": [
     "onboarding-walkthrough",
     "terminology-explainer",
