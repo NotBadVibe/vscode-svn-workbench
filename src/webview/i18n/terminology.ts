@@ -27,6 +27,48 @@ export const fileStatusLabels: Record<WorkbenchFileStatus, string> = {
 };
 
 /**
+ * v0.0.18 批次 B（C-05）：状态词就地解释——每个状态词说明“这意味着
+ * 什么、对提交/更新有什么影响”，一条一句话，不引入平行术语。
+ */
+export const statusExplanations: Record<WorkbenchFileStatus, string> = {
+  normal: "文件内容与 SVN 记录一致，没有本地修改。",
+  modified: "文件已在本地修改，尚未提交到仓库。",
+  added: "文件已加入版本控制，下次提交时进入仓库。",
+  deleted: "文件已标记删除，下次提交会从仓库移除。",
+  missing:
+    "SVN 记录中有此文件，但工作副本里找不到；可能被外部删除或移动，可还原恢复。",
+  unversioned: "文件不在版本控制内；需要先加入版本控制才能提交。",
+  conflicted:
+    "更新或合并时双方修改了同一处，需要人工解决冲突后才能提交或更新。",
+  ignored: "路径命中忽略规则（svn:ignore），不会进入常规提交候选。",
+  external:
+    "路径来自 svn:externals 引用的另一个仓库，是独立的工作副本边界，不能并入当前仓库的提交。",
+  obstructed:
+    "工作副本中该路径被不同类型的对象阻挡（例如文件占住了目录位置），SVN 操作无法继续。",
+  replaced: "文件先删除后又重新加入版本控制，下次提交按“替换”记录。",
+  incomplete:
+    "上次检出或更新未完成，该目录的子项可能缺失；建议先更新补全再操作。",
+  unknown: "未能识别的 SVN 状态；请刷新状态，持续出现可运行环境诊断。",
+};
+
+/** 选择建议（决策）的就地解释；键与协议 selection 字面量一致。 */
+export const selectionDecisionExplanations = {
+  selected: "本地规则按状态策略推荐提交该文件。",
+  needsReview:
+    "本地规则无法单独判断（例如未版本化或仅属性变化），请人工确认后再决定。",
+  excluded: "命中排除规则（路径规则或状态策略），默认不进入提交。",
+  blocked:
+    "安全规则阻止提交（例如冲突未解决、外部工作副本）；该结果不可被建议覆盖。",
+} as const;
+
+/** 更新风险等级的就地解释。 */
+export const riskExplanations = {
+  low: "未发现本地修改与远端更新的同路径重叠，更新通常安全。",
+  medium: "存在同路径重叠或其他风险信号，更新前请核对重叠路径清单。",
+  high: "本地修改与远端更新高度重叠，冲突可能性大；建议先处理本地修改再更新。",
+} as const;
+
+/**
  * 结果来源统一文案（v0.0.9 §3.1）：
  * - local-rule：未外发、可重复验证的本地规则，统一称“本地检查”；
  * - configured-model：基于明确回执中的数据生成，称“模型建议”；
@@ -97,7 +139,7 @@ export const taskLabels: Record<WorkbenchTaskId, string> = {
   "conflicts/resolve": "处理文件冲突",
   "changelists/manage": "管理变更集",
   "understanding/analyze": "变更解读",
-  "repository/update": "更新当前范围",
+  "update/preview": "更新当前范围",
   "repository/recovery": "清理与恢复工作副本",
   "repository/browse": "浏览 SVN 仓库",
   "repository/branch": "创建 SVN 分支",

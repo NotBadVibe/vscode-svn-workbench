@@ -62,7 +62,7 @@ export function getModuleTitle(
     "conflicts/resolve": "冲突处理",
     "changelists/manage": "变更集",
     "understanding/analyze": "变更解读",
-    "repository/update": "更新当前范围",
+    "update/preview": "更新当前范围",
     "repository/recovery": "清理与恢复工作副本",
     "repository/browse": "浏览 SVN 仓库",
     "repository/branch": "创建 SVN 分支",
@@ -221,5 +221,9 @@ export function buildScenarioModelMap(
 }
 
 export function quoteRelative(value: string): string {
-  return `"${normalizeRelative(value).replace(/"/g, '\\"')}"`;
+  return quoteCommandPreviewArgument(normalizeRelative(value));
+}
+
+export function quoteCommandPreviewArgument(value: string): string {
+  return JSON.stringify(value);
 }

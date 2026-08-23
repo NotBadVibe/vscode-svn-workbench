@@ -57,8 +57,10 @@ function findInitialAssets() {
     lazyChunks: assetFiles.filter((item) =>
       /(?:Module|Task)-.*\.js$/.test(item),
     ).length,
+    // v0.0.17 批次 A：UpdateTask 随 update 独立模块拆出为 UpdateModule chunk
+    // （计入 lazyChunks），repository 剩余 6 个任务保持按需惰性加载。
     repositoryTaskChunks: assetFiles.filter((item) =>
-      /(?:Update|Recovery|Browse|Properties|Advanced|PatchShelf|ReleaseNotes)Task-.*\.js$/.test(
+      /(?:Recovery|Browse|Properties|Advanced|PatchShelf|ReleaseNotes)Task-.*\.js$/.test(
         item,
       ),
     ).length,
@@ -127,7 +129,8 @@ async function main() {
       largeListMountedRows: 100,
       largeListScrollMs: 500,
       minimumLazyChunks: 17,
-      minimumRepositoryTaskChunks: 7,
+      // v0.0.17：UpdateTask 拆出后 repository 任务 chunk 数 7 → 6。
+      minimumRepositoryTaskChunks: 6,
     };
     const result = {
       measuredAt: new Date().toISOString(),

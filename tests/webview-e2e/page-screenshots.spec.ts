@@ -180,10 +180,21 @@ test("保存每个 Svelte 功能页面的验收截图", async ({ page }) => {
     await capture(page, "07-understanding");
   });
 
+  await test.step("Update", async () => {
+    // v0.0.17 批次 A/B：更新独立模块，结果页常驻冲突 CTA。
+    await openModule(page, "更新");
+    await page.getByRole("button", { name: "生成更新预览" }).click();
+    await expect(page.getByText("中风险")).toBeVisible();
+    await capture(page, "09-update-preview");
+  });
+
   await test.step("Repository", async () => {
     await openModule(page, "仓库操作");
-    await page.getByRole("button", { name: "生成更新预览" }).click();
-    await capture(page, "10-repository-update");
+    // v0.0.17 批次 D：任务分组默认折叠“维护与迁移”与“危险操作”，先展开。
+    await page
+      .locator('[data-task-group="maintenance"]')
+      .getByRole("button", { name: /维护与迁移/ })
+      .click();
     await page.getByRole("button", { name: "清理与恢复", exact: true }).click();
     await page.getByRole("button", { name: "生成清理预览" }).click();
     await expect(
@@ -200,6 +211,10 @@ test("保存每个 Svelte 功能页面的验收截图", async ({ page }) => {
   });
 
   await test.step("Repository destructive advanced preview", async () => {
+    await page
+      .locator('[data-task-group="dangerous"]')
+      .getByRole("button", { name: /危险操作/ })
+      .click();
     await page.getByRole("button", { name: "切换", exact: true }).click();
     await page
       .getByRole("textbox", { name: "目标 URL" })

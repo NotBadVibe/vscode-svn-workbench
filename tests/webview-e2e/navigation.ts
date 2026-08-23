@@ -8,6 +8,7 @@ import { expect, type Page } from "@playwright/test";
 const moduleIdByLabel: Record<string, string> = {
   本地修改: "changes",
   提交: "commit",
+  更新: "update",
   历史: "history",
   冲突: "conflicts",
   变更集: "changelists",

@@ -31,12 +31,21 @@ describe("workbench protocol validation", () => {
   });
 
   it("校验具体任务深链接与所属模块", () => {
-    expect(defaultWorkbenchTask("repository")).toBe("repository/update");
+    // v0.0.17 批次 A：update 拆分为独立模块，repository 默认任务改为浏览仓库。
+    expect(isWorkbenchModuleId("update")).toBe(true);
+    expect(defaultWorkbenchTask("update")).toBe("update/preview");
+    expect(defaultWorkbenchTask("repository")).toBe("repository/browse");
+    expect(isWorkbenchTaskId("update/preview")).toBe(true);
+    expect(isWorkbenchTaskId("repository/update")).toBe(false);
     expect(isWorkbenchTaskId("repository/properties")).toBe(true);
     expect(isWorkbenchTaskId("repository/unknown")).toBe(false);
     expect(
       isWorkbenchTaskForModule("repository/properties", "repository"),
     ).toBe(true);
+    expect(isWorkbenchTaskForModule("update/preview", "update")).toBe(true);
+    expect(isWorkbenchTaskForModule("update/preview", "repository")).toBe(
+      false,
+    );
     expect(isWorkbenchTaskForModule("settings/ai", "repository")).toBe(false);
     expect(
       isWebviewToHostMessage({

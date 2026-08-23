@@ -10,6 +10,7 @@ import {
   type WorkbenchTaskId,
 } from "@protocol/workbenchProtocol";
 import { workbenchBridge } from "../bridge/vscodeBridge";
+import { onboarding } from "./onboarding.svelte";
 
 export class WorkbenchState {
   connected = $state(false);
@@ -205,6 +206,10 @@ export class WorkbenchState {
         this.snapshot = message.payload.snapshot;
         this.loading = !message.payload.snapshot;
         this.error = undefined;
+        // v0.0.18 批次 A（C-03）：由“打开新手引导”命令进入时重置引导。
+        if (message.payload.restartGuide) {
+          onboarding.restart();
+        }
         // 会话替换：旧会话的编辑态一次性消息不得带入新会话。
         this.editSession = undefined;
         this.diffSaveResult = undefined;

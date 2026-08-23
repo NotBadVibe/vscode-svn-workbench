@@ -1,8 +1,8 @@
 # SVN Workbench v0.0.13：会话状态总线——草稿不丢、选择不乱
 
-> 文档身份：`planned-version-record`
+> 文档身份：`released-version-record`
 >
-> 状态：开发中（源码已落地，2026-08-21 verify 全链路 exit 0，待提交转 candidate）。范围已随 v0.0.16 候选包交付，发版时同包转 released。当前开发事实以源码、测试和 [`../../current/`](../../current/) 为准。
+> 状态：已发布。范围随 v0.0.16 同包交付并发布；源码提交 `e506a608efc73020f1f03e2b654878fe8c8913f1`、标签 `v0.0.16`、VSIX 指纹、本地完整门禁与发布 evidence 均已绑定（产物与证据记录见 [`../v0.0.16/manifest.json`](../v0.0.16/manifest.json)，本版 manifest 同包引用）。当前开发事实以源码、测试和 [`../../current/`](../../current/) 为准。
 >
 > 规划基线：[`v0.0.12`](../v0.0.12/)（已发布）。
 >
@@ -45,7 +45,7 @@
 - 选择状态跨模块共享须守住"右键范围只能缩小"：共享的是子集引用，不是范围本身。
 - 三选一守卫接入点增多，需统一焦点返回与键盘路径，避免各模块分叉。
 
-## 6. 实施状态（开发中，2026-08-20）
+## 6. 实施状态（已发布，2026-08-21）
 
 - 已完成（源码 + Mock + 协议双向守卫）：
   - 批次 A：`projectDraftStore` 泛化为通用总线——`DraftKind/ConflictFileDraft(baseContent)/ConflictMergeDraft`、`MAX_PROJECT_DRAFTS/MAX_CONFLICT_FILE_DRAFTS`、`projectDraftKey` 隔离、`writeConflictFileDraft/getConflictFileDraft/isConflictFileDirty` 纯领域、可单测，Controller 仅持有内存 `ProjectDraftMap` 实例（不写 `workspaceState`）。
@@ -57,5 +57,5 @@
   - `npm run verify` 端到端（docs:verify / audit 0 漏洞 / check / platform-contracts 52 / coverage 104 文件 1205 测试达标 / webview 77 E2E / performance 预算通过 / test:extension）单次链式 **exit 0**，复验亦 exit 0；
   - 期间修复均限定在 v0.0.13 变更集（mockWorkbench.ts Prettier 格式、jsdom `<dialog>` polyfill、SvelteSet、E2E 选择器），未降低校验、未删断言；
   - 变更集核对：17 个修改文件 + 4 个新增测试 + 规划版本目录，无范围外改动。
-- 当前状态：门禁全绿，待提交后转 candidate 流程；`docs/current/实现与代码映射.md` §8.12 与 `docs/current/设计与交互基线.md` §8.5 已同步。
+- 当前状态：已随 v0.0.16 同包发布（标签 `v0.0.16`）；`docs/current/实现与代码映射.md` §8.12 与 `docs/current/设计与交互基线.md` §8.5 已同步。
 - 未实施（后续可选）：Patch 模块对共享选择的显式消费、小高度/200% 目视与真实读屏复验。

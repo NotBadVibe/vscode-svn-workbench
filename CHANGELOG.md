@@ -2,8 +2,22 @@
 
 ## Unreleased
 
+## 0.0.18 (2026-08-23)
+
+### Added
+
+- v0.0.18 深水区与打磨：新增可跳过、可重开且止步最终提交确认前的新手引导；状态词提供键盘可达的就地解释；History 可明示加载边界，并以已校验的修订号、作者和日期范围发起可取消的只读“加载更早”请求；变更解读显示逐文件已看进度；范围栏补齐候选数、工作副本 revision、入口来源与可展开复制清单。
+- v0.0.17 发现性与核心任务效率：全局推荐下一步带（Host 按候选状态推导，挂在范围栏下方，可忽略、忽略不持久惩罚）；
+  Update 拆分为独立模块（`update`，与 Changes/Commit 平级），更新结果页与 Changes 冲突行提供“处理 N 个冲突”直达入口；
+  Repository 剩余任务按“分支与集成 / 维护与迁移 / 危险操作”分组并记忆展开状态；
+  Changes/Commit 增加文件类型筛选（选项从候选推导）与会话级命名筛选预设（Changes/Commit 共读，只影响视图不改变操作范围）；
+  Update/Changes/Commit 空状态补齐“发生了什么 / 是否正常 / 现在能做什么”。
+
 ### Changed
 
+- v0.0.17 批次 A：`repository/update` 任务与 `repository/preview-update`/`repository/execute-update`
+  动作迁移为 `update/preview` 任务与 `update/preview`/`update/execute` 动作，旧深链安全失效；
+  `svnWorkbench.updateScope` 命令与项目总览入口指向新 update 模块。
 - v0.0.12 批次 C 入口收敛：移除旧 `ai-review`、`impact`、`agent` 一级模块/命令/菜单，
   变更解读（`understanding`）为唯一变更解读主路径；本地检查/影响分析引擎
   （`src/ai/changeIntelligence.ts`）保留供变更解读本地适配。

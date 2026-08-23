@@ -31,6 +31,7 @@ export const WORKBENCH_PROTOCOL_VERSION = 2 as const;
 export type WorkbenchModuleId =
   | "changes"
   | "commit"
+  | "update"
   | "diff"
   | "history"
   | "conflicts"
@@ -50,7 +51,7 @@ export type WorkbenchTaskId =
   | "conflicts/resolve"
   | "changelists/manage"
   | "understanding/analyze"
-  | "repository/update"
+  | "update/preview"
   | "repository/recovery"
   | "repository/browse"
   | "repository/branch"
@@ -78,7 +79,8 @@ const defaultTasks: Record<WorkbenchModuleId, WorkbenchTaskId> = {
   conflicts: "conflicts/resolve",
   changelists: "changelists/manage",
   understanding: "understanding/analyze",
-  repository: "repository/update",
+  update: "update/preview",
+  repository: "repository/browse",
   settings: "settings/ai",
   diagnostics: "diagnostics/environment",
   projects: "projects/overview",
@@ -93,7 +95,7 @@ const taskModules: Record<WorkbenchTaskId, WorkbenchModuleId> = {
   "conflicts/resolve": "conflicts",
   "changelists/manage": "changelists",
   "understanding/analyze": "understanding",
-  "repository/update": "repository",
+  "update/preview": "update",
   "repository/recovery": "repository",
   "repository/browse": "repository",
   "repository/branch": "repository",
@@ -162,6 +164,41 @@ export interface WorkbenchScopeView {
     relativePath: DisplayPath;
   }>;
   source: "explorer" | "editor" | "scm" | "commandPalette" | "internal";
+  /**
+   * v0.0.18 批次 E（U-07 收尾）：范围栏快捷事实——候选文件数与工作副本
+   * revision，随最新候选状态更新（与推荐带同一下发时机）。
+   */
+  candidateCount?: number;
+  /** 工作副本 revision（v0.0.11 起会话内解析；未解析时缺省）。 */
+  workingCopyRevision?: string;
+  /**
+   * v0.0.17 批次 C：全局推荐下一步（Host 按最新候选状态推导，随
+   * app/initialize 与 scope/changed 下发）。推荐只是推荐：不替用户执行、
+   * 不扩大右键范围、不自动开始写操作；Webview 可忽略（会话内，状态
+   * 变化产生新 key 时重新展示，忽略不持久惩罚）。
+   */
+  recommendation?: ScopeRecommendation;
+}
+
+/**
+ * v0.0.17 批次 C：ScopeBar 下方推荐下一步带的协议形态。
+ * key 由 Host 生成（含数量等状态摘要），状态变化即 key 变化。
+ */
+export interface ScopeRecommendation {
+  /** 稳定键：同一状态重复下发不变，状态变化后变化。 */
+  key: string;
+  /** 推荐标题，如“处理 3 个冲突”。 */
+  title: string;
+  /** 说明为什么推荐此刻做这件事。 */
+  reason: string;
+  /** 主按钮文案（动词 + 对象）。 */
+  actionLabel: string;
+  target: {
+    moduleId: WorkbenchModuleId;
+    taskId?: WorkbenchTaskId;
+  };
+  /** 涉及的冲突/文件数量（用于标题与播报）。 */
+  count?: number;
 }
 
 export interface WorkbenchFileView {
@@ -193,12 +230,28 @@ export interface WorkbenchFileView {
   evaluation?: CommitSelectionExplanation;
 }
 
+/**
+ * v0.0.17 批次 E：命名筛选预设（名称 + 通配符集合，如 ["*.ts", "*.svelte"]）。
+ * 存取走会话状态总线（Host WorkbenchSession，仅会话内、不落盘）；
+ * patterns 使用简单通配符（* 匹配任意字符）匹配文件名，只缩小视图。
+ */
+export interface FilterPresetView {
+  id: string;
+  name: string;
+  patterns: string[];
+}
+
 export interface ChangesSnapshot {
   kind: "changes";
   commitDraft: string;
   files: WorkbenchFileView[];
   summary: Record<string, number>;
   refreshedAt: string;
+  /**
+   * v0.0.17 批次 E：会话共享的命名筛选预设（Host WorkbenchSession 存取，
+   * Changes/Commit 共读）。预设只影响视图筛选，不改变真实操作范围。
+   */
+  filterPresets?: FilterPresetView[];
   operationPreview?: {
     token: string;
     operation: "add" | "remove" | "revert" | "lock" | "unlock" | "ignore";
@@ -477,6 +530,8 @@ export interface CommitSnapshot {
     configured: boolean;
     model?: string;
   };
+  /** v0.0.17 批次 E：会话共享的命名筛选预设（与 Changes 共读，只影响视图）。 */
+  filterPresets?: FilterPresetView[];
   /**
    * 提交页一次性反馈（规划 4.2、4.3）：应用本地规则结果、规则更新提示等；
    * Host 在下发后的下一次快照构建时清除。
@@ -534,6 +589,19 @@ export interface HistoryRevisionView {
   }>;
 }
 
+/** v0.0.18 批次 C（C-06）：历史模块发起只读加载请求时使用的条件。 */
+export interface HistoryQueryView {
+  /** 较早修订号（包含）。 */
+  revisionFrom?: string;
+  /** 较晚修订号（包含）。 */
+  revisionTo?: string;
+  author?: string;
+  /** YYYY-MM-DD，包含当天。 */
+  dateFrom?: string;
+  /** YYYY-MM-DD，包含当天。 */
+  dateTo?: string;
+}
+
 export interface SnapshotFreshness {
   capturedAt: string;
   scopeHash: string;
@@ -546,6 +614,14 @@ export interface HistorySnapshot {
   selectedRevision?: string;
   compareRevisions: string[];
   limit: number;
+  /** 当前历史列表实际使用的只读请求条件；空对象表示未附加条件。 */
+  query?: HistoryQueryView;
+  /**
+   * v0.0.18 批次 C（C-06）：true 表示已加载条数达到请求上限，可能还有
+   * 更早修订（区分“没有更多”与“尚未加载”）；加载更早经
+   * history/load-more 以更大 limit 重新采集（可取消）。
+   */
+  hasMore?: boolean;
   fileActionsAvailable: boolean;
   blame?: Array<{
     line: number;
@@ -912,24 +988,6 @@ export interface RepositorySnapshot {
     repositoryRoot?: string;
     revision?: string;
   };
-  update?: {
-    token: string;
-    canExecute: boolean;
-    localCount: number;
-    remoteCount?: number;
-    checkedRevision?: string;
-    risk: "low" | "medium" | "high";
-    overlapPaths: string[];
-    messages: string[];
-    commands: string[];
-    error?: string;
-  };
-  lastResult?: {
-    ok: boolean;
-    revision?: string;
-    hasConflicts: boolean;
-    message: string;
-  };
   properties: {
     available: boolean;
     target: string;
@@ -996,6 +1054,48 @@ export interface RepositorySnapshot {
       toRevision?: string;
     };
     feedback?: string;
+  };
+}
+
+/**
+ * v0.0.17 批次 A：更新预览段（自 RepositorySnapshot 拆出，update 独立模块）。
+ */
+export interface UpdatePreviewView {
+  token: string;
+  canExecute: boolean;
+  localCount: number;
+  remoteCount?: number;
+  checkedRevision?: string;
+  risk: "low" | "medium" | "high";
+  overlapPaths: string[];
+  messages: string[];
+  commands: string[];
+  error?: string;
+}
+
+/** v0.0.17 批次 A：更新执行结果段（携带冲突直达 CTA 数据）。 */
+export interface UpdateResultView {
+  ok: boolean;
+  revision?: string;
+  hasConflicts: boolean;
+  message: string;
+}
+
+/**
+ * v0.0.17 批次 A/B：Update 独立模块快照（moduleId "update"，任务 update/preview）。
+ * conflicts 由 Host 构建快照时采集当前范围冲突，常驻支撑“处理 N 个冲突”CTA。
+ */
+export interface UpdateSnapshot {
+  kind: "update";
+  recovery?: RepositorySnapshot["recovery"];
+  info: RepositorySnapshot["info"];
+  preview?: UpdatePreviewView;
+  result?: UpdateResultView;
+  conflicts: {
+    count: number;
+    paths: string[];
+    /** 采集失败时如实说明；此时 count 为 0 且 CTA 不展示。 */
+    error?: string;
   };
 }
 
@@ -1067,6 +1167,7 @@ export type WorkbenchModuleSnapshot =
   | ChangesSnapshot
   | DiffSnapshot
   | CommitSnapshot
+  | UpdateSnapshot
   | HistorySnapshot
   | ConflictSnapshot
   | SettingsSnapshot
@@ -1133,6 +1234,11 @@ export type HostToWebviewMessage =
         moduleId: WorkbenchModuleId;
         scope: WorkbenchScopeView;
         snapshot?: WorkbenchModuleSnapshot;
+        /**
+         * v0.0.18 批次 A（C-03）：true 表示由“打开新手引导”命令进入，
+         * Webview 应重置引导状态从头开始。
+         */
+        restartGuide?: boolean;
       }
     >
   | MessageEnvelope<"module/loading", { moduleId: WorkbenchModuleId }>
@@ -1318,6 +1424,7 @@ export type WebviewAction =
   | "history/select"
   | "history/compare"
   | "history/blame"
+  | "history/load-more"
   | "history/preview-restore"
   | "history/execute-restore"
   | "conflict/select"
@@ -1350,8 +1457,8 @@ export type WebviewAction =
   | "settings/open-selection-vscode-settings"
   | "diagnostics/run"
   | "diagnostics/show-output"
-  | "repository/preview-update"
-  | "repository/execute-update"
+  | "update/preview"
+  | "update/execute"
   | "repository/preview-property"
   | "repository/execute-property"
   | "repository/preview-cleanup"
@@ -1372,6 +1479,8 @@ export type WebviewAction =
   | "changes/execute-operation"
   | "changes/copy-url"
   | "changes/show-in-repository"
+  | "list/save-filter-preset"
+  | "list/delete-filter-preset"
   | "file/path-detail"
   | "file/copy-path"
   | "projects/open-task"
@@ -1397,6 +1506,7 @@ export type WebviewToHostMessage =
 const moduleIds = new Set<WorkbenchModuleId>([
   "changes",
   "commit",
+  "update",
   "diff",
   "history",
   "conflicts",
@@ -1461,6 +1571,7 @@ export const webviewActions = [
   "history/select",
   "history/compare",
   "history/blame",
+  "history/load-more",
   "history/preview-restore",
   "history/execute-restore",
   "conflict/select",
@@ -1493,8 +1604,8 @@ export const webviewActions = [
   "settings/open-selection-vscode-settings",
   "diagnostics/run",
   "diagnostics/show-output",
-  "repository/preview-update",
-  "repository/execute-update",
+  "update/preview",
+  "update/execute",
   "repository/preview-property",
   "repository/execute-property",
   "repository/preview-cleanup",
@@ -1515,6 +1626,8 @@ export const webviewActions = [
   "changes/execute-operation",
   "changes/copy-url",
   "changes/show-in-repository",
+  "list/save-filter-preset",
+  "list/delete-filter-preset",
   "file/path-detail",
   "file/copy-path",
   "projects/open-task",

@@ -394,7 +394,8 @@ test("requires an update preview before running svn update", async ({
   page,
 }) => {
   await page.goto("/");
-  await openModule(page, "仓库操作");
+  // v0.0.17 批次 A：更新是独立模块，不再从仓库任务进入。
+  await openModule(page, "更新");
   await expect(
     page.getByRole("heading", { name: "更新当前范围" }).first(),
   ).toBeVisible();
@@ -410,6 +411,110 @@ test("requires an update preview before running svn update", async ({
   // 确认按钮数量与标题同源（远端变更数）
   await updateDialog.getByRole("button", { name: /确认更新/ }).click();
   await expect(page.getByText("已更新到 r43")).toBeVisible();
+  // v0.0.17 批次 B（U-06）：更新结果页常驻冲突 CTA，直达冲突模块。
+  const conflictCta = page.locator("[data-update-conflict-cta]");
+  await expect(conflictCta).toBeVisible();
+  await expect(conflictCta.getByText("当前范围有 2 个冲突")).toBeVisible();
+  await conflictCta.getByRole("button", { name: "处理 2 个冲突" }).click();
+  await expect(
+    page.getByRole("heading", { name: "处理文件冲突" }),
+  ).toBeVisible();
+});
+
+test("shows the scope recommendation strip with dismiss (v0.0.17)", async ({
+  page,
+}) => {
+  await page.goto("/");
+  // mock 初始 scope 携带“检查建议的 3 个文件”推荐（与 Host 推导规则一致）。
+  const strip = page.locator(".recommendation-strip");
+  await expect(strip).toBeVisible();
+  await expect(strip.getByText("检查建议的 3 个文件")).toBeVisible();
+  await expect(strip.getByText(/本地修改/)).toBeVisible();
+  // 推荐主按钮直达目标模块。
+  await strip.getByRole("button", { name: "前往检查并提交" }).click();
+  await expect(
+    page.getByRole("heading", { name: "提交当前范围" }),
+  ).toBeVisible();
+});
+
+test("recommendation strip can be dismissed and stays dismissed (v0.0.17)", async ({
+  page,
+}) => {
+  await page.goto("/");
+  const strip = page.locator(".recommendation-strip");
+  await expect(strip).toBeVisible();
+  await strip.getByRole("button", { name: "忽略" }).click();
+  await expect(strip).toHaveCount(0);
+  // 同一推荐（同 key）刷新后不再出现。
+  await page
+    .getByRole("button", { name: "刷新", exact: false })
+    .first()
+    .click();
+  await expect(page.locator(".recommendation-strip")).toHaveCount(0);
+});
+
+test("onboarding guide walks the safe loop and stops before commit (v0.0.18)", async ({
+  page,
+}) => {
+  // mock 环境默认关闭引导；?guide=1 开启（真实 Host 首次进入默认展示）。
+  await page.goto("/?guide=1");
+  const strip = page.locator(".onboarding-strip");
+  // 第 1 步进入工作台即完成，第 2 步看到候选文件即完成。
+  await expect(
+    strip.getByText(/引导步骤 3\/5：选择建议提交的文件/),
+  ).toBeVisible();
+  // 第 3 步：按引导说明点击“选择推荐项”（真实交互推进）。
+  await page.getByRole("button", { name: "选择推荐项" }).click();
+  await expect(
+    strip.getByText(/引导步骤 4\/5：查看提交预览与来源说明/),
+  ).toBeVisible();
+  // 第 4 步：进入提交页生成预览。
+  await page.getByRole("button", { name: /检查并提交所选/ }).click();
+  await page.getByRole("button", { name: /生成提交预览/ }).click();
+  await expect(strip.getByText(/引导步骤 5\/5：最终确认前结束/)).toBeVisible();
+  // 最后一步只有完成按钮，不出现任何执行提交的动作。
+  const finish = strip.getByRole("button", {
+    name: "完成引导（未执行任何提交）",
+  });
+  await expect(finish).toBeVisible();
+  await finish.click();
+  // 完成后引导条无痕隐藏。
+  await expect(page.locator(".onboarding-strip")).toHaveCount(0);
+});
+
+test("history load-more appends older revisions and distinguishes not-loaded (v0.0.18)", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await openModule(page, "历史");
+  await expect(
+    page.getByText(/已加载最近 \d+ 条修订（可能还有更早修订）/),
+  ).toBeVisible();
+  await page.getByRole("button", { name: /加载更早修订/ }).click();
+  // mock 追加更早修订并标记“已是全部历史”。
+  await expect(page.getByText(/已是全部历史/)).toBeVisible();
+  await expect(page.getByText("更早期的修订（加载更早演示）")).toBeVisible();
+});
+
+test("history load-more sends revision, author and date conditions (v0.0.18)", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await openModule(page, "历史");
+  await page.getByText("按条件加载更早修订").click();
+  await page.getByLabel("较早修订号").fill("10");
+  await page.getByLabel("较晚修订号").fill("20");
+  await page.getByLabel("历史作者").fill("yangnan");
+  await page.getByLabel("历史开始日期").fill("2026-07-01");
+  await page.getByLabel("历史结束日期").fill("2026-07-31");
+  await page.getByRole("button", { name: /加载更早修订/ }).click();
+
+  await expect(page.getByText(/已按条件加载更早修订/)).toBeVisible();
+  await expect(
+    page.getByText(
+      /当前按修订 r10 至 r20、作者“yangnan”、日期 2026-07-01 至 2026-07-31加载/,
+    ),
+  ).toBeVisible();
 });
 
 test("turns a grouping suggestion into a previewed SVN changelist", async ({

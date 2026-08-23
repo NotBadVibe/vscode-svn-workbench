@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
   "version": "0.0.16",
-  "status": "candidate",
+  "status": "released",
   "baseVersion": "0.0.15",
-  "releaseDate": null,
-  "gitTag": null,
-  "gitCommit": "67fdfc8bbcab508fe32fe99ea860ff6efa52fd75",
+  "releaseDate": "2026-08-21",
+  "gitTag": "v0.0.16",
+  "gitCommit": "e506a608efc73020f1f03e2b654878fe8c8913f1",
   "sourceState": "clean",
   "vsix": {
     "fileName": "svn-workbench-0.0.16.vsix",

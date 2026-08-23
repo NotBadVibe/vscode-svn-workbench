@@ -21,11 +21,6 @@ import { validatePathsInScope } from "../../scope/pathBoundaryGuard";
 import { nativePathSemantics } from "../../scope/nativePathSemantics";
 import { parseInfoXml } from "../../svn/parsers/infoXmlParser";
 import { runSvnCommand } from "../../svn/svnCommandRunner";
-import {
-  buildUpdateScopePreview,
-  checkUpdateScopeRemoteChanges,
-  summarizeUpdateScopeRisk,
-} from "../../update/updateFlow";
 import { appendOutput } from "../../diagnostics/outputChannel";
 import {
   asAdvancedRepositoryOperation,
@@ -113,8 +108,6 @@ export class RepositoryWorkbenchActions {
         repositoryRoot: info?.repositoryRoot,
         revision: info?.revision,
       },
-      update: session.repositoryState?.update,
-      lastResult: session.repositoryState?.lastResult,
       properties: {
         available: Boolean(propertyTarget && !propertyResult.error),
         target: propertyTarget
@@ -835,54 +828,5 @@ export class RepositoryWorkbenchActions {
       moduleId: "repository",
       payload: { snapshot },
     });
-  }
-
-  async createUpdatePreview(
-    session: WorkbenchSession,
-    requestId?: string,
-  ): Promise<void> {
-    const candidates = await this.host.collectScopeCandidates(session);
-    const base = buildUpdateScopePreview(session.scope, candidates);
-    let remoteChanges:
-      Awaited<ReturnType<typeof checkUpdateScopeRemoteChanges>> | undefined;
-    let remoteCheckError: string | undefined;
-    try {
-      remoteChanges = await checkUpdateScopeRemoteChanges(
-        session.svnPath,
-        session.scope,
-      );
-    } catch (error) {
-      remoteCheckError = errorMessage(error);
-    }
-    const risk = summarizeUpdateScopeRisk(
-      session.scope,
-      candidates,
-      remoteChanges,
-      remoteCheckError,
-    );
-    const token = randomUUID();
-    session.repositoryState = {
-      update: {
-        token,
-        canExecute: !remoteCheckError && base.localChanges.blocked === 0,
-        localCount: base.localChanges.total,
-        remoteCount: remoteChanges?.total,
-        checkedRevision: remoteChanges?.checkedRevision,
-        risk: risk.level,
-        overlapPaths: risk.overlapPaths,
-        messages: risk.messages,
-        commands: [
-          `svn update --accept postpone ${session.scope.roots.map((root) => `"${normalizeRelative(root.relativePath).replace(/"/g, '\\"')}"`).join(" ")}`,
-        ],
-        error: remoteCheckError,
-      },
-      candidateHash: hashCandidateState(candidates, "", []),
-      lastResult: session.repositoryState?.lastResult,
-      propertyPreview: session.repositoryState?.propertyPreview,
-      propertyFeedback: session.repositoryState?.propertyFeedback,
-      cleanupPreview: session.repositoryState?.cleanupPreview,
-      cleanupFeedback: session.repositoryState?.cleanupFeedback,
-    };
-    await this.host.sendRepositorySnapshot(session, requestId);
   }
 }

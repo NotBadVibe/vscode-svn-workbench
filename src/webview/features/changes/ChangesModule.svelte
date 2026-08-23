@@ -8,8 +8,13 @@
     WorkbenchFileView,
   } from "@protocol/workbenchProtocol";
   import { formatZhTime } from "../../i18n/formatters";
-  import { fileStatusLabels } from "../../i18n/terminology";
+  import {
+    fileStatusLabels,
+    selectionDecisionExplanations,
+    statusExplanations,
+  } from "../../i18n/terminology";
   import FilePathDetail from "../../components/svn/FilePathDetail.svelte";
+  import StatusExplanation from "../../components/svn/StatusExplanation.svelte";
   import PathCell from "../../components/list/PathCell.svelte";
   import SortHeader from "../../components/list/SortHeader.svelte";
   import SelectionSummary from "../../components/list/SelectionSummary.svelte";
@@ -50,10 +55,17 @@
     sortFileViews,
   } from "../../components/list/listModel";
   import {
+    deriveFileTypeOptions,
+    fileTypeToPattern,
+    matchesFilePatterns,
+    NO_EXTENSION_KEY,
+  } from "../../components/list/filterPresets";
+  import {
     loadListPreferences,
     saveListPreferences,
     type ListDensity,
   } from "../../app/listPreferences";
+  import { onboarding } from "../../app/onboarding.svelte";
 
   let {
     snapshot,
@@ -73,6 +85,12 @@
 
   let query = $state("");
   let activeStatus = $state<WorkbenchFileStatus | "all">("all");
+  // v0.0.17 批次 E（C-13）：文件类型筛选（选项从当前候选推导）与命名预设。
+  let activeFileType = $state("all");
+  let activePresetId = $state<string | undefined>();
+  let presetNameInput = $state("");
+  let presetNameComposing = $state(false);
+  let presetFeedback = $state("");
   let onlySelected = $state(false);
   let selected = $state<ReadonlySet<SelectionKey>>(emptySelection());
   let sortField = $state<SortField | undefined>();
@@ -129,10 +147,31 @@
     new Map(snapshot.files.map((file) => [file.selectionKey, file])),
   );
 
+  // v0.0.17 批次 E：类型选项从当前候选路径推导，不虚构取值。
+  const fileTypeOptions = $derived(deriveFileTypeOptions(snapshot.files));
+  const filterPresets = $derived(snapshot.filterPresets ?? []);
+  const activePreset = $derived(
+    filterPresets.find((preset) => preset.id === activePresetId),
+  );
+  const conflictedCount = $derived(snapshot.summary.conflicted ?? 0);
+
   const filteredFiles = $derived(
     snapshot.files.filter((file) => {
       if (activeStatus !== "all" && file.status !== activeStatus) return false;
       if (onlySelected && !selected.has(file.selectionKey)) return false;
+      // 预设与类型筛选都是视图维度：只缩小可见集合，不改变选择与操作范围。
+      if (
+        activePreset &&
+        !matchesFilePatterns(file.relativePath, activePreset.patterns)
+      )
+        return false;
+      if (!activePreset && activeFileType !== "all") {
+        const fileName = file.relativePath.split("/").pop() ?? "";
+        const dot = fileName.lastIndexOf(".");
+        const ext =
+          dot > 0 ? fileName.slice(dot).toLowerCase() : NO_EXTENSION_KEY;
+        if (ext !== activeFileType) return false;
+      }
       return matchesFileQuery(file, query);
     }),
   );
@@ -252,6 +291,17 @@
     }
   });
 
+  /*
+   * v0.0.18 批次 A（C-03）：引导埋点——看到候选文件完成第 2 步；
+   * 勾选至少一个文件完成第 3 步（冲突文件不可提交的说明在引导文案里）。
+   */
+  $effect(() => {
+    if (snapshot.files.length > 0) onboarding.recordStep("view-changes");
+  });
+  $effect(() => {
+    if (selected.size > 0) onboarding.recordStep("select-files");
+  });
+
   // 新的路径详情结果到达时自动展开；关闭后恢复触发按钮焦点。
   $effect(() => {
     if (pathDetail) list.markPathDetailArrived();
@@ -360,6 +410,39 @@
     unlock: "解锁文件",
     ignore: "添加到忽略列表",
   };
+
+  /*
+   * v0.0.17 批次 E：预设保存/应用/删除。预设经会话状态总线存取
+   * （list/save-filter-preset、list/delete-filter-preset），Changes 与
+   * 提交页共读；保存输入带 IME composition 保护。
+   */
+  function saveCurrentPreset(): void {
+    const name = presetNameInput.trim();
+    if (!name) {
+      presetFeedback = "请先填写预设名称。";
+      return;
+    }
+    const patterns = activePreset
+      ? activePreset.patterns
+      : fileTypeToPattern(activeFileType);
+    if (patterns.length === 0) {
+      presetFeedback = "“无扩展名”筛选暂不支持保存为预设；请选择具体文件类型。";
+      return;
+    }
+    onAction("list/save-filter-preset", { name, patterns });
+    presetNameInput = "";
+    presetFeedback = `已保存筛选预设“${name}”。`;
+  }
+
+  function applyPreset(presetId: string | undefined): void {
+    activePresetId = presetId;
+    presetFeedback = "";
+  }
+
+  function deletePreset(presetId: string): void {
+    if (activePresetId === presetId) activePresetId = undefined;
+    onAction("list/delete-filter-preset", { id: presetId });
+  }
 </script>
 
 <section class="feature-layout">
@@ -456,6 +539,90 @@
         {count}
       </button>
     {/each}
+    <!-- v0.0.17 批次 B（U-06）：存在冲突时提供直达冲突处理的 CTA。 -->
+    {#if conflictedCount > 0}
+      <button
+        class="button button--secondary"
+        data-changes-conflict-cta
+        onclick={() =>
+          onAction("open-module", {
+            moduleId: "conflicts",
+            taskId: "conflicts/resolve",
+          })}>处理 {conflictedCount} 个冲突</button
+      >
+    {/if}
+  </div>
+
+  <!-- v0.0.17 批次 E（C-13）：文件类型筛选与命名筛选预设（只影响视图）。 -->
+  <div class="filter-preset-row" aria-label="文件类型与筛选预设">
+    <select
+      class="sort-menu"
+      aria-label="文件类型筛选"
+      disabled={Boolean(activePreset)}
+      value={activePreset ? "preset" : activeFileType}
+      onchange={(event) => {
+        activeFileType = (event.currentTarget as HTMLSelectElement).value;
+        presetFeedback = "";
+      }}
+    >
+      {#if activePreset}
+        <option value="preset">预设：{activePreset.name}</option>
+      {:else}
+        <option value="all">全部类型</option>
+        {#each fileTypeOptions as option (option.value)}
+          <option value={option.value}>{option.label}（{option.count}）</option>
+        {/each}
+      {/if}
+    </select>
+    {#if filterPresets.length > 0}
+      <select
+        class="sort-menu"
+        aria-label="筛选预设"
+        value={activePresetId ?? ""}
+        onchange={(event) => {
+          const value = (event.currentTarget as HTMLSelectElement).value;
+          applyPreset(value || undefined);
+        }}
+      >
+        <option value="">不使用预设</option>
+        {#each filterPresets as preset (preset.id)}
+          <option value={preset.id}
+            >{preset.name}（{preset.patterns.join("、")}）</option
+          >
+        {/each}
+      </select>
+      {#if activePreset}
+        <button
+          class="button button--secondary"
+          aria-label={`删除筛选预设 ${activePreset.name}`}
+          onclick={() => deletePreset(activePreset.id)}>删除预设</button
+        >
+      {/if}
+    {/if}
+    <input
+      class="filter-preset-name"
+      aria-label="筛选预设名称"
+      placeholder="预设名称…"
+      bind:value={presetNameInput}
+      oncompositionstart={() => (presetNameComposing = true)}
+      oncompositionend={() => (presetNameComposing = false)}
+      onkeydown={(event) => {
+        // IME 候选阶段的 Enter 不触发保存。
+        if (event.key === "Enter" && !presetNameComposing) {
+          event.preventDefault();
+          saveCurrentPreset();
+        }
+      }}
+    />
+    <button
+      class="button button--secondary"
+      disabled={activeFileType === "all" && !activePreset}
+      title={activeFileType === "all" && !activePreset
+        ? "先选择文件类型或预设，再保存"
+        : undefined}
+      onclick={saveCurrentPreset}>保存为预设</button
+    >
+    {#if presetFeedback}<span role="status">{presetFeedback}</span>{/if}
   </div>
 
   <SelectionSummary
@@ -551,11 +718,32 @@
         >
         <p>
           {snapshot.files.length === 0
-            ? "当前范围没有本地修改。"
+            ? "当前范围没有本地修改，这是正常状态。"
             : onlySelected
-              ? "关闭“只看已选”或调整筛选条件。"
-              : "调整搜索词或状态筛选，或清除搜索后重试。"}
+              ? "已选文件被当前筛选隐藏；关闭“只看已选”或调整筛选即可看到。"
+              : "当前筛选没有匹配文件；调整搜索词、状态或类型筛选即可。"}
         </p>
+        {#if snapshot.files.length === 0}
+          <!-- v0.0.17 批次 F（C-02）：空工作副本快捷动作（C-09）。 -->
+          <div class="toolbar-actions">
+            <button
+              class="button button--secondary"
+              onclick={() =>
+                onAction("open-module", {
+                  moduleId: "update",
+                  taskId: "update/preview",
+                })}>检查远端更新</button
+            >
+            <button
+              class="button button--secondary"
+              onclick={() =>
+                onAction("open-module", {
+                  moduleId: "history",
+                  taskId: "history/revisions",
+                })}>查看历史</button
+            >
+          </div>
+        {/if}
       </div>
     {:else}
       <ContextMenu.Root
@@ -648,15 +836,44 @@
                     <span class={`status-badge status-badge--${file.status}`}
                       >{fileStatusLabels[file.status]}</span
                     >
+                    <!-- v0.0.18 批次 B（C-05）：状态词键盘可达的就地解释。 -->
+                    <StatusExplanation
+                      term={fileStatusLabels[file.status]}
+                      explanation={statusExplanations[file.status]}
+                    />
                     <span class="selection-note" title={file.reason}
                       >{file.reason ??
                         (file.selection
                           ? selectionLabels[file.selection]
                           : "—")}</span
                     >
+                    {#if file.selection}
+                      <StatusExplanation
+                        term={selectionLabels[file.selection]}
+                        explanation={selectionDecisionExplanations[
+                          file.selection
+                        ]}
+                      />
+                    {/if}
                     <span class="file-row__ownership"
                       >{file.projectName ?? file.repositoryName ?? "—"}</span
                     >
+                    {#if file.status === "conflicted"}
+                      <!-- v0.0.17 批次 B（U-06）：冲突行直达冲突处理（范围不变）。 -->
+                      <button
+                        class="icon-button icon-button--small"
+                        aria-label={`处理 ${file.relativePath} 的冲突`}
+                        onclick={() =>
+                          onAction("open-module", {
+                            moduleId: "conflicts",
+                            taskId: "conflicts/resolve",
+                          })}
+                        ><span
+                          class="codicon codicon-warning"
+                          aria-hidden="true"
+                        ></span></button
+                      >
+                    {/if}
                     <button
                       class="icon-button icon-button--small"
                       aria-label={`查看 ${file.relativePath} 差异`}

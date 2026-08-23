@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Component } from "svelte";
+  import { SvelteSet } from "svelte/reactivity";
   import type {
     HostToWebviewMessage,
     RepositorySnapshot,
@@ -11,8 +12,15 @@
   import OperationIntentDialog from "../../components/operation/OperationIntentDialog.svelte";
   import type { OperationIntentKind } from "../../../operation/operationIntent";
   import { taskLabels } from "../../i18n/terminology";
+  import {
+    loadListPreferences,
+    saveListPreferences,
+  } from "../../app/listPreferences";
 
-  type RepositoryTaskId = Extract<WorkbenchTaskId, `repository/${string}`>;
+  type RepositoryTaskId = Exclude<
+    Extract<WorkbenchTaskId, `repository/${string}`>,
+    never
+  >;
   type TaskModule = {
     default: Component<{
       snapshot: RepositorySnapshot;
@@ -27,7 +35,7 @@
 
   let {
     snapshot,
-    taskId = "repository/update",
+    taskId = "repository/browse",
     onAction,
     pathDetail,
   }: {
@@ -41,23 +49,52 @@
     >["payload"];
   } = $props();
 
-  const taskNavigation: Array<{ id: RepositoryTaskId; label: string }> = [
-    { id: "repository/update", label: "更新" },
-    { id: "repository/recovery", label: "清理与恢复" },
-    { id: "repository/browse", label: "浏览仓库" },
-    { id: "repository/properties", label: "SVN 属性" },
-    { id: "repository/branch", label: "创建分支" },
-    { id: "repository/tag", label: "创建标签" },
-    { id: "repository/switch", label: "切换" },
-    { id: "repository/relocate", label: "重定位" },
-    { id: "repository/merge", label: "合并" },
-    { id: "repository/patch-shelf", label: "补丁与搁置" },
-    { id: "repository/release-notes", label: "发布说明" },
+  /*
+   * v0.0.17 批次 D（U-09 收尾）：Update 拆走后，剩余仓库任务按
+   * “分支与集成 / 维护与迁移 / 危险操作”分组；高级区默认折叠并按模块
+   * 记忆展开状态（listPreferences）。分组标题用组标签而非标题层级，
+   * 页面保持单一主标题。
+   */
+  const taskGroups: Array<{
+    id: string;
+    label: string;
+    hint: string;
+    tasks: Array<{ id: RepositoryTaskId; label: string }>;
+  }> = [
+    {
+      id: "integration",
+      label: "分支与集成",
+      hint: "在仓库端创建分支/标签，或把其他分支合并进来",
+      tasks: [
+        { id: "repository/branch", label: "创建分支" },
+        { id: "repository/tag", label: "创建标签" },
+        { id: "repository/merge", label: "合并" },
+      ],
+    },
+    {
+      id: "maintenance",
+      label: "维护与迁移",
+      hint: "浏览仓库、属性、清理恢复、补丁与发布说明",
+      tasks: [
+        { id: "repository/browse", label: "浏览仓库" },
+        { id: "repository/properties", label: "SVN 属性" },
+        { id: "repository/recovery", label: "清理与恢复" },
+        { id: "repository/patch-shelf", label: "补丁与搁置" },
+        { id: "repository/release-notes", label: "发布说明" },
+      ],
+    },
+    {
+      id: "dangerous",
+      label: "危险操作",
+      hint: "改变工作副本绑定地址，执行前必须二次确认",
+      tasks: [
+        { id: "repository/switch", label: "切换" },
+        { id: "repository/relocate", label: "重定位" },
+      ],
+    },
   ];
 
   const taskLoaders: Record<RepositoryTaskId, () => Promise<TaskModule>> = {
-    "repository/update": () =>
-      import("./tasks/UpdateTask.svelte") as Promise<TaskModule>,
     "repository/recovery": () =>
       import("./tasks/RecoveryTask.svelte") as Promise<TaskModule>,
     "repository/browse": () =>
@@ -96,7 +133,7 @@
   const currentTask = $derived(
     (taskId.startsWith("repository/")
       ? taskId
-      : "repository/update") as RepositoryTaskId,
+      : "repository/browse") as RepositoryTaskId,
   );
   const currentTaskLoader = $derived(taskLoaders[currentTask]);
   const showsAdvancedPreview = $derived(
@@ -109,6 +146,39 @@
       "repository/patch-shelf",
     ].includes(currentTask),
   );
+
+  // 分组展开状态：默认展开“分支与集成”，其余折叠；经 listPreferences 记忆。
+  const DEFAULT_EXPANDED_GROUPS = ["integration"];
+  const savedGroupPreferences = loadListPreferences("repository");
+  const expandedGroups = new SvelteSet<string>(
+    savedGroupPreferences.expandedGroups ?? DEFAULT_EXPANDED_GROUPS,
+  );
+  // 当前任务所在组始终可见（即使被折叠也强制展开导航入口）。
+  const groupOfCurrentTask = $derived(
+    taskGroups.find((group) =>
+      group.tasks.some((task) => task.id === currentTask),
+    )?.id,
+  );
+  const effectiveExpanded = $derived.by(() => {
+    if (groupOfCurrentTask && !expandedGroups.has(groupOfCurrentTask)) {
+      const expanded = new SvelteSet<string>(expandedGroups);
+      expanded.add(groupOfCurrentTask);
+      return expanded;
+    }
+    return expandedGroups;
+  });
+
+  function toggleGroup(groupId: string): void {
+    // 偏好只记录用户显式展开的组；当前任务所在组的强制展开不写入偏好。
+    if (expandedGroups.has(groupId)) {
+      expandedGroups.delete(groupId);
+    } else {
+      expandedGroups.add(groupId);
+    }
+    saveListPreferences("repository", {
+      expandedGroups: [...expandedGroups],
+    });
+  }
 
   let advancedConfirmed = $state(false);
   let previewToken = $state<string | undefined>();
@@ -181,12 +251,40 @@
   </header>
 
   <ScrollArea class="repository-task-navigation" label="仓库任务导航">
-    {#each taskNavigation as item (item.id)}
-      <button
-        class:active={currentTask === item.id}
-        aria-current={currentTask === item.id ? "page" : undefined}
-        onclick={() => openTask(item.id)}>{item.label}</button
+    {#each taskGroups as group (group.id)}
+      <div
+        class="task-group"
+        role="group"
+        aria-label={`${group.label}（${group.tasks.length} 个任务）`}
+        data-task-group={group.id}
       >
+        <button
+          class="task-group__toggle"
+          aria-expanded={effectiveExpanded.has(group.id)}
+          onclick={() => toggleGroup(group.id)}
+        >
+          <span
+            class="codicon codicon-{effectiveExpanded.has(group.id)
+              ? 'chevron-down'
+              : 'chevron-right'}"
+            aria-hidden="true"
+          ></span>
+          <span class="task-group__label">{group.label}</span>
+          <span class="task-group__count">{group.tasks.length}</span>
+        </button>
+        {#if effectiveExpanded.has(group.id)}
+          <p class="task-group__hint">{group.hint}</p>
+          <div class="task-group__items">
+            {#each group.tasks as item (item.id)}
+              <button
+                class:active={currentTask === item.id}
+                aria-current={currentTask === item.id ? "page" : undefined}
+                onclick={() => openTask(item.id)}>{item.label}</button
+              >
+            {/each}
+          </div>
+        {/if}
+      </div>
     {/each}
   </ScrollArea>
 

@@ -59,6 +59,7 @@ SVN Workbench 是面向 VS Code 的 AI-first Subversion 工作台。正式业务
 - `SVN：变更集管理`（`svnWorkbench.openChangelists`）
 - `SVN：解读所选变更`（`svnWorkbench.understandScope`）
 - `SVN：项目总览`（`svnWorkbench.openProjects`）
+- `SVN：打开新手引导`（`svnWorkbench.openGuide`）
 - `SVN：打开验收清单`（`svnWorkbench.openAcceptanceChecklist`，仅开发/测试环境可见）
 
 ## 基本流程

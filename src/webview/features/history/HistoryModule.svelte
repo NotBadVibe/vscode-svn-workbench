@@ -1,6 +1,7 @@
 <script lang="ts">
   import { SvelteSet } from "svelte/reactivity";
   import type {
+    HistoryQueryView,
     HistorySnapshot,
     HostToWebviewMessage,
     WebviewAction,
@@ -40,6 +41,8 @@
   let pathQuery = $state("");
   let pathActionFilter = $state<string>("all");
   let pathSort = $state<"path" | "action">("path");
+  /** v0.0.18 C-06：仅用于下一次“加载更早”的只读请求，不影响本地搜索。 */
+  let loadQuery = $state<HistoryQueryView>({});
   const compare = new SvelteSet<string>();
 
   $effect(() => {
@@ -47,6 +50,11 @@
     for (const revision of snapshot.compareRevisions) {
       compare.add(revision);
     }
+  });
+
+  // Host 成功应用条件后，以快照中的实际条件回填；未成功请求不会覆盖用户输入。
+  $effect(() => {
+    loadQuery = { ...(snapshot.query ?? {}) };
   });
 
   const visible = $derived(
@@ -160,6 +168,35 @@
   function clearCompare(): void {
     compare.clear();
   }
+
+  function updateLoadQuery(key: keyof HistoryQueryView, value: string): void {
+    loadQuery = { ...loadQuery, [key]: value };
+  }
+
+  function requestMoreHistory(): void {
+    onAction("history/load-more", { ...loadQuery });
+  }
+
+  function describeHistoryQuery(query: HistoryQueryView | undefined): string {
+    if (!query) return "";
+    const parts: string[] = [];
+    if (query.revisionFrom || query.revisionTo) {
+      parts.push(
+        `修订 r${query.revisionFrom ?? "1"} 至 r${query.revisionTo ?? "HEAD"}`,
+      );
+    }
+    if (query.author) parts.push(`作者“${query.author}”`);
+    if (query.dateFrom || query.dateTo) {
+      parts.push(
+        `日期 ${query.dateFrom ?? "最早"} 至 ${query.dateTo ?? "今天"}`,
+      );
+    }
+    return parts.join("、");
+  }
+
+  const appliedQueryDescription = $derived(
+    describeHistoryQuery(snapshot.query),
+  );
 </script>
 
 <section class="history-layout">
@@ -167,7 +204,12 @@
     <div class="feature-toolbar feature-toolbar--compact">
       <div>
         <h2>修订历史</h2>
-        <p>最近 {snapshot.revisions.length} 条修订</p>
+        <!-- v0.0.18 批次 C（C-06）：明确“已加载最近 N 条”，区分没有更多与尚未加载。 -->
+        <p>
+          已加载最近 {snapshot.revisions.length} 条修订{snapshot.hasMore
+            ? "（可能还有更早修订）"
+            : "（已是全部历史）"}
+        </p>
       </div>
       <SearchInput
         bind:value={query}
@@ -177,6 +219,14 @@
       />
       <ResultCount count={orderedRevisions.length} suffix="条修订" />
       <div class="toolbar-actions">
+        {#if snapshot.hasMore}
+          <button
+            class="button button--secondary"
+            data-load-more
+            onclick={requestMoreHistory}
+            >加载更早修订（已加载 {snapshot.revisions.length}）</button
+          >
+        {/if}
         <select
           class="sort-menu"
           aria-label="修订排序"
@@ -191,6 +241,86 @@
         </select>
       </div>
     </div>
+    <details class="history-load-conditions">
+      <summary>按条件加载更早修订</summary>
+      <div class="history-load-conditions__fields">
+        <label
+          >较早修订号
+          <input
+            aria-label="较早修订号"
+            inputmode="numeric"
+            placeholder="例如 100"
+            value={loadQuery.revisionFrom ?? ""}
+            oninput={(event) =>
+              updateLoadQuery(
+                "revisionFrom",
+                (event.currentTarget as HTMLInputElement).value,
+              )}
+          />
+        </label>
+        <label
+          >较晚修订号
+          <input
+            aria-label="较晚修订号"
+            inputmode="numeric"
+            placeholder="例如 200"
+            value={loadQuery.revisionTo ?? ""}
+            oninput={(event) =>
+              updateLoadQuery(
+                "revisionTo",
+                (event.currentTarget as HTMLInputElement).value,
+              )}
+          />
+        </label>
+        <label
+          >作者
+          <input
+            aria-label="历史作者"
+            placeholder="包含匹配"
+            value={loadQuery.author ?? ""}
+            oninput={(event) =>
+              updateLoadQuery(
+                "author",
+                (event.currentTarget as HTMLInputElement).value,
+              )}
+          />
+        </label>
+        <label
+          >开始日期
+          <input
+            aria-label="历史开始日期"
+            type="date"
+            value={loadQuery.dateFrom ?? ""}
+            oninput={(event) =>
+              updateLoadQuery(
+                "dateFrom",
+                (event.currentTarget as HTMLInputElement).value,
+              )}
+          />
+        </label>
+        <label
+          >结束日期
+          <input
+            aria-label="历史结束日期"
+            type="date"
+            value={loadQuery.dateTo ?? ""}
+            oninput={(event) =>
+              updateLoadQuery(
+                "dateTo",
+                (event.currentTarget as HTMLInputElement).value,
+              )}
+          />
+        </label>
+      </div>
+      <p>
+        条件只限制本次只读历史请求，不改变当前范围；条件变化后会从首批重新读取。加载期间可使用页面顶部的“取消”。
+      </p>
+    </details>
+    {#if appliedQueryDescription}
+      <p class="history-load-conditions__applied" role="status">
+        当前按{appliedQueryDescription}加载；再次加载会保留这些条件。
+      </p>
+    {/if}
     <div class="history-compare-bar">
       <span role="status"
         >已选择 {compare.size}/2 条修订；再选一条会替换最早选择的修订</span
@@ -219,7 +349,9 @@
         <div class="mini-empty">
           {snapshot.revisions.length === 0
             ? "当前范围没有可显示的修订记录。"
-            : "没有匹配的修订；调整搜索词或清除筛选后重试。"}
+            : snapshot.hasMore
+              ? "已加载的最近修订中没有匹配；更早的修订尚未加载，可点击“加载更早修订”后再搜索。"
+              : "没有匹配的修订；调整搜索词或清除筛选后重试。"}
         </div>
       {/if}
       {#each list.visibleRows as { row: revision, index } (revision.revision)}

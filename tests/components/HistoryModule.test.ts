@@ -37,6 +37,86 @@ const snapshot: HistorySnapshot = {
 };
 
 describe("HistoryModule", () => {
+  it("hasMore 时显示加载更早入口并发送动作；无更多时不显示", async () => {
+    const onAction = vi.fn();
+    render(HistoryModule, {
+      snapshot: { ...snapshot, hasMore: true },
+      onAction,
+    });
+    expect(
+      screen.getByText(/已加载最近 2 条修订（可能还有更早修订）/),
+    ).toBeInTheDocument();
+    const loadMore = screen.getByRole("button", {
+      name: "加载更早修订（已加载 2）",
+    });
+    await fireEvent.click(loadMore);
+    expect(onAction).toHaveBeenCalledWith("history/load-more", {});
+    // 无更多时：显示“已是全部历史”且无加载入口。
+    render(HistoryModule, {
+      snapshot: { ...snapshot, hasMore: false },
+      onAction: vi.fn(),
+    });
+    expect(screen.getByText(/已是全部历史/)).toBeInTheDocument();
+  });
+
+  it("将修订号、作者和日期范围随加载更早请求一并发送", async () => {
+    const onAction = vi.fn();
+    render(HistoryModule, {
+      snapshot: { ...snapshot, hasMore: true },
+      onAction,
+    });
+
+    await fireEvent.click(screen.getByText("按条件加载更早修订"));
+    await fireEvent.input(screen.getByLabelText("较早修订号"), {
+      target: { value: "10" },
+    });
+    await fireEvent.input(screen.getByLabelText("较晚修订号"), {
+      target: { value: "20" },
+    });
+    await fireEvent.input(screen.getByLabelText("历史作者"), {
+      target: { value: "alice" },
+    });
+    await fireEvent.input(screen.getByLabelText("历史开始日期"), {
+      target: { value: "2026-07-01" },
+    });
+    await fireEvent.input(screen.getByLabelText("历史结束日期"), {
+      target: { value: "2026-07-31" },
+    });
+    await fireEvent.click(
+      screen.getByRole("button", { name: "加载更早修订（已加载 2）" }),
+    );
+
+    expect(onAction).toHaveBeenCalledWith("history/load-more", {
+      revisionFrom: "10",
+      revisionTo: "20",
+      author: "alice",
+      dateFrom: "2026-07-01",
+      dateTo: "2026-07-31",
+    });
+  });
+
+  it("搜索无匹配时区分“尚未加载”与“没有更多”（C-06）", async () => {
+    render(HistoryModule, {
+      snapshot: { ...snapshot, hasMore: true },
+      onAction: vi.fn(),
+    });
+    await fireEvent.input(screen.getByLabelText("筛选历史"), {
+      target: { value: "不存在的修订xyz" },
+    });
+    expect(
+      screen.getByText(/更早的修订尚未加载，可点击“加载更早修订”/),
+    ).toBeInTheDocument();
+    // 全部已加载时的无匹配文案不同。
+    render(HistoryModule, {
+      snapshot: { ...snapshot, hasMore: false },
+      onAction: vi.fn(),
+    });
+    await fireEvent.input(screen.getAllByLabelText("筛选历史")[1], {
+      target: { value: "不存在的修订xyz" },
+    });
+    expect(screen.getByText(/没有匹配的修订；调整搜索词/)).toBeInTheDocument();
+  });
+
   it("选择两个修订后发送比较请求", async () => {
     const onAction = vi.fn();
     render(HistoryModule, { snapshot, onAction });
