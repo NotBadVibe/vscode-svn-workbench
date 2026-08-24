@@ -1,8 +1,8 @@
 # SVN Workbench v0.1.0：差异底座重整与可测基线
 
-> 文档身份：`planned-version-record`
+> 文档身份：`released-version-record`
 >
-> 状态：开发中（`draft/in-progress`）。V010-A～V010-E 已实现并通过单元/组件/e2e 门禁；V010-F 验证与文档收尾中。尚未发布，不代表已验收结论。
+> 状态：已发布（2026-08-24）。V010-A～V010-F 全部完成；标签 `v0.1.0` / `cd60c6ad840b2e7d37e2511c6242e173bc462321`，验收证据 `artifacts/2026-08-24T13-01-21-122Z-e38f6842`，完整 `npm run verify` 与 `npm run evidence:release` 通过。5000 行性能预算未达标项见 §9，已按验收场景 6 如实记录并阻止高级冲突视图推进。
 >
 > 基线版本：[`v0.0.18`](../v0.0.18/)。
 >
