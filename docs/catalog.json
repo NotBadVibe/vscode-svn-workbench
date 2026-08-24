@@ -370,6 +370,135 @@
     "understanding-progress",
     "scope-bar-details"
    ]
+  },
+  {
+   "version": "0.1.0",
+   "status": "draft",
+   "phase": "planned",
+   "baseVersion": "0.0.18",
+   "canonicalEntry": "releases/v0.1.0/README.md",
+   "manifest": "releases/v0.1.0/manifest.json",
+   "releasedFact": false,
+   "topics": [
+    "diff-foundation",
+    "pierre-diffs",
+    "performance-baseline"
+   ]
+  },
+  {
+   "version": "0.1.1",
+   "status": "draft",
+   "phase": "planned",
+   "baseVersion": "0.1.0",
+   "canonicalEntry": "releases/v0.1.1/README.md",
+   "manifest": "releases/v0.1.1/manifest.json",
+   "releasedFact": false,
+   "topics": [
+    "conflict-diff",
+    "unresolved-file",
+    "svn-role-mapping"
+   ]
+  },
+  {
+   "version": "0.1.2",
+   "status": "draft",
+   "phase": "planned",
+   "baseVersion": "0.1.1",
+   "canonicalEntry": "releases/v0.1.2/README.md",
+   "manifest": "releases/v0.1.2/manifest.json",
+   "releasedFact": false,
+   "topics": [
+    "conflict-editing",
+    "undo-redo",
+    "draft-recovery"
+   ]
+  },
+  {
+   "version": "0.1.3",
+   "status": "draft",
+   "phase": "planned",
+   "baseVersion": "0.1.2",
+   "canonicalEntry": "releases/v0.1.3/README.md",
+   "manifest": "releases/v0.1.3/manifest.json",
+   "releasedFact": false,
+   "topics": [
+    "conflict-save",
+    "conflict-verification",
+    "resolve-workflow"
+   ]
+  },
+  {
+   "version": "0.1.4",
+   "status": "draft",
+   "phase": "planned",
+   "baseVersion": "0.1.3",
+   "canonicalEntry": "releases/v0.1.4/README.md",
+   "manifest": "releases/v0.1.4/manifest.json",
+   "releasedFact": false,
+   "topics": [
+    "changes-diff-commit",
+    "continuous-context",
+    "primary-action"
+   ]
+  },
+  {
+   "version": "0.1.5",
+   "status": "draft",
+   "phase": "planned",
+   "baseVersion": "0.1.4",
+   "canonicalEntry": "releases/v0.1.5/README.md",
+   "manifest": "releases/v0.1.5/manifest.json",
+   "releasedFact": false,
+   "topics": [
+    "task-summary",
+    "operation-intent",
+    "result-recovery"
+   ]
+  },
+  {
+   "version": "0.1.6",
+   "status": "draft",
+   "phase": "planned",
+   "baseVersion": "0.1.5",
+   "canonicalEntry": "releases/v0.1.6/README.md",
+   "manifest": "releases/v0.1.6/manifest.json",
+   "releasedFact": false,
+   "topics": [
+    "ai-progressive-disclosure",
+    "visual-hierarchy",
+    "component-extraction"
+   ]
+  },
+  {
+   "version": "0.1.7",
+   "status": "draft",
+   "phase": "planned",
+   "baseVersion": "0.1.6",
+   "canonicalEntry": "releases/v0.1.7/README.md",
+   "manifest": "releases/v0.1.7/manifest.json",
+   "releasedFact": false,
+   "topics": [
+    "keyboard",
+    "ime",
+    "accessibility",
+    "responsive-layout"
+   ]
+  },
+  {
+   "version": "0.1.8",
+   "status": "draft",
+   "phase": "planned",
+   "baseVersion": "0.1.7",
+   "canonicalEntry": "releases/v0.1.8/README.md",
+   "manifest": "releases/v0.1.8/manifest.json",
+   "releasedFact": false,
+   "topics": [
+    "large-diff-performance",
+    "virtualization",
+    "worker",
+    "tortoise-merge",
+    "external-merge-tool"
+   ]
   }
  ],
  "archive": [
@@ -418,4 +547,4 @@
    ]
   }
  ]
-}
+ }

@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "version": "0.1.8",
+  "status": "draft",
+  "baseVersion": "0.1.7",
+  "releaseDate": null,
+  "gitTag": null,
+  "gitCommit": null,
+  "sourceState": "unbound",
+  "vsix": null,
+  "tests": {},
+  "acceptedEvidenceRun": null,
+  "evidencePath": null,
+  "evidenceTreeSha256": null
+}

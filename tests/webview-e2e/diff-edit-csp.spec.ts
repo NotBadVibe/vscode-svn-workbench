@@ -110,7 +110,7 @@ test("严格 CSP：页内编辑零违规、编辑器样式生效、可输入并�
   const { consoleErrors, pageErrors } = await openDiffUnderStrictCsp(page);
 
   await page.getByRole("button", { name: "页内编辑" }).click();
-  await expect(page.getByText("编辑模式")).toBeVisible();
+  await expect(page.getByText("正在编辑工作副本")).toBeVisible();
 
   const editable = page
     .locator("diffs-container")
@@ -162,7 +162,9 @@ test("严格 CSP：页内编辑零违规、编辑器样式生效、可输入并�
   await page.keyboard.type("// 严格 CSP 编辑");
   await expect(page.getByText(/有未保存的修改/)).toBeVisible();
   await page.keyboard.press("Control+s");
-  await expect(page.getByRole("button", { name: "保存修改" })).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: "保存到工作副本" }),
+  ).toBeDisabled();
 
   expect(await collectViolations(page), "编辑态必须零 CSP 违规").toEqual([]);
   expect(consoleErrors).toEqual([]);

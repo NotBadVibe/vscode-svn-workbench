@@ -133,6 +133,55 @@ diffs-container {
   border-radius: var(--radius-md);
   background: var(--vscode-editor-background);
 }
+
+/* v0.1.0（V010-D）：统一工具区——差异块导航与显示设置。 */
+.diff-hunk-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.diff-hunk-position {
+  min-width: 72px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.diff-nav-feedback {
+  color: var(--muted);
+  font-size: 11px;
+}
+.diff-view-settings {
+  position: relative;
+  display: inline-flex;
+}
+.diff-view-settings-panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 200px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+  box-shadow: 0 4px 12px color-mix(in srgb, #000 32%, transparent);
+}
+.diff-view-settings-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.diff-view-settings-hint {
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .diff-view-frame diffs-container + diffs-container {
   display: block;
   margin-top: 12px;

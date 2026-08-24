@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+## 0.1.0（开发中）
+
+### Added
+
+- v0.1.0 差异底座重整：普通 Diff 的文件信息、比较双方、编辑状态、当前变更块 X/Y 与视图设置收敛为单一工具区；上一处/下一处差异支持按钮与 Alt+↑/↓ 快捷键，到达首尾给出非阻塞文字反馈；split/unified 与上下文展开收敛进“显示设置” popover。
+- 结构化 Diff 错误分类（diffErrorTaxonomy）：Pierre 挂载失败、patch 解析为空、高亮/CSP/Editor attach 失败、二进制、截断、无 BASE 等 10 种状态分别给出“发生了什么/可能原因/现在能做什么”，降级页提供重试渲染/重试高亮出口。
+- 新增确定性 Diff 性能 fixture 与测量脚本（`npm run test:diff-performance`）：100/1000/5000/10000 行 × 多档变更比例，覆盖超长行、CRLF、无末尾换行与 TS/JSON/XML/text，输出首个可见内容、高亮、导航、输入 P95、目标切换与内存数据。
+
+### Changed
+
+- Diff 编辑态徽章固定为“正在编辑工作副本”，保存按钮写明对象“保存到工作副本”，保存中与已保存用文字表达。
+- DiffView 薄化为 props 驱动的业务入口，Pierre 实例创建、observer 注册、Editor attach 与清理收敛到 diffViewAdapter 单一生命周期（幂等 dispose）。
+- `@pierre/diffs` 锁定为精确版本 1.3.4，并补充能力矩阵静态契约测试（含 VirtualizedUnresolvedFile 不存在的明确记录）。
+
+### Fixed
+
+- 修复 pierre Editor 语法高亮 tokenizer 经 globalThis.postMessage 的自调度消息被误判为“协议版本不兼容”导致会话终止的问题。
+- 修复退出 Diff 编辑后会因 editSession 仍在而立即重置回编辑态的问题。
+- 修复 mock 环境下切换差异目标后旧会话消息被协议守卫丢弃的问题。
+
 ## 0.0.18 (2026-08-23)
 
 ### Added

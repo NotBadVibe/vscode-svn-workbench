@@ -111,6 +111,34 @@ export function computeDiffHunks(
   return hunks;
 }
 
+const PATCH_HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/gm;
+
+/**
+ * v0.1.0：从 unified patch 文本解析差异块位置（修订比较模式的导航）。
+ * 只读取 @@ 头中的行号区间；newLines/oldLines 留空（patch 模式为只读，
+ * 不参与逐块采用）。
+ */
+export function computePatchHunks(patch: string): DiffHunk[] {
+  const hunks: DiffHunk[] = [];
+  PATCH_HUNK_HEADER.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = PATCH_HUNK_HEADER.exec(patch)) !== null) {
+    const oldStart = Number(match[1]);
+    const oldCount = match[2] === undefined ? 1 : Number(match[2]);
+    const newStart = Number(match[3]);
+    const newCount = match[4] === undefined ? 1 : Number(match[4]);
+    hunks.push({
+      newStart,
+      newEnd: newStart + Math.max(newCount, 1) - 1,
+      oldStart,
+      oldEnd: oldStart + Math.max(oldCount, 1) - 1,
+      newLines: [],
+      oldLines: [],
+    });
+  }
+  return hunks;
+}
+
 function computeLcs(left: string[], right: string[]): string[] {
   const m = left.length;
   const n = right.length;

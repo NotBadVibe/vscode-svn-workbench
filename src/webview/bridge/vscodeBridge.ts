@@ -21,9 +21,27 @@ type MessageListener = (message: HostToWebviewMessage) => void;
 const listeners = new Set<MessageListener>();
 const vscodeApi = window.acquireVsCodeApi?.<Record<string, unknown>>();
 
+/*
+ * v0.1.0（V010-E）：window message 通道的最小结构过滤。
+ * @pierre/diffs 编辑器的后台 tokenizer 用 globalThis.postMessage 自调度
+ * （{type:"tokenize",...}），若不拦截会被误当成 Host 消息触发
+ * “协议版本不兼容”而终止整个会话。只放行具备工作台信封结构
+ * （字符串 type + 数值 protocolVersion 字段）的消息；真正的版本不匹配
+ * （带 protocolVersion 但值不同）仍走既有的“协议版本不兼容”错误页。
+ */
+function isWorkbenchEnvelope(value: unknown): value is HostToWebviewMessage {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as { type?: unknown }).type === "string" &&
+    typeof (value as { protocolVersion?: unknown }).protocolVersion === "number"
+  );
+}
+
 window.addEventListener(
   "message",
   (event: MessageEvent<HostToWebviewMessage>) => {
+    if (!isWorkbenchEnvelope(event.data)) return;
     for (const listener of listeners) {
       listener(event.data);
     }
