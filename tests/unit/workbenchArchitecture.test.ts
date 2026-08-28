@@ -11,6 +11,7 @@ import {
   asRevisionArray,
   getModuleTitle,
   inferLanguage,
+  quoteCommandPreviewArgument,
   toScopeView,
 } from "../../src/extension/workbench/workbenchPresentation";
 import {
@@ -75,6 +76,12 @@ describe("工作台职责拆分后的纯逻辑", () => {
     expect(inferLanguage("Component.svelte")).toBe("svelte");
     expect(inferLanguage("README")).toBe("text");
     expect(asRevisionArray(["1", "x", 2, "003"])).toEqual(["1", "003"]);
+  });
+
+  it("完整编码命令预览参数中的反斜杠与双引号", () => {
+    expect(quoteCommandPreviewArgument('dir\\segment"quoted.ts')).toBe(
+      '"dir\\\\segment\\"quoted.ts"',
+    );
   });
 
   it("范围视图携带 v0.0.7 项目上下文：项目名为主显示，工作副本为次级", () => {
