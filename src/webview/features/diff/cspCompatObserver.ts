@@ -191,11 +191,41 @@ export function installDiffCspCompatibilityShim(): void {
   };
 
   if (supportsConstructableSheets) {
+    // 额外拦截 insertBefore / append 以覆盖 Pierre 可能使用的其它插入路径
+    const originalShadowInsertBefore = (
+      ShadowRoot.prototype as unknown as { insertBefore?: unknown }
+    ).insertBefore as
+      ((newNode: Node, refNode: Node | null) => Node) | undefined;
+    if (originalShadowInsertBefore) {
+      (
+        ShadowRoot.prototype as unknown as { insertBefore: unknown }
+      ).insertBefore = function <T extends Node>(
+        this: ShadowRoot,
+        newNode: T,
+        refNode: Node | null,
+      ): T {
+        if (
+          newNode instanceof HTMLStyleElement &&
+          this.host instanceof Element &&
+          this.host.localName === "diffs-container"
+        ) {
+          adoptStyleNode(newNode as HTMLStyleElement, (sheet) => {
+            (this as ShadowRoot).adoptedStyleSheets = [
+              ...(this as ShadowRoot).adoptedStyleSheets,
+              sheet,
+            ];
+          });
+          return newNode;
+        }
+        return (
+          originalShadowInsertBefore as unknown as (n: T, r: Node | null) => T
+        ).call(this, newNode, refNode);
+      };
+    }
     const originalShadowAppendChild = ShadowRoot.prototype.appendChild;
     ShadowRoot.prototype.appendChild = function <T extends Node>(node: T): T {
       if (
         node instanceof HTMLStyleElement &&
-        SHADOW_STYLE_MARKERS.some((marker) => node.hasAttribute(marker)) &&
         this.host instanceof Element &&
         this.host.localName === "diffs-container"
       ) {
@@ -209,17 +239,100 @@ export function installDiffCspCompatibilityShim(): void {
 
     const originalElementAppendChild = Element.prototype.appendChild;
     Element.prototype.appendChild = function <T extends Node>(node: T): T {
-      if (
-        node instanceof HTMLStyleElement &&
-        node.hasAttribute(GLOBAL_STYLE_MARKER)
-      ) {
-        adoptStyleNode(node, (sheet) => {
-          document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
-        });
-        return node;
+      if (node instanceof HTMLStyleElement) {
+        // 生产等价 CSP 下，任何 <style> 直接插入都会触发 style-src-elem 违规；
+        // 对 document.head / diffs-container 相关 <style> 统一转 adoptedStyleSheets
+        const isGlobalStyle =
+          this === document.head ||
+          this === document.documentElement ||
+          (this instanceof Element && this.tagName === "HEAD");
+        if (
+          isGlobalStyle ||
+          node.hasAttribute(GLOBAL_STYLE_MARKER) ||
+          node.hasAttribute("data-theme-css") ||
+          node.hasAttribute("data-core-css") ||
+          node.hasAttribute("data-unsafe-css")
+        ) {
+          adoptStyleNode(node, (sheet) => {
+            document.adoptedStyleSheets = [
+              ...document.adoptedStyleSheets,
+              sheet,
+            ];
+          });
+          return node;
+        }
       }
       return originalElementAppendChild.call(this, node) as T;
     };
+    const originalElementInsertBefore = Element.prototype.insertBefore;
+    (Element.prototype as unknown as { insertBefore: unknown }).insertBefore =
+      function <T extends Node>(
+        this: Element,
+        newNode: T,
+        refNode: Node | null,
+      ): T {
+        if (newNode instanceof HTMLStyleElement) {
+          const isGlobalStyle =
+            this === document.head ||
+            this === document.documentElement ||
+            (this instanceof Element && this.tagName === "HEAD");
+          if (
+            isGlobalStyle ||
+            (newNode as HTMLStyleElement).hasAttribute(GLOBAL_STYLE_MARKER) ||
+            (newNode as HTMLStyleElement).hasAttribute("data-theme-css")
+          ) {
+            adoptStyleNode(newNode as HTMLStyleElement, (sheet) => {
+              document.adoptedStyleSheets = [
+                ...document.adoptedStyleSheets,
+                sheet,
+              ];
+            });
+            return newNode;
+          }
+        }
+        return (
+          originalElementInsertBefore as unknown as (n: T, r: Node | null) => T
+        ).call(this, newNode, refNode);
+      };
+    const originalElementAppend = (
+      Element.prototype as unknown as { append?: unknown }
+    ).append as ((...nodes: (Node | string)[]) => void) | undefined;
+    if (originalElementAppend) {
+      (Element.prototype as unknown as { append: unknown }).append = function (
+        this: Element,
+        ...nodes: (Node | string)[]
+      ): void {
+        const styles = nodes.filter(
+          (n) => n instanceof HTMLStyleElement,
+        ) as HTMLStyleElement[];
+        if (styles.length > 0) {
+          const isGlobalStyle =
+            this === document.head ||
+            this === document.documentElement ||
+            (this instanceof Element && this.tagName === "HEAD");
+          let handled = false;
+          for (const s of styles) {
+            if (
+              isGlobalStyle ||
+              s.hasAttribute(GLOBAL_STYLE_MARKER) ||
+              s.hasAttribute("data-theme-css")
+            ) {
+              adoptStyleNode(s, (sheet) => {
+                document.adoptedStyleSheets = [
+                  ...document.adoptedStyleSheets,
+                  sheet,
+                ];
+              });
+              handled = true;
+            }
+          }
+          if (handled && styles.length === nodes.length) return;
+        }
+        return (
+          originalElementAppend as (...n: (Node | string)[]) => void
+        ).apply(this, nodes);
+      };
+    }
   }
 }
 

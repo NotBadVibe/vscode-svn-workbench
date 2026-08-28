@@ -3,6 +3,16 @@ import { describe, expect, it, vi } from "vitest";
 import ConflictsModule from "../../src/webview/features/conflicts/ConflictsModule.svelte";
 import type { ConflictSnapshot } from "../../src/protocol/workbenchProtocol";
 
+// ConflictDiffView 的差异引擎在 jsdom 不可用；本文件聚焦草稿守卫，用 stub 避免触发 V011-E 降级警告。
+vi.mock("@pierre/diffs", () => ({
+  UnresolvedFile: class {
+    render() {
+      return true;
+    }
+    cleanUp() {}
+  },
+}));
+
 const baseSnapshot: ConflictSnapshot = {
   kind: "conflicts",
   conflicts: [
@@ -12,7 +22,10 @@ const baseSnapshot: ConflictSnapshot = {
   selected: {
     relativePath: "src/a.ts",
     contents: {
-      working: { content: "base content", truncated: false },
+      working: {
+        content: "<<<<<<< .mine\nlocal\n=======\nremote\n>>>>>>> .r5\n",
+        truncated: false,
+      },
       mine: { content: "mine", truncated: false },
       theirs: { content: "theirs", truncated: false },
     },
@@ -23,7 +36,8 @@ const baseSnapshot: ConflictSnapshot = {
       feedback: "保存失败：模拟失败；草稿已保留",
     },
     draft: {
-      content: "edited draft",
+      content:
+        "<<<<<<< .mine\nedited mine\n=======\nedited remote\n>>>>>>> .r5\n",
       revision: 2,
       updatedAt: Date.now(),
       hasDraft: true,

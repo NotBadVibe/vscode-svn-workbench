@@ -40,3 +40,28 @@ describe("conflictMerge", () => {
     expect(applyTextConflictResolution("clean", 3, "mine")).toBe("clean");
   });
 });
+
+describe("conflictMerge 扩展：SVN/Git 角色与损坏处理", () => {
+  it("Git 无 BASE 仍解析为 Mine/Theirs", () => {
+    const git = `a\n<<<<<<< HEAD\n mine-git\n=======\n theirs-git\n>>>>>>> branch\n`;
+    const blocks = parseTextConflictBlocks(git);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].mine).toContain("mine-git");
+    expect(blocks[0].theirs).toContain("theirs-git");
+    expect(blocks[0].base).toBeUndefined();
+  });
+
+  it("CRLF 行尾不丢失", () => {
+    const crlf =
+      "a\r\n<<<<<<< .mine\r\n mine\r\n=======\r\n theirs\r\n>>>>>>> .r1\r\n";
+    const blocks = parseTextConflictBlocks(crlf);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0].mine).toContain("mine");
+  });
+
+  it("损坏缺少分隔符时按现实现状不产生块（由 conflictDiffModel 结构化报错）", () => {
+    const damaged = "a\n<<<<<<< .mine\n mine\n>>>>>>> .r1\n";
+    const blocks = parseTextConflictBlocks(damaged);
+    expect(blocks).toHaveLength(0);
+  });
+});

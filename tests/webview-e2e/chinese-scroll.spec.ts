@@ -136,6 +136,7 @@ test("SCR-05：冲突列表、编辑器正文和解决确认在小高度下可�
     element.scrollTop = element.scrollHeight;
   });
 
+  await page.getByText("需要帮助（合并建议与解释）").click();
   await page.getByRole("button", { name: "AI 分析" }).click();
   await page.getByRole("button", { name: "生成解决预览" }).click();
   const workspace = page.getByRole("region", { name: "冲突处理工作区" });

@@ -398,6 +398,7 @@ test("keeps conflict advice separate from explicit resolve", async ({
   await page.goto("/");
   await openModule(page, "冲突");
   await expect(page.getByRole("heading", { name: "待处理冲突" })).toBeVisible();
+  await page.getByText("需要帮助（合并建议与解释）").click();
   await expect(page.getByText(/点击“AI 分析”后才会发送/)).toBeVisible();
   await page.getByRole("button", { name: "AI 分析" }).click();
   await expect(page.getByText("两侧都修改了同一处行为")).toBeVisible();
@@ -1075,6 +1076,7 @@ test("conflict intent interpretation: receipt-confirmed six-section output (v0.0
     receiptRegion.getByText("冲突意图解释（conflict-interpret）"),
   ).toBeVisible();
   await receiptRegion.getByRole("button", { name: "开始解释" }).click();
+  await page.getByText("需要帮助（合并建议与解释）").click();
   await expect(page.getByRole("heading", { name: "意图解释" })).toBeVisible();
   await expect(page.getByText("我的修改意图")).toBeVisible();
   await expect(page.getByText("对方修改意图")).toBeVisible();

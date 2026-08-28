@@ -145,6 +145,7 @@ test("保存每个 Svelte 功能页面的验收截图", async ({ page }) => {
 
   await test.step("Conflicts", async () => {
     await openModule(page, "冲突");
+    await page.getByText("需要帮助（合并建议与解释）").click();
     await page.getByRole("button", { name: "AI 分析" }).click();
     await expect(page.getByText("两侧都修改了同一处行为")).toBeVisible();
     await page.getByRole("button", { name: "生成解决预览" }).click();

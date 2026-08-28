@@ -2298,12 +2298,57 @@ function conflictSnapshot(
           sourceRightRevision: "42",
         },
       ];
-  const workingContent = isScrollDataset()
+  const scenario = new URLSearchParams(window.location.search).get(
+    "conflictScenario",
+  );
+  const aiParam =
+    new URLSearchParams(window.location.search).get("ai") ??
+    new URLSearchParams(window.location.search).get("conflictAi");
+  const aiDisabled = aiParam === "disabled";
+  const conflictBlocksParam = new URLSearchParams(window.location.search).get(
+    "conflictBlocks",
+  );
+  const conflictBlocksCount = conflictBlocksParam
+    ? Number.parseInt(conflictBlocksParam, 10)
+    : 0;
+  let workingContent: string | undefined = isScrollDataset()
     ? Array.from(
         { length: 80 },
         (_, index) => `第 ${index + 1} 行工作副本内容`,
       ).join("\n")
     : "<<<<<<< .mine\nexport const mode = 'local';\n=======\nexport const mode = 'svelte';\n>>>>>>> .r42\n";
+  let workingExtra: Record<string, unknown> = {};
+  if (
+    Number.isFinite(conflictBlocksCount) &&
+    conflictBlocksCount > 1 &&
+    conflictBlocksCount <= 20 &&
+    !isScrollDataset() &&
+    !scenario
+  ) {
+    const blocks = Array.from({ length: conflictBlocksCount }, (_, index) => {
+      const n = index + 1;
+      return `<<<<<<< .mine\nmy-block-${n}-local\n||||||| .r100\nbase-block-${n}\n=======\ntheir-block-${n}-remote\n>>>>>>> .r101`;
+    });
+    const separators = Array.from(
+      { length: conflictBlocksCount - 1 },
+      (_, index) => `\n// ---- separator ${index + 1} unique-${index + 1 * 7} ----\n// filler line distinct ${index + 1}\n`,
+    );
+    let combined = "// header-do-not-merge\n";
+    for (let i = 0; i < blocks.length; i++) {
+      combined += blocks[i] + "\n";
+      if (i < separators.length) combined += separators[i];
+    }
+    combined += "// footer-end\n";
+    workingContent = combined;
+  } else {
+    if (scenario === "damaged")
+      workingContent = "<<<<<<< .mine\nlocal\n>>>>>>> .r42\n";
+    if (scenario === "binary")
+      workingExtra = { truncated: true, readError: "二进制文件不支持内嵌合并" };
+    if (scenario === "truncated") workingExtra = { truncated: true };
+    if (scenario === "missing") workingContent = undefined;
+  }
+
   return {
     kind: "conflicts",
     conflicts,
@@ -2325,12 +2370,12 @@ function conflictSnapshot(
           content: "export const mode = 'svelte';\n",
           truncated: false,
         },
-        working: { content: workingContent, truncated: false },
+        working: { content: workingContent, truncated: false, ...workingExtra },
       },
       mergeEditor: { token: "mock-edit", editable: true, issues: [] },
     },
     aiPrivacy: {
-      model: "deepseek-v4-flash",
+      model: aiDisabled ? "本地规则（未配置外部模型）" : "deepseek-v4-flash",
       characters: 86,
       maxCharacters: 32000,
       data: "基础版本、我的版本、对方版本、工作副本的截断文本与修订元数据",

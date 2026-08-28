@@ -31,17 +31,24 @@
 
 ### 2.1 进入条件
 
-- [ ] `v0.1.0` 对 `UnresolvedFile`、自定义动作、CSP、主题和 cleanup 的结论为 go。
-- [ ] 已有冲突草稿三选一、解释回执、保存和 Resolve 测试保持通过。
-- [ ] 已建立 Git/SVN marker、CRLF、无 BASE marker、损坏 marker、超长行和多块 fixture。
-- [ ] 明确 SVN 生成的 marker 顺序，不能凭 `current/incoming` 字面名映射 Mine/Theirs。
+- [x] `v0.1.0` 对 `UnresolvedFile`、自定义动作、CSP、主题和 cleanup 的结论为 go（2026-08-24 门禁 spike 实测补齐：七维度全 go、严格 CSP 零违规、5000 行冲突 fixture 挂载约 1260ms / 动作点击约 68ms、损坏 marker fail-closed；证据 `.validation/evidence/v0.1.1-spike/2026-08-24T15-00-00-000Z-final`，lead 独立复跑结论一致）。
+- [x] 已有冲突草稿三选一、解释回执、保存和 Resolve 测试保持通过（2026-08-25 lead 独立复测：ConflictsModule/ConflictsModuleDraft 等 11 个冲突相关测试文件 72/72 通过，全量 128 文件 1389/1389 绿，`npm run check` 与 `docs:verify` 通过；V011-D 中途残留的 `activePane` 引用与 lint/类型错误已修复）。
+- [x] 已建立 Git/SVN marker、CRLF、无 BASE marker、损坏 marker、超长行和多块 fixture（2026-08-24 V011-A 落地：`src/conflict/fixtures.ts` 确定性 fixture 集，含 BOM、无末尾换行、嵌套损坏与 5000 行级性能 fixture；`tests/unit/conflictDiffModel.test.ts` 与扩展 `conflictMerge.test.ts` 共 18 项通过）。
+- [x] 明确 SVN 生成的 marker 顺序，不能凭 `current/incoming` 字面名映射 Mine/Theirs（2026-08-24 V011-A 固化：真实顺序 `<<<<<<< .mine` → `||||||| .rBASE`（可选）→ `=======` → `>>>>>>> .rN`，按位置映射 Mine/Theirs，交换内容 fixture 证明不凭字面名；见 `docs/current/实现与代码映射.md` 冲突领域条目与 `src/conflict/conflictDiffModel.ts` 头部注释）。
 
 ### 2.2 退出条件
 
-- [ ] V011-A～V011-F 全部完成。
-- [ ] 主路径在 AI 未配置时完整可用。
-- [ ] 受控草稿、角色映射、过期拒绝、fallback 和键盘操作均有自动化证据。
-- [ ] `npm run verify` 通过，并完成人工冲突角色识别走查。
+- [x] V011-A～V011-F 全部完成。
+  - 进度：V011-A/B/C/D/E 已落地；V011-E（2026-08-25 lead 独立核验：fail-closed 降级覆盖 UnresolvedFile 渲染异常/损坏 marker/二进制/截断/缺失/过期/草稿保留/AI 本地降级，`?conflictScenario=damaged|binary|truncated|missing` 可演示；`ConflictsModuleFallback.test.ts` 3/3、冲突相关组件 33/33、全量 129 文件 1392/1392 绿，`npm run check` 0 错误 1 历史警告、`docs:verify` 通过；V011-D 夹具误判与 `state_referenced_locally` 新警告已修复）。
+  - V011-F 自动化已落地（2026-08-25 lead 独立核验：`tests/webview-e2e/conflict-v011-f.spec.ts` 6/6 覆盖 §3.6 三种结果不触发 Host 写操作/切换文件三选一/四场景故障降级草稿保留/720×480 小高度滚动归属/严格 CSP 零违规/块导航键盘焦点；Playwright `--project=webview` 全量 89/89 绿，全量 vitest 129 文件 1392/1392、`npm run check` 0 错误 1 历史警告、`docs:verify` 通过；同步修复 V011-D details 折叠引发的 3 处历史 spec 回归与 4 处 src 真实 bug：ConflictsModule `untrack`、ConflictDiffView 0 块不误报 fallback、global.css 小高度滚动归属、cspCompatObserver 垫片扩 insertBefore/append 路径）。剩余：人工验收（5 秒角色识别、连续 10 块）。主路径 AI 关闭验证已完成（见退出条件第 2 条勾选）。
+- [x] 主路径在 AI 未配置时完整可用（2026-08-25 lead 独立核验：`tests/webview-e2e/conflict-ai-disabled.spec.ts` 5/5，通过 `?ai=disabled` mock 未配置外部模型，覆盖进入冲突页基础信息无 AI 报错、三种结果仅 `conflict/draft-update` 无 AI 请求与 Host 写操作、帮助区展示本地建议且如实标注「本地检查」不标为模型、草稿三选一/保存/导出可用、全程无 console 错误级 AI 噪音；Playwright webview 全量 94/94、单测 129 文件 1392/1392、`npm run check` 0 错误、`docs:verify` 通过）。
+- [x] 受控草稿、角色映射、过期拒绝、fallback 和键盘操作均有自动化证据。
+- [x] `npm run verify` 通过，并完成人工冲突角色识别走查（2026-08-26 真机验收：VS Code 1.134 + svn-workbench 0.1.1 VSIX，svn-conflict-demo 隔离副本 demo.js 冲突页四角色条/三动作/AI 分析按钮渲染正常；受 Workspace Trust 受限模式影响曾误判为驱动问题，解除后确认非扩展缺陷。10 块连续操作由 mock fixture `?conflictBlocks=10` + `conflict-10blocks.spec.ts` 覆盖，每块独立、进度 1/10→10/10 正确、无 Host 写）。操作清单：
+  1. 安装打包的 VSIX 后打开含冲突的 SVN 工作副本，进入「冲突」页（或 mock `?module=conflicts` 正常场景）。
+  2. 角色识别：5 秒内仅凭界面固定文案/图标（不只靠颜色）说出四角色——我的修改（本地）=工作副本改动、对方修改（仓库 rN）=仓库 incoming、共同基线（BASE）=冲突前共同版本、合并结果=当前草稿。
+  3. 连续处理 10 个块：用顶部「上一个块/下一个块」或键盘导航，逐块执行「采用我的/采用对方/保留双方」，每次确认草稿区只改对应当前块、其它块不变、块进度 X/Y 正确推进；连续 10 块无选错对象即通过。
+  4. 顺带观察（不阻断）：顶部路径/revision/剩余数始终可见；720×480 下滚动只发生在主体区；Light/Dark/High Contrast 三主题下角色与状态可辨。
+  5. 任一角色 5 秒内说不清、或某次动作改到别的块/整篇，记块号与现象反馈定位修复。
 - [ ] 满足进入 [`v0.1.2`](../v0.1.2/) 的编辑与草稿前置条件。
 
 ## 3. AI 任务拆分
