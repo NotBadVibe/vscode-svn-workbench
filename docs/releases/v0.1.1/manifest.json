@@ -5,7 +5,7 @@
   "baseVersion": "0.1.0",
   "releaseDate": "2026-08-28",
   "gitTag": "v0.1.1",
-  "gitCommit": "PLACEHOLDER_AFTER_COMMIT",
+  "gitCommit": "f2519211514ef65ed6cb745b0894c4887fa00051",
   "sourceState": "clean",
   "vsix": {
     "fileName": "svn-workbench-0.1.0.vsix",
@@ -26,6 +26,6 @@
     }
   },
   "acceptedEvidenceRun": "2026-08-28-manual-verification",
-  "evidencePath": ".validation/manual_screenshots",
-  "evidenceTreeSha256": null
+  "evidencePath": "artifacts/2026-08-28-manual-verification",
+  "evidenceTreeSha256": "4B091D6342A8AD04638F5ED96819908FFE1E0E3C82B5FD0F36C23770652410E8"
 }

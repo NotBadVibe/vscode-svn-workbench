@@ -348,12 +348,12 @@
     },
     {
       "version": "0.1.1",
-      "status": "draft",
-      "phase": "planned",
+      "status": "released",
+      "phase": "released",
       "baseVersion": "0.1.0",
       "canonicalEntry": "releases/v0.1.1/README.md",
       "manifest": "releases/v0.1.1/manifest.json",
-      "releasedFact": false,
+      "releasedFact": true,
       "topics": ["conflict-diff", "unresolved-file", "svn-role-mapping"]
     },
     {
