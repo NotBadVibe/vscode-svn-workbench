@@ -28,6 +28,12 @@ import { createCommitSelectionEvaluator } from "../../commit/commitSelectionRule
 import type { SvnStatus } from "../../svn/svnTypes";
 import { workbenchBridge } from "../bridge/vscodeBridge";
 import { onboarding } from "../app/onboarding.svelte";
+import {
+  generateDiffFixture,
+  parseDiffFixtureId,
+  type DiffFixtureContent,
+  type DiffFixtureLanguage,
+} from "./diffFixtures";
 
 /*
  * Diff 模块 mock 数据：内容包含一段足够长的未变更代码，用于在
@@ -248,6 +254,12 @@ let mockEditToken = "mock-edit-token";
 let mockEditRevision = 1;
 /** 目标切换后的 mock 会话序号（模拟 Host 会话替换）。 */
 let mockSessionCounter = 0;
+/**
+ * v0.1.0：当前 mock 会话 ID。目标切换（injectDiffTargetSwitch）后递增，
+ * 后续 injectHostMessage/injectSnapshot 必须使用当前会话，否则新会话的
+ * Webview 会按协议守卫丢弃旧会话消息。
+ */
+let currentMockSessionId = "mock-session-id";
 /** v0.0.17 批次 E：会话共享筛选预设（mock 内存，与 Host 会话状态总线语义一致）。 */
 let mockFilterPresets: FilterPresetView[] = [];
 
@@ -260,6 +272,7 @@ function currentModuleSnapshot(): WorkbenchModuleSnapshot {
 function injectDiffTargetSwitch(relativePath: string): void {
   activeMockDiffPath = relativePath;
   mockSessionCounter += 1;
+  currentMockSessionId = `mock-session-${mockSessionCounter}`;
   workbenchBridge.injectMock({
     protocolVersion: WORKBENCH_PROTOCOL_VERSION,
     type: "app/initialize",
@@ -340,6 +353,27 @@ function updateSnapshot(
   } as WorkbenchModuleSnapshot;
 }
 
+/** v0.1.0（V010-A）：?diffFixture=<id> 指定的确定性性能 fixture（memoized）。 */
+let cachedDiffFixture: DiffFixtureContent | undefined;
+let diffFixtureResolved = false;
+function activeDiffFixture(): DiffFixtureContent | undefined {
+  if (diffFixtureResolved) return cachedDiffFixture;
+  diffFixtureResolved = true;
+  const id = new URLSearchParams(window.location.search).get("diffFixture");
+  if (id) {
+    const spec = parseDiffFixtureId(id);
+    if (spec) cachedDiffFixture = generateDiffFixture(spec);
+  }
+  return cachedDiffFixture;
+}
+
+const DIFF_FIXTURE_LANGUAGES: Record<DiffFixtureLanguage, string> = {
+  ts: "typescript",
+  json: "json",
+  xml: "xml",
+  text: "text",
+};
+
 /**
  * mock 的 diff 快照（v0.0.6 编辑能力）：默认支持页内编辑并签发 mock targetId。
  */
@@ -353,12 +387,19 @@ function mockDiffSnapshot(
   } = {},
 ): WorkbenchModuleSnapshot {
   const supported = overrides.supported ?? true;
+  const fixture = activeDiffFixture();
+  const fixtureSpec = new URLSearchParams(window.location.search).get(
+    "diffFixture",
+  );
+  const parsedSpec = fixtureSpec ? parseDiffFixtureId(fixtureSpec) : undefined;
   return {
     kind: "diff",
     relativePath,
-    original: overrides.original ?? mockDiffOriginal,
-    modified: overrides.modified ?? mockDiffModified,
-    language: "typescript",
+    original: overrides.original ?? fixture?.original ?? mockDiffOriginal,
+    modified: overrides.modified ?? fixture?.modified ?? mockDiffModified,
+    language: parsedSpec
+      ? DIFF_FIXTURE_LANGUAGES[parsedSpec.language]
+      : "typescript",
     truncated: false,
     binary: false,
     edit: supported
@@ -390,7 +431,7 @@ function injectHostMessage(
     type,
     moduleId: activeMockModuleId,
     taskId: activeMockTaskId,
-    sessionId: "mock-session-id",
+    sessionId: currentMockSessionId,
     repositoryUuid: "mock-repository-uuid",
     scopeHash: "mock-scope-hash",
     payload,
@@ -411,7 +452,7 @@ export function startMockWorkbench(): void {
     type: "app/initialize",
     moduleId: initialModuleId,
     taskId: activeMockTaskId,
-    sessionId: "mock-session-id",
+    sessionId: currentMockSessionId,
     repositoryUuid: "mock-repository-uuid",
     scopeHash: "mock-scope-hash",
     payload: {
@@ -2257,12 +2298,58 @@ function conflictSnapshot(
           sourceRightRevision: "42",
         },
       ];
-  const workingContent = isScrollDataset()
+  const scenario = new URLSearchParams(window.location.search).get(
+    "conflictScenario",
+  );
+  const aiParam =
+    new URLSearchParams(window.location.search).get("ai") ??
+    new URLSearchParams(window.location.search).get("conflictAi");
+  const aiDisabled = aiParam === "disabled";
+  const conflictBlocksParam = new URLSearchParams(window.location.search).get(
+    "conflictBlocks",
+  );
+  const conflictBlocksCount = conflictBlocksParam
+    ? Number.parseInt(conflictBlocksParam, 10)
+    : 0;
+  let workingContent: string | undefined = isScrollDataset()
     ? Array.from(
         { length: 80 },
         (_, index) => `第 ${index + 1} 行工作副本内容`,
       ).join("\n")
     : "<<<<<<< .mine\nexport const mode = 'local';\n=======\nexport const mode = 'svelte';\n>>>>>>> .r42\n";
+  let workingExtra: Record<string, unknown> = {};
+  if (
+    Number.isFinite(conflictBlocksCount) &&
+    conflictBlocksCount > 1 &&
+    conflictBlocksCount <= 20 &&
+    !isScrollDataset() &&
+    !scenario
+  ) {
+    const blocks = Array.from({ length: conflictBlocksCount }, (_, index) => {
+      const n = index + 1;
+      return `<<<<<<< .mine\nmy-block-${n}-local\n||||||| .r100\nbase-block-${n}\n=======\ntheir-block-${n}-remote\n>>>>>>> .r101`;
+    });
+    const separators = Array.from(
+      { length: conflictBlocksCount - 1 },
+      (_, index) =>
+        `\n// ---- separator ${index + 1} unique-${index + 1 * 7} ----\n// filler line distinct ${index + 1}\n`,
+    );
+    let combined = "// header-do-not-merge\n";
+    for (let i = 0; i < blocks.length; i++) {
+      combined += blocks[i] + "\n";
+      if (i < separators.length) combined += separators[i];
+    }
+    combined += "// footer-end\n";
+    workingContent = combined;
+  } else {
+    if (scenario === "damaged")
+      workingContent = "<<<<<<< .mine\nlocal\n>>>>>>> .r42\n";
+    if (scenario === "binary")
+      workingExtra = { truncated: true, readError: "二进制文件不支持内嵌合并" };
+    if (scenario === "truncated") workingExtra = { truncated: true };
+    if (scenario === "missing") workingContent = undefined;
+  }
+
   return {
     kind: "conflicts",
     conflicts,
@@ -2284,12 +2371,12 @@ function conflictSnapshot(
           content: "export const mode = 'svelte';\n",
           truncated: false,
         },
-        working: { content: workingContent, truncated: false },
+        working: { content: workingContent, truncated: false, ...workingExtra },
       },
       mergeEditor: { token: "mock-edit", editable: true, issues: [] },
     },
     aiPrivacy: {
-      model: "deepseek-v4-flash",
+      model: aiDisabled ? "本地规则（未配置外部模型）" : "deepseek-v4-flash",
       characters: 86,
       maxCharacters: 32000,
       data: "基础版本、我的版本、对方版本、工作副本的截断文本与修订元数据",
@@ -2346,7 +2433,7 @@ function injectMockConflictReceipt(): void {
     type: "conflict/receipt",
     moduleId: "conflicts",
     taskId: "conflicts/resolve",
-    sessionId: "mock-session-id",
+    sessionId: currentMockSessionId,
     repositoryUuid: "mock-repository-uuid",
     scopeHash: "mock-scope-hash",
     payload: {
@@ -3036,7 +3123,7 @@ function injectMockChangelistReceipt(): void {
     type: "changelist/receipt",
     moduleId: "changelists",
     taskId: "changelists/manage",
-    sessionId: "mock-session-id",
+    sessionId: currentMockSessionId,
     repositoryUuid: "mock-repository-uuid",
     scopeHash: "mock-scope-hash",
     payload: {
@@ -3232,7 +3319,7 @@ function injectMockCommitReceipt(retryNote?: string): void {
     type: "commit/receipt",
     moduleId: "commit",
     taskId: "commit/compose",
-    sessionId: "mock-session-id",
+    sessionId: currentMockSessionId,
     repositoryUuid: "mock-repository-uuid",
     scopeHash: "mock-scope-hash",
     payload: {
@@ -3301,7 +3388,7 @@ function injectMockUnderstandingReceipt(retryNote?: string): void {
     type: "understanding/receipt",
     moduleId: "understanding",
     taskId: "understanding/analyze",
-    sessionId: "mock-session-id",
+    sessionId: currentMockSessionId,
     repositoryUuid: "mock-repository-uuid",
     scopeHash: "mock-scope-hash",
     payload: {
@@ -3376,7 +3463,7 @@ function injectSnapshot(
     type: "module/snapshot",
     moduleId,
     taskId: resolvedTaskId,
-    sessionId: "mock-session-id",
+    sessionId: currentMockSessionId,
     repositoryUuid: "mock-repository-uuid",
     scopeHash: "mock-scope-hash",
     payload: { snapshot },
@@ -3394,7 +3481,7 @@ function injectMockError(
     type: "operation/error",
     moduleId: "changes",
     taskId: "changes/overview",
-    sessionId: "mock-session-id",
+    sessionId: currentMockSessionId,
     repositoryUuid: "mock-repository-uuid",
     scopeHash: "mock-scope-hash",
     payload,

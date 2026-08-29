@@ -578,6 +578,16 @@ async function main(): Promise<void> {
     return;
   }
 
+  // v0.1.1 UnresolvedFile Spike：真实冲突内容专项验证
+  if (params.get("unresolved") === "1") {
+    const { installDiffCspCompatibilityShim } =
+      await import("@prod/csp-compat-observer");
+    installDiffCspCompatibilityShim();
+    const { runUnresolvedSpike } = await import("./unresolved-spike");
+    await runUnresolvedSpike(params);
+    return;
+  }
+
   const theme = params.get("theme") ?? "dark";
   const view = params.get("view") === "unified" ? "unified" : "split";
   document.body.dataset.theme = theme;

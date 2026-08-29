@@ -3,6 +3,16 @@ import { describe, expect, it, vi } from "vitest";
 import ConflictsModule from "../../src/webview/features/conflicts/ConflictsModule.svelte";
 import type { ConflictSnapshot } from "../../src/protocol/workbenchProtocol";
 
+// ConflictDiffView 的差异引擎在 jsdom 不可用；本文件聚焦解释回执等页面行为，用 stub 避免触发 V011-E 降级警告。
+vi.mock("@pierre/diffs", () => ({
+  UnresolvedFile: class {
+    render() {
+      return true;
+    }
+    cleanUp() {}
+  },
+}));
+
 const snapshot: ConflictSnapshot = {
   kind: "conflicts",
   conflicts: [{ relativePath: "src/a.ts", type: "text" }],

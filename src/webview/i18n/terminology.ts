@@ -226,7 +226,7 @@ export const commitSelectionAiSourceLabels = {
 } as const;
 
 /**
- * 差异视图工具栏与区域文案（v0.0.4 @pierre/diffs 迁移）。
+ * 差异视图工具栏与区域文案（v0.0.4 @pierre/diffs 迁移；v0.1.0 统一工具区）。
  * 视图当前态通过 aria-pressed 与文字同时表达，不只靠颜色。
  */
 export const diffViewLabels = {
@@ -236,13 +236,44 @@ export const diffViewLabels = {
   expandAll: "展开全部",
   collapseUnchanged: "折叠未变更",
   contentRegion: "差异内容",
+  /** v0.1.0：显示设置聚合入口（split/unified 与展开控制不再各自平铺）。 */
+  viewSettings: "显示设置",
+  viewSettingsRegion: "差异显示设置",
+  expandUnchangedLabel: "展开未变更的上下文行",
+  /** v0.1.0：差异块导航（只读与编辑态一致）。 */
+  prevHunk: "上一处差异",
+  nextHunk: "下一处差异",
+  hunkNavGroup: "差异块导航",
+  noHunks: "没有可导航的差异块",
+  firstHunkReached: "已经是第一处差异",
+  lastHunkReached: "已经是最后一处差异",
+  /** v0.1.0：编辑与保存状态（不只靠颜色）。 */
+  editingBadge: "正在编辑工作副本",
+  saveToWorkingCopy: "保存到工作副本",
+  saving: "正在保存到工作副本…",
+  /** v0.1.0：降级视图来源与恢复入口。 */
+  simplifiedView: "当前为简化视图",
+  retryRender: "重试渲染",
+  retryHighlight: "重试加载语法高亮",
+  /**
+   * v0.1.0：@pierre/diffs@1.3.4 统一视图下页内编辑不可用（V010-B 能力矩阵
+   * 记录为“受限”）；进入编辑时临时切换为分栏并在退出后恢复。
+   */
+  editForcesSplit:
+    "统一视图暂不支持页内编辑，已临时切换为分栏视图；回到审阅后恢复统一视图。",
+  unifiedDisabledWhileEditing: "页内编辑期间仅支持分栏视图",
 } as const;
+
+/** 差异块当前位置指示（X/Y）。 */
+export function diffHunkPositionLabel(current: number, total: number): string {
+  return `变更块 ${current}/${total}`;
+}
 
 /** 差异渲染组件失败时的中文降级提示。 */
 export const diffFallbackNotices = {
   mergeView:
-    "差异渲染组件加载失败，已切换为基础对比视图；语法高亮与视图切换暂不可用。",
-  rawPatch: "无法解析该修订比较的差异内容，已按原始文本显示。",
+    "差异渲染组件加载失败，已切换为基础对比视图（简化视图）；语法高亮与视图切换暂不可用。",
+  rawPatch: "无法解析该修订比较的差异内容，已按原始文本显示（简化视图）。",
 } as const;
 
 /**

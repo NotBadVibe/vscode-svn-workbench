@@ -29,6 +29,8 @@ const pierreMocks = vi.hoisted(() => {
     failRender: null as Error | null,
     instanceCount: 0,
     cleanupCount: 0,
+    revealCalls: [] as number[],
+    failPreload: false,
   };
   return { records, state };
 });
@@ -52,6 +54,10 @@ vi.mock("@pierre/diffs", () => {
       container.appendChild(marker);
       return true;
     }
+    revealLine(lineNumber: number): boolean {
+      pierreMocks.state.revealCalls.push(lineNumber);
+      return true;
+    }
     cleanUp(): void {
       this.cleanedUp = true;
       pierreMocks.state.cleanupCount += 1;
@@ -63,7 +69,10 @@ vi.mock("@pierre/diffs", () => {
       text.includes("Index:")
         ? [{ files: [{ name: "src/extension.ts" }] }]
         : [],
-    preloadHighlighter: () => Promise.resolve(),
+    preloadHighlighter: () =>
+      pierreMocks.state.failPreload
+        ? Promise.reject(new Error("模拟高亮资源失败"))
+        : Promise.resolve(),
   };
 });
 
@@ -83,7 +92,10 @@ vi.mock("@pierre/diffs/edit", () => {
       this.options = options;
       editMock.instances.push(this);
     }
-    edit(): void {
+    edit(): () => void {
+      return () => undefined;
+    }
+    cleanUp(): void {
       /* no-op */
     }
     getText(): string {
@@ -140,6 +152,8 @@ beforeEach(() => {
   pierreMocks.state.failRender = null;
   pierreMocks.state.instanceCount = 0;
   pierreMocks.state.cleanupCount = 0;
+  pierreMocks.state.revealCalls.length = 0;
+  pierreMocks.state.failPreload = false;
   editMock.instances.length = 0;
 });
 
@@ -169,41 +183,57 @@ describe("DiffModule（@pierre/diffs 适配层）", () => {
     expect(screen.getByText("BASE ↔ 工作副本 · typescript")).toBeVisible();
   });
 
-  it("视图切换按钮中文可达、aria 表达当前态，切换后以 unified 重新挂载", async () => {
+  it("显示设置聚合 split/unified，切换后以 unified 重新挂载且偏好不改内容", async () => {
     render(DiffModule, { snapshot: workingSnapshot, onAction: vi.fn() });
     await waitFor(() => expect(pierreMocks.records).toHaveLength(1));
 
-    const group = screen.getByRole("group", {
-      name: "差异视图切换与折叠控制",
-    });
-    const unifiedButton = screen.getByRole("button", { name: "统一视图" });
-    const splitButton = screen.getByRole("button", { name: "分栏视图" });
-    expect(group).toContainElement(unifiedButton);
-    expect(splitButton).toHaveAttribute("aria-pressed", "true");
-    expect(unifiedButton).toHaveAttribute("aria-pressed", "false");
+    // 主工具区不再平铺视图开关；统一收入“显示设置”。
+    expect(screen.queryByRole("button", { name: "统一视图" })).toBeNull();
+    const trigger = screen.getByRole("button", { name: "显示设置" });
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
 
-    await fireEvent.click(unifiedButton);
+    await fireEvent.click(trigger);
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    const panel = screen.getByRole("group", { name: "差异显示设置" });
+    const splitRadio = screen.getByRole("radio", { name: "分栏视图" });
+    const unifiedRadio = screen.getByRole("radio", { name: "统一视图" });
+    expect(panel).toContainElement(splitRadio);
+    expect(panel).toContainElement(unifiedRadio);
+    expect(splitRadio).toBeChecked();
+    expect(unifiedRadio).not.toBeChecked();
+
+    await fireEvent.click(unifiedRadio);
     await waitFor(() => expect(pierreMocks.records).toHaveLength(2));
     expect(pierreMocks.records[1].options.diffStyle).toBe("unified");
-    expect(unifiedButton).toHaveAttribute("aria-pressed", "true");
-    expect(splitButton).toHaveAttribute("aria-pressed", "false");
+    // 视图偏好只影响呈现：内容与文件目标不变。
+    expect(pierreMocks.records[1].props.newFile).toMatchObject({
+      contents: "const a = 2;\nconst b = 3;\n",
+    });
+
+    // Esc 关闭浮层并把焦点交还触发按钮。
+    await fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() =>
+      expect(screen.queryByRole("group", { name: "差异显示设置" })).toBeNull(),
+    );
+    expect(document.activeElement).toBe(trigger);
   });
 
-  it("提供键盘可达的“展开全部/折叠未变更”控制", async () => {
+  it("显示设置中的展开未变更上下文控制以重建应用偏好", async () => {
     render(DiffModule, { snapshot: workingSnapshot, onAction: vi.fn() });
     await waitFor(() => expect(pierreMocks.records).toHaveLength(1));
 
-    const expandButton = screen.getByRole("button", { name: "展开全部" });
-    const collapseButton = screen.getByRole("button", { name: "折叠未变更" });
-    expect(collapseButton).toBeDisabled();
+    await fireEvent.click(screen.getByRole("button", { name: "显示设置" }));
+    const expandCheckbox = screen.getByRole("checkbox", {
+      name: "展开未变更的上下文行",
+    });
+    expect(expandCheckbox).not.toBeChecked();
 
-    await fireEvent.click(expandButton);
+    await fireEvent.click(expandCheckbox);
     await waitFor(() => expect(pierreMocks.records).toHaveLength(2));
     expect(pierreMocks.records[1].options.expandUnchanged).toBe(true);
-    expect(expandButton).toBeDisabled();
-    expect(collapseButton).toBeEnabled();
+    expect(expandCheckbox).toBeChecked();
 
-    await fireEvent.click(collapseButton);
+    await fireEvent.click(expandCheckbox);
     await waitFor(() => expect(pierreMocks.records).toHaveLength(3));
     expect(pierreMocks.records[2].options.expandUnchanged).toBe(false);
   });
@@ -228,26 +258,31 @@ describe("DiffModule（@pierre/diffs 适配层）", () => {
     };
     render(DiffModule, { snapshot: badPatch, onAction: vi.fn() });
 
-    await screen.findByText("无法解析该修订比较的差异内容，已按原始文本显示。");
+    await screen.findByText(/无法解析该修订比较的差异内容，已按原始文本显示/);
     const pre = document.querySelector(".unified-diff");
     expect(pre).not.toBeNull();
     expect(pre?.textContent).toContain("这不是合法的 unified diff 内容");
+    // 降级为简化视图：显示设置不再可用，并提供重试渲染入口。
     expect(
-      screen.queryByRole("button", { name: "统一视图" }),
+      screen.queryByRole("button", { name: "显示设置" }),
     ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "重试渲染" }),
+    ).toBeInTheDocument();
   });
 
   it("组件挂载失败时降级到 MergeView 并显示中文降级提示", async () => {
     pierreMocks.state.failRender = new Error("模拟挂载失败");
     render(DiffModule, { snapshot: workingSnapshot, onAction: vi.fn() });
 
-    await screen.findByText(
-      "差异渲染组件加载失败，已切换为基础对比视图；语法高亮与视图切换暂不可用。",
-    );
+    await screen.findByText(/差异视图渲染失败，已切换到简化视图/);
     expect(document.querySelector(".codemirror-merge-host")).not.toBeNull();
     expect(
-      screen.queryByRole("button", { name: "统一视图" }),
+      screen.queryByRole("button", { name: "显示设置" }),
     ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "重试渲染" }),
+    ).toBeInTheDocument();
   });
 
   it("挂载后把键盘焦点放入 Diff 区域", async () => {
@@ -460,9 +495,11 @@ describe("DiffModule 页内编辑（v0.0.6）", () => {
       onAction: vi.fn(),
       editSession: editSessionPayload,
     });
-    expect(await screen.findByText("编辑模式")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "保存修改" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "下一个差异" })).toBeTruthy();
+    expect(await screen.findByText("正在编辑工作副本")).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "保存到工作副本" }),
+    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "下一处差异" })).toBeTruthy();
     expect(
       screen.getByRole("button", { name: "还原当前差异块为 BASE" }),
     ).toBeTruthy();
@@ -475,7 +512,7 @@ describe("DiffModule 页内编辑（v0.0.6）", () => {
       onAction: action,
       editSession: editSessionPayload,
     });
-    await screen.findByText("编辑模式");
+    await screen.findByText("正在编辑工作副本");
     // 真实编辑路径：DiffView onChange → 脏状态。fake editor 经
     // applyEdits（“还原此块”）触发 onChange，getText 返回编辑后文本。
     editMock.state.text = "const a = 9;\nconst b = 3;\n";
@@ -508,7 +545,7 @@ describe("DiffModule 页内编辑（v0.0.6）", () => {
       onAction: action,
       editSession: { ...editSessionPayload },
     });
-    await screen.findByText("编辑模式");
+    await screen.findByText("正在编辑工作副本");
     editMock.state.text = "const a = 9;\nconst b = 3;\n";
     await fireEvent.click(
       screen.getByRole("button", { name: "还原当前差异块为 BASE" }),
@@ -565,7 +602,7 @@ describe("DiffModule 页内编辑（v0.0.6）", () => {
       onAction: action,
       editSession: session,
     });
-    await screen.findByText("编辑模式");
+    await screen.findByText("正在编辑工作副本");
     // 第一次编辑。
     editMock.state.text = "const a = 9;\nconst b = 3;\n";
     await fireEvent.click(
@@ -638,7 +675,7 @@ describe("DiffModule 页内编辑（v0.0.6）", () => {
       onAction: action,
       editSession: session,
     });
-    await screen.findByText("编辑模式");
+    await screen.findByText("正在编辑工作副本");
     editMock.state.text = "const a = 9;\nconst b = 3;\n";
     await fireEvent.click(
       screen.getByRole("button", { name: "还原当前差异块为 BASE" }),
@@ -666,7 +703,9 @@ describe("DiffModule 页内编辑（v0.0.6）", () => {
       screen.getByRole("button", { name: "还原当前差异块为 BASE" }),
     );
     expect(screen.queryByText(/有未保存的修改/)).toBeNull();
-    expect(screen.getByRole("button", { name: "保存修改" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "保存到工作副本" }),
+    ).toBeDisabled();
   });
 
   it("token 失效类拒绝提供“重新建立编辑会话”恢复动作", async () => {
@@ -686,7 +725,7 @@ describe("DiffModule 页内编辑（v0.0.6）", () => {
         snapshotVersion: 1,
       },
     });
-    await screen.findByText("编辑模式");
+    await screen.findByText("正在编辑工作副本");
     // 编辑内容（脏）后点击恢复：先刷新检查点保留草稿，再重新 open-edit。
     editMock.state.text = "const a = 9;\nconst b = 3;\n";
     await fireEvent.click(
@@ -723,7 +762,7 @@ describe("DiffModule 页内编辑（v0.0.6）", () => {
         snapshotVersion: 1,
       },
     });
-    await screen.findByText("编辑模式");
+    await screen.findByText("正在编辑工作副本");
     expect(await screen.findByText(/保存被拒绝：写入失败/)).toBeTruthy();
     expect(screen.getByText(/草稿已保留，版本 2/)).toBeTruthy();
   });
@@ -754,7 +793,7 @@ describe("DiffModule 页内编辑（v0.0.6）", () => {
         nextRelativePath: "src/other.ts",
       },
     });
-    await screen.findByText("编辑模式");
+    await screen.findByText("正在编辑工作副本");
     // 无脏修改、无草稿：不出现三选一，自动回 stash。
     expect(screen.queryByRole("dialog")).toBeNull();
     await waitFor(() =>
@@ -776,7 +815,7 @@ describe("DiffModule 页内编辑（v0.0.6）", () => {
         nextRelativePath: "src/other.ts",
       },
     });
-    await screen.findByText("编辑模式");
+    await screen.findByText("正在编辑工作副本");
     const dialog = await screen.findByRole("dialog", {
       name: "当前文件有未保存的草稿",
     });
@@ -801,7 +840,7 @@ describe("DiffModule 页内编辑（v0.0.6）", () => {
         nextRelativePath: "src/other.ts",
       },
     });
-    await screen.findByText("编辑模式");
+    await screen.findByText("正在编辑工作副本");
     // 制造脏状态。
     editMock.state.text = "const a = 9;\nconst b = 3;\n";
     await fireEvent.click(
@@ -834,7 +873,7 @@ describe("DiffModule 页内编辑（v0.0.6）", () => {
         nextRelativePath: "src/other.ts",
       },
     });
-    await screen.findByText("编辑模式");
+    await screen.findByText("正在编辑工作副本");
     // 制造最新编辑（debounce 检查点尚未发出）立刻选择保存并打开。
     editMock.state.text = "const a = 9;\nconst b = 3;\n";
     await fireEvent.click(
@@ -931,7 +970,7 @@ describe("DiffModule 编辑态快照刷新与 save-result 消费（v0.0.6 回归
       initialEditSession: editSessionPayload,
       controller,
     });
-    await screen.findByText("编辑模式");
+    await screen.findByText("正在编辑工作副本");
     const mounts = pierreMocks.state.instanceCount;
     const cleans = pierreMocks.state.cleanupCount;
     expect(mounts).toBeGreaterThan(0);
@@ -990,7 +1029,7 @@ describe("DiffModule 编辑态快照刷新与 save-result 消费（v0.0.6 回归
       initialDiffSaveResult: firstResult,
       controller,
     });
-    await screen.findByText("编辑模式");
+    await screen.findByText("正在编辑工作副本");
     expect(screen.queryByText(/有未保存的修改/)).toBeNull();
     // 第二轮编辑 → 脏。
     editMock.state.text = "const a = 9;\n";
@@ -1039,5 +1078,248 @@ describe("DiffModule 编辑态快照刷新与 save-result 消费（v0.0.6 回归
         screen.queryByRole("button", { name: "恢复草稿并编辑" }),
       ).toBeNull(),
     );
+  });
+});
+
+describe("DiffModule 统一工具区与导航（v0.1.0 V010-D）", () => {
+  const threeHunkSnapshot: DiffSnapshot = {
+    kind: "diff",
+    relativePath: "src/extension.ts",
+    original: "a\nb\nc\nd\ne\n",
+    modified: "a\nB\nc\nD\ne\n",
+    language: "typescript",
+    truncated: false,
+    binary: false,
+  };
+
+  it("只读态显示“变更块 X/Y”，导航经 revealLine 滚入目标块", async () => {
+    render(DiffModule, { snapshot: threeHunkSnapshot, onAction: vi.fn() });
+    await waitFor(() => expect(pierreMocks.records).toHaveLength(1));
+
+    expect(screen.getByText("变更块 1/2")).toBeInTheDocument();
+    const next = screen.getByRole("button", { name: "下一处差异" });
+    const prev = screen.getByRole("button", { name: "上一处差异" });
+    expect(prev).toBeEnabled();
+
+    await fireEvent.click(next);
+    expect(screen.getByText("变更块 2/2")).toBeInTheDocument();
+    expect(pierreMocks.state.revealCalls).toEqual([4]);
+  });
+
+  it("到达首尾不环绕并给出非阻塞文字反馈", async () => {
+    render(DiffModule, { snapshot: threeHunkSnapshot, onAction: vi.fn() });
+    await waitFor(() => expect(pierreMocks.records).toHaveLength(1));
+
+    await fireEvent.click(screen.getByRole("button", { name: "上一处差异" }));
+    expect(screen.getByText("已经是第一处差异")).toBeInTheDocument();
+    expect(screen.getByText("变更块 1/2")).toBeInTheDocument();
+
+    await fireEvent.click(screen.getByRole("button", { name: "下一处差异" }));
+    expect(screen.queryByText("已经是第一处差异")).not.toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "下一处差异" }));
+    expect(screen.getByText("已经是最后一处差异")).toBeInTheDocument();
+  });
+
+  it("Alt+↑/↓ 与导航按钮行为一致，IME 候选阶段不触发", async () => {
+    render(DiffModule, { snapshot: threeHunkSnapshot, onAction: vi.fn() });
+    await waitFor(() => expect(pierreMocks.records).toHaveLength(1));
+
+    await fireEvent.keyDown(window, { key: "ArrowDown", altKey: true });
+    expect(screen.getByText("变更块 2/2")).toBeInTheDocument();
+    await fireEvent.keyDown(window, { key: "ArrowUp", altKey: true });
+    expect(screen.getByText("变更块 1/2")).toBeInTheDocument();
+    // IME composition 中的按键被忽略。
+    await fireEvent.keyDown(window, {
+      key: "ArrowDown",
+      altKey: true,
+      isComposing: true,
+    });
+    expect(screen.getByText("变更块 1/2")).toBeInTheDocument();
+  });
+
+  it("无差异块时导航禁用并说明原因", async () => {
+    const clean: DiffSnapshot = {
+      ...threeHunkSnapshot,
+      modified: threeHunkSnapshot.original,
+    };
+    render(DiffModule, { snapshot: clean, onAction: vi.fn() });
+    await waitFor(() => expect(pierreMocks.records).toHaveLength(1));
+    const next = screen.getByRole("button", { name: "下一处差异" });
+    expect(next).toBeDisabled();
+    expect(next).toHaveAttribute("title", "没有可导航的差异块");
+    expect(screen.queryByText(/变更块 \d+\/\d+/)).toBeNull();
+  });
+
+  it("修订比较（patch 直渲）从 @@ 头解析差异块并可导航", async () => {
+    const twoHunkPatch: DiffSnapshot = {
+      ...patchSnapshot,
+      modified: `Index: src/extension.ts
+===================================================================
+--- src/extension.ts\t(revision 41)
++++ src/extension.ts\t(revision 42)
+@@ -1 +1 @@
+-old
++new
+@@ -30 +30 @@
+-old2
++new2
+`,
+    };
+    render(DiffModule, { snapshot: twoHunkPatch, onAction: vi.fn() });
+    await waitFor(() => expect(pierreMocks.records).toHaveLength(1));
+    expect(screen.getByText("变更块 1/2")).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "下一处差异" }));
+    expect(screen.getByText("变更块 2/2")).toBeInTheDocument();
+    // 只读 patch 模式经 FileDiff.revealLine 滚入目标块。
+    expect(pierreMocks.state.revealCalls).toEqual([30]);
+  });
+});
+
+describe("DiffModule 失败降级与可观测性（v0.1.0 V010-E）", () => {
+  it("挂载失败展示结构化三要素与重试渲染，重试后恢复差异视图", async () => {
+    pierreMocks.state.failRender = new Error("模拟挂载失败");
+    render(DiffModule, { snapshot: workingSnapshot, onAction: vi.fn() });
+    await screen.findByText(/差异视图渲染失败，已切换到简化视图/);
+    expect(screen.getByText(/可以点击“重试渲染”/)).toBeInTheDocument();
+
+    pierreMocks.state.failRender = null;
+    await fireEvent.click(screen.getByRole("button", { name: "重试渲染" }));
+    await waitFor(() =>
+      expect(document.querySelector(".fake-pierre-diff")).not.toBeNull(),
+    );
+    expect(screen.queryByText(/差异视图渲染失败/)).not.toBeInTheDocument();
+  });
+
+  it("语法高亮失败给出非阻塞提示与重试入口，不影响差异渲染", async () => {
+    pierreMocks.state.failPreload = true;
+    render(DiffModule, { snapshot: workingSnapshot, onAction: vi.fn() });
+    await screen.findByText(/语法高亮资源加载失败，已按纯文本渲染/);
+    expect(document.querySelector(".fake-pierre-diff")).not.toBeNull();
+
+    pierreMocks.state.failPreload = false;
+    await fireEvent.click(
+      screen.getByRole("button", { name: "重试加载语法高亮" }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByText(/语法高亮资源加载失败/),
+      ).not.toBeInTheDocument(),
+    );
+  });
+
+  it("保存进行中显示文字状态，成功后显示保存时间（不只靠颜色）", async () => {
+    const action = vi.fn();
+    const editSnapshot: DiffSnapshot = {
+      ...workingSnapshot,
+      edit: { supported: true, targetId: "mock-target" },
+    };
+    const editSessionPayload = {
+      targetId: "mock-target",
+      editToken: "mock-token",
+      draftRevision: 1,
+      baseHash: "base",
+      baseRevision: "BASE",
+      rawHash: "raw",
+      baseContents: "const a = 1;\n",
+      message: "已进入页内编辑。",
+    };
+    const { rerender } = render(DiffModule, {
+      snapshot: editSnapshot,
+      onAction: action,
+      editSession: editSessionPayload,
+    });
+    await screen.findByText("正在编辑工作副本");
+
+    // 产生脏内容（fake editor 经“还原此块”触发 onChange）。
+    editMock.state.text = "const a = 9;\nconst b = 3;\n";
+    await fireEvent.click(
+      screen.getByRole("button", { name: "还原当前差异块为 BASE" }),
+    );
+    const saveButton = screen.getByRole("button", { name: "保存到工作副本" });
+    expect(saveButton).toBeEnabled();
+
+    await fireEvent.click(saveButton);
+    expect(action).toHaveBeenLastCalledWith(
+      "diff/save-working",
+      expect.objectContaining({ targetId: "mock-target" }),
+    );
+    // 保存中：文字状态 + 按钮禁用（不只靠颜色）。
+    expect(await screen.findByText("正在保存到工作副本…")).toBeInTheDocument();
+    expect(saveButton).toBeDisabled();
+
+    // 保存成功：状态转为“已于 HH:mm 保存到工作副本”。
+    await rerender({
+      snapshot: editSnapshot,
+      onAction: action,
+      editSession: editSessionPayload,
+      diffSaveResult: {
+        result: {
+          ok: true,
+          acceptedRevision: 2,
+          newContentHash: "raw2",
+          newEditToken: "token2",
+          snapshotVersion: 2,
+        },
+        snapshotVersion: 2,
+      },
+    });
+    expect(
+      await screen.findByText(/已于 \d{2}:\d{2} 保存到工作副本/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("正在保存到工作副本…")).not.toBeInTheDocument();
+  });
+
+  it("统一视图进入编辑临时切换分栏并告知，回到审阅后恢复", async () => {
+    const editSnapshot: DiffSnapshot = {
+      ...workingSnapshot,
+      edit: { supported: true, targetId: "mock-target" },
+    };
+    const { rerender } = render(DiffModule, {
+      snapshot: editSnapshot,
+      onAction: vi.fn(),
+    });
+    await waitFor(() => expect(pierreMocks.records).toHaveLength(1));
+
+    // 切到统一视图。
+    await fireEvent.click(screen.getByRole("button", { name: "显示设置" }));
+    await fireEvent.click(screen.getByRole("radio", { name: "统一视图" }));
+    await waitFor(() =>
+      expect(pierreMocks.records.at(-1)?.options.diffStyle).toBe("unified"),
+    );
+    // 关闭设置面板（后续会再次打开检查编辑期禁用态）。
+    await fireEvent.keyDown(window, { key: "Escape" });
+
+    // 进入编辑：临时切换分栏并展示说明。
+    await fireEvent.click(screen.getByRole("button", { name: "页内编辑" }));
+    await rerender({
+      snapshot: editSnapshot,
+      onAction: vi.fn(),
+      editSession: {
+        targetId: "mock-target",
+        editToken: "mock-token",
+        draftRevision: 1,
+        baseHash: "base",
+        baseRevision: "BASE",
+        rawHash: "raw",
+        baseContents: "const a = 1;\n",
+        message: "已进入页内编辑。",
+      },
+    });
+    await screen.findByText("正在编辑工作副本");
+    expect(screen.getByText(/已临时切换为分栏视图/)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(pierreMocks.records.at(-1)?.options.diffStyle).toBe("split"),
+    );
+    // 编辑期间统一视图选项禁用并说明原因。
+    await fireEvent.click(screen.getByRole("button", { name: "显示设置" }));
+    expect(screen.getByRole("radio", { name: /统一视图/ })).toBeDisabled();
+    await fireEvent.keyDown(window, { key: "Escape" });
+
+    // 回到审阅：恢复统一视图偏好。
+    await fireEvent.click(screen.getByRole("button", { name: "回到审阅" }));
+    await waitFor(() =>
+      expect(pierreMocks.records.at(-1)?.options.diffStyle).toBe("unified"),
+    );
+    expect(screen.queryByText(/已临时切换为分栏视图/)).not.toBeInTheDocument();
   });
 });

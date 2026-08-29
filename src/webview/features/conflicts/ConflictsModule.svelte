@@ -11,6 +11,14 @@
     applyTextConflictResolution,
     parseTextConflictBlocks,
   } from "../../../conflict/conflictMerge";
+  import type { MergeConflictActionPayload } from "@pierre/diffs";
+  import {
+    type ConflictFileIdentity,
+    type ContentHash,
+  } from "../../../conflict/conflictDiffModel";
+
+  import ConflictDiffView from "./ConflictDiffView.svelte";
+  import type { DiffErrorInfo } from "../diff/diffErrorTaxonomy";
   import ScrollArea from "../../components/ui/ScrollArea.svelte";
   import SearchInput from "../../components/list/SearchInput.svelte";
   import ResultCount from "../../components/list/ResultCount.svelte";
@@ -58,7 +66,10 @@
     >["payload"];
   } = $props();
 
-  let activePane = $state<"mine" | "theirs" | "base" | "working">("working");
+  let activePane = $state<"working" | "mine" | "theirs" | "base">("working");
+  // v0.1.1 V011-D：主视图固定为合并结果（ConflictDiffView + 手动编辑器）；
+  // 我的/对方/BASE 收入“查看来源”折叠区，不再与块级动作争夺首屏。
+  let sourcePane = $state<"mine" | "theirs" | "base">("mine");
   let receiptExpanded = $state(false);
 
   /** v0.0.12 批次 C：解释冲突意图（先展示受限回执，确认后调用模型）。 */
@@ -128,12 +139,63 @@
   );
   let editorHost = $state<HTMLDivElement>();
   let editorView = $state<EditorView>();
-  let editorToken = $state("");
-  let mergeDraft = $state("");
-  let savedWorking = $state("");
+  // v0.1.1 V011-E 修复：初始值直接取首个快照（优先 Host 内存草稿），
+  // 避免首帧空文本导致 ConflictDiffView 对无标记内容 fail-closed 误报降级。
+  let editorToken = $state(
+    untrack(() => snapshot.selected?.mergeEditor.token ?? ""),
+  );
+  let mergeDraft = $state(
+    untrack(
+      () =>
+        snapshot.selected?.draft?.content ??
+        snapshot.selected?.contents.working?.content ??
+        "",
+    ),
+  );
+  let savedWorking = $state(
+    untrack(() => snapshot.selected?.contents.working?.content ?? ""),
+  );
   const content = $derived(snapshot.selected?.contents[activePane]);
+  const sourceContent = $derived(snapshot.selected?.contents[sourcePane]);
   const conflictBlocks = $derived(parseTextConflictBlocks(mergeDraft));
   const workingDirty = $derived(mergeDraft !== savedWorking);
+  // v0.1.1 V011-D：块级差异视图实例与进度（动作紧邻冲突块，进度与列表统一）。
+  let diffView = $state<ConflictDiffView>();
+  let diffProgress = $state({ current: 1, total: 0 });
+  let diffActionFeedback = $state("");
+  let sourceDetailsOpen = $state(false);
+  let helpDetailsOpen = $state(false);
+  // V011-E 安全降级：fail-closed 保留草稿
+  let diffErrorInfo = $state<DiffErrorInfo | null>(null);
+  let useSimplified = $state(false);
+  /** 文件身份：路径 + 来源 revision，用于过期拒绝（revision 变化即失效）。 */
+  const conflictFileIdentity = $derived(
+    (snapshot.selected
+      ? `${snapshot.selected.relativePath}@r${snapshot.selected.sourceLeftRevision ?? "?"}-r${snapshot.selected.sourceRightRevision ?? "?"}`
+      : "") as ConflictFileIdentity,
+  );
+  const diffWorkingText = $derived(mergeDraft);
+  const workingContentView = $derived(snapshot.selected?.contents.working);
+  const isFallbackContent = $derived(
+    Boolean(
+      workingContentView?.readError ||
+      workingContentView?.truncated ||
+      workingContentView?.content === undefined,
+    ),
+  );
+  const fallbackContentReason = $derived(
+    workingContentView?.readError
+      ? workingContentView.readError
+      : workingContentView?.truncated
+        ? "内容已截断，仅用于辅助判断；请用简化编辑器或导出草稿。"
+        : null,
+  );
+  const sourcePaneLabels = {
+    mine: "我的修改",
+    theirs: "对方修改",
+    base: "修改前版本",
+  } as const;
+
   const recommendationLabels = {
     acceptWorking: "保留当前工作副本内容",
     acceptMine: "采用本地版本",
@@ -288,7 +350,7 @@
     const parent = editorHost;
     const token = editorToken;
     const editable = snapshot.selected?.mergeEditor.editable ?? false;
-    if (!parent || !token || activePane !== "working") return;
+    if (!parent || !token) return;
     const view = new EditorView({
       state: EditorState.create({
         doc: untrack(() => mergeDraft),
@@ -353,7 +415,70 @@
       editorView.dispatch({
         changes: { from: 0, to: editorView.state.doc.length, insert: next },
       });
+    if (!isComposing && snapshot.selected) {
+      onAction("conflict/draft-update", {
+        relativePath: snapshot.selected.relativePath,
+        content: next,
+      });
+    }
   }
+
+  function handleDiffAction(
+    payload: MergeConflictActionPayload & {
+      fileIdentity: ConflictFileIdentity;
+      expectedHash: ContentHash;
+      newHash?: ContentHash;
+    },
+  ): void {
+    const newest = diffView?.getControlledResult?.() ?? mergeDraft;
+    if (newest !== mergeDraft) {
+      mergeDraft = newest;
+      if (editorView) {
+        editorView.dispatch({
+          changes: { from: 0, to: editorView.state.doc.length, insert: newest },
+        });
+      }
+      if (snapshot.selected) {
+        onAction("conflict/draft-update", {
+          relativePath: snapshot.selected.relativePath,
+          content: newest,
+        });
+      }
+      diffActionFeedback = `\u5df2\u5e94\u7528\uff1a${payload.resolution === "current" ? "\u91c7\u7528\u6211\u7684\u4fee\u6539" : payload.resolution === "incoming" ? "\u91c7\u7528\u5bf9\u65b9\u4fee\u6539" : "\u4fdd\u7559\u53cc\u65b9\u4fee\u6539"}\uff08\u5757 ${payload.conflict.conflictIndex + 1}\uff09`;
+    }
+  }
+
+  function notifyBlockProgress(p: { current: number; total: number }): void {
+    diffProgress = p;
+  }
+  function handleDiffError(info: DiffErrorInfo): void {
+    diffErrorInfo = info;
+  }
+  // 重试/换文后挂载成功即清除降级提示（草稿内容始终保留在 mergeDraft）。
+  function handleDiffReady(): void {
+    diffErrorInfo = null;
+  }
+
+  function focusBlock(delta: -1 | 1): void {
+    if (!diffProgress.total) return;
+    const next = Math.max(
+      1,
+      Math.min(diffProgress.total, diffProgress.current + delta),
+    );
+    diffView?.focusConflict(next - 1);
+    diffProgress = { ...diffProgress, current: next };
+  }
+
+  $effect(() => {
+    const tp = snapshot.selected?.relativePath;
+    const tk = snapshot.selected?.mergeEditor.token;
+    void tp;
+    void tk;
+    const total = untrack(() => diffProgress.total);
+    if (total > 0) {
+      queueMicrotask(() => diffView?.focusConflict(0));
+    }
+  });
 </script>
 
 <section class="conflict-layout">
@@ -658,6 +783,174 @@
         {/each}
       </div>
       {#if activePane === "working"}
+        <!-- V011-D 紧凑导航：文件 + 块级导航，进度统一 -->
+        <div
+          class="conflict-compact-nav"
+          role="navigation"
+          aria-label="冲突导航"
+        >
+          <div class="toolbar-actions">
+            <button
+              class="button button--secondary"
+              onclick={() => moveToConflict(-1)}
+              disabled={orderedConflicts.length < 2}>上一个文件</button
+            >
+            <button
+              class="button button--secondary"
+              onclick={() => moveToConflict(1)}
+              disabled={orderedConflicts.length < 2}>下一个文件</button
+            >
+            <span class="muted" aria-live="polite"
+              >文件 {snapshot.selected
+                ? orderedConflicts.findIndex(
+                    (c) => c.relativePath === snapshot.selected?.relativePath,
+                  ) + 1
+                : 0}/{orderedConflicts.length}</span
+            >
+          </div>
+          <div class="toolbar-actions" role="group" aria-label="冲突块导航">
+            <button
+              class="button button--secondary"
+              aria-label="上一个冲突块"
+              onclick={() => focusBlock(-1)}
+              disabled={!diffProgress.total}>上一个块</button
+            >
+            <button
+              class="button button--secondary"
+              aria-label="下一个冲突块"
+              onclick={() => focusBlock(1)}
+              disabled={!diffProgress.total}>下一个块</button
+            >
+            <span
+              class="muted"
+              role="status"
+              aria-live="polite"
+              data-testid="block-progress"
+              >块 {diffProgress.current}/{diffProgress.total || 0}</span
+            >
+          </div>
+        </div>
+        <!-- V011-D 固定角色说明：不只依赖颜色 -->
+        <div
+          class="conflict-role-bar"
+          role="note"
+          aria-label="冲突角色说明"
+          data-testid="conflict-role-bar"
+        >
+          <span class="role role--mine"
+            ><span class="codicon codicon-circle-filled" aria-hidden="true"
+            ></span> 我的修改（本地）</span
+          >
+          <span class="role role--theirs"
+            ><span class="codicon codicon-circle-outline" aria-hidden="true"
+            ></span> 对方修改（仓库）</span
+          >
+          <span class="role role--base"
+            ><span class="codicon codicon-compare-changes" aria-hidden="true"
+            ></span> 共同基线（BASE）</span
+          >
+          <span class="role role--merged"
+            ><span class="codicon codicon-merge" aria-hidden="true"></span> 合并结果</span
+          >
+        </div>
+        {#if !useSimplified}
+          <ConflictDiffView
+            bind:this={diffView}
+            workingText={diffWorkingText}
+            relativePath={snapshot.selected?.relativePath ?? ""}
+            fileIdentity={conflictFileIdentity}
+            onBlockProgress={notifyBlockProgress}
+            onMergeConflictAction={handleDiffAction}
+            onError={handleDiffError}
+            onReady={handleDiffReady}
+          />
+        {:else}
+          <div
+            class="notice notice--info"
+            role="status"
+            data-testid="simplified-fallback-notice"
+          >
+            已切换到简化编辑器（草稿已保留，可复制/导出）
+          </div>
+        {/if}
+        {#if diffActionFeedback}<div
+            class="notice notice--success"
+            role="status"
+            data-testid="diff-action-feedback"
+          >
+            {diffActionFeedback}
+          </div>{/if}
+        {#if isFallbackContent}
+          <div
+            class="notice notice--warning"
+            role="alert"
+            data-testid="content-fallback-warning"
+          >
+            <span class="codicon codicon-warning" aria-hidden="true"></span>
+            <div>
+              <strong>内容暂不可用</strong>
+              <p>{fallbackContentReason ?? "内容缺失或非法编码"}</p>
+            </div>
+            <div class="toolbar-actions">
+              <button
+                class="button button--secondary"
+                data-testid="use-simple-editor-content"
+                onclick={() => (useSimplified = true)}>使用简化编辑器</button
+              >
+              <button
+                class="button button--secondary"
+                onclick={() =>
+                  onAction("open-file", {
+                    relativePath: snapshot.selected?.relativePath,
+                  })}>在编辑器中打开</button
+              >
+              {#if snapshot.selected?.draft?.hasDraft}<button
+                  class="button button--secondary"
+                  onclick={() =>
+                    onAction("conflict/draft-export", {
+                      relativePath: snapshot.selected?.relativePath,
+                    })}>导出草稿</button
+                >{/if}
+            </div>
+          </div>
+        {/if}
+        {#if diffErrorInfo}
+          <div
+            class="notice notice--warning"
+            role="alert"
+            data-testid="conflict-fallback-warning"
+          >
+            <span class="codicon codicon-warning" aria-hidden="true"></span>
+            <div>
+              <strong>差异视图暂不可用</strong>
+              <p>{diffErrorInfo.what}</p>
+              <small>{diffErrorInfo.cause} {diffErrorInfo.recovery}</small>
+            </div>
+            <div class="toolbar-actions">
+              <button
+                class="button button--secondary"
+                data-testid="use-simple-editor"
+                onclick={() => (useSimplified = true)}>使用简化编辑器</button
+              >
+              {#if snapshot.selected?.draft?.hasDraft}<button
+                  class="button button--secondary"
+                  data-testid="export-draft-fallback"
+                  onclick={() =>
+                    onAction("conflict/draft-export", {
+                      relativePath: snapshot.selected?.relativePath,
+                    })}>导出草稿</button
+                >{/if}
+              <button
+                class="button button--secondary"
+                data-testid="open-in-editor-fallback"
+                onclick={() =>
+                  onAction("open-file", {
+                    relativePath: snapshot.selected?.relativePath,
+                  })}>在编辑器中打开</button
+              >
+            </div>
+          </div>
+        {/if}
         <div class="merge-block-toolbar">
           <div>
             <strong>块级合并</strong><span
@@ -773,6 +1066,52 @@
               })}>放弃草稿</button
           >
         </div>
+        <!-- V011-D 查看来源折叠区：默认不与块级动作争夺首屏 -->
+        <details
+          class="conflict-source-details"
+          bind:open={sourceDetailsOpen}
+          data-testid="conflict-source-details"
+        >
+          <summary>查看来源（我的修改 / 对方修改 / 共同基线）</summary>
+          <div
+            class="conflict-source-tabs"
+            role="tablist"
+            aria-label="来源版本"
+          >
+            {#each ["mine", "theirs", "base"] as sp (sp)}
+              <button
+                role="tab"
+                aria-selected={sourcePane === sp}
+                class:active={sourcePane === sp}
+                onclick={() => (sourcePane = sp as typeof sourcePane)}
+                >{sourcePaneLabels[sp as keyof typeof sourcePaneLabels]}</button
+              >
+            {/each}
+          </div>
+          <!-- svelte-ignore a11y_no_noninteractive_tabindex -- 来源内容区域需要获得键盘焦点以便滚动。 -->
+          <div
+            class="conflict-source-content"
+            role="region"
+            aria-label={`${sourcePaneLabels[sourcePane]}内容`}
+            tabindex="0"
+          >
+            {#if sourceContent?.readError}
+              <div class="module-state module-state--error">
+                <span class="codicon codicon-error"></span>
+                <div>
+                  <strong>读取失败</strong>
+                  <p>{sourceContent.readError}</p>
+                </div>
+              </div>
+            {:else}
+              <pre><code>{sourceContent?.content ?? "（没有可用内容）"}</code
+                ></pre>
+              {#if sourceContent?.truncated}<div class="notice notice--warning">
+                  内容已截断，仅用于辅助判断。
+                </div>{/if}
+            {/if}
+          </div>
+        </details>
       {:else}
         <!-- svelte-ignore a11y_no_noninteractive_tabindex -- 冲突正文需要获得键盘焦点以便滚动。 -->
         <div
@@ -800,168 +1139,177 @@
       {/if}
 
       <div class="conflict-bottom">
-        <section class="conflict-advice">
-          <div class="section-heading">
-            <div>
-              <span class="eyebrow">冲突建议来源</span>
-              <h2>合并建议</h2>
+        <details
+          class="conflict-help-details"
+          bind:open={helpDetailsOpen}
+          data-testid="conflict-help-details"
+        >
+          <summary>需要帮助（合并建议与解释）</summary>
+          <section class="conflict-advice">
+            <div class="section-heading">
+              <div>
+                <span class="eyebrow">冲突建议来源</span>
+                <h2>合并建议</h2>
+              </div>
+              {#if snapshot.advice}<span
+                  class={`confidence confidence--${snapshot.advice.confidence}`}
+                  >{confidenceLabels[snapshot.advice.confidence]}</span
+                >{/if}
             </div>
-            {#if snapshot.advice}<span
-                class={`confidence confidence--${snapshot.advice.confidence}`}
-                >{confidenceLabels[snapshot.advice.confidence]}</span
-              >{/if}
-          </div>
-          {#if snapshot.aiPrivacy}<div class="privacy-note">
-              <strong>外发预览</strong><span
-                >{snapshot.aiPrivacy.data}；{snapshot.aiPrivacy
-                  .characters}/{snapshot.aiPrivacy.maxCharacters} 个字符；模型 {snapshot
-                  .aiPrivacy.model}；不含历史。{conflictAdviceConfigured
-                  ? "点击“AI 分析”后才会发送。"
-                  : "未配置外部模型，将运行本地规则，不会外发。"}</span
-              >
-            </div>{/if}
-          {#if snapshot.advice}
-            <strong
-              >{recommendationLabels[snapshot.advice.recommendation]}</strong
-            >
-            <small class="ai-source"
-              >{sourceLabels[snapshot.advice.source]}</small
-            >
-            <p>{snapshot.advice.summary}</p>
-            {#if snapshot.advice.fallbackReason}<div
-                class="notice notice--warning"
-              >
-                降级原因：{snapshot.advice.fallbackReason}
+            {#if snapshot.aiPrivacy}<div class="privacy-note">
+                <strong>外发预览</strong><span
+                  >{snapshot.aiPrivacy.data}；{snapshot.aiPrivacy
+                    .characters}/{snapshot.aiPrivacy.maxCharacters} 个字符；模型 {snapshot
+                    .aiPrivacy.model}；不含历史。{conflictAdviceConfigured
+                    ? "点击“AI 分析”后才会发送。"
+                    : "未配置外部模型，将运行本地规则，不会外发。"}</span
+                >
               </div>{/if}
-            {#if snapshot.advice.risks.length}<h3>风险</h3>
+            {#if snapshot.advice}
+              <strong
+                >{recommendationLabels[snapshot.advice.recommendation]}</strong
+              >
+              <small class="ai-source"
+                >{sourceLabels[snapshot.advice.source]}</small
+              >
+              <p>{snapshot.advice.summary}</p>
+              {#if snapshot.advice.fallbackReason}<div
+                  class="notice notice--warning"
+                >
+                  降级原因：{snapshot.advice.fallbackReason}
+                </div>{/if}
+              {#if snapshot.advice.risks.length}<h3>风险</h3>
+                <ul>
+                  {#each snapshot.advice.risks as risk, riskIndex (riskIndex)}<li
+                    >
+                      {risk}
+                    </li>{/each}
+                </ul>{/if}
+              {#if snapshot.advice.steps.length}<h3>验证步骤</h3>
+                <ol>
+                  {#each snapshot.advice.steps as step, stepIndex (stepIndex)}<li
+                    >
+                      {step}
+                    </li>{/each}
+                </ol>{/if}
+            {:else}
+              <div class="preview-empty">
+                <span class="codicon codicon-sparkle"></span>
+                <p>AI 只提供解释和候选，不会自动标记解决。</p>
+                <button
+                  class="button button--secondary"
+                  onclick={() =>
+                    onAction("conflict/advise", {
+                      relativePath: snapshot.selected?.relativePath,
+                    })}>分析两侧意图</button
+                >
+              </div>
+            {/if}
+          </section>
+          {#if snapshot.interpretation}
+            <section class="conflict-advice" aria-label="冲突意图解释">
+              <div class="section-heading">
+                <div>
+                  <span class="eyebrow">冲突意图解释（§7 六段）</span>
+                  <h2>意图解释</h2>
+                </div>
+                <span class="conflict-advice__source"
+                  >来源：{sourceLabels[
+                    snapshot.interpretation.source
+                  ]}{#if snapshot.interpretation.stale}
+                    · 已过期（冲突或修订已变化，只读）{/if}</span
+                >
+              </div>
+              {#if snapshot.interpretation.fallbackReason}<div
+                  class="notice notice--warning"
+                >
+                  降级原因：{snapshot.interpretation.fallbackReason}
+                </div>{/if}
+              <h3>我的修改意图</h3>
+              <p>{snapshot.interpretation.myIntent}</p>
+              <h3>对方修改意图</h3>
+              <p>{snapshot.interpretation.theirIntent}</p>
+              <h3>共同点</h3>
               <ul>
-                {#each snapshot.advice.risks as risk, riskIndex (riskIndex)}<li>
-                    {risk}
+                {#each snapshot.interpretation.commonPoints as point, pointIndex (pointIndex)}<li
+                  >
+                    {point}
                   </li>{/each}
-              </ul>{/if}
-            {#if snapshot.advice.steps.length}<h3>验证步骤</h3>
+              </ul>
+              <h3>冲突点</h3>
+              <ul>
+                {#each snapshot.interpretation.conflictPoints as point, pointIndex (pointIndex)}<li
+                  >
+                    {point}
+                  </li>{/each}
+              </ul>
+              <h3>推荐处理方式及证据</h3>
+              <p>{snapshot.interpretation.recommendedHandling.summary}</p>
+              {#if snapshot.interpretation.recommendedHandling.evidence.length}<ul
+                >
+                  {#each snapshot.interpretation.recommendedHandling.evidence as evidence, evidenceIndex (evidenceIndex)}<li
+                    >
+                      {evidence}
+                    </li>{/each}
+                </ul>{/if}
+              <h3>无法判断的业务选择</h3>
+              <ul>
+                {#each snapshot.interpretation.businessUnknowns as unknown, unknownIndex (unknownIndex)}<li
+                  >
+                    {unknown}
+                  </li>{/each}
+              </ul>
+              <h3>保存后应运行的验证</h3>
               <ol>
-                {#each snapshot.advice.steps as step, stepIndex (stepIndex)}<li>
-                    {step}
+                {#each snapshot.interpretation.postSaveVerification as item, itemIndex (itemIndex)}<li
+                  >
+                    {item.title}{#if item.command}<code class="conflict-command"
+                        >{item.command}</code
+                      >{/if}
                   </li>{/each}
-              </ol>{/if}
-          {:else}
-            <div class="preview-empty">
-              <span class="codicon codicon-sparkle"></span>
-              <p>AI 只提供解释和候选，不会自动标记解决。</p>
+              </ol>
+            </section>
+          {/if}
+          <section class="resolve-panel">
+            <div class="section-heading">
+              <div>
+                <span class="eyebrow">解决确认</span>
+                <h2>标记为已解决</h2>
+              </div>
+            </div>
+            {#if snapshot.resolvePreview}
+              <div class="notice">
+                <span class="codicon codicon-terminal"></span><code
+                  >{snapshot.resolvePreview.command}</code
+                >
+              </div>
+              {#each snapshot.resolvePreview.issues as issue, issueIndex (issueIndex)}<div
+                  class="issue-list"
+                >
+                  <div>{issue}</div>
+                </div>{/each}
+              <button
+                class="button button--primary commit-button"
+                disabled={!snapshot.resolvePreview.canResolve}
+                onclick={(event) => {
+                  resolveTriggerEl = event.currentTarget as HTMLElement;
+                  resolveIntentOpen = true;
+                }}>确认使用当前工作副本内容并标记解决</button
+              >
+            {:else}
+              <p class="muted">
+                请先在内嵌工作副本编辑器完成合并并保存。解决预览不会修改文件。
+              </p>
               <button
                 class="button button--secondary"
                 onclick={() =>
-                  onAction("conflict/advise", {
+                  onAction("conflict/preview-resolve", {
                     relativePath: snapshot.selected?.relativePath,
-                  })}>分析两侧意图</button
+                  })}>生成解决预览</button
               >
-            </div>
-          {/if}
-        </section>
-        {#if snapshot.interpretation}
-          <section class="conflict-advice" aria-label="冲突意图解释">
-            <div class="section-heading">
-              <div>
-                <span class="eyebrow">冲突意图解释（§7 六段）</span>
-                <h2>意图解释</h2>
-              </div>
-              <span class="conflict-advice__source"
-                >来源：{sourceLabels[
-                  snapshot.interpretation.source
-                ]}{#if snapshot.interpretation.stale}
-                  · 已过期（冲突或修订已变化，只读）{/if}</span
-              >
-            </div>
-            {#if snapshot.interpretation.fallbackReason}<div
-                class="notice notice--warning"
-              >
-                降级原因：{snapshot.interpretation.fallbackReason}
-              </div>{/if}
-            <h3>我的修改意图</h3>
-            <p>{snapshot.interpretation.myIntent}</p>
-            <h3>对方修改意图</h3>
-            <p>{snapshot.interpretation.theirIntent}</p>
-            <h3>共同点</h3>
-            <ul>
-              {#each snapshot.interpretation.commonPoints as point, pointIndex (pointIndex)}<li
-                >
-                  {point}
-                </li>{/each}
-            </ul>
-            <h3>冲突点</h3>
-            <ul>
-              {#each snapshot.interpretation.conflictPoints as point, pointIndex (pointIndex)}<li
-                >
-                  {point}
-                </li>{/each}
-            </ul>
-            <h3>推荐处理方式及证据</h3>
-            <p>{snapshot.interpretation.recommendedHandling.summary}</p>
-            {#if snapshot.interpretation.recommendedHandling.evidence.length}<ul
-              >
-                {#each snapshot.interpretation.recommendedHandling.evidence as evidence, evidenceIndex (evidenceIndex)}<li
-                  >
-                    {evidence}
-                  </li>{/each}
-              </ul>{/if}
-            <h3>无法判断的业务选择</h3>
-            <ul>
-              {#each snapshot.interpretation.businessUnknowns as unknown, unknownIndex (unknownIndex)}<li
-                >
-                  {unknown}
-                </li>{/each}
-            </ul>
-            <h3>保存后应运行的验证</h3>
-            <ol>
-              {#each snapshot.interpretation.postSaveVerification as item, itemIndex (itemIndex)}<li
-                >
-                  {item.title}{#if item.command}<code class="conflict-command"
-                      >{item.command}</code
-                    >{/if}
-                </li>{/each}
-            </ol>
+            {/if}
           </section>
-        {/if}
-        <section class="resolve-panel">
-          <div class="section-heading">
-            <div>
-              <span class="eyebrow">解决确认</span>
-              <h2>标记为已解决</h2>
-            </div>
-          </div>
-          {#if snapshot.resolvePreview}
-            <div class="notice">
-              <span class="codicon codicon-terminal"></span><code
-                >{snapshot.resolvePreview.command}</code
-              >
-            </div>
-            {#each snapshot.resolvePreview.issues as issue, issueIndex (issueIndex)}<div
-                class="issue-list"
-              >
-                <div>{issue}</div>
-              </div>{/each}
-            <button
-              class="button button--primary commit-button"
-              disabled={!snapshot.resolvePreview.canResolve}
-              onclick={(event) => {
-                resolveTriggerEl = event.currentTarget as HTMLElement;
-                resolveIntentOpen = true;
-              }}>确认使用当前工作副本内容并标记解决</button
-            >
-          {:else}
-            <p class="muted">
-              请先在内嵌工作副本编辑器完成合并并保存。解决预览不会修改文件。
-            </p>
-            <button
-              class="button button--secondary"
-              onclick={() =>
-                onAction("conflict/preview-resolve", {
-                  relativePath: snapshot.selected?.relativePath,
-                })}>生成解决预览</button
-            >
-          {/if}
-        </section>
+        </details>
       </div>
     {:else}
       <div class="empty-state empty-state--large">

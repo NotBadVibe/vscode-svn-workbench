@@ -4080,8 +4080,9 @@ button.path-detail__value:hover {
     overflow: auto;
   }
   .conflict-workspace {
-    height: auto;
-    overflow: visible;
+    height: 320px;
+    max-height: 45vh;
+    overflow: auto;
   }
   .conflict-bottom {
     grid-template-columns: 1fr;

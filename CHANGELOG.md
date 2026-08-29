@@ -2,6 +2,48 @@
 
 ## Unreleased
 
+## 0.1.1 (2026-08-28)
+
+### Added
+
+- 统一冲突差异视图与角色映射：冲突正文接入已验证的 Pierre UnresolvedFile，顶部固定“我的修改（本地）/ 对方修改（仓库 rN）/ 共同基线（BASE）/ 合并结果”四角色条，块进度与文件进度分开表达（块 X/Y 与文件 X/Y 不再混为一个数字）。
+- 块级就地取舍：每个冲突块旁提供中文、键盘可达的“采用我的修改 / 采用对方修改 / 保留双方”动作；动作只更新 Host 内存草稿，不写工作副本、不执行 Resolve。
+- 安全降级：冲突内容损坏、二进制、截断或缺失时保留草稿并给出明确出口（使用简化编辑器 / 在编辑器中打开 / 导出草稿），如实显示真实原因，本地规则结果不标为 AI。
+- AI 未配置主路径可用：冲突解释与提交建议在外部模型未配置时回退到本地规则，界面明确标注“本地检查”来源。
+- 冲突页 Webview E2E：新增 conflict-v011-f、conflict-ai-disabled、conflict-10blocks 等场景，覆盖三种取舍、切换文件三选一、四场景降级、720×480 小高度滚动归属、严格 CSP 零违规与 10 块连续处理。
+
+### Changed
+
+- 冲突页顶部收敛为路径 / revision / 剩余冲突数与紧凑导航（上/下一个文件、上/下一个块），“查看来源”“需要帮助”默认折叠。
+- 过期守卫统一：文件、scope、revision 或内容 hash 变化后旧动作与旧 AI 结果立即失效。
+- 严格 CSP 兼容层扩展：constructable stylesheet 垫片覆盖 insertBefore / append 等更多插入路径。
+
+### Fixed
+
+- 修复冲突页在 0 块（已解决）时误报 fallback 的问题。
+- 修复小高度视口下冲突工作区无明确滚动归属的问题。
+- 修复多处分页/折叠状态在切换文件后未重置导致的断言回归。
+
+## 0.1.0 (2026-08-24)
+
+### Added
+
+- v0.1.0 差异底座重整：普通 Diff 的文件信息、比较双方、编辑状态、当前变更块 X/Y 与视图设置收敛为单一工具区；上一处/下一处差异支持按钮与 Alt+↑/↓ 快捷键，到达首尾给出非阻塞文字反馈；split/unified 与上下文展开收敛进“显示设置” popover。
+- 结构化 Diff 错误分类（diffErrorTaxonomy）：Pierre 挂载失败、patch 解析为空、高亮/CSP/Editor attach 失败、二进制、截断、无 BASE 等 10 种状态分别给出“发生了什么/可能原因/现在能做什么”，降级页提供重试渲染/重试高亮出口。
+- 新增确定性 Diff 性能 fixture 与测量脚本（`npm run test:diff-performance`）：100/1000/5000/10000 行 × 多档变更比例，覆盖超长行、CRLF、无末尾换行与 TS/JSON/XML/text，输出首个可见内容、高亮、导航、输入 P95、目标切换与内存数据。
+
+### Changed
+
+- Diff 编辑态徽章固定为“正在编辑工作副本”，保存按钮写明对象“保存到工作副本”，保存中与已保存用文字表达。
+- DiffView 薄化为 props 驱动的业务入口，Pierre 实例创建、observer 注册、Editor attach 与清理收敛到 diffViewAdapter 单一生命周期（幂等 dispose）。
+- `@pierre/diffs` 锁定为精确版本 1.3.4，并补充能力矩阵静态契约测试（含 VirtualizedUnresolvedFile 不存在的明确记录）。
+
+### Fixed
+
+- 修复 pierre Editor 语法高亮 tokenizer 经 globalThis.postMessage 的自调度消息被误判为“协议版本不兼容”导致会话终止的问题。
+- 修复退出 Diff 编辑后会因 editSession 仍在而立即重置回编辑态的问题。
+- 修复 mock 环境下切换差异目标后旧会话消息被协议守卫丢弃的问题。
+
 ## 0.0.18 (2026-08-23)
 
 ### Added

@@ -22,6 +22,64 @@ test("opens the mock changes workspace and navigates to diff", async ({
   await expect(page.getByText("BASE ↔ 工作副本 · typescript")).toBeVisible();
 });
 
+test("v0.1.0 差异主路径：X/Y 导航、键盘一致、显示设置与连续保存", async ({
+  page,
+}) => {
+  await page.goto("/?module=diff");
+  await expect(page.getByText("BASE ↔ 工作副本 · typescript")).toBeVisible();
+
+  // 统一工具区：变更块 X/Y 指示 + 上一处/下一处按钮。
+  await expect(page.getByText("变更块 1/3")).toBeVisible();
+  await page.getByRole("button", { name: "下一处差异" }).click();
+  await expect(page.getByText("变更块 2/3")).toBeVisible();
+
+  // 到达末尾的非阻塞反馈（不环绕）。
+  await page.getByRole("button", { name: "下一处差异" }).click();
+  await page.getByRole("button", { name: "下一处差异" }).click();
+  await expect(page.getByText("已经是最后一处差异")).toBeVisible();
+
+  // 键盘 Alt+↑ 与按钮行为一致。
+  await page.keyboard.press("Alt+ArrowUp");
+  await expect(page.getByText("变更块 2/3")).toBeVisible();
+
+  // 显示设置聚合视图开关：切换统一视图不改变文件目标与内容。
+  await page.getByRole("button", { name: "显示设置" }).click();
+  await page.getByRole("radio", { name: "统一视图" }).click();
+  await expect(page.getByText("src/extension.ts").first()).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("group", { name: "差异显示设置" })).toHaveCount(
+    0,
+  );
+
+  // 进入编辑：统一视图不支持页内编辑（pierre 1.3.4 受限能力），临时切回
+  // 分栏并明确告知；回到审阅后恢复统一视图。
+  await page.getByRole("button", { name: "页内编辑" }).click();
+  await expect(page.getByText("正在编辑工作副本")).toBeVisible();
+  await expect(page.getByText(/已临时切换为分栏视图/)).toBeVisible();
+  const editable = page
+    .locator("diffs-container")
+    .locator('[contenteditable="true"]')
+    .first();
+  await editable.click();
+  await expect(editable).toBeFocused();
+  await page.keyboard.type("// 第一轮");
+  await expect(page.getByText(/有未保存的修改/)).toBeVisible();
+  await page.keyboard.press("Control+s");
+  await expect(page.getByText(/已于 .* 保存到工作副本/)).toBeVisible();
+  await page.keyboard.type("// 第二轮");
+  await expect(page.getByText(/有未保存的修改/)).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "保存到工作副本" }),
+  ).toBeEnabled();
+
+  // 回到审阅：退出编辑态（不反弹）并恢复进入前的统一视图偏好。
+  await page.getByRole("button", { name: "回到审阅" }).click();
+  await expect(page.getByText("正在编辑工作副本")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "页内编辑" })).toBeVisible();
+  await page.getByRole("button", { name: "显示设置" }).click();
+  await expect(page.getByRole("radio", { name: "统一视图" })).toBeChecked();
+});
+
 test("has no automatically detectable accessibility violations on changes", async ({
   page,
 }) => {
@@ -340,6 +398,7 @@ test("keeps conflict advice separate from explicit resolve", async ({
   await page.goto("/");
   await openModule(page, "冲突");
   await expect(page.getByRole("heading", { name: "待处理冲突" })).toBeVisible();
+  await page.getByText("需要帮助（合并建议与解释）").click();
   await expect(page.getByText(/点击“AI 分析”后才会发送/)).toBeVisible();
   await page.getByRole("button", { name: "AI 分析" }).click();
   await expect(page.getByText("两侧都修改了同一处行为")).toBeVisible();
@@ -732,8 +791,10 @@ test("edits a working copy in-page and saves with Ctrl+S (v0.0.6)", async ({
   await page.goto("/?module=diff");
   await expect(page.getByRole("button", { name: "页内编辑" })).toBeVisible();
   await page.getByRole("button", { name: "页内编辑" }).click();
-  await expect(page.getByText("编辑模式")).toBeVisible();
-  await expect(page.getByRole("button", { name: "保存修改" })).toBeDisabled();
+  await expect(page.getByText("正在编辑工作副本")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "保存到工作副本" }),
+  ).toBeDisabled();
 
   // 真实点击编辑区并输入，触发脏状态。
   const editable = page
@@ -745,11 +806,15 @@ test("edits a working copy in-page and saves with Ctrl+S (v0.0.6)", async ({
   await expect(editable).toBeFocused();
   await page.keyboard.type("// 页内编辑注释");
   await expect(page.getByText(/有未保存的修改/)).toBeVisible();
-  await expect(page.getByRole("button", { name: "保存修改" })).toBeEnabled();
+  await expect(
+    page.getByRole("button", { name: "保存到工作副本" }),
+  ).toBeEnabled();
 
   // Ctrl+S 保存：mock 返回成功并刷新快照。
   await page.keyboard.press("Control+s");
-  await expect(page.getByRole("button", { name: "保存修改" })).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: "保存到工作副本" }),
+  ).toBeDisabled();
 });
 
 /** 在 mock 模式直接派发一条 Webview 动作（等同界面触发 open-diff）。 */
@@ -816,7 +881,7 @@ test("dirty draft target switch requires an explicit three-way choice (v0.0.6)",
   // 留在当前文件：不切换。
   await dialog.getByRole("button", { name: "留在当前文件" }).click();
   await expect(dialog).toHaveCount(0);
-  await expect(page.getByText("编辑模式")).toBeVisible();
+  await expect(page.getByText("正在编辑工作副本")).toBeVisible();
 
   // 再次触发并选择暂存并打开：切换到新文件，草稿保留。
   await dispatchMockAction(page, "open-diff", {
@@ -851,7 +916,9 @@ test("saved working copy becomes clean: no draft notice, no switch dialog (v0.0.
   await page.keyboard.type("// 保存后应变干净");
   await expect(page.getByText(/有未保存的修改/)).toBeVisible();
   await page.keyboard.press("Control+s");
-  await expect(page.getByRole("button", { name: "保存修改" })).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: "保存到工作副本" }),
+  ).toBeDisabled();
   // 保存成功：不再提示未保存草稿。
   await expect(page.getByText(/存在未保存草稿/)).toHaveCount(0);
   await expect(page.getByText(/有未保存的修改/)).toHaveCount(0);
@@ -882,7 +949,9 @@ test("consecutive saves carry the rotated token and hash (v0.0.6 regression)", a
   await page.keyboard.type("// 第一次保存");
   await expect(page.getByText(/有未保存的修改/)).toBeVisible();
   await page.keyboard.press("Control+s");
-  await expect(page.getByRole("button", { name: "保存修改" })).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: "保存到工作副本" }),
+  ).toBeDisabled();
 
   // 第二次真实编辑并保存：mock Host 校验 editToken/expectedContentHash，
   // 携带旧基准会得到 diskChanged 拒绝——这里必须成功。
@@ -892,7 +961,9 @@ test("consecutive saves carry the rotated token and hash (v0.0.6 regression)", a
   await expect(page.getByText(/有未保存的修改/)).toBeVisible();
   await page.keyboard.press("Control+s");
   await expect(page.getByText(/保存被拒绝/)).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "保存修改" })).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: "保存到工作副本" }),
+  ).toBeDisabled();
 });
 
 test("change understanding: local check then receipt-confirmed model analysis (v0.0.12)", async ({
@@ -1005,6 +1076,7 @@ test("conflict intent interpretation: receipt-confirmed six-section output (v0.0
     receiptRegion.getByText("冲突意图解释（conflict-interpret）"),
   ).toBeVisible();
   await receiptRegion.getByRole("button", { name: "开始解释" }).click();
+  await page.getByText("需要帮助（合并建议与解释）").click();
   await expect(page.getByRole("heading", { name: "意图解释" })).toBeVisible();
   await expect(page.getByText("我的修改意图")).toBeVisible();
   await expect(page.getByText("对方修改意图")).toBeVisible();
