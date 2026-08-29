@@ -1,8 +1,9 @@
 {
-  "vsixSha256": "18e5186fdece75b616b9a99d7bcf620fd4dac021e04fadf89ba81d559306844d",
-  "vsixSizeBytes": 8706685,
-  "installedAt": "2026-08-26T10:30:00+08:00",
+  "vsixSha256": "c67fe34f4b39d01d73ed7dd9e3b4a427353d3f0c8a2df0fde14261caaf528098",
+  "vsixSizeBytes": 8697588,
+  "installedAt": "2026-08-29T20:14:00+08:00",
   "vscodeVersion": "1.134.0",
   "platform": "macOS 26.6 arm64",
-  "verified": true
+  "verified": false,
+  "note": "0.1.1 重新打包的发布资产（内部版本 0.1.1）。人工功能验收沿用 2026-08-28 轮截图证据；本文件指纹对应该发布资产，verified 置为 false 表示未对该资产重复人工安装验收。"
 }
