@@ -2331,7 +2331,8 @@ function conflictSnapshot(
     });
     const separators = Array.from(
       { length: conflictBlocksCount - 1 },
-      (_, index) => `\n// ---- separator ${index + 1} unique-${index + 1 * 7} ----\n// filler line distinct ${index + 1}\n`,
+      (_, index) =>
+        `\n// ---- separator ${index + 1} unique-${index + 1 * 7} ----\n// filler line distinct ${index + 1}\n`,
     );
     let combined = "// header-do-not-merge\n";
     for (let i = 0; i < blocks.length; i++) {
