@@ -314,12 +314,45 @@ function preserveFinalNewlineSemantics(
   return replacement;
 }
 
+/** 中文注释：简单单条缓存的解析结果，避免同一文本在单次编辑中被重复解析 100 次（100 块 O(n²) 场景） */
+let cachedParseText: string | undefined;
+let cachedParseResult: ReturnType<typeof parseConflictRegions> | undefined;
+function cachedParseConflictRegions(
+  text: string,
+): ReturnType<typeof parseConflictRegions> {
+  if (cachedParseText === text && cachedParseResult !== undefined) {
+    return cachedParseResult;
+  }
+  const result = parseConflictRegions(text);
+  cachedParseText = text;
+  cachedParseResult = result;
+  return result;
+}
+
 /** 编辑后 tracked 区间漂移重映射：编辑触及区间即标记手工修改；整体覆盖且不再是合法块则失效 */
 function updateTrackedForEdit(
   tracked: TrackedConflictRegion[],
   edit: TextEdit,
 ): TrackedConflictRegion[] {
   const delta = edit.newText.length - (edit.end - edit.start);
+  // 中文注释：对 edit.newText 的解析结果只算一次，消除 100 块时的 100 次重复全量解析
+  let parsedOnce: ReturnType<typeof parseConflictRegions> | undefined;
+  let parsedOnceChecked = false;
+  let parsedOnceIsSingleBlock = false;
+  function isSingleBlock(): boolean {
+    if (!parsedOnceChecked) {
+      parsedOnceChecked = true;
+      parsedOnce = cachedParseConflictRegions(edit.newText);
+      const only =
+        parsedOnce.regions.length === 1 ? parsedOnce.regions[0] : undefined;
+      parsedOnceIsSingleBlock =
+        !parsedOnce.error &&
+        !!only &&
+        only.start === 0 &&
+        only.end === edit.newText.length;
+    }
+    return parsedOnceIsSingleBlock;
+  }
   return tracked.map((entry) => {
     if (edit.end <= entry.start) {
       return { ...entry, start: entry.start + delta, end: entry.end + delta };
@@ -337,14 +370,7 @@ function updateTrackedForEdit(
     };
     if (coversAll && !entry.resolved) {
       /* 整块被替换：替换内容必须仍恰好是一个完整冲突块，否则结构失效 */
-      const parsed = parseConflictRegions(edit.newText);
-      const only = parsed.regions.length === 1 ? parsed.regions[0] : undefined;
-      if (
-        parsed.error ||
-        !only ||
-        only.start !== 0 ||
-        only.end !== edit.newText.length
-      ) {
+      if (!isSingleBlock()) {
         next.invalidated = true;
       }
     }
@@ -358,16 +384,17 @@ function buildRegionsView(
   tracked: TrackedConflictRegion[],
   originalRegions: Record<string, MergeRegionSnapshot>,
 ): MergeDocumentRegion[] {
-  const parsed = parseConflictRegions(draftContents);
+  const parsed = cachedParseConflictRegions(draftContents);
   if (parsed.error) return [];
+  // 中文注释：建 baseIdentity→tracked 的索引，消除 regions.map × tracked.find 的 O(n²)
+  const trackedMap = new Map<string, TrackedConflictRegion>();
+  for (const candidate of tracked) {
+    if (candidate.invalidated || candidate.resolved) continue;
+    const key = `${candidate.start}:${candidate.end}`;
+    if (!trackedMap.has(key)) trackedMap.set(key, candidate);
+  }
   return parsed.regions.map((region) => {
-    const entry = tracked.find(
-      (candidate) =>
-        !candidate.invalidated &&
-        !candidate.resolved &&
-        candidate.start === region.start &&
-        candidate.end === region.end,
-    );
+    const entry = trackedMap.get(`${region.start}:${region.end}`);
     const known = originalRegions[region.identity] !== undefined;
     return {
       ...region,

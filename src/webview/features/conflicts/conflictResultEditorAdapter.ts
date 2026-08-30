@@ -114,6 +114,36 @@ export function toPierreEdits(
   }));
 }
 
+/** 中文注释：计算增量 TextEdit，避免每次输入都全量 0-len 替换（100 块时全量会使 tracked 全部坍缩） */
+export function computeIncrementalEdit(
+  oldText: string,
+  newText: string,
+): V012ATextEdit | undefined {
+  if (oldText === newText) return undefined;
+  let prefix = 0;
+  const minLen = Math.min(oldText.length, newText.length);
+  while (
+    prefix < minLen &&
+    oldText.charCodeAt(prefix) === newText.charCodeAt(prefix)
+  ) {
+    prefix++;
+  }
+  // 完全前缀相等时 suffix 不应越过 prefix
+  let suffix = 0;
+  const maxSuffix = minLen - prefix;
+  while (
+    suffix < maxSuffix &&
+    oldText.charCodeAt(oldText.length - 1 - suffix) ===
+      newText.charCodeAt(newText.length - 1 - suffix)
+  ) {
+    suffix++;
+  }
+  const start = prefix;
+  const end = oldText.length - suffix;
+  const newSlice = newText.slice(start, newText.length - suffix);
+  return { start, end, newText: newSlice };
+}
+
 export function mountConflictResultEditor(
   container: HTMLElement,
   options: ConflictResultEditorMountOptions,
@@ -384,7 +414,7 @@ export function mountConflictResultEditor(
     }
 
     if (!options.readonly) {
-      // Pierre 编辑器 onChange：比对全量文本生成全量 TextEdit 调 applyMergeEdit
+      // Pierre 编辑器 onChange：增量比对生成最小 TextEdit，避免全量替换导致 100 块 tracked 坍缩与重复解析
       const onChange = (): void => {
         if (disposed || !editorInstance) return;
         // 程序化编辑刚触发的 onChange 不应再计为手工修改
@@ -408,7 +438,8 @@ export function mountConflictResultEditor(
         }
         const oldText = curState.draftContents;
         if (newText === oldText) return;
-        const edit: V012ATextEdit = { start: 0, end: oldText.length, newText };
+        const edit = computeIncrementalEdit(oldText, newText);
+        if (!edit) return;
         const result = applyMergeEdit(curState, {
           expectedRevision: curState.draftRevision,
           edit,

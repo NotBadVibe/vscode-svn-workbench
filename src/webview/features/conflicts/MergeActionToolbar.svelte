@@ -85,7 +85,8 @@
       }
     };
     poll();
-    pollTimer = setInterval(poll, 120);
+    // 中文注释：适度降低轮询频率，减少 100 块时的渲染压力（原 120ms）
+    pollTimer = setInterval(poll, 180);
     return () => {
       if (pollTimer) clearInterval(pollTimer);
     };
@@ -208,6 +209,28 @@
     return "";
   });
 
+  // 中文注释：预览缓存，避免每次渲染重复 joinBoth/countLines（100 块时每次轮询都会重算）
+  let previewCache = $derived.by(() => {
+    const st = mergeState;
+    const region = currentRegion;
+    if (!st || !region) return null;
+    // 依赖 revision 与 region 关键字段， revision 不变时不重算
+    void st.draftRevision;
+    void region.start;
+    void region.end;
+    void region.mine;
+    void region.theirs;
+    void st.draftContents.length;
+    return {
+      mine: previewFor("take-mine"),
+      theirs: previewFor("take-theirs"),
+      bothMineFirst: previewFor("take-both", "mine-first"),
+      bothTheirsFirst: previewFor("take-both", "theirs-first"),
+      restore: previewFor("restore-original"),
+      del: previewFor("delete"),
+    };
+  });
+
   // V012-E：实时刷新 canUndo/canRedo（轮询，避免 derived 仅依赖引用）
   let canUndoState = $state(false);
   let canRedoState = $state(false);
@@ -225,7 +248,8 @@
       }
     };
     tick();
-    const timer = setInterval(tick, 150);
+    // 中文注释：降低 canUndo 轮询频率，减少 100 块时的无效渲染
+    const timer = setInterval(tick, 220);
     return () => clearInterval(timer);
   });
   let canUndo = $derived(canUndoState);
@@ -592,7 +616,7 @@
         title="采用我的修改"
       >
         采用我的修改 <small data-testid="preview-take-mine"
-          >{previewFor("take-mine").label}</small
+          >{(previewCache?.mine ?? previewFor("take-mine")).label}</small
         >
       </button>
       <button
@@ -603,7 +627,7 @@
         title="采用对方修改"
       >
         采用对方修改 <small data-testid="preview-take-theirs"
-          >{previewFor("take-theirs").label}</small
+          >{(previewCache?.theirs ?? previewFor("take-theirs")).label}</small
         >
       </button>
       <button
@@ -614,7 +638,9 @@
         title="保留双方·先我的后对方"
       >
         保留双方·先我后他 <small data-testid="preview-both-mine-first"
-          >{previewFor("take-both", "mine-first").label}</small
+          >{(
+            previewCache?.bothMineFirst ?? previewFor("take-both", "mine-first")
+          ).label}</small
         >
       </button>
       <button
@@ -625,7 +651,10 @@
         title="保留双方·先对方后我的"
       >
         保留双方·先他后我 <small data-testid="preview-both-theirs-first"
-          >{previewFor("take-both", "theirs-first").label}</small
+          >{(
+            previewCache?.bothTheirsFirst ??
+            previewFor("take-both", "theirs-first")
+          ).label}</small
         >
       </button>
       <button
@@ -636,7 +665,8 @@
         title="恢复当前块到打开时状态"
       >
         恢复块 <small data-testid="preview-restore"
-          >{previewFor("restore-original").label}</small
+          >{(previewCache?.restore ?? previewFor("restore-original"))
+            .label}</small
         >
       </button>
       <div class="toolbar-more" data-testid="more-menu-host">
@@ -661,11 +691,11 @@
               title="删除当前块双方内容"
             >
               删除当前块双方内容 <small data-testid="preview-delete"
-                >{previewFor("delete").label}</small
+                >{(previewCache?.del ?? previewFor("delete")).label}</small
               >
             </button>
             <div class="toolbar-more-hint muted" role="note">
-              将删除 {previewFor("delete").deleted} 行，非默认动作
+              将删除 {(previewCache?.del ?? previewFor("delete")).deleted} 行，非默认动作
             </div>
           </div>
         {/if}

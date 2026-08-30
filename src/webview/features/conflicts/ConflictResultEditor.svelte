@@ -9,6 +9,7 @@
     TextEdit,
   } from "../../../conflict/mergeDocumentModel";
   import {
+    computeIncrementalEdit,
     mountConflictResultEditor,
     type ConflictResultEditorMountHandle,
   } from "./conflictResultEditorAdapter";
@@ -116,12 +117,14 @@
         untrack(() => {
           if (mergeState) {
             const cur = mergeState!;
-            // 手工编辑需同步 tracked/regions，否则工具栏的手工拦截不生效
-            const edit: TextEdit = {
-              start: 0,
-              end: cur.draftContents.length,
-              newText: text,
-            };
+            // 中文注释：增量编辑，避免全量替换导致 100 块 tracked 坍缩与重复全量解析
+            const edit =
+              computeIncrementalEdit(cur.draftContents, text) ??
+              ({
+                start: 0,
+                end: cur.draftContents.length,
+                newText: text,
+              } as TextEdit);
             const res = applyMergeEdit(cur, {
               expectedRevision: cur.draftRevision,
               edit,
