@@ -19,6 +19,7 @@ import {
   type MergeDocumentState,
   type TextEdit as V012ATextEdit,
 } from "../../../conflict/mergeDocumentModel";
+import { CONFLICT_EDITOR_FIND_KEYMAP } from "./conflictShortcuts";
 
 /** Pierre TextEdit 行列形态（0 基 UTF-16） */
 interface PierreTextEdit {
@@ -406,12 +407,30 @@ export function mountConflictResultEditor(
         scheduleDraftChange(newText, result.state.draftRevision);
       };
 
-      const editor = new (
-        Editor as unknown as new (o: unknown) => InstanceType<typeof Editor>
-      )({
-        onChange,
-      } as unknown as never);
-      editorInstance = editor;
+      // V012-E：查找经 keymap 绑定 openSearchPanel 间接启用（无程序化 API），仅交付查找，替换延期
+      let editor: InstanceType<typeof Editor> | undefined;
+      try {
+        editor = new (
+          Editor as unknown as new (o: unknown) => InstanceType<typeof Editor>
+        )({
+          onChange,
+          keymap: CONFLICT_EDITOR_FIND_KEYMAP,
+        } as unknown as never);
+      } catch {
+        // 查找 keymap 绑定失败优雅降级（不报错炸页面）
+        try {
+          editor = new (
+            Editor as unknown as new (o: unknown) => InstanceType<typeof Editor>
+          )({
+            onChange,
+          } as unknown as never);
+        } catch {
+          throw new DiffStageError("editor-attach", "编辑器附加失败", {
+            cause: new Error("Editor init failed"),
+          });
+        }
+      }
+      editorInstance = editor as InstanceType<typeof Editor>;
       // attach 可能抛错，单独 try
       try {
         const d = (editor as unknown as { edit: (f: unknown) => unknown }).edit(

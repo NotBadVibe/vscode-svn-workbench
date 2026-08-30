@@ -7,6 +7,12 @@
     type MergeDocumentState,
   } from "../../../conflict/mergeDocumentModel";
   import { hashText } from "../../../conflict/conflictDiffModel";
+  import {
+    CONFLICT_SHORTCUTS,
+    CONFLICT_SHORTCUT_LIST,
+    REPLACE_DEFERRED_NOTE,
+    isImeComposingEvent,
+  } from "./conflictShortcuts";
 
   /**
    * V012-C 可撤销取舍工具栏（当前块作用域）。
@@ -14,6 +20,7 @@
    *          / restore-original / delete（空替换）。
    * 全部经 verifyExpectedContent 复核后通过 ConflictResultEditor.applyRegionEdit 进同一 undo 栈。
    * 中文文案、行数预览、aria-live 播报、禁用态、X/Y、IME 保护。
+   * V012-E：快捷键单一来源（CONFLICT_SHORTCUTS）、实时 canUndo/canRedo、查找经 keymap、IME 全局守卫。
    */
 
   let {
@@ -201,20 +208,29 @@
     return "";
   });
 
-  let canUndo = $derived.by(() => {
-    try {
-      return resultEditor?.canUndo?.() ?? false;
-    } catch {
-      return false;
-    }
+  // V012-E：实时刷新 canUndo/canRedo（轮询，避免 derived 仅依赖引用）
+  let canUndoState = $state(false);
+  let canRedoState = $state(false);
+  $effect(() => {
+    const tick = () => {
+      try {
+        canUndoState = resultEditor?.canUndo?.() ?? false;
+      } catch {
+        canUndoState = false;
+      }
+      try {
+        canRedoState = resultEditor?.canRedo?.() ?? false;
+      } catch {
+        canRedoState = false;
+      }
+    };
+    tick();
+    const timer = setInterval(tick, 150);
+    return () => clearInterval(timer);
   });
-  let canRedo = $derived.by(() => {
-    try {
-      return resultEditor?.canRedo?.() ?? false;
-    } catch {
-      return false;
-    }
-  });
+  let canUndo = $derived(canUndoState);
+  let canRedo = $derived(canRedoState);
+  let showShortcutHelp = $state(false);
 
   async function runAction(
     action: "take-mine" | "take-theirs" | "take-both" | "restore-original",
@@ -483,7 +499,27 @@
   }
 
   function onKeydown(e: KeyboardEvent): void {
-    if (resultEditor.isComposing()) return;
+    // V012-E：IME 期间所有快捷键不触发
+    if (isImeComposingEvent(e) || resultEditor.isComposing()) return;
+    // ? 帮助（单一来源）
+    if (e.key === "?" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      e.preventDefault();
+      showShortcutHelp = !showShortcutHelp;
+      return;
+    }
+    // Alt+↑/↓ 块导航（与 Diff 一致，沿用现有行为确认可用）
+    if (e.altKey && !e.ctrlKey && !e.metaKey) {
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setCurrent(Math.max(0, currentIndex - 1));
+        return;
+      }
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setCurrent(Math.min(total - 1, currentIndex + 1));
+        return;
+      }
+    }
     const isMod = e.ctrlKey || e.metaKey;
     if (!isMod) return;
     if (e.key.toLowerCase() === "z" && !e.shiftKey) {
@@ -522,7 +558,7 @@
         data-testid="toolbar-prev-block"
         disabled={total <= 1 || isBusy}
         onclick={() => setCurrent(Math.max(0, currentIndex - 1))}
-        >上一个块</button
+        title={CONFLICT_SHORTCUTS.prevBlock.title}>上一个块</button
       >
       <button
         class="button button--secondary"
@@ -530,8 +566,17 @@
         data-testid="toolbar-next-block"
         disabled={total <= 1 || isBusy}
         onclick={() => setCurrent(Math.min(total - 1, currentIndex + 1))}
-        >下一个块</button
+        title={CONFLICT_SHORTCUTS.nextBlock.title}>下一个块</button
       >
+      <button
+        class="button button--secondary"
+        data-testid="toolbar-shortcut-help"
+        aria-label="快捷键帮助"
+        title={CONFLICT_SHORTCUTS.help.title}
+        onclick={() => (showShortcutHelp = !showShortcutHelp)}
+      >
+        ?
+      </button>
     </div>
   </div>
 
@@ -635,7 +680,7 @@
       aria-label="撤销"
       disabled={!canUndo || isBusy}
       onclick={handleUndo}
-      title="撤销（Ctrl/Cmd+Z）"
+      title={CONFLICT_SHORTCUTS.undo.title}
     >
       撤销
     </button>
@@ -645,11 +690,39 @@
       aria-label="重做"
       disabled={!canRedo || isBusy}
       onclick={handleRedo}
-      title="重做（Ctrl/Cmd+Shift+Z）"
+      title={CONFLICT_SHORTCUTS.redo.title}
     >
       重做
     </button>
   </div>
+
+  {#if showShortcutHelp}
+    <div
+      class="toolbar-shortcut-help"
+      role="region"
+      aria-label="快捷键帮助"
+      data-testid="shortcut-help"
+    >
+      <strong>快捷键</strong>
+      <ul>
+        {#each CONFLICT_SHORTCUT_LIST as sc (sc.id)}
+          <li>
+            <span>{sc.label}</span><code>{sc.display}</code><small
+              >{sc.title}</small
+            >
+          </li>
+        {/each}
+      </ul>
+      <small class="muted" data-testid="replace-deferred-note"
+        >{REPLACE_DEFERRED_NOTE}</small
+      >
+      <button
+        class="button button--secondary"
+        data-testid="shortcut-help-close"
+        onclick={() => (showShortcutHelp = false)}>关闭</button
+      >
+    </div>
+  {/if}
 
   {#if errorTip}
     <div

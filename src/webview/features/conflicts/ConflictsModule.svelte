@@ -17,6 +17,12 @@
     type ConflictFileIdentity,
     type ContentHash,
   } from "../../../conflict/conflictDiffModel";
+  import {
+    CONFLICT_SHORTCUTS,
+    CONFLICT_SHORTCUT_LIST,
+    REPLACE_DEFERRED_NOTE,
+    isImeComposingEvent,
+  } from "./conflictShortcuts";
 
   import ConflictDiffView from "./ConflictDiffView.svelte";
   import ConflictResultEditor from "./ConflictResultEditor.svelte";
@@ -674,6 +680,42 @@
     diffProgress = { ...diffProgress, current: next };
   }
 
+  // V012-E：快捷键全局守卫（中文 IME 期间不触发，单一来源）
+  function handleModuleKeydown(e: KeyboardEvent): void {
+    if (
+      isImeComposingEvent(e) ||
+      isComposing ||
+      (resultEditor?.isComposing?.() ?? false)
+    )
+      return;
+    const isMod = e.ctrlKey || e.metaKey;
+    // Ctrl/Cmd+S 保存检查点（不写入工作副本）
+    if (isMod && e.key.toLowerCase() === "s") {
+      e.preventDefault();
+      flushCheckpoint();
+      return;
+    }
+    // ? 快捷键帮助（单一来源，按钮与面板共用）
+    if (!isMod && !e.altKey && e.key === "?") {
+      e.preventDefault();
+      helpDetailsOpen = !helpDetailsOpen;
+      return;
+    }
+    // Alt+↑/↓ 块导航（与 Diff 一致）
+    if (e.altKey && !isMod) {
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        focusBlock(-1);
+        return;
+      }
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        focusBlock(1);
+        return;
+      }
+    }
+  }
+
   $effect(() => {
     const tp = snapshot.selected?.relativePath;
     const tk = snapshot.selected?.mergeEditor.token;
@@ -686,7 +728,12 @@
   });
 </script>
 
-<section class="conflict-layout">
+<section
+  class="conflict-layout"
+  role="region"
+  aria-label="冲突处理"
+  onkeydown={handleModuleKeydown}
+>
   <aside class="conflict-list-pane">
     <div class="feature-toolbar feature-toolbar--compact">
       <div>
@@ -1017,12 +1064,14 @@
             <button
               class="button button--secondary"
               aria-label="上一个冲突块"
+              title={CONFLICT_SHORTCUTS.prevBlock.title}
               onclick={() => focusBlock(-1)}
               disabled={!diffProgress.total}>上一个块</button
             >
             <button
               class="button button--secondary"
               aria-label="下一个冲突块"
+              title={CONFLICT_SHORTCUTS.nextBlock.title}
               onclick={() => focusBlock(1)}
               disabled={!diffProgress.total}>下一个块</button
             >
@@ -1343,8 +1392,7 @@
             onclick={flushCheckpoint}
             onkeydown={(e) =>
               isComposing && e.key === "Enter" && e.preventDefault()}
-            title="立即保存检查点到 Host 内存（不写工作副本，不标记解决）"
-            >保存检查点</button
+            title={CONFLICT_SHORTCUTS.saveCheckpoint.title}>保存检查点</button
           ><button
             class="button button--secondary"
             data-testid="copy-draft"
@@ -1613,6 +1661,31 @@
                   })}>生成解决预览</button
               >
             {/if}
+          </section>
+          <!-- V012-E：快捷键帮助（单一来源，按钮 title 与本面板共用；? 切换） -->
+          <section
+            class="conflict-shortcut-help"
+            aria-label="快捷键帮助"
+            data-testid="conflict-shortcut-help"
+            title={CONFLICT_SHORTCUTS.help.title}
+          >
+            <h3>快捷键（{CONFLICT_SHORTCUTS.help.display} 打开/关闭）</h3>
+            <ul>
+              {#each CONFLICT_SHORTCUT_LIST as sc (sc.id)}
+                <li data-testid={`shortcut-${sc.id}`}>
+                  <span>{sc.label}</span><code>{sc.display}</code><small
+                    >{sc.title}</small
+                  >
+                </li>
+              {/each}
+            </ul>
+            <small class="muted" data-testid="replace-deferred-note"
+              >{REPLACE_DEFERRED_NOTE}</small
+            >
+            <small class="muted"
+              >查找面板的英文 placeholder 为第三方库内部
+              UI，属已知限制；关闭查找后焦点返回编辑位置。</small
+            >
           </section>
         </details>
       </div>
