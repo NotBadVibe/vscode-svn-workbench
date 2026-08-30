@@ -358,12 +358,12 @@
     },
     {
       "version": "0.1.2",
-      "status": "draft",
-      "phase": "planned",
+      "status": "released",
+      "phase": "released",
       "baseVersion": "0.1.1",
       "canonicalEntry": "releases/v0.1.2/README.md",
       "manifest": "releases/v0.1.2/manifest.json",
-      "releasedFact": false,
+      "releasedFact": true,
       "topics": ["conflict-editing", "undo-redo", "draft-recovery"]
     },
     {

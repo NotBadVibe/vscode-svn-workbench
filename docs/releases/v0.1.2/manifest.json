@@ -1,15 +1,31 @@
 {
   "schemaVersion": 1,
   "version": "0.1.2",
-  "status": "draft",
+  "status": "released",
   "baseVersion": "0.1.1",
-  "releaseDate": null,
-  "gitTag": null,
-  "gitCommit": null,
-  "sourceState": "unbound",
-  "vsix": null,
-  "tests": {},
-  "acceptedEvidenceRun": null,
-  "evidencePath": null,
-  "evidenceTreeSha256": null
+  "releaseDate": "2026-08-30",
+  "gitTag": "v0.1.2",
+  "gitCommit": "139679d0f63860ac2aa2250e8ab7b92bb33d4e7d",
+  "sourceState": "clean",
+  "vsix": {
+    "fileName": "svn-workbench-0.1.2.vsix",
+    "sizeBytes": 8718568,
+    "sha256": "155841534136F8B907E5358A728726E951D149417631BB09B942D569B89E2800"
+  },
+  "tests": {
+    "unit": 1449,
+    "lineCoverage": "91.53%",
+    "webview": 100,
+    "extensionHost": "passed",
+    "performance": "passed",
+    "toolchain": {
+      "node": "26.7.0",
+      "npm": "12.0.2",
+      "vscode": "1.134.0",
+      "platform": "macOS 26.6 arm64"
+    }
+  },
+  "acceptedEvidenceRun": "2026-08-30T11-41-34-411Z-61f28611",
+  "evidencePath": "artifacts/2026-08-30T11-41-34-411Z-61f28611",
+  "evidenceTreeSha256": "FAB2A18D937B613B2C648526EDBAE75A7A61A81338DF9DDAF646A5397DDDE2FD"
 }
