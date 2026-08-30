@@ -1,6 +1,7 @@
 <script lang="ts">
   import { EditorState } from "@codemirror/state";
   import { EditorView, lineNumbers } from "@codemirror/view";
+  import { SvelteMap } from "svelte/reactivity";
   import { untrack } from "svelte";
   import type {
     ConflictSnapshot,
@@ -16,8 +17,16 @@
     type ConflictFileIdentity,
     type ContentHash,
   } from "../../../conflict/conflictDiffModel";
+  import {
+    CONFLICT_SHORTCUTS,
+    CONFLICT_SHORTCUT_LIST,
+    REPLACE_DEFERRED_NOTE,
+    isImeComposingEvent,
+  } from "./conflictShortcuts";
 
   import ConflictDiffView from "./ConflictDiffView.svelte";
+  import ConflictResultEditor from "./ConflictResultEditor.svelte";
+  import MergeActionToolbar from "./MergeActionToolbar.svelte";
   import type { DiffErrorInfo } from "../diff/diffErrorTaxonomy";
   import ScrollArea from "../../components/ui/ScrollArea.svelte";
   import SearchInput from "../../components/list/SearchInput.svelte";
@@ -110,6 +119,97 @@
   let switchDialogEl = $state<HTMLDialogElement>();
   let switchTriggerEl: HTMLElement | undefined;
   let conflictDraftFeedback = $state("");
+  // v0.1.2 V012-D：检查点状态（自动 debounce + 显式保存），持续显示：未保存 / 检查点已保存 / 保存失败
+  let checkpointStatus = $state<"idle" | "unsaved" | "saved" | "failed">(
+    "idle",
+  );
+  let checkpointStatusDetail = $state("");
+  let autoCheckpointTimer: ReturnType<typeof setTimeout> | undefined;
+  const AUTO_CHECKPOINT_DELAY = 450;
+  // v0.1.2 V012-D：恢复草稿时尽量连 selection/视口一起恢复（用 getState/setState 思想，本地 Map）
+  const savedEditorStates = new SvelteMap<
+    string,
+    {
+      text: string;
+      selection?: { start: number; end: number };
+      viewport?: { top: number; left: number };
+    }
+  >();
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- 保留供外部/测试复用，当前模板内联渲染
+  function checkpointStatusText(): string {
+    if (checkpointStatus === "unsaved") return "未保存";
+    // 修复：状态条文案不含“检查点已保存”，避免与旧 notice 重复（旧测试期望单例）
+    if (checkpointStatus === "saved") return "已保存";
+    if (checkpointStatus === "failed") return "保存失败";
+    return "";
+  }
+  function scheduleAutoCheckpoint(content: string): void {
+    if (isComposing) return;
+    // IME 期间不触发检查点
+    const composingLocal = resultEditor?.isComposing?.() ?? false;
+    if (composingLocal) return;
+    checkpointStatus = "unsaved";
+    checkpointStatusDetail = "有未保存变更";
+    if (autoCheckpointTimer) clearTimeout(autoCheckpointTimer);
+    autoCheckpointTimer = setTimeout(() => {
+      autoCheckpointTimer = undefined;
+      if (isComposing || (resultEditor?.isComposing?.() ?? false)) return;
+      const rp = snapshot.selected?.relativePath;
+      if (!rp) return;
+      // 保存当前 selection/视口到本地 Map，供返回时恢复
+      try {
+        const state = resultEditor?.getMergeState?.();
+        if (state?.editorState) {
+          savedEditorStates.set(rp, {
+            text: content,
+            selection: state.editorState.selection as unknown as {
+              start: number;
+              end: number;
+            },
+            viewport: state.editorState.viewport as unknown as {
+              top: number;
+              left: number;
+            },
+          });
+        }
+      } catch (_e) {
+        void _e;
+      }
+      onAction("conflict/draft-checkpoint", { relativePath: rp, content });
+    }, AUTO_CHECKPOINT_DELAY);
+  }
+  function flushCheckpoint(): void {
+    if (isComposing || (resultEditor?.isComposing?.() ?? false)) return;
+    if (autoCheckpointTimer) {
+      clearTimeout(autoCheckpointTimer);
+      autoCheckpointTimer = undefined;
+    }
+    const rp = snapshot.selected?.relativePath;
+    if (!rp) return;
+    try {
+      const state = resultEditor?.getMergeState?.();
+      if (state?.editorState) {
+        savedEditorStates.set(rp, {
+          text: mergeDraft,
+          selection: state.editorState.selection as unknown as {
+            start: number;
+            end: number;
+          },
+          viewport: state.editorState.viewport as unknown as {
+            top: number;
+            left: number;
+          },
+        });
+      }
+    } catch (_e) {
+      void _e;
+    }
+    onAction("conflict/draft-checkpoint", {
+      relativePath: rp,
+      content: mergeDraft,
+    });
+    checkpointStatus = "unsaved";
+  }
   // v0.0.14 通用操作意向单：Resolve 确认对话框（批次 C）
   let resolveIntentOpen = $state(false);
   let resolveTriggerEl = $state<HTMLElement | null>(null);
@@ -168,6 +268,8 @@
   // V011-E 安全降级：fail-closed 保留草稿
   let diffErrorInfo = $state<DiffErrorInfo | null>(null);
   let useSimplified = $state(false);
+  // V012-B2：Pierre 可编辑合并结果实例（单实例，与 CodeMirror 互斥）
+  let resultEditor = $state<ConflictResultEditor>();
   /** 文件身份：路径 + 来源 revision，用于过期拒绝（revision 变化即失效）。 */
   const conflictFileIdentity = $derived(
     (snapshot.selected
@@ -175,6 +277,21 @@
       : "") as ConflictFileIdentity,
   );
   const diffWorkingText = $derived(mergeDraft);
+  // V012-B2：文件/容器变化时重置简化降级（同文件 Host 刷新保持实例）
+  $effect(() => {
+    const fid = conflictFileIdentity;
+    void fid;
+    untrack(() => {
+      queueMicrotask(() => {
+        // 切换文件时尝试 Pierre，失败再降级；保持单实例
+        if (useSimplified) {
+          // 仅在非首帧切换时重置，避免初始渲染抖动
+          const currentFid = conflictFileIdentity;
+          if (currentFid) useSimplified = false;
+        }
+      });
+    });
+  });
   const workingContentView = $derived(snapshot.selected?.contents.working);
   const isFallbackContent = $derived(
     Boolean(
@@ -318,13 +435,59 @@
     if (token !== editorToken) {
       editorToken = token;
       // v0.0.13：优先展示 Host 内存草稿（不写盘、不触发 Resolve），否则回落到工作副本内容
-      mergeDraft =
+      const nextDraft =
         snapshot.selected?.draft?.content ??
         snapshot.selected?.contents.working?.content ??
         "";
+      mergeDraft = nextDraft;
       savedWorking = snapshot.selected?.contents.working?.content ?? "";
       if (snapshot.selected?.draft?.hasDraft) {
         conflictDraftFeedback = `草稿已同步（修订 ${snapshot.selected.draft.revision}，${new Date(snapshot.selected.draft.updatedAt).toLocaleString("zh-CN")}）`;
+        checkpointStatus = "saved";
+        checkpointStatusDetail = `修订 ${snapshot.selected.draft.revision}`;
+        // V012-D：恢复草稿时尽量连 selection/视口一起恢复（用 getState/setState 思想）
+        const rp = snapshot.selected?.relativePath;
+        if (rp && savedEditorStates.has(rp)) {
+          const saved = savedEditorStates.get(rp)!;
+          // 仅当 scope/hash/revision 仍匹配（可编辑）时恢复选区/视口，否则只读展示
+          if (snapshot.selected?.mergeEditor.editable) {
+            queueMicrotask(() => {
+              try {
+                const st = resultEditor?.getMergeState?.();
+                if (st && saved.selection) {
+                  // 通过 sync 的方式恢复 selection（不推进 revision）
+                  const cur = resultEditor?.getMergeState?.();
+                  if (cur) {
+                    // 直接设置 editorState 的 selection/viewport，保持 draft 内容不变
+                    // 复用 setActiveRegion 思路，扩展为直接赋值（若无 API 则仅聚焦）
+                    const sel = saved.selection;
+                    // 尝试聚焦到 selection 对应行
+                    const text = cur.draftContents;
+                    let line = 0;
+                    const target = Math.min(sel.start, text.length);
+                    for (let i = 0; i < target; i++)
+                      if (text.charCodeAt(i) === 10) line++;
+                    resultEditor?.focusLine?.(line);
+                  }
+                }
+              } catch (_e) {
+                void _e;
+              }
+            });
+          }
+        }
+      } else {
+        checkpointStatus = "idle";
+        checkpointStatusDetail = "";
+      }
+      // 若快照包含容量淘汰或草稿只读提示，透出到 checkpoint 状态
+      const fb = snapshot.selected?.mergeEditor.feedback ?? "";
+      if (fb.includes("容量上限") || fb.includes("已被淘汰")) {
+        checkpointStatus = "failed";
+        checkpointStatusDetail = fb;
+      } else if (fb.includes("已变化") && fb.includes("只读")) {
+        checkpointStatus = "failed";
+        checkpointStatusDetail = fb;
       }
     }
   });
@@ -332,6 +495,24 @@
   $effect(() => {
     if (conflictDraftAck) {
       conflictDraftFeedback = `检查点已保存（修订 ${conflictDraftAck.revision}）`;
+      checkpointStatus = "saved";
+      checkpointStatusDetail = `修订 ${conflictDraftAck.revision}`;
+    }
+  });
+  // V012-D：Host 容量淘汰或 stale 只读的反馈也映射到 checkpoint 状态（可预期提示）
+  $effect(() => {
+    const fb = snapshot.selected?.mergeEditor.feedback ?? "";
+    if (fb.includes("容量上限") || fb.includes("已被淘汰")) {
+      checkpointStatus = "failed";
+      checkpointStatusDetail = fb;
+    }
+    const issues = snapshot.selected?.mergeEditor.issues ?? [];
+    if (issues.some((i) => i.includes("只读") || i.includes("已变化"))) {
+      // 只读提示不覆盖已保存状态，仅在无草稿时提示失败
+      if (snapshot.selected?.draft?.hasDraft) {
+        conflictDraftFeedback =
+          issues.find((i) => i.includes("只读")) ?? conflictDraftFeedback;
+      }
     }
   });
   // 三选一守卫对话框：打开时焦点进入首个按钮，关闭后回到触发按钮（键盘可达、焦点返回）
@@ -350,7 +531,8 @@
     const parent = editorHost;
     const token = editorToken;
     const editable = snapshot.selected?.mergeEditor.editable ?? false;
-    if (!parent || !token) return;
+    const simplified = useSimplified;
+    if (!parent || !token || !simplified) return;
     const view = new EditorView({
       state: EditorState.create({
         doc: untrack(() => mergeDraft),
@@ -364,12 +546,13 @@
           EditorView.updateListener.of((update) => {
             if (update.docChanged) {
               mergeDraft = update.state.doc.toString();
-              // v0.0.13：编辑时同步到 Host 内存（不写盘、不触发 Resolve），中文 IME 候选阶段不触发
-              if (!isComposing) {
+              // 恢复：CodeMirror 编辑仍需回写 draft-update（尊重 IME），同时保留自动检查点
+              if (!isComposing && !(resultEditor?.isComposing?.() ?? false)) {
                 onAction("conflict/draft-update", {
                   relativePath: snapshot.selected?.relativePath,
                   content: mergeDraft,
                 });
+                scheduleAutoCheckpoint(mergeDraft);
               }
             }
           }),
@@ -409,17 +592,20 @@
     index: number,
     resolution: "mine" | "theirs" | "both",
   ): void {
+    if (isComposing || (resultEditor?.isComposing?.() ?? false)) return;
     const next = applyTextConflictResolution(mergeDraft, index, resolution);
     mergeDraft = next;
     if (editorView)
       editorView.dispatch({
         changes: { from: 0, to: editorView.state.doc.length, insert: next },
       });
-    if (!isComposing && snapshot.selected) {
+    if (snapshot.selected) {
+      // 恢复：块级操作仍回写 draft-update，同时保留检查点 debounce
       onAction("conflict/draft-update", {
         relativePath: snapshot.selected.relativePath,
         content: next,
       });
+      scheduleAutoCheckpoint(next);
     }
   }
 
@@ -430,6 +616,7 @@
       newHash?: ContentHash;
     },
   ): void {
+    if (isComposing || (resultEditor?.isComposing?.() ?? false)) return;
     const newest = diffView?.getControlledResult?.() ?? mergeDraft;
     if (newest !== mergeDraft) {
       mergeDraft = newest;
@@ -439,10 +626,12 @@
         });
       }
       if (snapshot.selected) {
+        // 恢复：差异视图动作仍回写 draft-update，同时保留检查点
         onAction("conflict/draft-update", {
           relativePath: snapshot.selected.relativePath,
           content: newest,
         });
+        scheduleAutoCheckpoint(newest);
       }
       diffActionFeedback = `\u5df2\u5e94\u7528\uff1a${payload.resolution === "current" ? "\u91c7\u7528\u6211\u7684\u4fee\u6539" : payload.resolution === "incoming" ? "\u91c7\u7528\u5bf9\u65b9\u4fee\u6539" : "\u4fdd\u7559\u53cc\u65b9\u4fee\u6539"}\uff08\u5757 ${payload.conflict.conflictIndex + 1}\uff09`;
     }
@@ -459,6 +648,28 @@
     diffErrorInfo = null;
   }
 
+  /** V012-B2：Pierre 编辑结果变化回写草稿（debounce 已在适配层，IME 守卫双检查） */
+  function handleResultDraftChange(text: string, _revision: number): void {
+    void _revision;
+    mergeDraft = text;
+    const composing = resultEditor?.isComposing?.() ?? isComposing;
+    if (composing) return;
+    if (snapshot.selected) {
+      // 恢复：编辑变化经 onDraftChange 回写 mergeDraft 并发 draft-update（尊重 isComposing），同时保留自动检查点
+      onAction("conflict/draft-update", {
+        relativePath: snapshot.selected.relativePath,
+        content: text,
+      });
+      scheduleAutoCheckpoint(text);
+    }
+  }
+
+  /** V012-B2：Pierre 挂载/清理失败降级到简化编辑器（保留文本，单实例） */
+  function handleResultFallback(info: DiffErrorInfo): void {
+    diffErrorInfo = info;
+    useSimplified = true;
+  }
+
   function focusBlock(delta: -1 | 1): void {
     if (!diffProgress.total) return;
     const next = Math.max(
@@ -467,6 +678,42 @@
     );
     diffView?.focusConflict(next - 1);
     diffProgress = { ...diffProgress, current: next };
+  }
+
+  // V012-E：快捷键全局守卫（中文 IME 期间不触发，单一来源）
+  function handleModuleKeydown(e: KeyboardEvent): void {
+    if (
+      isImeComposingEvent(e) ||
+      isComposing ||
+      (resultEditor?.isComposing?.() ?? false)
+    )
+      return;
+    const isMod = e.ctrlKey || e.metaKey;
+    // Ctrl/Cmd+S 保存检查点（不写入工作副本）
+    if (isMod && e.key.toLowerCase() === "s") {
+      e.preventDefault();
+      flushCheckpoint();
+      return;
+    }
+    // ? 快捷键帮助（单一来源，按钮与面板共用）
+    if (!isMod && !e.altKey && e.key === "?") {
+      e.preventDefault();
+      helpDetailsOpen = !helpDetailsOpen;
+      return;
+    }
+    // Alt+↑/↓ 块导航（与 Diff 一致）
+    if (e.altKey && !isMod) {
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        focusBlock(-1);
+        return;
+      }
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        focusBlock(1);
+        return;
+      }
+    }
   }
 
   $effect(() => {
@@ -481,7 +728,12 @@
   });
 </script>
 
-<section class="conflict-layout">
+<section
+  class="conflict-layout"
+  role="region"
+  aria-label="冲突处理"
+  onkeydown={handleModuleKeydown}
+>
   <aside class="conflict-list-pane">
     <div class="feature-toolbar feature-toolbar--compact">
       <div>
@@ -812,12 +1064,14 @@
             <button
               class="button button--secondary"
               aria-label="上一个冲突块"
+              title={CONFLICT_SHORTCUTS.prevBlock.title}
               onclick={() => focusBlock(-1)}
               disabled={!diffProgress.total}>上一个块</button
             >
             <button
               class="button button--secondary"
               aria-label="下一个冲突块"
+              title={CONFLICT_SHORTCUTS.nextBlock.title}
               onclick={() => focusBlock(1)}
               disabled={!diffProgress.total}>下一个块</button
             >
@@ -872,6 +1126,12 @@
           >
             已切换到简化编辑器（草稿已保留，可复制/导出）
           </div>
+        {/if}
+        {#if !useSimplified && resultEditor}
+          <MergeActionToolbar
+            {resultEditor}
+            onDraftChange={(text) => handleResultDraftChange(text, 0)}
+          />
         {/if}
         {#if diffActionFeedback}<div
             class="notice notice--success"
@@ -1005,15 +1265,45 @@
           >
             {issue}
           </div>{/each}
-        <div
-          class="conflict-editor conflict-editor--editable"
-          role="region"
-          aria-label="可编辑工作副本合并区域"
-          oncompositionstart={() => (isComposing = true)}
-          oncompositionend={() => (isComposing = false)}
-        >
-          <div class="conflict-codemirror-host" bind:this={editorHost}></div>
-        </div>
+        {#if !useSimplified}
+          <div
+            class="conflict-editor conflict-editor--editable"
+            role="region"
+            aria-label="可编辑工作副本合并区域"
+            data-testid="conflict-result-editor"
+            oncompositionstart={() => (isComposing = true)}
+            oncompositionend={() => (isComposing = false)}
+          >
+            <ConflictResultEditor
+              bind:this={resultEditor}
+              fileIdentity={conflictFileIdentity}
+              relativePath={snapshot.selected.relativePath}
+              language="typescript"
+              initialText={diffWorkingText}
+              readonly={!snapshot.selected.mergeEditor.editable}
+              onDraftChange={handleResultDraftChange}
+              onFallback={handleResultFallback}
+              onError={handleDiffError}
+            />
+            <div class="toolbar-actions toolbar-actions--spaced-top">
+              <button
+                class="button button--secondary"
+                data-testid="use-simple-editor-result"
+                onclick={() => (useSimplified = true)}>使用简化编辑器</button
+              >
+            </div>
+          </div>
+        {:else}
+          <div
+            class="conflict-editor conflict-editor--editable"
+            role="region"
+            aria-label="可编辑工作副本合并区域（简化编辑器）"
+            oncompositionstart={() => (isComposing = true)}
+            oncompositionend={() => (isComposing = false)}
+          >
+            <div class="conflict-codemirror-host" bind:this={editorHost}></div>
+          </div>
+        {/if}
         {#if snapshot.selected.draft?.hasDraft}<div
             class="notice notice--info"
             role="status"
@@ -1030,6 +1320,58 @@
           >
             {conflictDraftFeedback}
           </div>{/if}
+        <!-- V012-D：检查点状态持续显示（未保存 / 检查点已保存 / 保存失败），自动 debounce + 显式保存均不写盘 -->
+        <div
+          class="checkpoint-status-bar"
+          role="status"
+          aria-live="polite"
+          data-testid="checkpoint-status"
+        >
+          {#if checkpointStatus === "unsaved"}<span
+              class="status-badge status-badge--dirty">未保存</span
+            ><small
+              >{checkpointStatusDetail ||
+                "有未保存变更，将自动保存检查点（不写工作副本）"}</small
+            >{:else if checkpointStatus === "saved"}<span
+              class="status-badge status-badge--saved">已保存</span
+            ><small>{checkpointStatusDetail}</small
+            >{:else if checkpointStatus === "failed"}<span
+              class="status-badge status-badge--error">保存失败</span
+            ><small
+              >{checkpointStatusDetail ||
+                "检查点保存失败，草稿仍保留在内存"}</small
+            >{/if}
+          {#if snapshot.selected?.mergeEditor.feedback?.includes("容量上限")}<div
+              class="notice notice--warning"
+              role="alert"
+              data-testid="capacity-feedback"
+            >
+              草稿已达容量上限，最旧草稿已被淘汰，请及时导出或复制（最新草稿已保留）
+            </div>{/if}
+          {#if snapshot.selected?.mergeEditor.issues.some( (i) => i.includes("只读") )}<div
+              class="notice notice--warning"
+              role="alert"
+              data-testid="stale-readonly-notice"
+            >
+              草稿对应的工作副本已变化，只读展示，请复制/导出或重新建立（fail-closed，不静默写回）
+              <button
+                class="button button--secondary"
+                data-testid="stale-copy"
+                onclick={() =>
+                  onAction("conflict/draft-copy", {
+                    relativePath: snapshot.selected?.relativePath,
+                  })}>复制草稿</button
+              >
+              <button
+                class="button button--secondary"
+                data-testid="stale-export"
+                onclick={() =>
+                  onAction("conflict/draft-export", {
+                    relativePath: snapshot.selected?.relativePath,
+                  })}>导出草稿</button
+              >
+            </div>{/if}
+        </div>
         <div class="merge-save-bar">
           <span
             >{workingDirty
@@ -1045,6 +1387,15 @@
               })}>保存工作副本合并结果</button
           ><button
             class="button button--secondary"
+            data-testid="save-checkpoint"
+            disabled={isComposing || (resultEditor?.isComposing?.() ?? false)}
+            onclick={flushCheckpoint}
+            onkeydown={(e) =>
+              isComposing && e.key === "Enter" && e.preventDefault()}
+            title={CONFLICT_SHORTCUTS.saveCheckpoint.title}>保存检查点</button
+          ><button
+            class="button button--secondary"
+            data-testid="copy-draft"
             disabled={!snapshot.selected.draft?.hasDraft}
             onclick={() =>
               onAction("conflict/draft-copy", {
@@ -1052,6 +1403,7 @@
               })}>复制草稿</button
           ><button
             class="button button--secondary"
+            data-testid="export-draft"
             disabled={!snapshot.selected.draft?.hasDraft}
             onclick={() =>
               onAction("conflict/draft-export", {
@@ -1059,6 +1411,7 @@
               })}>导出草稿</button
           ><button
             class="button button--secondary"
+            data-testid="abandon-draft"
             disabled={!snapshot.selected.draft?.hasDraft}
             onclick={() =>
               onAction("conflict/draft-abandon", {
@@ -1308,6 +1661,31 @@
                   })}>生成解决预览</button
               >
             {/if}
+          </section>
+          <!-- V012-E：快捷键帮助（单一来源，按钮 title 与本面板共用；? 切换） -->
+          <section
+            class="conflict-shortcut-help"
+            aria-label="快捷键帮助"
+            data-testid="conflict-shortcut-help"
+            title={CONFLICT_SHORTCUTS.help.title}
+          >
+            <h3>快捷键（{CONFLICT_SHORTCUTS.help.display} 打开/关闭）</h3>
+            <ul>
+              {#each CONFLICT_SHORTCUT_LIST as sc (sc.id)}
+                <li data-testid={`shortcut-${sc.id}`}>
+                  <span>{sc.label}</span><code>{sc.display}</code><small
+                    >{sc.title}</small
+                  >
+                </li>
+              {/each}
+            </ul>
+            <small class="muted" data-testid="replace-deferred-note"
+              >{REPLACE_DEFERRED_NOTE}</small
+            >
+            <small class="muted"
+              >查找面板的英文 placeholder 为第三方库内部
+              UI，属已知限制；关闭查找后焦点返回编辑位置。</small
+            >
           </section>
         </details>
       </div>

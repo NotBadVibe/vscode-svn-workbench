@@ -31,6 +31,13 @@ export interface ConflictFileDraft {
   revision: number;
   /** v0.0.13 批次 B：打开时的原始工作副本内容，用于无 SVN 重采的脏判断 */
   baseContent: string;
+  /** v0.1.2 V012-D：草稿所属工作副本 revision，用于返回时的 stale-identity 复核 */
+  workingCopyRevision?: string;
+  /** v0.1.2 V012-D：编辑器 selection/视口，快照恢复时尽量还原 */
+  editorState?: {
+    selection?: { start: number; end: number };
+    viewport?: { top: number; left: number };
+  };
 }
 
 export interface ConflictMergeDraft extends BaseDraft {
@@ -227,6 +234,11 @@ export function writeConflictFileDraft(
   content: string,
   baseContent: string,
   revision?: number,
+  workingCopyRevision?: string,
+  editorState?: {
+    selection?: { start: number; end: number };
+    viewport?: { top: number; left: number };
+  },
 ): ProjectDraftMap {
   const existing = readConflictMergeDraft(store, key);
   const now = Date.now();
@@ -238,6 +250,8 @@ export function writeConflictFileDraft(
       updatedAt: now,
       revision: revision ?? (prev?.revision ?? 0) + 1,
       baseContent: prev?.baseContent ?? baseContent,
+      workingCopyRevision: workingCopyRevision ?? prev?.workingCopyRevision,
+      editorState: editorState ?? prev?.editorState,
     },
   };
   // 单键内文件数容量控制
