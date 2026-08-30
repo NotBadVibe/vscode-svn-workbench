@@ -2407,7 +2407,35 @@ function conflictSnapshot(
       workingExtra = { truncated: true, readError: "二进制文件不支持内嵌合并" };
     if (scenario === "truncated") workingExtra = { truncated: true };
     if (scenario === "missing") workingContent = undefined;
+    // v0.1.3 V013-F：支持 tree/property/binary 非文本场景参数（conflictScenario=tree 等或 conflictType=tree）
+    const typeParam = new URLSearchParams(window.location.search).get(
+      "conflictType",
+    );
+    const nonTextScenario =
+      typeParam ??
+      (scenario === "tree" || scenario === "property" || scenario === "binary"
+        ? scenario
+        : undefined);
+    if (
+      nonTextScenario === "tree" ||
+      nonTextScenario === "property" ||
+      nonTextScenario === "binary"
+    ) {
+      // 通过 overrides 保持一致，此处仅标记；实际类型通过 URL 参数透传给 conflictSnapshot 的 selected.type
+      // 为兼容无 selected 覆盖的默认快照，工作内容设为空（非文本不展示文本合并）
+      workingContent = "";
+      workingExtra = {};
+    }
   }
+  // v0.1.3 V013-F：非文本类型覆盖（conflictType 或 conflictScenario 驱动）
+  const typeOverride = (() => {
+    const p = new URLSearchParams(window.location.search).get("conflictType");
+    if (p === "tree" || p === "property" || p === "binary" || p === "text")
+      return p;
+    if (scenario === "tree" || scenario === "property" || scenario === "binary")
+      return scenario;
+    return undefined;
+  })();
 
   // 若调用方通过 overrides 显式指定 progress/selected，则尊重；否则按当前 conflicts 推导
   const defaultProgress = {
@@ -2415,10 +2443,19 @@ function conflictSnapshot(
     remaining: conflicts.length,
     resolvedCount: 1,
   };
-  const firstPath = conflicts[0]?.relativePath ?? "src/conflict/example.ts";
+  // v0.1.3 V013-F：若 URL 指定非文本类型且调用方未覆盖 conflicts，则同步覆盖列表类型
+  const effectiveConflicts =
+    typeOverride && !overrides.conflicts
+      ? ((conflicts as Array<Record<string, unknown>>).map((c) => ({
+          ...c,
+          type: typeOverride,
+        })) as typeof conflicts)
+      : conflicts;
+  const firstPath =
+    effectiveConflicts[0]?.relativePath ?? "src/conflict/example.ts";
   return {
     kind: "conflicts",
-    conflicts,
+    conflicts: effectiveConflicts,
     progress:
       (overrides.progress as typeof defaultProgress | undefined) ??
       defaultProgress,
@@ -2430,7 +2467,7 @@ function conflictSnapshot(
           : {
               relativePath: firstPath,
               operation: "update",
-              type: "text",
+              type: typeOverride ?? "text",
               sourceLeftRevision: "41",
               sourceRightRevision: "42",
               contents: {
