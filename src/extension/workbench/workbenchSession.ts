@@ -145,6 +145,9 @@ export interface WorkbenchSession extends OpenWorkbenchRequest {
       contentHash: string;
       relativePath: string;
       feedback?: string;
+      /** v0.1.3 V013-B2：原子保存链的草稿版本与目标标识（openConflictSave 签发） */
+      draftRevision?: number;
+      targetId?: string;
     };
   };
   settingsState?: {

@@ -360,6 +360,11 @@ import { createDiffEditingService, watchDiffEditTargets } from "./diffEditHost";
 import { DiffEditingService } from "../../diffEdit/diffEditingService";
 import { buildDiffTargetId } from "../../diffEdit/diffEditingService";
 import { analyzeUtf8, MAX_EDITABLE_BYTES } from "../../diffEdit/diffPathGuard";
+import { ConflictSaveService } from "../../conflict/conflictSaveService";
+import { DiffEditTokenRegistry } from "../../diffEdit/diffEditTokenRegistry";
+import { DiffDraftService } from "../../diffEdit/diffDraftService";
+import { DiffAtomicWriterService } from "../../diffEdit/diffAtomicWriter";
+import { hashBytes } from "../../diffEdit/diffPathGuard";
 import { SvnSecurityContextRegistry } from "../../security/svnSecurityContextRegistry";
 import { normalizeSvnRepositoryRoot } from "../../security/svnSecurityContext";
 import { validateOperationIntentForExecute } from "../../operation/operationIntent";
@@ -435,6 +440,8 @@ export class WorkbenchController implements vscode.Disposable {
   private conflictSwitchBypass = false;
   /** v0.0.16 批次 A：会话内操作时间线（纯内存，不写磁盘） */
   private activityStore: ActivityStoreState = createActivityStore();
+  /** v0.1.3 V013-B2：冲突原子保存服务（真实依赖注入，仿 diffEditHost） */
+  private readonly conflictSaveService: ConflictSaveService;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -468,6 +475,68 @@ export class WorkbenchController implements vscode.Disposable {
       this.diffEdit = createDiffEditingService();
       this.context.subscriptions.push(watchDiffEditTargets(this.diffEdit));
     }
+    // v0.1.3 V013-B2：冲突保存服务真实依赖注入（fs/文档状态/SVN 绑定与 diffEditHost 同形）
+    this.conflictSaveService = this.createConflictSaveService();
+  }
+
+  /** 创建 ConflictSaveService 真实依赖（中文注释） */
+  private createConflictSaveService(): ConflictSaveService {
+    // 规范路径解析，处理 macOS /var → /private/var 等系统链接
+    const canonicalPath = async (value: string): Promise<string> => {
+      const resolved = path.resolve(value);
+      return fs.realpath(resolved).catch(() => resolved);
+    };
+    return new ConflictSaveService({
+      tokens: new DiffEditTokenRegistry(),
+      drafts: new DiffDraftService(),
+      writer: new DiffAtomicWriterService(),
+      isDocumentDirty: async (targetPath: string): Promise<boolean> => {
+        const resolved = await canonicalPath(targetPath);
+        for (const document of vscode.workspace.textDocuments) {
+          if (
+            document.isClosed ||
+            document.uri.scheme !== "file" ||
+            !document.isDirty
+          )
+            continue;
+          if ((await canonicalPath(document.uri.fsPath)) === resolved)
+            return true;
+        }
+        return false;
+      },
+      getDocumentVersion: async (targetPath: string): Promise<number> => {
+        const resolved = await canonicalPath(targetPath);
+        for (const candidate of vscode.workspace.textDocuments) {
+          if (candidate.isClosed || candidate.uri.scheme !== "file") continue;
+          if ((await canonicalPath(candidate.uri.fsPath)) === resolved)
+            return candidate.version;
+        }
+        return -1;
+      },
+      freshness: async (targetPath: string) => {
+        try {
+          const stat = await fs.lstat(targetPath);
+          const bytes = await fs.readFile(targetPath);
+          const real = await fs.realpath(targetPath);
+          return {
+            exists: true,
+            isRegularFile: stat.isFile(),
+            realPath: real,
+            rawHash: hashBytes(bytes),
+            sizeBytes: bytes.byteLength,
+          };
+        } catch {
+          return {
+            exists: false,
+            isRegularFile: false,
+            realPath: targetPath,
+            rawHash: "",
+            sizeBytes: 0,
+          };
+        }
+      },
+      readBytes: async (targetPath: string) => fs.readFile(targetPath),
+    });
   }
 
   /** 当前控制器是否服务独立 Diff 模块窗口（保留 sameGroup/beside 行为）。 */
@@ -622,6 +691,7 @@ export class WorkbenchController implements vscode.Disposable {
       this.nativeDiffContentProvider?.releaseSession(this.session.sessionId);
       // 会话替换即撤销旧会话的编辑令牌：旧 token 永不恢复有效（v0.0.7 §8）。
       this.diffEdit?.revokeForSession(this.session.sessionId);
+      this.conflictSaveService.revokeForSession(this.session.sessionId);
     }
     const storedAi = await readStoredAiConfiguration(this.context);
     const repositoryUuid = await resolveRepositoryUuid(
@@ -745,6 +815,7 @@ export class WorkbenchController implements vscode.Disposable {
     if (session) {
       this.nativeDiffContentProvider?.releaseSession(session.sessionId);
       this.diffEdit?.revokeForSession(session.sessionId);
+      this.conflictSaveService.revokeForSession(session.sessionId);
     }
     if (referenceRoot) {
       this.releaseSecurityContext(referenceRoot);
@@ -899,6 +970,7 @@ export class WorkbenchController implements vscode.Disposable {
         if (session) {
           this.nativeDiffContentProvider?.releaseSession(session.sessionId);
           this.diffEdit?.revokeForSession(session.sessionId);
+          this.conflictSaveService.revokeForSession(session.sessionId);
         }
         if (referenceRoot) {
           this.releaseSecurityContext(referenceRoot);
@@ -3007,9 +3079,19 @@ export class WorkbenchController implements vscode.Disposable {
         return;
       }
       case "conflict/save-working": {
+        // v0.1.3 V013-B2：改走 ConflictSaveService 原子写入+完整复验链（中文注释）
         const token = asString(data.editToken);
         const content = asStringAllowEmpty(data.content);
-        const editState = session.conflictState?.editState;
+        const editState = session.conflictState?.editState as
+          | {
+              token: string;
+              contentHash: string;
+              relativePath: string;
+              feedback?: string;
+              draftRevision?: number;
+              targetId?: string;
+            }
+          | undefined;
         if (
           !token ||
           content === undefined ||
@@ -3045,51 +3127,91 @@ export class WorkbenchController implements vscode.Disposable {
           );
           return;
         }
-        if ((await hashFileContents(absolutePath)) !== editState.contentHash) {
-          session.conflictState!.editState = undefined;
-          await this.sendError(
-            "conflicts",
-            "工作副本文件已变化",
-            "编辑器外部已修改该文件，请重新加载后合并。",
-            true,
-            message.requestId,
-          );
-          return;
-        }
-        const buffer = Buffer.from(content, "utf8");
-        if (buffer.byteLength > MAX_DIFF_BYTES || containsNull(buffer)) {
-          await this.sendError(
-            "conflicts",
-            "合并内容不安全",
-            "文本超过 5 MB 或包含二进制空字节，工作台未写入。",
-            false,
-            message.requestId,
-          );
-          return;
-        }
-        try {
-          await fs.writeFile(absolutePath, buffer, { flag: "w" });
-        } catch (error) {
-          // v0.0.13 批次 B：保存失败内联展示，编辑器与草稿保留（不写盘、不触发 Resolve）
-          const msg = error instanceof Error ? error.message : String(error);
+        // 完整复验与原子写入交由 ConflictSaveService（含 UUID/BASE/fileExternal、fsync、权限/BOM/EOL、token 单次消耗+TTL）
+        const { buildConflictTargetId } =
+          await import("../../conflict/conflictSaveService");
+        const targetId =
+          editState.targetId ?? buildConflictTargetId(absolutePath);
+        const draftRevision =
+          typeof data.draftRevision === "number"
+            ? (asNumber(data.draftRevision) ?? editState.draftRevision ?? 0)
+            : (editState.draftRevision ?? 0);
+        const expectedContentHash =
+          asString(data.expectedContentHash) ?? editState.contentHash;
+        const result = await this.conflictSaveService.saveConflictWorking({
+          sessionId: session.sessionId,
+          repositoryUuid: session.repositoryUuid,
+          scopeHash: session.scopeHash,
+          targetId,
+          targetPath: absolutePath,
+          editToken: token,
+          draftRevision,
+          expectedContentHash,
+          content,
+          scope: session.scope,
+          repositoryRoot: session.scope.repositoryRoot,
+          probeSvnBinding: createSvnBindingProbe(session.svnPath),
+        });
+        if (result.ok) {
+          // 成功：更新 editState（新 token/hash/draftRevision）+ 清 resolvePreview + 草稿 markSaved
+          session.conflictState!.resolvePreview = undefined;
+          this.clearConflictDraft(session, editState.relativePath);
           session.conflictState!.editState = {
-            ...editState,
-            feedback: `保存失败：${msg}；草稿已保留在 Host 内存，可重试或复制/导出。`,
+            token: result.newEditToken,
+            contentHash: result.newContentHash,
+            relativePath: editState.relativePath,
+            feedback: containsSvnConflictMarkers(content)
+              ? "工作副本内容已保存，但仍有冲突标记；请继续逐块处理。"
+              : "工作副本合并结果已保存；请生成解决预览。",
+            draftRevision: result.acceptedRevision,
+            targetId,
           };
           await this.sendConflictSnapshot(session, message.requestId);
           return;
         }
-        session.conflictState!.resolvePreview = undefined;
-        // 保存成功后清除对应文件的 Host 草稿（已落盘，标记为干净）
-        this.clearConflictDraft(session, editState.relativePath);
+        // 失败：按结构化 reason 映射中文三段式错误，保留原文件/草稿/编辑态
+        let title: string;
+        const recoverable = result.recoverable !== false;
+        switch (result.reason) {
+          case "tokenExpired":
+            title = "合并草稿已失效";
+            break;
+          case "scopeChanged":
+            title = "范围校验失败";
+            break;
+          case "diskChanged":
+            title = result.message.includes("BASE")
+              ? "BASE 已变化"
+              : "工作副本文件已变化";
+            break;
+          case "documentDirty":
+            title = "编辑器有未保存内容";
+            break;
+          case "targetMoved":
+            title = "目标文件已移动或删除";
+            break;
+          case "tooLarge":
+          case "unsupportedEncoding":
+            title = "合并内容不安全";
+            break;
+          case "writeFailed":
+            title = "保存失败";
+            break;
+          default:
+            title = "保存失败";
+        }
+        // 保留编辑态，feedback 追加可恢复提示
         session.conflictState!.editState = {
-          token: randomUUID(),
-          contentHash: await hashFileContents(absolutePath),
-          relativePath: editState.relativePath,
-          feedback: containsSvnConflictMarkers(content)
-            ? "工作副本内容已保存，但仍有冲突标记；请继续逐块处理。"
-            : "工作副本合并结果已保存；请生成解决预览。",
+          ...editState,
+          feedback: `${result.message}；草稿已保留，可重试或复制/导出。`,
         };
+        await this.sendError(
+          "conflicts",
+          title,
+          `${result.message}；${recoverable ? "请保留草稿，刷新后重试或复制/导出。" : "请重新选择冲突文件。"}`,
+          recoverable,
+          message.requestId,
+        );
         await this.sendConflictSnapshot(session, message.requestId);
         return;
       }
@@ -6142,14 +6264,44 @@ export class WorkbenchController implements vscode.Disposable {
       (!session.conflictState?.editState ||
         session.conflictState.editState.relativePath !== selected.relativePath)
     ) {
-      session.conflictState = {
-        ...session.conflictState,
-        editState: {
-          token: randomUUID(),
-          contentHash: await hashFileContents(selected.workingFile),
-          relativePath: selected.relativePath,
-        },
-      };
+      // v0.1.3 V013-B2：进入冲突编辑时改为 openConflictSave 签发真实绑定 token（原子写入+全复验链前置）
+      const targetPath = selected.workingFile;
+      const openResult = await this.conflictSaveService.openConflictSave({
+        sessionId: session.sessionId,
+        repositoryUuid: session.repositoryUuid,
+        scopeHash: session.scopeHash,
+        targetPath,
+        baseRevision: session.workingCopyRevision ?? "BASE",
+        baseContents: request?.contents.base?.content ?? "",
+        scope: session.scope,
+        repositoryRoot: session.scope.repositoryRoot,
+        probeSvnBinding: createSvnBindingProbe(session.svnPath),
+      });
+      if (openResult.ok) {
+        session.conflictState = {
+          ...session.conflictState,
+          editState: {
+            token: openResult.editToken,
+            contentHash: openResult.diskHash,
+            relativePath: selected.relativePath,
+            draftRevision: openResult.draftRevision,
+            targetId: openResult.targetId,
+          },
+        };
+      } else {
+        // 复验失败仍建立可展示编辑态，feedback 承载中文可恢复提示，editable 将在快照构建中置为只读
+        session.conflictState = {
+          ...session.conflictState,
+          editState: {
+            token: randomUUID(),
+            contentHash: await hashFileContents(selected.workingFile).catch(
+              () => "",
+            ),
+            relativePath: selected.relativePath,
+            feedback: openResult.message,
+          },
+        };
+      }
     }
     const previewState = session.conflictState?.resolvePreview;
     const preview =

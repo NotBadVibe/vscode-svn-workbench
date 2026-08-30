@@ -540,4 +540,16 @@ export class ConflictSaveService {
     const draft = this.drafts.get(targetId);
     return draft !== undefined && draft.content !== draft.cleanContent;
   }
+
+  /** 会话替换/面板销毁后撤销该会话的全部 token（中文注释） */
+  revokeForSession(sessionId: string): void {
+    this.tokens.revokeAllForSession(sessionId);
+  }
+
+  /** 按规范路径撤销（外部文档/磁盘变化监听） */
+  async revokeForPath(targetPath: string): Promise<void> {
+    const canonical = await fs.realpath(targetPath).catch(() => targetPath);
+    this.tokens.revokeAllForPath(canonical);
+    if (canonical !== targetPath) this.tokens.revokeAllForPath(targetPath);
+  }
 }
