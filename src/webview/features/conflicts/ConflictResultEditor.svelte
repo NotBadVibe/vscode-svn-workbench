@@ -276,8 +276,20 @@
     return untrack(() => mergeState);
   }
 
+  /** V012-D：别名 getState（复用 getMergeState，供恢复 selection/视口） */
+  export function getState(): MergeDocumentState | undefined {
+    return untrack(() => mergeState);
+  }
+
   /** V012-C：程序化动作成功后同步状态，保持与 Editor 文本一致（仍进同一 undo 栈）。 */
   export function syncMergeState(next: MergeDocumentState): void {
+    untrack(() => {
+      mergeState = next;
+    });
+  }
+
+  /** V012-D：别名 setState（复用 syncMergeState，供恢复 selection/视口） */
+  export function setState(next: MergeDocumentState): void {
     untrack(() => {
       mergeState = next;
     });

@@ -5452,6 +5452,11 @@ export class WorkbenchController implements vscode.Disposable {
         revision: number;
         updatedAt: number;
         baseContent: string;
+        workingCopyRevision?: string;
+        editorState?: {
+          selection?: { start: number; end: number };
+          viewport?: { top: number; left: number };
+        };
       }
     | undefined {
     const key = this.conflictDraftKey(session);
@@ -5466,6 +5471,8 @@ export class WorkbenchController implements vscode.Disposable {
       revision: fileDraft.revision,
       updatedAt: fileDraft.updatedAt,
       baseContent: fileDraft.baseContent,
+      workingCopyRevision: fileDraft.workingCopyRevision,
+      editorState: fileDraft.editorState,
     };
   }
 
@@ -5474,8 +5481,21 @@ export class WorkbenchController implements vscode.Disposable {
     relativePath: string,
     content: string,
     baseContent: string,
-  ): { revision: number; updatedAt: number } {
+    editorState?: {
+      selection?: { start: number; end: number };
+      viewport?: { top: number; left: number };
+    },
+  ): { revision: number; updatedAt: number; evicted?: boolean } {
     const key = this.conflictDraftKey(session);
+    const beforeStore = this.conflictDraftStore;
+    const beforeDraft = getConflictFileDraft(beforeStore, key, relativePath);
+    const beforeKeys = Object.keys(beforeStore);
+    const beforeFileCount = (() => {
+      const m = beforeStore[key] as unknown as
+        { drafts?: Record<string, unknown> } | undefined;
+      return m?.drafts ? Object.keys(m.drafts).length : 0;
+    })();
+    const existedBefore = beforeDraft !== undefined;
     this.conflictDraftStore = writeConflictFileDraft(
       this.conflictDraftStore,
       key,
@@ -5483,13 +5503,59 @@ export class WorkbenchController implements vscode.Disposable {
       relativePath,
       content,
       baseContent,
+      undefined,
+      session.workingCopyRevision,
+      editorState,
     );
     const draft = getConflictFileDraft(
       this.conflictDraftStore,
       key,
       relativePath,
     )!;
-    return { revision: draft.revision, updatedAt: draft.updatedAt };
+    // 容量淘汰检测：若新建隔离键导致旧键被淘汰，或同键内新建文件导致旧文件被淘汰
+    const afterKeys = Object.keys(this.conflictDraftStore);
+    const afterFileCount = (() => {
+      const m = this.conflictDraftStore[key] as unknown as
+        { drafts?: Record<string, unknown> } | undefined;
+      return m?.drafts ? Object.keys(m.drafts).length : 0;
+    })();
+    let evicted = false;
+    if (
+      !existedBefore &&
+      beforeKeys.length >= 32 &&
+      afterKeys.length === 32 &&
+      !beforeKeys.includes(key)
+    ) {
+      evicted = true;
+    }
+    if (!existedBefore && beforeFileCount >= 32 && afterFileCount === 32) {
+      evicted = true;
+    }
+    // 新分片容量：若最新草稿因淘汰未保留（理论上不应发生，保持可预期反馈）
+    const stillExists =
+      getConflictFileDraft(this.conflictDraftStore, key, relativePath) !==
+      undefined;
+    if (!stillExists) {
+      evicted = true;
+    }
+    if (evicted) {
+      // 通过 editState.feedback 透出到快照，UI 明确提示（不静默丢最新）
+      if (!session.conflictState)
+        session.conflictState = { selectedPath: relativePath };
+      if (!session.conflictState.editState) {
+        session.conflictState.editState = {
+          token: "evict",
+          contentHash: "",
+          relativePath,
+          feedback:
+            "草稿已达容量上限，最旧草稿已被淘汰，请及时导出或复制（最新草稿已保留）",
+        };
+      } else {
+        session.conflictState.editState.feedback =
+          "草稿已达容量上限，最旧草稿已被淘汰，请及时导出或复制（最新草稿已保留）";
+      }
+    }
+    return { revision: draft.revision, updatedAt: draft.updatedAt, evicted };
   }
 
   private clearConflictDraft(
@@ -6129,6 +6195,28 @@ export class WorkbenchController implements vscode.Disposable {
               const dirty = hasDraft
                 ? draft.content !== (baseContent ?? "")
                 : false;
+              // V012-D：返回文件时先重采 SVN 状态，scope/hash/revision 仍匹配才可编辑，否则只读（fail-closed）
+              const isDraftStale =
+                hasDraft &&
+                draft &&
+                ((draft.workingCopyRevision !== undefined &&
+                  session.workingCopyRevision !== undefined &&
+                  draft.workingCopyRevision !== session.workingCopyRevision) ||
+                  draft.baseContent !== baseContent);
+              const baseEditable =
+                !request.contents.working?.truncated &&
+                !request.contents.working?.readError &&
+                !isDraftStale;
+              const baseIssues: string[] = request.contents.working?.truncated
+                ? ["工作副本内容超过 5 MB，内嵌编辑已禁用。"]
+                : request.contents.working?.readError
+                  ? [request.contents.working.readError]
+                  : [];
+              if (isDraftStale) {
+                baseIssues.push(
+                  "草稿对应的工作副本已变化，只读展示，请复制/导出或重新建立（fail-closed，不静默写回）",
+                );
+              }
               return {
                 relativePath: selected.relativePath,
                 operation: selected.operation,
@@ -6143,14 +6231,8 @@ export class WorkbenchController implements vscode.Disposable {
                 },
                 mergeEditor: {
                   token: session.conflictState!.editState!.token,
-                  editable:
-                    !request.contents.working?.truncated &&
-                    !request.contents.working?.readError,
-                  issues: request.contents.working?.truncated
-                    ? ["工作副本内容超过 5 MB，内嵌编辑已禁用。"]
-                    : request.contents.working?.readError
-                      ? [request.contents.working.readError]
-                      : [],
+                  editable: baseEditable,
+                  issues: baseIssues,
                   feedback: session.conflictState!.editState!.feedback,
                 },
                 draft: hasDraft
