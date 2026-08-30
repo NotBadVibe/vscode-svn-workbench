@@ -627,16 +627,23 @@ test.describe("V012 冲突连续编辑与可编辑结果区矩阵", () => {
   test("性能：100 块下输入 P95 与块动作反馈（候选目标，记录实测）", async ({
     page,
   }) => {
+    // Windows CI 等慢机器上 100 块 fixture 挂载/渲染明显更慢，默认 30s 不够；
+    // 仅放大超时上限，不改变测量语义与判定（性能是否达标仍如实记录不伪造）。
+    test.setTimeout(120_000);
     await setupMockCapture(page);
     await page.goto("/?module=conflicts&conflictBlocks=100");
-    await expect(
-      page.getByRole("heading", { name: "待处理冲突" }),
-    ).toBeVisible();
-    await expect(page.getByTestId("merge-action-toolbar")).toBeVisible();
-    await expect(page.getByTestId("conflict-result-editor-host")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "待处理冲突" })).toBeVisible(
+      { timeout: 60_000 },
+    );
+    await expect(page.getByTestId("merge-action-toolbar")).toBeVisible({
+      timeout: 60_000,
+    });
+    await expect(page.getByTestId("conflict-result-editor-host")).toBeVisible({
+      timeout: 60_000,
+    });
     // 确认 100 块已加载：工具栏进度应显示 /100 或 /99（取决于首块是否已解决）
     const progress = page.getByTestId("merge-block-progress");
-    await expect(progress).toBeVisible();
+    await expect(progress).toBeVisible({ timeout: 60_000 });
     const progressText = await progress.textContent();
 
     console.log("[V012-Perf] 初始块进度", progressText);
@@ -672,13 +679,15 @@ test.describe("V012 冲突连续编辑与可编辑结果区矩阵", () => {
     const blockTimings: number[] = [];
     // 回到初始 100 块以复位
     await page.goto("/?module=conflicts&conflictBlocks=100");
-    await expect(page.getByTestId("merge-action-toolbar")).toBeVisible();
+    await expect(page.getByTestId("merge-action-toolbar")).toBeVisible({
+      timeout: 60_000,
+    });
     for (let i = 0; i < 5; i++) {
       await clearCapturedActions(page);
       const t0 = await page.evaluate(() => performance.now());
       await page.getByTestId("action-take-mine").click();
       await expect(page.getByText("Host 内存草稿已同步")).toBeVisible({
-        timeout: 15_000,
+        timeout: 60_000,
       });
       const t1 = await page.evaluate(() => performance.now());
       blockTimings.push(t1 - t0);
