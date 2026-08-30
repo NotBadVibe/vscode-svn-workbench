@@ -1285,7 +1285,7 @@
               onFallback={handleResultFallback}
               onError={handleDiffError}
             />
-            <div class="toolbar-actions" style="margin-top:6px">
+            <div class="toolbar-actions toolbar-actions--spaced-top">
               <button
                 class="button button--secondary"
                 data-testid="use-simple-editor-result"

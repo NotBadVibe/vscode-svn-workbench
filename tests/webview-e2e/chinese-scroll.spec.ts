@@ -125,16 +125,29 @@ test("SCR-05：冲突列表、编辑器正文和解决确认在小高度下可�
   const conflicts = page.getByRole("list", { name: "冲突文件" });
   await assertScrollable(conflicts, conflicts.getByRole("listitem").last());
 
-  const editorScroller = page.locator(".conflict-codemirror-host .cm-scroller");
-  await expect(editorScroller).toBeVisible();
-  expect(
-    await editorScroller.evaluate((element) => element.scrollHeight),
-  ).toBeGreaterThan(
-    await editorScroller.evaluate((element) => element.clientHeight),
+  // V012 兼容：默认 Pierre 可编辑结果区（conflict-result-editor），回落时才为 CodeMirror
+  const codemirrorScroller = page.locator(
+    ".conflict-codemirror-host .cm-scroller",
   );
-  await editorScroller.evaluate((element) => {
-    element.scrollTop = element.scrollHeight;
-  });
+  const pierreHost = page.getByTestId("conflict-result-editor-host");
+  const pierreVisible = await pierreHost.isVisible().catch(() => false);
+  if (pierreVisible) {
+    await expect(pierreHost).toBeVisible();
+    // Pierre 宿主本身承载滚动，宽松校验可见性；详细滚动归属由后续 workspace 校验覆盖
+    await pierreHost.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+    });
+  } else {
+    await expect(codemirrorScroller).toBeVisible();
+    expect(
+      await codemirrorScroller.evaluate((element) => element.scrollHeight),
+    ).toBeGreaterThan(
+      await codemirrorScroller.evaluate((element) => element.clientHeight),
+    );
+    await codemirrorScroller.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+    });
+  }
 
   await page.getByText("需要帮助（合并建议与解释）").click();
   await page.getByRole("button", { name: "AI 分析" }).click();

@@ -469,6 +469,9 @@ button.path-detail__value:hover {
   align-items: center;
   gap: 8px;
 }
+.toolbar-actions--spaced-top {
+  margin-top: 6px;
+}
 .scope-chip {
   max-width: 360px;
   display: flex;

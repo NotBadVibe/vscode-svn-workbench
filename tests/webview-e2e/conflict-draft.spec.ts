@@ -7,11 +7,23 @@ test("conflict draft: edit then save failure preserves draft and allows copy/exp
   await page.goto("/?conflictSave=fail");
   await openModule(page, "冲突");
   await expect(page.getByRole("heading", { name: "待处理冲突" })).toBeVisible();
-  // 打开第一条冲突的编辑区（工作副本 tab 已默认）
-  const editHost = page.locator(".conflict-codemirror-host").first();
-  await expect(editHost).toBeVisible();
+  // 打开第一条冲突的编辑区（V012 默认 Pierre，可回落到 CodeMirror）
+  const pierreHost = page.getByTestId("conflict-result-editor-host");
+  const codemirrorHost = page.locator(".conflict-codemirror-host").first();
+  const editHost = (await pierreHost.count()) > 0 ? pierreHost : codemirrorHost;
+  await expect(editHost.first()).toBeVisible();
   // 先做块级合并编辑：产生脏草稿并使保存按钮可用（保存按钮要求 workingDirty）
-  await page.getByRole("button", { name: "采用对方修改" }).first().click();
+  // 限定块列表作用域，避免命中工具栏同名按钮
+  const draftBtn = page
+    .locator(".merge-block-list")
+    .getByRole("button", { name: "采用对方修改" })
+    .first();
+  const targetBtn =
+    (await draftBtn.count()) > 0 &&
+    (await draftBtn.isVisible().catch(() => false))
+      ? draftBtn
+      : page.getByRole("button", { name: "采用对方修改" }).first();
+  await targetBtn.click();
   // 等待 mock 的 draft-update 回环完成（草稿同步通知出现）
   await expect(page.getByText("Host 内存草稿已同步")).toBeVisible({
     timeout: 15_000,
@@ -32,7 +44,16 @@ test("conflict draft: edit then save failure preserves draft and allows copy/exp
   // 重试成功：去掉 fail 参数，重新编辑并保存
   await page.goto("/");
   await openModule(page, "冲突");
-  await page.getByRole("button", { name: "采用对方修改" }).first().click();
+  const retryBtn = page
+    .locator(".merge-block-list")
+    .getByRole("button", { name: "采用对方修改" })
+    .first();
+  const retryTarget =
+    (await retryBtn.count()) > 0 &&
+    (await retryBtn.isVisible().catch(() => false))
+      ? retryBtn
+      : page.getByRole("button", { name: "采用对方修改" }).first();
+  await retryTarget.click();
   await expect(page.getByText("Host 内存草稿已同步")).toBeVisible({
     timeout: 15_000,
   });
@@ -48,7 +69,16 @@ test("conflict draft: switch file with dirty draft shows three-way dialog and 30
   await page.goto("/");
   await openModule(page, "冲突");
   // 触发编辑产生脏草稿（通过点击块级合并的“采用对方修改”会产生 draft-update）
-  await page.getByRole("button", { name: "采用对方修改" }).first().click();
+  const switchDraftBtn = page
+    .locator(".merge-block-list")
+    .getByRole("button", { name: "采用对方修改" })
+    .first();
+  const switchTarget =
+    (await switchDraftBtn.count()) > 0 &&
+    (await switchDraftBtn.isVisible().catch(() => false))
+      ? switchDraftBtn
+      : page.getByRole("button", { name: "采用对方修改" }).first();
+  await switchTarget.click();
   // 等待 draft-checkpointed 通知（mock 会注入 draft）
   await expect(page.getByText("Host 内存草稿已同步")).toBeVisible({
     timeout: 15_000,
