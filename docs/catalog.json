@@ -368,12 +368,12 @@
     },
     {
       "version": "0.1.3",
-      "status": "draft",
-      "phase": "planned",
+      "status": "released",
+      "phase": "released",
       "baseVersion": "0.1.2",
       "canonicalEntry": "releases/v0.1.3/README.md",
       "manifest": "releases/v0.1.3/manifest.json",
-      "releasedFact": false,
+      "releasedFact": true,
       "topics": ["conflict-save", "conflict-verification", "resolve-workflow"]
     },
     {
