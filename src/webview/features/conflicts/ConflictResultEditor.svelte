@@ -1,6 +1,9 @@
 <script lang="ts">
   import { untrack } from "svelte";
-  import { createMergeDocument } from "../../../conflict/mergeDocumentModel";
+  import {
+    applyMergeEdit,
+    createMergeDocument,
+  } from "../../../conflict/mergeDocumentModel";
   import type {
     MergeDocumentState,
     TextEdit,
@@ -57,7 +60,8 @@
     return result.state;
   }
 
-  // 挂载：仅文件/语言/只读变化时重建；同文件 Host 刷新保持实例
+  // V012 修复：仅文件/语言/只读变化时重建，避免手工编辑后 mergeDraft 变化触发重建而丢失手工标记
+  let builtForIdentity = $state<string>("");
   $effect(() => {
     const container = containerEl;
     const fid = fileIdentity;
@@ -65,6 +69,11 @@
     const lang = language;
     const ro = readonly;
     if (!container) return;
+    const identityKey = `${fid}|${rp}|${lang}|${ro}`;
+    if (builtForIdentity === identityKey && untrack(() => handle)) {
+      return;
+    }
+    builtForIdentity = identityKey;
     void fid;
     void rp;
     void lang;
@@ -106,11 +115,32 @@
       onDraftChange: (text: string, revision: number) => {
         untrack(() => {
           if (mergeState) {
-            mergeState = {
-              ...mergeState,
-              draftContents: text,
-              draftRevision: revision,
-            } as MergeDocumentState;
+            const cur = mergeState!;
+            // 手工编辑需同步 tracked/regions，否则工具栏的手工拦截不生效
+            const edit: TextEdit = {
+              start: 0,
+              end: cur.draftContents.length,
+              newText: text,
+            };
+            const res = applyMergeEdit(cur, {
+              expectedRevision: cur.draftRevision,
+              edit,
+            });
+            if (res.ok) {
+              mergeState =
+                res.state.draftRevision === revision
+                  ? res.state
+                  : ({
+                      ...res.state,
+                      draftRevision: revision,
+                    } as MergeDocumentState);
+            } else {
+              mergeState = {
+                ...cur,
+                draftContents: text,
+                draftRevision: revision,
+              } as MergeDocumentState;
+            }
           }
         });
         if (untrack(() => isComposingLocal)) return;

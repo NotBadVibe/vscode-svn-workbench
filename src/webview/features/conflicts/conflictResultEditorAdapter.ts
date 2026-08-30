@@ -135,6 +135,8 @@ export function mountConflictResultEditor(
   let disposed = false;
   let isComposing = false;
   let draftChangeTimer: ReturnType<typeof setTimeout> | undefined;
+  // 程序化编辑（restore/take 等）触发的编辑不应再经 onChange 标记为手工修改，抑制一次
+  let suppressNextOnChange = false;
 
   // 需在 dispose 中移除的监听
   let compositionStartHandler: (() => void) | undefined;
@@ -247,11 +249,17 @@ export function mountConflictResultEditor(
       try {
         const curText = options.getMergeState().draftContents;
         const pierreEdits = toPierreEdits(curText, edits);
+        suppressNextOnChange = true;
         (
           editorInstance as unknown as { applyEdits: (e: unknown[]) => void }
         ).applyEdits(pierreEdits as unknown[]);
+        // 若 onChange 未触发（如无实际变更），400ms 后自动清除抑制，避免误屏蔽下一次手工输入
+        setTimeout(() => {
+          if (suppressNextOnChange) suppressNextOnChange = false;
+        }, 400);
       } catch {
         /* 应用编辑防御 */
+        suppressNextOnChange = false;
       }
     },
     canUndo: () => {
@@ -379,6 +387,11 @@ export function mountConflictResultEditor(
       // Pierre 编辑器 onChange：比对全量文本生成全量 TextEdit 调 applyMergeEdit
       const onChange = (): void => {
         if (disposed || !editorInstance) return;
+        // 程序化编辑刚触发的 onChange 不应再计为手工修改
+        if (suppressNextOnChange) {
+          suppressNextOnChange = false;
+          return;
+        }
         let newText: string;
         try {
           newText = (

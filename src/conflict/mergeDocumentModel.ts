@@ -500,7 +500,17 @@ export function applyMergeEdit(
     return reject("invalid-action", "编辑区间越界或非法");
   }
   const nextContents = applyTextEdits(state.draftContents, [options.edit]);
-  const nextTracked = updateTrackedForEdit(state.tracked, options.edit);
+  let nextTracked = updateTrackedForEdit(state.tracked, options.edit);
+  // 若编辑后区间内容恰好恢复为打开时原文，则清除手工标记（避免后续 restore 误判）
+  nextTracked = nextTracked.map((candidate) => {
+    const snapshot = state.originalRegions[candidate.baseIdentity];
+    if (!snapshot || candidate.invalidated) return candidate;
+    const slice = nextContents.slice(candidate.start, candidate.end);
+    if (slice === snapshot.anchorText && candidate.manuallyModified) {
+      return { ...candidate, manuallyModified: false };
+    }
+    return candidate;
+  });
   return {
     ok: true,
     state: {
@@ -614,11 +624,10 @@ export function applyMergeAction(
       );
     }
     const nextContents = applyTextEdits(state.draftContents, [edit]);
+    // 恢复后必须清除手工标记；updateTrackedForEdit 已克隆对象，引用比较不可靠，按 baseIdentity 匹配
     const nextTracked = updateTrackedForEdit(state.tracked, edit).map(
       (candidate) =>
-        candidate === entry ||
-        (candidate.baseIdentity === entry.baseIdentity &&
-          candidate.start === edit.start)
+        candidate.baseIdentity === entry.baseIdentity
           ? {
               ...candidate,
               start: edit.start,

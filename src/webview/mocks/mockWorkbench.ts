@@ -241,8 +241,11 @@ let activeMockTaskId: WorkbenchTaskId = defaultWorkbenchTask("changes");
 let activeMockDiffPath = "src/extension.ts";
 /** 持有草稿的 mock 路径（dirty 与 Host cleanContent 语义一致）。 */
 const mockDrafts = new Map<string, { dirty: boolean }>();
-/** v0.0.13：mock 的冲突合并草稿脏状态（按相对路径跟踪，模拟 Host 内存草稿）。 */
-const mockConflictDrafts = new Map<string, { dirty: boolean }>();
+/** v0.0.13：mock 的冲突合并草稿脏状态（按相对路径跟踪，模拟 Host 内存草稿）。V012：补内容与 revision 供重开恢复 */
+const mockConflictDrafts = new Map<
+  string,
+  { dirty: boolean; content?: string; revision?: number; updatedAt?: number }
+>();
 /** v0.0.13：mock 待确认的冲突文件切换（脏草稿三选一）。 */
 let mockPendingConflictSwitch:
   { currentRelativePath: string; nextRelativePath: string } | undefined;
@@ -1448,7 +1451,12 @@ export function startMockWorkbench(): void {
         typeof data.content === "string" ? data.content : "draft content";
       const draftPath =
         (data.relativePath as string) ?? "src/conflict/example.ts";
-      mockConflictDrafts.set(draftPath, { dirty: true });
+      mockConflictDrafts.set(draftPath, {
+        dirty: true,
+        content,
+        revision: 2,
+        updatedAt: Date.now(),
+      });
       injectHostMessage("conflict/draft-checkpointed", {
         relativePath: draftPath,
         revision: 2,
@@ -2321,7 +2329,7 @@ function conflictSnapshot(
   if (
     Number.isFinite(conflictBlocksCount) &&
     conflictBlocksCount > 1 &&
-    conflictBlocksCount <= 20 &&
+    conflictBlocksCount <= 120 &&
     !isScrollDataset() &&
     !scenario
   ) {
@@ -2374,6 +2382,22 @@ function conflictSnapshot(
         working: { content: workingContent, truncated: false, ...workingExtra },
       },
       mergeEditor: { token: "mock-edit", editable: true, issues: [] },
+      // V012：若 mock 内存已有草稿且调用方未通过 overrides 覆盖，则注入草稿供重开恢复
+      ...(() => {
+        const entry = mockConflictDrafts.get("src/conflict/example.ts");
+        if (entry?.dirty && entry.content) {
+          return {
+            draft: {
+              content: entry.content,
+              revision: entry.revision ?? 2,
+              updatedAt: entry.updatedAt ?? Date.now(),
+              hasDraft: true,
+              dirty: true,
+            },
+          };
+        }
+        return {};
+      })(),
     },
     aiPrivacy: {
       model: aiDisabled ? "本地规则（未配置外部模型）" : "deepseek-v4-flash",
