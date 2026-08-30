@@ -18,6 +18,7 @@
   } from "../../../conflict/conflictDiffModel";
 
   import ConflictDiffView from "./ConflictDiffView.svelte";
+  import ConflictResultEditor from "./ConflictResultEditor.svelte";
   import type { DiffErrorInfo } from "../diff/diffErrorTaxonomy";
   import ScrollArea from "../../components/ui/ScrollArea.svelte";
   import SearchInput from "../../components/list/SearchInput.svelte";
@@ -168,6 +169,8 @@
   // V011-E 安全降级：fail-closed 保留草稿
   let diffErrorInfo = $state<DiffErrorInfo | null>(null);
   let useSimplified = $state(false);
+  // V012-B2：Pierre 可编辑合并结果实例（单实例，与 CodeMirror 互斥）
+  let resultEditor = $state<ConflictResultEditor>();
   /** 文件身份：路径 + 来源 revision，用于过期拒绝（revision 变化即失效）。 */
   const conflictFileIdentity = $derived(
     (snapshot.selected
@@ -175,6 +178,21 @@
       : "") as ConflictFileIdentity,
   );
   const diffWorkingText = $derived(mergeDraft);
+  // V012-B2：文件/容器变化时重置简化降级（同文件 Host 刷新保持实例）
+  $effect(() => {
+    const fid = conflictFileIdentity;
+    void fid;
+    untrack(() => {
+      queueMicrotask(() => {
+        // 切换文件时尝试 Pierre，失败再降级；保持单实例
+        if (useSimplified) {
+          // 仅在非首帧切换时重置，避免初始渲染抖动
+          const currentFid = conflictFileIdentity;
+          if (currentFid) useSimplified = false;
+        }
+      });
+    });
+  });
   const workingContentView = $derived(snapshot.selected?.contents.working);
   const isFallbackContent = $derived(
     Boolean(
@@ -350,7 +368,8 @@
     const parent = editorHost;
     const token = editorToken;
     const editable = snapshot.selected?.mergeEditor.editable ?? false;
-    if (!parent || !token) return;
+    const simplified = useSimplified;
+    if (!parent || !token || !simplified) return;
     const view = new EditorView({
       state: EditorState.create({
         doc: untrack(() => mergeDraft),
@@ -457,6 +476,26 @@
   // 重试/换文后挂载成功即清除降级提示（草稿内容始终保留在 mergeDraft）。
   function handleDiffReady(): void {
     diffErrorInfo = null;
+  }
+
+  /** V012-B2：Pierre 编辑结果变化回写草稿（debounce 已在适配层，IME 守卫双检查） */
+  function handleResultDraftChange(text: string, _revision: number): void {
+    void _revision;
+    mergeDraft = text;
+    const composing = resultEditor?.isComposing?.() ?? isComposing;
+    if (composing) return;
+    if (snapshot.selected) {
+      onAction("conflict/draft-update", {
+        relativePath: snapshot.selected.relativePath,
+        content: text,
+      });
+    }
+  }
+
+  /** V012-B2：Pierre 挂载/清理失败降级到简化编辑器（保留文本，单实例） */
+  function handleResultFallback(info: DiffErrorInfo): void {
+    diffErrorInfo = info;
+    useSimplified = true;
   }
 
   function focusBlock(delta: -1 | 1): void {
@@ -1005,15 +1044,45 @@
           >
             {issue}
           </div>{/each}
-        <div
-          class="conflict-editor conflict-editor--editable"
-          role="region"
-          aria-label="可编辑工作副本合并区域"
-          oncompositionstart={() => (isComposing = true)}
-          oncompositionend={() => (isComposing = false)}
-        >
-          <div class="conflict-codemirror-host" bind:this={editorHost}></div>
-        </div>
+        {#if !useSimplified}
+          <div
+            class="conflict-editor conflict-editor--editable"
+            role="region"
+            aria-label="可编辑工作副本合并区域"
+            data-testid="conflict-result-editor"
+            oncompositionstart={() => (isComposing = true)}
+            oncompositionend={() => (isComposing = false)}
+          >
+            <ConflictResultEditor
+              bind:this={resultEditor}
+              fileIdentity={conflictFileIdentity}
+              relativePath={snapshot.selected.relativePath}
+              language="typescript"
+              initialText={diffWorkingText}
+              readonly={!snapshot.selected.mergeEditor.editable}
+              onDraftChange={handleResultDraftChange}
+              onFallback={handleResultFallback}
+              onError={handleDiffError}
+            />
+            <div class="toolbar-actions" style="margin-top:6px">
+              <button
+                class="button button--secondary"
+                data-testid="use-simple-editor-result"
+                onclick={() => (useSimplified = true)}>使用简化编辑器</button
+              >
+            </div>
+          </div>
+        {:else}
+          <div
+            class="conflict-editor conflict-editor--editable"
+            role="region"
+            aria-label="可编辑工作副本合并区域（简化编辑器）"
+            oncompositionstart={() => (isComposing = true)}
+            oncompositionend={() => (isComposing = false)}
+          >
+            <div class="conflict-codemirror-host" bind:this={editorHost}></div>
+          </div>
+        {/if}
         {#if snapshot.selected.draft?.hasDraft}<div
             class="notice notice--info"
             role="status"

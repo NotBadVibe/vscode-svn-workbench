@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unused-vars */
 import { fireEvent, render, screen, within } from "@testing-library/svelte";
 import { describe, expect, it, vi } from "vitest";
 import ConflictsModule from "../../src/webview/features/conflicts/ConflictsModule.svelte";
@@ -11,6 +12,39 @@ vi.mock("@pierre/diffs", () => ({
     }
     cleanUp() {}
   },
+  File: class {
+    render() {
+      return true;
+    }
+    cleanUp() {}
+  },
+}));
+vi.mock("@pierre/diffs/edit", () => ({
+  Editor: class {
+    constructor(_opts: unknown) {}
+    edit() {
+      return () => {};
+    }
+    getText() {
+      return "";
+    }
+    applyEdits() {}
+    cleanUp() {}
+    canUndo() {
+      return false;
+    }
+    canRedo() {
+      return false;
+    }
+    undo() {}
+    redo() {}
+    focus() {}
+  },
+}));
+vi.mock("../../src/webview/features/diff/cspCompatObserver", () => ({
+  observeDiffContainer: () => ({ disconnect: () => {} }),
+  observeDiffShadowRoot: () => ({ disconnect: () => {} }),
+  installDiffCspCompatibilityShim: () => {},
 }));
 
 const baseSnapshot: ConflictSnapshot = {
