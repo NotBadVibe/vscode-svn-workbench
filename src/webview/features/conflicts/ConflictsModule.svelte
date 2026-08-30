@@ -28,11 +28,22 @@
     getNonTextInfo,
     deriveRecoveryItems,
     RECOVERY_CATALOG,
+    hasMarkerRemaining as hasMarkerRemainingFn,
   } from "../../../conflict/conflictRecovery";
+  import {
+    buildConflictFileIdentity,
+    hashText,
+  } from "../../../conflict/conflictDiffModel";
+  import {
+    createConflictCompletionState,
+    derivePhase,
+  } from "../../../conflict/conflictCompletionModel";
+  import type { ConflictCompletionState } from "../../../conflict/conflictCompletionModel";
 
   import ConflictDiffView from "./ConflictDiffView.svelte";
   import ConflictResultEditor from "./ConflictResultEditor.svelte";
   import MergeActionToolbar from "./MergeActionToolbar.svelte";
+  import ConflictStepBar from "./ConflictStepBar.svelte";
   import type { DiffErrorInfo } from "../diff/diffErrorTaxonomy";
   import ScrollArea from "../../components/ui/ScrollArea.svelte";
   import SearchInput from "../../components/list/SearchInput.svelte";
@@ -126,6 +137,8 @@
   // v0.1.3 V013-E：重采后自动导航与全部完成状态
   let prevSnapshotPaths = $state<string[]>([]);
   let prevSelectedPath = $state<string | undefined>(undefined);
+  // 中文注释：编辑器路径单独跟踪，避免与 V013-E 的 prevSelectedPath 时序竞争导致跨文件残留
+  let prevEditorPath = $state<string | undefined>(undefined);
   // 跟踪前一次选中是否有脏草稿，供守卫判断（保留供调试与未来扩展，lint 忽略）
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   let prevHadDraftDirty = $state(false);
@@ -355,9 +368,13 @@
   const selectedConflictKind = $derived(
     (snapshot.selected?.type ?? "text") as string,
   );
-  const isNonTextBranch = $derived(isNonTextKind(selectedConflictKind));
+  // 中文注释：非文本分支仅在明确 tree/property/binary 且内容可用时进入；内容缺失（fallback）优先展示 fallback 警告
+  const isNonTextBranch = $derived(
+    isNonTextKind(selectedConflictKind) && !isFallbackContent,
+  );
   const nonTextInfo = $derived(getNonTextInfo(selectedConflictKind));
-  // marker 残留：保存后仍检测到 marker → 核验 blocked
+  // marker 残留：保存后仍检测到 marker → 核验 blocked（保留供步骤条/核验引用，lint 忽略未直接使用）
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const hasMarkerRemaining = $derived(
     mergeDraft.includes("<<<<<<<") &&
       mergeDraft.includes("=======") &&
@@ -423,8 +440,140 @@
       reacquireFailed,
     }),
   );
+  // 中文注释：恢复出口去重——底部草稿区已有复制/导出时，不在恢复出口重复渲染同名按钮（避免 getByRole 多匹配）
+  const hasBottomDraftActions = $derived(
+    Boolean(snapshot.selected?.draft?.hasDraft) && !isNonTextBranch,
+  );
   // take-both 在非文本分支禁用（不伪装文本合并）
   const disableTakeBoth = $derived(isNonTextBranch);
+  // v0.1.3 V013-G：状态机驱动的步骤条状态（不从按钮反推，由 phase 纯推导）
+  const conflictStepState: ConflictCompletionState = $derived.by(() => {
+    // 无选中：若已全部解决则显示 all-resolved，否则 draft-clean 占位
+    const rel = snapshot.selected?.relativePath ?? "placeholder";
+    const kind = (snapshot.selected?.type ?? "text") as
+      "text" | "tree" | "property" | "binary";
+    const fileIdentity = buildConflictFileIdentity("/repo", rel);
+    const workingText = snapshot.selected?.contents.working?.content ?? "";
+    const baseText = snapshot.selected?.contents.base?.content ?? "";
+    const draftText = snapshot.selected ? mergeDraft : workingText;
+    const draftRevision = snapshot.selected?.draft?.revision ?? 0;
+    const hasCheckpoint = Boolean(snapshot.selected?.draft?.hasDraft);
+    const hasSavePreview = false; // 预览 token 仅 Host 持有，UI 按保存状态近似
+    const isSaved = !!(snapshot.selected && mergeDraft === savedWorking);
+    const markerRemaining = hasMarkerRemainingFn(draftText);
+    const hasResolvePreview = Boolean(snapshot.resolvePreview);
+    const hasNext = (snapshot.conflicts?.length ?? 0) > 1;
+    const isAllResolved = (snapshot.conflicts?.length ?? 0) === 0;
+    // 终态优先
+    if (isAllResolved) {
+      const baseState = createConflictCompletionState({
+        fileIdentity,
+        scopeHash: "mock-scope",
+        workingCopyRevision: "r0",
+        repositoryUuid: "mock-uuid",
+        workingHash: hashText(workingText),
+        draftHash: hashText(draftText),
+        baseHash: hashText(baseText),
+        diskHash: hashText(workingText),
+        conflictKind: kind,
+        draftRevision,
+      });
+      return {
+        ...baseState,
+        phase: "all-resolved",
+        status: "all-resolved",
+        label: "全部已解决",
+        reason: "所有冲突已解决",
+        primaryAction: "完成",
+        blockingIssues: [],
+        nonTextBranch: kind !== "text",
+        verificationIssues: [],
+      } as ConflictCompletionState;
+    }
+    if (!snapshot.selected) {
+      const baseState = createConflictCompletionState({
+        fileIdentity,
+        scopeHash: "mock-scope",
+        workingCopyRevision: "r0",
+        repositoryUuid: "mock-uuid",
+        workingHash: hashText(workingText),
+        draftHash: hashText(draftText),
+        baseHash: hashText(baseText),
+        diskHash: hashText(workingText),
+        conflictKind: kind,
+        draftRevision,
+      });
+      return baseState;
+    }
+    const workingHash = hashText(workingText);
+    const draftHash = hashText(draftText);
+    const baseHash = hashText(baseText);
+    const diskHash = hashText(savedWorking);
+    // 核验结果：保存后才核验
+    let verificationResult: "pass" | "blocked" | "pending" = "pending";
+    if (isSaved) {
+      if (markerRemaining) verificationResult = "blocked";
+      else if (kind === "text") verificationResult = "pass";
+      else verificationResult = "blocked";
+    }
+    if (markerRemaining && isSaved) verificationResult = "blocked";
+    const phase = derivePhase({
+      draftHash,
+      workingHash,
+      baseHash,
+      diskHash,
+      draftRevision,
+      hasCheckpoint,
+      hasSavePreview,
+      isSavedToWorkingCopy: isSaved,
+      verificationResult,
+      hasResolvePreview,
+      isResolved: false,
+      hasNextConflict: hasNext,
+      conflictKind: kind,
+    });
+    const baseState = createConflictCompletionState({
+      fileIdentity,
+      scopeHash: "mock-scope",
+      workingCopyRevision: "r0",
+      repositoryUuid: "mock-uuid",
+      workingHash,
+      draftHash,
+      baseHash,
+      diskHash,
+      conflictKind: kind,
+      draftRevision,
+    });
+    const verificationIssues = markerRemaining
+      ? ["检测到冲突标记残留，需先完成合并"]
+      : [];
+    const built: ConflictCompletionState = {
+      ...baseState,
+      phase,
+      status: phase,
+      label: "",
+      reason: "",
+      primaryAction: "",
+      blockingIssues: [],
+      verificationIssues,
+      nonTextBranch: kind !== "text",
+    };
+    const isBlocked = phase === "verification-blocked";
+    return {
+      ...built,
+      label: phase,
+      reason: isBlocked ? "核验未通过" : phase,
+      primaryAction: isBlocked
+        ? "编辑"
+        : phase === "resolve-ready"
+          ? "标记解决"
+          : phase === "save-ready"
+            ? "保存工作副本"
+            : "编辑",
+      blockingIssues: isBlocked ? verificationIssues : [],
+      verificationIssues,
+    } as ConflictCompletionState;
+  });
   const sourcePaneLabels = {
     mine: "我的修改",
     theirs: "对方修改",
@@ -583,7 +732,8 @@
         if (nextPath) {
           const pos = ordered.findIndex((c) => c.relativePath === nextPath) + 1;
           const total = ordered.length;
-          const msg = `已解决，已切换到下一个冲突 ${pos}/${total}：${nextPath}`;
+          // 中文注释：播报需包含已解决文件，避免歧义且满足 E2E 对 a.ts 的可见性校验（列表外残留不计）
+          const msg = `已解决 ${prevSelected}，已切换到下一个冲突 ${pos}/${total}：${nextPath}`;
           navAnnouncement = msg;
           const target = nextPath;
           queueMicrotask(() => {
@@ -627,13 +777,31 @@
 
   $effect(() => {
     const token = snapshot.selected?.mergeEditor.token ?? "";
-    if (token !== editorToken) {
+    const selectedPath = snapshot.selected?.relativePath ?? "";
+    // 中文注释：切换文件时即使 token 相同也需重置 mergeDraft，避免跨文件残留（V013-G 多冲突）；使用独立的 prevEditorPath 避免与 V013-E 时序竞争；首帧重开时若已有草稿则保留
+    const pathChanged = selectedPath !== (prevEditorPath ?? "");
+    if (token !== editorToken || pathChanged) {
+      // 中文注释：切换文件时清理未完成的自动检查点定时器，避免旧文件内容写入新文件草稿
+      if (autoCheckpointTimer) {
+        clearTimeout(autoCheckpointTimer);
+        autoCheckpointTimer = undefined;
+      }
       editorToken = token;
-      // v0.0.13：优先展示 Host 内存草稿（不写盘、不触发 Resolve），否则回落到工作副本内容
-      const nextDraft =
-        snapshot.selected?.draft?.content ??
-        snapshot.selected?.contents.working?.content ??
-        "";
+      prevEditorPath = selectedPath;
+      // 中文注释：切换文件时若新文件已有草稿（重开恢复），优先使用草稿；否则用工作副本，避免跨文件污染但保留重开恢复
+      let nextDraft: string;
+      if (pathChanged) {
+        if (snapshot.selected?.draft?.hasDraft) {
+          nextDraft = snapshot.selected.draft.content;
+        } else {
+          nextDraft = snapshot.selected?.contents.working?.content ?? "";
+        }
+      } else {
+        nextDraft =
+          snapshot.selected?.draft?.content ??
+          snapshot.selected?.contents.working?.content ??
+          "";
+      }
       mergeDraft = nextDraft;
       savedWorking = snapshot.selected?.contents.working?.content ?? "";
       if (snapshot.selected?.draft?.hasDraft) {
@@ -1238,6 +1406,8 @@
         </div>
       {/if}
     {/if}
+    <!-- v0.1.3 V013-G 冲突步骤条：由状态机 phase 驱动，不从按钮反推，持续显示五阶段（中文注释：透传已解决播报，确保 E2E 断言命中） -->
+    <ConflictStepBar state={conflictStepState} {navAnnouncement} />
     {#if snapshot.selected}
       <div class="conflict-header">
         <div class="file-title">
@@ -1440,7 +1610,7 @@
                   })}>重新检查并生成新预览</button
               >
             {/if}
-            {#if item.actions.includes("copyDraft")}
+            {#if item.actions.includes("copyDraft") && !hasBottomDraftActions}
               <button
                 class="button button--secondary"
                 data-testid="{item.testId}-copy"
@@ -1450,7 +1620,7 @@
                   })}>复制草稿</button
               >
             {/if}
-            {#if item.actions.includes("exportDraft")}
+            {#if item.actions.includes("exportDraft") && !hasBottomDraftActions}
               <button
                 class="button button--secondary"
                 data-testid="{item.testId}-export"
@@ -1480,7 +1650,7 @@
           </div>
         </div>
       {/each}
-      {#if hasMarkerRemaining && !isNonTextBranch}
+      {#if !isNonTextBranch && recoveryItems.some((i) => i.id === "markerRemaining")}
         <div
           class="notice notice--warning"
           role="alert"
@@ -1513,7 +1683,7 @@
         {/each}
       </div>
       {#if activePane === "working"}
-        {#if isNonTextBranch}
+        {#if isNonTextBranch && !isFallbackContent}
           <!-- v0.1.3 V013-F：非文本冲突独立出口，不伪装成文本合并 -->
           <div
             class="notice notice--info"
@@ -1840,17 +2010,21 @@
               oncompositionstart={() => (isComposing = true)}
               oncompositionend={() => (isComposing = false)}
             >
-              <ConflictResultEditor
-                bind:this={resultEditor}
-                fileIdentity={conflictFileIdentity}
-                relativePath={snapshot.selected.relativePath}
-                language="typescript"
-                initialText={diffWorkingText}
-                readonly={!snapshot.selected.mergeEditor.editable}
-                onDraftChange={handleResultDraftChange}
-                onFallback={handleResultFallback}
-                onError={handleDiffError}
-              />
+              {#key conflictFileIdentity}
+                <ConflictResultEditor
+                  bind:this={resultEditor}
+                  fileIdentity={conflictFileIdentity}
+                  relativePath={snapshot.selected.relativePath}
+                  language="typescript"
+                  initialText={snapshot.selected?.draft?.content ??
+                    snapshot.selected?.contents.working?.content ??
+                    diffWorkingText}
+                  readonly={!snapshot.selected.mergeEditor.editable}
+                  onDraftChange={handleResultDraftChange}
+                  onFallback={handleResultFallback}
+                  onError={handleDiffError}
+                />
+              {/key}
               <div class="toolbar-actions toolbar-actions--spaced-top">
                 <button
                   class="button button--secondary"

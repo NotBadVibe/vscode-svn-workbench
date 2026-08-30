@@ -2407,15 +2407,13 @@ function conflictSnapshot(
       workingExtra = { truncated: true, readError: "二进制文件不支持内嵌合并" };
     if (scenario === "truncated") workingExtra = { truncated: true };
     if (scenario === "missing") workingContent = undefined;
-    // v0.1.3 V013-F：支持 tree/property/binary 非文本场景参数（conflictScenario=tree 等或 conflictType=tree）
+    // 中文注释：V013-F 非文本仅显式 conflictType 驱动；binary 仅靠 readError 的 fallback 场景不视为非文本，优先 fallback
     const typeParam = new URLSearchParams(window.location.search).get(
       "conflictType",
     );
     const nonTextScenario =
       typeParam ??
-      (scenario === "tree" || scenario === "property" || scenario === "binary"
-        ? scenario
-        : undefined);
+      (scenario === "tree" || scenario === "property" ? scenario : undefined);
     if (
       nonTextScenario === "tree" ||
       nonTextScenario === "property" ||
@@ -2427,13 +2425,12 @@ function conflictSnapshot(
       workingExtra = {};
     }
   }
-  // v0.1.3 V013-F：非文本类型覆盖（conflictType 或 conflictScenario 驱动）
+  // 中文注释：非文本类型覆盖仅 tree/property 走 scenario；binary 靠 readError 的场景保持 text + fallback
   const typeOverride = (() => {
     const p = new URLSearchParams(window.location.search).get("conflictType");
     if (p === "tree" || p === "property" || p === "binary" || p === "text")
       return p;
-    if (scenario === "tree" || scenario === "property" || scenario === "binary")
-      return scenario;
+    if (scenario === "tree" || scenario === "property") return scenario;
     return undefined;
   })();
 

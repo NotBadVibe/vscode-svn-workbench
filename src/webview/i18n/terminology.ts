@@ -281,6 +281,24 @@ export const diffFallbackNotices = {
  * 最终决策 · 决策原因（命中规则及来源 / 状态默认策略 / 安全规则）· 安全锁定。
  * 文案统一收口在此处，提交页与设置预览不各自拼字符串。
  */
+/** v0.1.3 V013-G：冲突解决步骤条文案（五阶段，不从按钮反推） */
+export const conflictStepLabels = {
+  barTitle: "冲突解决步骤",
+  edit: "编辑",
+  saveWorking: "保存工作副本",
+  verify: "核验",
+  resolve: "标记解决",
+  next: "下一个",
+  stateDone: "已完成",
+  stateCurrent: "进行中",
+  stateBlocked: "已阻止",
+  statePending: "待处理",
+  blockedReason: "阻止原因",
+  nextAction: "下一步",
+  toggleExpand: "展开",
+  toggleCollapse: "折叠",
+} as const;
+
 export function describeCommitSelectionEvaluation(
   evaluation: CommitSelectionExplanation,
 ): string {

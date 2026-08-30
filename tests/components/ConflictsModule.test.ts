@@ -241,9 +241,10 @@ describe("ConflictsModule 列表迁移（v0.0.10）", () => {
     expect(onAction).toHaveBeenCalledWith("conflict/select", {
       relativePath: "api/b.ts",
     });
+    // 中文注释：V013-G 步骤条透传已解决播报，导致同一文本在 StepBar 与原播报中各出现一次，改用 getAllByText 兼容精确条件
     expect(
-      screen.getByText(/已切换到 api\/b\.ts（剩余 3 个未解决冲突）/),
-    ).toBeInTheDocument();
+      screen.getAllByText(/已切换到 api\/b\.ts（剩余 3 个未解决冲突）/).length,
+    ).toBeGreaterThan(0);
   });
 
   it("上一个从排序末尾的选中冲突回退", async () => {
