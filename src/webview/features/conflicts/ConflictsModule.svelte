@@ -50,6 +50,7 @@
     conflictReceipt,
     conflictDraftAck,
     conflictSwitchRequest,
+    entryOrigin,
   }: {
     snapshot: ConflictSnapshot;
     onAction: (action: WebviewAction, data?: Record<string, unknown>) => void;
@@ -73,6 +74,8 @@
       HostToWebviewMessage,
       { type: "conflict/draft-switch-confirm" }
     >["payload"];
+    /** v0.1.3 V013-E：进入冲突页的来源（用于全部完成后的返回来路） */
+    entryOrigin?: "update" | "changes" | "command" | "conflicts" | "generic";
   } = $props();
 
   let activePane = $state<"working" | "mine" | "theirs" | "base">("working");
@@ -114,6 +117,39 @@
   let operationFilter = $state("all");
   let sortField = $state<"path" | "type" | "operation">("path");
   let navAnnouncement = $state("");
+  // v0.1.3 V013-E：重采后自动导航与全部完成状态
+  let prevSnapshotPaths = $state<string[]>([]);
+  let prevSelectedPath = $state<string | undefined>(undefined);
+  // 跟踪前一次选中是否有脏草稿，供守卫判断（保留供调试与未来扩展，lint 忽略）
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  let prevHadDraftDirty = $state(false);
+  let v013Initialized = $state(false);
+  // 记录进入来源：优先 props，其次 URL 参数，其次 sessionStorage，最后 generic
+  const effectiveEntryOrigin = $derived.by(() => {
+    if (entryOrigin) return entryOrigin;
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const p = params.get("entry") ?? params.get("source");
+      if (
+        p === "update" ||
+        p === "changes" ||
+        p === "command" ||
+        p === "conflicts"
+      )
+        return p;
+      const stored = sessionStorage.getItem("conflicts-entry-origin");
+      if (
+        stored === "update" ||
+        stored === "changes" ||
+        stored === "command" ||
+        stored === "conflicts"
+      )
+        return stored;
+    } catch (_e) {
+      void _e;
+    }
+    return "generic" as const;
+  });
   // v0.0.13 中文 IME 保护与三选一对话框焦点管理
   let isComposing = $state(false);
   let switchDialogEl = $state<HTMLDialogElement>();
@@ -410,6 +446,83 @@
     typeFilter;
     operationFilter;
     list.resetNavigation();
+  });
+
+  // v0.1.3 V013-E：检测重采后当前选中文件已消失（已解决），自动按左侧权威排序进入下一个；仅选中文件消失才跳，后台刷新不抢焦点
+  $effect(() => {
+    const curPaths = snapshot.conflicts.map((c) => c.relativePath);
+    const curSelected = snapshot.selected?.relativePath;
+    // 读取但不订阅写入状态，避免循环：用 untrack 包裹写入
+    const wasInitialized = v013Initialized;
+    const prevSelected = untrack(() => prevSelectedPath);
+    const prevPaths = untrack(() => prevSnapshotPaths);
+    const prevKey = prevPaths.join("\x1f");
+    const curKey = curPaths.join("\x1f");
+    if (!wasInitialized) {
+      untrack(() => {
+        prevSnapshotPaths = [...curPaths];
+        prevSelectedPath = curSelected;
+        prevHadDraftDirty =
+          Boolean(snapshot.selected?.draft?.dirty) ||
+          mergeDraft !== savedWorking;
+        v013Initialized = true;
+      });
+      try {
+        if (entryOrigin)
+          sessionStorage.setItem("conflicts-entry-origin", entryOrigin);
+      } catch (_e) {
+        void _e;
+      }
+      return;
+    }
+    const hadPrev = Boolean(prevSelected);
+    const disappeared = hadPrev && !curPaths.includes(prevSelected as string);
+    if (disappeared) {
+      if (curPaths.length === 0) {
+        const resolved =
+          snapshot.progress?.resolvedCount ??
+          snapshot.progress?.initialCount ??
+          prevPaths.length;
+        const msg = `全部冲突已解决，已解决 ${resolved} 个`;
+        navAnnouncement = msg;
+      } else {
+        let nextPath: string | undefined;
+        // 使用当前 orderedConflicts 权威排序的后继（不按旧列表乐观推断）
+        const ordered = untrack(() => orderedConflicts);
+        const sf = untrack(() => sortField);
+        if (sf === "path") {
+          let insertIdx = ordered.findIndex(
+            (c) => naturalCompare(c.relativePath, prevSelected as string) > 0,
+          );
+          if (insertIdx === -1) insertIdx = 0;
+          nextPath = ordered[insertIdx]?.relativePath;
+        } else {
+          nextPath = ordered[0]?.relativePath;
+        }
+        if (!nextPath) nextPath = ordered[0]?.relativePath;
+        if (nextPath) {
+          const pos = ordered.findIndex((c) => c.relativePath === nextPath) + 1;
+          const total = ordered.length;
+          const msg = `已解决，已切换到下一个冲突 ${pos}/${total}：${nextPath}`;
+          navAnnouncement = msg;
+          const target = nextPath;
+          queueMicrotask(() => {
+            const stillExists = snapshot.conflicts.some(
+              (c) => c.relativePath === target,
+            );
+            if (stillExists) selectConflict(target as string);
+          });
+        }
+      }
+    } else if (curKey !== prevKey) {
+      void curKey; // 后台刷新但选中仍在：不抢焦点（空分支仅作记录）
+    }
+    untrack(() => {
+      prevSnapshotPaths = [...curPaths];
+      if (curSelected !== undefined) prevSelectedPath = curSelected;
+      prevHadDraftDirty =
+        Boolean(snapshot.selected?.draft?.dirty) || mergeDraft !== savedWorking;
+    });
   });
 
   // 新的路径详情结果到达时自动展开；关闭后恢复触发按钮焦点。
@@ -837,11 +950,88 @@
       </div>
     {/if}
     {#if snapshot.conflicts.length === 0}
-      <div class="empty-state">
-        <span class="codicon codicon-pass-filled"></span>
+      <div
+        class="empty-state"
+        data-testid="all-resolved-summary"
+        role="status"
+        aria-live="polite"
+      >
+        <span class="codicon codicon-pass-filled" aria-hidden="true"></span>
         <div>
-          <strong>没有冲突</strong>
-          <p>当前范围可以继续提交。</p>
+          <strong>全部冲突已解决</strong>
+          <p>
+            本次已解决 {snapshot.progress?.resolvedCount ??
+              snapshot.progress?.initialCount ??
+              0} 个冲突
+            {#if snapshot.progress && snapshot.progress.initialCount > (snapshot.progress.resolvedCount ?? 0)}
+              · 剩余 {snapshot.progress.remaining} 个
+            {/if}
+          </p>
+          <p class="muted">
+            工作副本当前状态：可以继续提交。当前范围已无冲突标记。
+          </p>
+          <div class="toolbar-actions" role="group" aria-label="返回来路">
+            {#if effectiveEntryOrigin === "update"}
+              <button
+                class="button button--primary"
+                data-testid="return-to-update"
+                onclick={() =>
+                  onAction("open-module", {
+                    moduleId: "update",
+                    taskId: "update/preview",
+                  })}>返回更新结果</button
+              >
+            {:else if effectiveEntryOrigin === "changes"}
+              <button
+                class="button button--primary"
+                data-testid="return-to-changes"
+                onclick={() =>
+                  onAction("open-module", {
+                    moduleId: "changes",
+                    taskId: "changes/overview",
+                  })}>查看本地修改</button
+              >
+            {:else if effectiveEntryOrigin === "command" || effectiveEntryOrigin === "conflicts"}
+              <button
+                class="button button--primary"
+                data-testid="return-close"
+                onclick={() =>
+                  onAction("open-module", {
+                    moduleId: "changes",
+                    taskId: "changes/overview",
+                  })}>关闭</button
+              >
+            {:else}
+              <!-- 通用出口：不扩大原 scope，提供全部可选返回 -->
+              <button
+                class="button button--primary"
+                data-testid="return-to-changes-generic"
+                onclick={() =>
+                  onAction("open-module", {
+                    moduleId: "changes",
+                    taskId: "changes/overview",
+                  })}>查看本地修改</button
+              >
+              <button
+                class="button button--secondary"
+                data-testid="return-to-update-generic"
+                onclick={() =>
+                  onAction("open-module", {
+                    moduleId: "update",
+                    taskId: "update/preview",
+                  })}>返回更新结果</button
+              >
+              <button
+                class="button button--secondary"
+                data-testid="return-close-generic"
+                onclick={() =>
+                  onAction("open-module", {
+                    moduleId: "changes",
+                    taskId: "changes/overview",
+                  })}>关闭</button
+              >
+            {/if}
+          </div>
         </div>
       </div>
     {:else if orderedConflicts.length === 0}

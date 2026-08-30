@@ -246,6 +246,16 @@ const mockConflictDrafts = new Map<
   string,
   { dirty: boolean; content?: string; revision?: number; updatedAt?: number }
 >();
+/** v0.1.3 V013-E：可配置多冲突列表（resolve 后重采模拟）；为空时使用默认单文件 */
+let mockConflictsOverride:
+  | Array<{
+      relativePath: string;
+      operation?: string;
+      type?: string;
+      sourceLeftRevision?: string;
+      sourceRightRevision?: string;
+    }>
+  | undefined;
 /** v0.0.13：mock 待确认的冲突文件切换（脏草稿三选一）。 */
 let mockPendingConflictSwitch:
   { currentRelativePath: string; nextRelativePath: string } | undefined;
@@ -1534,6 +1544,43 @@ export function startMockWorkbench(): void {
         }),
       );
     }
+    if (action === "conflict/resolve") {
+      // v0.1.3 V013-E：模拟 Host 成功 resolve 后的重采——从列表移除目标并重发快照（按权威重采语义）
+      const target =
+        (data.previewToken
+          ? "src/conflict/example.ts"
+          : (data.relativePath as string)) || "src/conflict/example.ts";
+      // 若存在多冲突覆盖，则从覆盖中移除
+      const current = mockConflictsOverride ?? [
+        { relativePath: "src/conflict/example.ts" },
+      ];
+      mockConflictsOverride = current.filter((c) => c.relativePath !== target);
+      // 清理该文件草稿
+      mockConflictDrafts.delete(target);
+      // 若覆盖为空，保留空数组表示全部完成；否则保持剩余
+      injectHostMessage("operation/result", {
+        title: "冲突已标记解决",
+        message: target,
+      });
+      // 下发重采后的快照：conflicts 已更新，selected 自动指向首个剩余（由 conflictSnapshot 逻辑决定）
+      const remaining = mockConflictsOverride;
+      if (remaining.length === 0) {
+        injectSnapshot(
+          "conflicts",
+          conflictSnapshot({
+            conflicts: [],
+            progress: {
+              initialCount: current.length + 1,
+              remaining: 0,
+              resolvedCount: current.length + 1,
+            },
+            selected: undefined,
+          } as unknown as Record<string, unknown>),
+        );
+      } else {
+        injectSnapshot("conflicts", conflictSnapshot());
+      }
+    }
     if (action === "settings/test-ai") {
       injectSnapshot(
         "settings",
@@ -2289,7 +2336,8 @@ function historySnapshot(
 function conflictSnapshot(
   overrides: Record<string, unknown> = {},
 ): WorkbenchModuleSnapshot {
-  const conflicts = isScrollDataset()
+  // v0.1.3 V013-E：优先使用 override 注入的 conflicts（如测试或 resolve 后重采），否则按默认/滚动数据集生成
+  const baseConflicts = isScrollDataset()
     ? Array.from({ length: 36 }, (_, index) => ({
         relativePath: `项目资料/冲突/文件-${index + 1}.ts`,
         operation: "update" as const,
@@ -2297,7 +2345,7 @@ function conflictSnapshot(
         sourceLeftRevision: "119",
         sourceRightRevision: "120",
       }))
-    : [
+    : (mockConflictsOverride ?? [
         {
           relativePath: "src/conflict/example.ts",
           operation: "update" as const,
@@ -2305,7 +2353,10 @@ function conflictSnapshot(
           sourceLeftRevision: "41",
           sourceRightRevision: "42",
         },
-      ];
+      ]);
+  // overrides.conflicts 可覆盖基础列表（用于测试多冲突场景）
+  const conflicts =
+    (overrides.conflicts as typeof baseConflicts | undefined) ?? baseConflicts;
   const scenario = new URLSearchParams(window.location.search).get(
     "conflictScenario",
   );
@@ -2358,47 +2409,67 @@ function conflictSnapshot(
     if (scenario === "missing") workingContent = undefined;
   }
 
+  // 若调用方通过 overrides 显式指定 progress/selected，则尊重；否则按当前 conflicts 推导
+  const defaultProgress = {
+    initialCount: conflicts.length + 1,
+    remaining: conflicts.length,
+    resolvedCount: 1,
+  };
+  const firstPath = conflicts[0]?.relativePath ?? "src/conflict/example.ts";
   return {
     kind: "conflicts",
     conflicts,
-    progress: {
-      initialCount: conflicts.length + 1,
-      remaining: conflicts.length,
-      resolvedCount: 1,
-    },
-    selected: {
-      relativePath: "src/conflict/example.ts",
-      operation: "update",
-      type: "text",
-      sourceLeftRevision: "41",
-      sourceRightRevision: "42",
-      contents: {
-        base: { content: "export const mode = 'legacy';\n", truncated: false },
-        mine: { content: "export const mode = 'local';\n", truncated: false },
-        theirs: {
-          content: "export const mode = 'svelte';\n",
-          truncated: false,
-        },
-        working: { content: workingContent, truncated: false, ...workingExtra },
-      },
-      mergeEditor: { token: "mock-edit", editable: true, issues: [] },
-      // V012：若 mock 内存已有草稿且调用方未通过 overrides 覆盖，则注入草稿供重开恢复
-      ...(() => {
-        const entry = mockConflictDrafts.get("src/conflict/example.ts");
-        if (entry?.dirty && entry.content) {
-          return {
-            draft: {
-              content: entry.content,
-              revision: entry.revision ?? 2,
-              updatedAt: entry.updatedAt ?? Date.now(),
-              hasDraft: true,
-              dirty: true,
+    progress:
+      (overrides.progress as typeof defaultProgress | undefined) ??
+      defaultProgress,
+    selected:
+      (overrides.selected as unknown) !== undefined
+        ? (overrides.selected as never)
+        : conflicts.length === 0
+          ? undefined
+          : {
+              relativePath: firstPath,
+              operation: "update",
+              type: "text",
+              sourceLeftRevision: "41",
+              sourceRightRevision: "42",
+              contents: {
+                base: {
+                  content: "export const mode = 'legacy';\n",
+                  truncated: false,
+                },
+                mine: {
+                  content: "export const mode = 'local';\n",
+                  truncated: false,
+                },
+                theirs: {
+                  content: "export const mode = 'svelte';\n",
+                  truncated: false,
+                },
+                working: {
+                  content: workingContent,
+                  truncated: false,
+                  ...workingExtra,
+                },
+              },
+              mergeEditor: { token: "mock-edit", editable: true, issues: [] },
+              // V012：若 mock 内存已有草稿且调用方未通过 overrides 覆盖，则注入草稿供重开恢复
+              ...(() => {
+                const entry = mockConflictDrafts.get("src/conflict/example.ts");
+                if (entry?.dirty && entry.content) {
+                  return {
+                    draft: {
+                      content: entry.content,
+                      revision: entry.revision ?? 2,
+                      updatedAt: entry.updatedAt ?? Date.now(),
+                      hasDraft: true,
+                      dirty: true,
+                    },
+                  };
+                }
+                return {};
+              })(),
             },
-          };
-        }
-        return {};
-      })(),
-    },
     aiPrivacy: {
       model: aiDisabled ? "本地规则（未配置外部模型）" : "deepseek-v4-flash",
       characters: 86,
