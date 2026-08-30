@@ -1,6 +1,6 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import * as vscode from "vscode";
 import type { AiConflictRequest } from "../../ai/aiProvider";
 import {
@@ -442,6 +442,8 @@ export class WorkbenchController implements vscode.Disposable {
   private activityStore: ActivityStoreState = createActivityStore();
   /** v0.1.3 V013-B2：冲突原子保存服务（真实依赖注入，仿 diffEditHost） */
   private readonly conflictSaveService: ConflictSaveService;
+  /** v0.1.3 修复：resolve preview token 注册表（TTL 15min、绑定 session/scope/UUID/revision/contentHash、单次消耗） */
+  private readonly resolvePreviewTokens = new DiffEditTokenRegistry();
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -692,6 +694,7 @@ export class WorkbenchController implements vscode.Disposable {
       // 会话替换即撤销旧会话的编辑令牌：旧 token 永不恢复有效（v0.0.7 §8）。
       this.diffEdit?.revokeForSession(this.session.sessionId);
       this.conflictSaveService.revokeForSession(this.session.sessionId);
+      this.resolvePreviewTokens.revokeAllForSession(this.session.sessionId);
     }
     const storedAi = await readStoredAiConfiguration(this.context);
     const repositoryUuid = await resolveRepositoryUuid(
@@ -816,6 +819,7 @@ export class WorkbenchController implements vscode.Disposable {
       this.nativeDiffContentProvider?.releaseSession(session.sessionId);
       this.diffEdit?.revokeForSession(session.sessionId);
       this.conflictSaveService.revokeForSession(session.sessionId);
+      this.resolvePreviewTokens.revokeAllForSession(session.sessionId);
     }
     if (referenceRoot) {
       this.releaseSecurityContext(referenceRoot);
@@ -971,6 +975,7 @@ export class WorkbenchController implements vscode.Disposable {
           this.nativeDiffContentProvider?.releaseSession(session.sessionId);
           this.diffEdit?.revokeForSession(session.sessionId);
           this.conflictSaveService.revokeForSession(session.sessionId);
+          this.resolvePreviewTokens.revokeAllForSession(session.sessionId);
         }
         if (referenceRoot) {
           this.releaseSecurityContext(referenceRoot);
@@ -3237,22 +3242,24 @@ export class WorkbenchController implements vscode.Disposable {
           preview.canResolve = false;
         }
         const contentHash = await hashFileContents(absolutePath);
+        const { buildConflictTargetId: buildIdForPreview } =
+          await import("../../conflict/conflictSaveService");
+        const previewTargetId = buildIdForPreview(absolutePath);
         // V013-D：前置确定性核验（复用 V013-C runDeterministicVerification，7 项）
         try {
           const { runDeterministicVerification } =
             await import("../../conflict/conflictVerification");
-          const { hashText } = await import("../../conflict/conflictDiffModel");
-          const { buildConflictTargetId } =
-            await import("../../conflict/conflictSaveService");
           const { analyzeUtf8 } = await import("../../diffEdit/diffPathGuard");
-          const targetId = buildConflictTargetId(absolutePath);
+          const targetId = previewTargetId;
           const draft = this.conflictSaveService.getDraft(targetId);
           const savedHash = draft
-            ? (hashText(draft.cleanContent) as string)
-            : "";
+            ? createHash("sha256")
+                .update(draft.cleanContent, "utf8")
+                .digest("hex")
+            : contentHash;
           const hasUnsavedInput = draft
             ? draft.content !== draft.cleanContent
-            : true;
+            : false;
           const conflictsForCheck = await collectConflictItems(
             session.svnPath,
             session.scope,
@@ -3321,11 +3328,35 @@ export class WorkbenchController implements vscode.Disposable {
           preview.issues.push("前置核验失败，已阻止标记解决；请重试。");
           preview.canResolve = false;
         }
+        // 复用 DiffEditTokenRegistry 签发 resolve preview token（TTL 15min、绑定 session/scope/UUID/revision/contentHash、单次消耗）
+        const resolveToken = this.resolvePreviewTokens.issue({
+          sessionId: session.sessionId,
+          moduleId: "conflicts" as unknown as "diff",
+          taskId: "conflicts/resolve" as unknown as "diff/working",
+          repositoryUuid: session.repositoryUuid,
+          scopeHash: session.scopeHash,
+          targetId: previewTargetId,
+          targetPath: absolutePath,
+          rawHash: contentHash,
+          baseHash: session.workingCopyRevision ?? "",
+          baseRevision: session.workingCopyRevision ?? "",
+          documentVersion: -1,
+          draftRevision: -1,
+        } as unknown as Parameters<DiffEditTokenRegistry["issue"]>[0]);
+        const storedResolve = (
+          this.resolvePreviewTokens as unknown as {
+            tokens: Map<string, { taskId: string; moduleId: string }>;
+          }
+        ).tokens.get(resolveToken);
+        if (storedResolve) {
+          storedResolve.taskId = "conflicts/resolve";
+          storedResolve.moduleId = "conflicts";
+        }
         session.conflictState = {
           ...session.conflictState,
           selectedPath,
           resolvePreview: {
-            token: randomUUID(),
+            token: resolveToken,
             contentHash,
             relativePath: selectedPath,
           },
@@ -3342,12 +3373,60 @@ export class WorkbenchController implements vscode.Disposable {
         const token = asString(data.previewToken);
         const previewState = session.conflictState?.resolvePreview;
         if (!token || !previewState || token !== previewState.token) {
-          // V013-D：过期只读，提供重新检查并生成新预览的恢复动作
+          session.conflictState!.resolvePreview = undefined;
+          if (token) this.resolvePreviewTokens.revoke(token);
+          await this.sendError(
+            "conflicts",
+            "解决预览已失效",
+            "解决预览已失效，请重新检查并生成新预览。",
+            true,
+            message.requestId,
+          );
+          await this.sendConflictSnapshot(session, message.requestId);
+          return;
+        }
+        // 先消耗 token（单次有效、TTL 15min 校验）
+        const consumed = this.resolvePreviewTokens.consume(token);
+        if (!consumed.ok) {
           session.conflictState!.resolvePreview = undefined;
           await this.sendError(
             "conflicts",
             "解决预览已失效",
-            "意向单已只读失效，请点击“重新检查并生成新预览”重新生成。",
+            "解决预览已失效，请重新检查并生成新预览。",
+            true,
+            message.requestId,
+          );
+          await this.sendConflictSnapshot(session, message.requestId);
+          return;
+        }
+        // 绑定校验：sessionId / scopeHash / repositoryUuid / revision / contentHash(relativePath) 必须一致
+        const binding = consumed.binding as unknown as {
+          sessionId: string;
+          scopeHash: string;
+          repositoryUuid: string;
+          targetId: string;
+          rawHash: string;
+          baseRevision: string;
+        };
+        const { buildConflictTargetId: buildIdForResolve } =
+          await import("../../conflict/conflictSaveService");
+        const expectedTargetId = buildIdForResolve(
+          path.resolve(session.scope.repositoryRoot, previewState.relativePath),
+        );
+        const currentRevision = session.workingCopyRevision ?? "";
+        const bindingMismatch =
+          binding.sessionId !== session.sessionId ||
+          binding.scopeHash !== session.scopeHash ||
+          binding.repositoryUuid !== session.repositoryUuid ||
+          binding.targetId !== expectedTargetId ||
+          binding.rawHash !== previewState.contentHash ||
+          binding.baseRevision !== currentRevision;
+        if (bindingMismatch) {
+          session.conflictState!.resolvePreview = undefined;
+          await this.sendError(
+            "conflicts",
+            "解决预览已失效",
+            "解决预览已失效，请重新检查并生成新预览。",
             true,
             message.requestId,
           );
