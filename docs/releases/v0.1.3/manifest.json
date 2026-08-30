@@ -5,7 +5,7 @@
   "baseVersion": "0.1.2",
   "releaseDate": "2026-08-30",
   "gitTag": "v0.1.3",
-  "gitCommit": "GITCOMMIT_PLACEHOLDER",
+  "gitCommit": "f7e545c6d7a75a30a83189788a6759c0036c093f",
   "sourceState": "clean",
   "vsix": {
     "fileName": "svn-workbench-0.1.3.vsix",
