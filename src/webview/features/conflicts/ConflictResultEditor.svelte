@@ -270,6 +270,33 @@
     }
     return untrack(() => isComposingLocal);
   }
+
+  /** V012-C：供工具栏读取当前 MergeDocumentState（只读）。 */
+  export function getMergeState(): MergeDocumentState | undefined {
+    return untrack(() => mergeState);
+  }
+
+  /** V012-C：程序化动作成功后同步状态，保持与 Editor 文本一致（仍进同一 undo 栈）。 */
+  export function syncMergeState(next: MergeDocumentState): void {
+    untrack(() => {
+      mergeState = next;
+    });
+  }
+
+  /** V012-C：更新当前块身份（仅界面状态，不推进 revision）。 */
+  export function setActiveRegion(baseIdentity: string | undefined): void {
+    const cur = untrack(() => mergeState);
+    if (!cur) return;
+    untrack(() => {
+      mergeState = {
+        ...cur,
+        editorState: {
+          ...cur.editorState,
+          activeRegionBaseIdentity: baseIdentity,
+        },
+      } as MergeDocumentState;
+    });
+  }
 </script>
 
 <div

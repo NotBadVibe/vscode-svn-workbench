@@ -19,6 +19,7 @@
 
   import ConflictDiffView from "./ConflictDiffView.svelte";
   import ConflictResultEditor from "./ConflictResultEditor.svelte";
+  import MergeActionToolbar from "./MergeActionToolbar.svelte";
   import type { DiffErrorInfo } from "../diff/diffErrorTaxonomy";
   import ScrollArea from "../../components/ui/ScrollArea.svelte";
   import SearchInput from "../../components/list/SearchInput.svelte";
@@ -911,6 +912,12 @@
           >
             已切换到简化编辑器（草稿已保留，可复制/导出）
           </div>
+        {/if}
+        {#if !useSimplified && resultEditor}
+          <MergeActionToolbar
+            {resultEditor}
+            onDraftChange={(text) => handleResultDraftChange(text, 0)}
+          />
         {/if}
         {#if diffActionFeedback}<div
             class="notice notice--success"
