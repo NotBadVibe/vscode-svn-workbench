@@ -3237,6 +3237,90 @@ export class WorkbenchController implements vscode.Disposable {
           preview.canResolve = false;
         }
         const contentHash = await hashFileContents(absolutePath);
+        // V013-D：前置确定性核验（复用 V013-C runDeterministicVerification，7 项）
+        try {
+          const { runDeterministicVerification } =
+            await import("../../conflict/conflictVerification");
+          const { hashText } = await import("../../conflict/conflictDiffModel");
+          const { buildConflictTargetId } =
+            await import("../../conflict/conflictSaveService");
+          const { analyzeUtf8 } = await import("../../diffEdit/diffPathGuard");
+          const targetId = buildConflictTargetId(absolutePath);
+          const draft = this.conflictSaveService.getDraft(targetId);
+          const savedHash = draft
+            ? (hashText(draft.cleanContent) as string)
+            : "";
+          const hasUnsavedInput = draft
+            ? draft.content !== draft.cleanContent
+            : true;
+          const conflictsForCheck = await collectConflictItems(
+            session.svnPath,
+            session.scope,
+          ).catch(() => [] as Awaited<ReturnType<typeof collectConflictItems>>);
+          const isConflicted = conflictsForCheck.some(
+            (c) => c.relativePath === selectedPath,
+          );
+          const inScope =
+            validatePathsInScope(
+              session.scope,
+              [absolutePath],
+              nativePathSemantics,
+            ).outOfScopeItems.length === 0;
+          const stat = await fs.stat(absolutePath).catch(() => null);
+          const isRegularFile = Boolean(stat && stat.isFile());
+          let isDecodableText = true;
+          let fileDetail: string | undefined;
+          try {
+            const bytes = await fs.readFile(absolutePath);
+            const analysis = analyzeUtf8(bytes);
+            if (!analysis.ok) {
+              isDecodableText = false;
+              fileDetail = "文件不是可解码的 UTF-8 文本";
+            }
+          } catch {
+            isDecodableText = false;
+            fileDetail = "无法读取文件";
+          }
+          const isWritable = isRegularFile;
+          const verification = runDeterministicVerification({
+            workingText: workingContent,
+            fileMeta: {
+              isRegularFile,
+              isWritable,
+              isDecodableText,
+              detail: fileDetail,
+            },
+            scopeMeta: {
+              inScope,
+              inWorkingCopy: inScope,
+              inRepository: true,
+              detail: inScope ? undefined : "文件已移出操作范围",
+            },
+            diskHash: contentHash,
+            savedHash,
+            svnMeta: {
+              isConflicted,
+              canResolve: isConflicted,
+              detail: isConflicted ? undefined : "文件已不是冲突状态",
+            },
+            previewMeta: {
+              hasPreview: true,
+              tokenIssuedAt: Date.now(),
+              now: Date.now(),
+            },
+            draftMeta: { hasUnsavedInput },
+          });
+          if (!verification.pass) {
+            for (const iss of verification.issues.filter((i) => !i.pass)) {
+              if (!preview.issues.includes(iss.reason))
+                preview.issues.push(iss.reason);
+            }
+            preview.canResolve = false;
+          }
+        } catch {
+          preview.issues.push("前置核验失败，已阻止标记解决；请重试。");
+          preview.canResolve = false;
+        }
         session.conflictState = {
           ...session.conflictState,
           selectedPath,
@@ -3258,13 +3342,16 @@ export class WorkbenchController implements vscode.Disposable {
         const token = asString(data.previewToken);
         const previewState = session.conflictState?.resolvePreview;
         if (!token || !previewState || token !== previewState.token) {
+          // V013-D：过期只读，提供重新检查并生成新预览的恢复动作
+          session.conflictState!.resolvePreview = undefined;
           await this.sendError(
             "conflicts",
             "解决预览已失效",
-            "请重新生成解决预览。",
+            "意向单已只读失效，请点击“重新检查并生成新预览”重新生成。",
             true,
             message.requestId,
           );
+          await this.sendConflictSnapshot(session, message.requestId);
           return;
         }
         const absolutePath = path.resolve(
@@ -3277,7 +3364,7 @@ export class WorkbenchController implements vscode.Disposable {
           token: previewState.token,
           kind: "resolve" as const,
           title: `标记解决 1 个冲突`,
-          summary: `标记解决 ${previewState.relativePath} · 执行前将重新校验工作副本内容`,
+          summary: `标记解决 ${previewState.relativePath} · 当前状态：工作副本已保存，待标记解决 · 不可逆：执行 svn resolve --accept working 将清除冲突标记，需确认后不可自动撤销`,
           paths: [previewState.relativePath],
           scopeHash: session.scopeHash,
           candidateHash: previewState.contentHash,
@@ -3298,13 +3385,18 @@ export class WorkbenchController implements vscode.Disposable {
         );
         if (!resolveGenericCheck.ok) {
           session.conflictState!.resolvePreview = undefined;
+          // V013-D：确保错误文案含恢复动作“重新检查并生成新预览”
+          const recoveryMsg = resolveGenericCheck.reason.includes("重新")
+            ? `${resolveGenericCheck.reason} 请点击“重新检查并生成新预览”。`
+            : `${resolveGenericCheck.reason} 请点击“重新检查并生成新预览”重新生成。`;
           await this.sendError(
             "conflicts",
             "解决预览已失效",
-            resolveGenericCheck.reason,
+            recoveryMsg,
             true,
             message.requestId,
           );
+          await this.sendConflictSnapshot(session, message.requestId);
           return;
         }
         if (currentResolveHash !== previewState.contentHash) {
@@ -3312,7 +3404,44 @@ export class WorkbenchController implements vscode.Disposable {
           await this.sendError(
             "conflicts",
             "工作副本文件已变化",
-            "请检查保存内容并重新生成解决预览。",
+            "请检查保存内容并点击“重新检查并生成新预览”重新生成。",
+            true,
+            message.requestId,
+          );
+          await this.sendConflictSnapshot(session, message.requestId);
+          return;
+        }
+        // V013-D：执行前 SVN 状态复验（重新采集是否仍为 conflicted）
+        try {
+          const latestConflicts = await collectConflictItems(
+            session.svnPath,
+            session.scope,
+          );
+          const stillConflicted = latestConflicts.some(
+            (c) => c.relativePath === previewState.relativePath,
+          );
+          if (!stillConflicted) {
+            session.conflictState!.resolvePreview = undefined;
+            await this.sendError(
+              "conflicts",
+              "冲突状态已变化",
+              "该文件已不是冲突状态，可能已被外部工具处理。请点击“重新检查并生成新预览”。",
+              true,
+              message.requestId,
+            );
+            await this.sendConflictSnapshot(
+              session,
+              message.requestId,
+              latestConflicts,
+            );
+            return;
+          }
+        } catch {
+          session.conflictState!.resolvePreview = undefined;
+          await this.sendError(
+            "conflicts",
+            "冲突状态已变化",
+            "无法重新采集 SVN 状态，已阻止标记解决。请点击“重新检查并生成新预览”。",
             true,
             message.requestId,
           );
@@ -3349,6 +3478,14 @@ export class WorkbenchController implements vscode.Disposable {
           });
           return;
         }
+        // V013-D：成功前记录 resolved 事实供 V013-A 状态机/E 使用（清除前快照/feedback）
+        const resolvedFacts = {
+          relativePath: previewState.relativePath,
+          resolvedAt: new Date().toISOString(),
+        };
+        (
+          session as unknown as { lastResolvedConflict?: typeof resolvedFacts }
+        ).lastResolvedConflict = resolvedFacts;
         session.conflictState = undefined;
         await this.post({
           protocolVersion: WORKBENCH_PROTOCOL_VERSION,

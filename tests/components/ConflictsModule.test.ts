@@ -82,7 +82,9 @@ describe("ConflictsModule", () => {
       screen.getByRole("dialog", { name: "标记解决 1 个冲突" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("标记解决 src/a.ts · 执行前将重新校验工作副本内容"),
+      screen.getByText(
+        "标记解决 src/a.ts · 当前状态：工作副本已保存，待标记解决 · 不可逆：执行 svn resolve --accept working 将清除冲突标记，需确认后不可自动撤销",
+      ),
     ).toBeInTheDocument();
     const dialog = screen.getByRole("dialog", { name: "标记解决 1 个冲突" });
     const confirmInDialog = Array.from(dialog.querySelectorAll("button")).find(

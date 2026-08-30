@@ -217,7 +217,9 @@
     const preview = snapshot.resolvePreview;
     if (!preview || !snapshot.selected) return undefined;
     const title = `标记解决 1 个冲突`;
-    const summary = `标记解决 ${snapshot.selected.relativePath} · 执行前将重新校验工作副本内容`;
+    const summary = `标记解决 ${snapshot.selected.relativePath} · 当前状态：工作副本已保存，待标记解决 · 不可逆：执行 svn resolve --accept working 将清除冲突标记，需确认后不可自动撤销`;
+    // V013-D：标题保持，不加前置复选框，一次确认；summary 已补充状态与不可逆影响
+
     const stale = false;
     return {
       token: preview.token,
