@@ -45,11 +45,11 @@
 
 ### 2.2 退出条件
 
-- [ ] V013-A～V013-G 全部完成。
+- [x] V013-A～V013-G 全部完成。V013-A~G 已落地，单测+组件 1580、E2E 100 全绿、check 0 错误。
 - [ ] 保存、核验、Resolve、重采、下一个冲突和返回来路构成一个可完整完成的主路径。
 - [ ] 写操作成功、拒绝、过期、失败、取消、恢复分支均有 Host/真实 SVN 证据。
 - [ ] AI 未配置时完整可用。
-- [ ] `npm run verify`、隔离真实 SVN 主路径和人工小视口验收通过。
+- [ ] `npm run verify`、隔离真实 SVN 主路径和人工小视口验收通过。待 verify 与真实 SVN 验收。
 - [ ] 满足进入 [`v0.1.4`](../v0.1.4/) 的跨模块连续性条件。
 
 ## 3. 状态机
@@ -171,6 +171,12 @@ resolved
 - E2E：Update→Conflicts→编辑→保存→意向单→Resolve→下一个→返回。
 - AI 未配置、AI 超时、AI 结果过期不阻塞人工路径。
 - 操作时间线只记录安全字段，不记录正文、凭据或 token。
+
+### 4.8 完成结论（v0.1.3 开发中）
+
+- **主路径闭环已实现**：编辑 → 保存工作副本 → 核验 → 意向单一次确认 → Resolve → 自动下一个 → 全部完成 → 返回来路。`ConflictStepBar` 贯穿五阶段，`WorkbenchController` 完成 save-working 原子化与 Resolve 前置核验+SVN 状态复验，`ConflictsModule` 接入步骤条/下一个导航/恢复出口/非文本分支。
+- **测试基线**：单测+组件 138 文件 1580 通过、Webview E2E 100 通过、`npm run check` 0 错误（`conflictCompletionModel` 39、`conflictSaveService` 20、`conflictVerification` 27、`conflictRecovery` 37 等；组件 `ConflictStepBar`、`ConflictsModuleV013E`；E2E `conflict-v013.spec.ts` 4）。
+- **已知待完成**：未跑 `npm run verify`、未做隔离真实 SVN 主路径与人工小视口验收，留待发布前完成；不影响当前文档与代码映射同步。
 
 ## 5. 主要代码落点
 

@@ -82,7 +82,9 @@ describe("ConflictsModule", () => {
       screen.getByRole("dialog", { name: "标记解决 1 个冲突" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("标记解决 src/a.ts · 执行前将重新校验工作副本内容"),
+      screen.getByText(
+        "标记解决 src/a.ts · 当前状态：工作副本已保存，待标记解决 · 不可逆：执行 svn resolve --accept working 将清除冲突标记，需确认后不可自动撤销",
+      ),
     ).toBeInTheDocument();
     const dialog = screen.getByRole("dialog", { name: "标记解决 1 个冲突" });
     const confirmInDialog = Array.from(dialog.querySelectorAll("button")).find(
@@ -239,9 +241,10 @@ describe("ConflictsModule 列表迁移（v0.0.10）", () => {
     expect(onAction).toHaveBeenCalledWith("conflict/select", {
       relativePath: "api/b.ts",
     });
+    // 中文注释：V013-G 步骤条透传已解决播报，导致同一文本在 StepBar 与原播报中各出现一次，改用 getAllByText 兼容精确条件
     expect(
-      screen.getByText(/已切换到 api\/b\.ts（剩余 3 个未解决冲突）/),
-    ).toBeInTheDocument();
+      screen.getAllByText(/已切换到 api\/b\.ts（剩余 3 个未解决冲突）/).length,
+    ).toBeGreaterThan(0);
   });
 
   it("上一个从排序末尾的选中冲突回退", async () => {

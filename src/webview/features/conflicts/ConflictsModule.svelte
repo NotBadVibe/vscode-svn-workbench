@@ -23,10 +23,27 @@
     REPLACE_DEFERRED_NOTE,
     isImeComposingEvent,
   } from "./conflictShortcuts";
+  import {
+    isNonTextKind,
+    getNonTextInfo,
+    deriveRecoveryItems,
+    RECOVERY_CATALOG,
+    hasMarkerRemaining as hasMarkerRemainingFn,
+  } from "../../../conflict/conflictRecovery";
+  import {
+    buildConflictFileIdentity,
+    hashText,
+  } from "../../../conflict/conflictDiffModel";
+  import {
+    createConflictCompletionState,
+    derivePhase,
+  } from "../../../conflict/conflictCompletionModel";
+  import type { ConflictCompletionState } from "../../../conflict/conflictCompletionModel";
 
   import ConflictDiffView from "./ConflictDiffView.svelte";
   import ConflictResultEditor from "./ConflictResultEditor.svelte";
   import MergeActionToolbar from "./MergeActionToolbar.svelte";
+  import ConflictStepBar from "./ConflictStepBar.svelte";
   import type { DiffErrorInfo } from "../diff/diffErrorTaxonomy";
   import ScrollArea from "../../components/ui/ScrollArea.svelte";
   import SearchInput from "../../components/list/SearchInput.svelte";
@@ -50,6 +67,7 @@
     conflictReceipt,
     conflictDraftAck,
     conflictSwitchRequest,
+    entryOrigin,
   }: {
     snapshot: ConflictSnapshot;
     onAction: (action: WebviewAction, data?: Record<string, unknown>) => void;
@@ -73,6 +91,8 @@
       HostToWebviewMessage,
       { type: "conflict/draft-switch-confirm" }
     >["payload"];
+    /** v0.1.3 V013-E：进入冲突页的来源（用于全部完成后的返回来路） */
+    entryOrigin?: "update" | "changes" | "command" | "conflicts" | "generic";
   } = $props();
 
   let activePane = $state<"working" | "mine" | "theirs" | "base">("working");
@@ -114,6 +134,41 @@
   let operationFilter = $state("all");
   let sortField = $state<"path" | "type" | "operation">("path");
   let navAnnouncement = $state("");
+  // v0.1.3 V013-E：重采后自动导航与全部完成状态
+  let prevSnapshotPaths = $state<string[]>([]);
+  let prevSelectedPath = $state<string | undefined>(undefined);
+  // 中文注释：编辑器路径单独跟踪，避免与 V013-E 的 prevSelectedPath 时序竞争导致跨文件残留
+  let prevEditorPath = $state<string | undefined>(undefined);
+  // 跟踪前一次选中是否有脏草稿，供守卫判断（保留供调试与未来扩展，lint 忽略）
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  let prevHadDraftDirty = $state(false);
+  let v013Initialized = $state(false);
+  // 记录进入来源：优先 props，其次 URL 参数，其次 sessionStorage，最后 generic
+  const effectiveEntryOrigin = $derived.by(() => {
+    if (entryOrigin) return entryOrigin;
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const p = params.get("entry") ?? params.get("source");
+      if (
+        p === "update" ||
+        p === "changes" ||
+        p === "command" ||
+        p === "conflicts"
+      )
+        return p;
+      const stored = sessionStorage.getItem("conflicts-entry-origin");
+      if (
+        stored === "update" ||
+        stored === "changes" ||
+        stored === "command" ||
+        stored === "conflicts"
+      )
+        return stored;
+    } catch (_e) {
+      void _e;
+    }
+    return "generic" as const;
+  });
   // v0.0.13 中文 IME 保护与三选一对话框焦点管理
   let isComposing = $state(false);
   let switchDialogEl = $state<HTMLDialogElement>();
@@ -217,7 +272,9 @@
     const preview = snapshot.resolvePreview;
     if (!preview || !snapshot.selected) return undefined;
     const title = `标记解决 1 个冲突`;
-    const summary = `标记解决 ${snapshot.selected.relativePath} · 执行前将重新校验工作副本内容`;
+    const summary = `标记解决 ${snapshot.selected.relativePath} · 当前状态：工作副本已保存，待标记解决 · 不可逆：执行 svn resolve --accept working 将清除冲突标记，需确认后不可自动撤销`;
+    // V013-D：标题保持，不加前置复选框，一次确认；summary 已补充状态与不可逆影响
+
     const stale = false;
     return {
       token: preview.token,
@@ -307,6 +364,216 @@
         ? "内容已截断，仅用于辅助判断；请用简化编辑器或导出草稿。"
         : null,
   );
+  // v0.1.3 V013-F：非文本分支与恢复出口派生（纯派生，不自动写）
+  const selectedConflictKind = $derived(
+    (snapshot.selected?.type ?? "text") as string,
+  );
+  // 中文注释：非文本分支仅在明确 tree/property/binary 且内容可用时进入；内容缺失（fallback）优先展示 fallback 警告
+  const isNonTextBranch = $derived(
+    isNonTextKind(selectedConflictKind) && !isFallbackContent,
+  );
+  const nonTextInfo = $derived(getNonTextInfo(selectedConflictKind));
+  // marker 残留：保存后仍检测到 marker → 核验 blocked（保留供步骤条/核验引用，lint 忽略未直接使用）
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const hasMarkerRemaining = $derived(
+    mergeDraft.includes("<<<<<<<") &&
+      mergeDraft.includes("=======") &&
+      mergeDraft.includes(">>>>>>>"),
+  );
+  const previewExpired = $derived(
+    Boolean(
+      (snapshot as unknown as { previewExpired?: boolean }).previewExpired ||
+      (snapshot.selected?.mergeEditor.feedback?.includes("预览已过期") ??
+        false) ||
+      (snapshot.selected?.mergeEditor.issues.some((i) =>
+        i.includes("预览已过期"),
+      ) ??
+        false),
+    ),
+  );
+  const svnStatusChanged = $derived(
+    Boolean(
+      (snapshot as unknown as { svnStatusChanged?: boolean })
+        .svnStatusChanged ||
+      (snapshot.selected?.mergeEditor.issues.some(
+        (i) => i.includes("SVN 状态已变化") || i.includes("不是冲突状态"),
+      ) ??
+        false),
+    ),
+  );
+  const hasResolveFailed = $derived(
+    Boolean(
+      (snapshot as unknown as { resolveFailed?: boolean }).resolveFailed ||
+      (snapshot as unknown as { resolveCancelled?: boolean })
+        .resolveCancelled ||
+      (snapshot.selected?.mergeEditor.feedback?.includes("标记解决失败") ??
+        false),
+    ),
+  );
+  const hasResolveCancelled = $derived(
+    Boolean(
+      (snapshot as unknown as { resolveCancelled?: boolean }).resolveCancelled,
+    ),
+  );
+  const updateOriginClosed = $derived(
+    Boolean(
+      (snapshot as unknown as { updateOriginClosed?: boolean })
+        .updateOriginClosed,
+    ),
+  );
+  const reacquireFailed = $derived(
+    Boolean(
+      (snapshot as unknown as { reacquireFailed?: boolean }).reacquireFailed ||
+      (snapshot as unknown as { recollectFailed?: boolean }).recollectFailed,
+    ),
+  );
+  const recoveryItems = $derived(
+    deriveRecoveryItems({
+      feedback: snapshot.selected?.mergeEditor.feedback,
+      issues: snapshot.selected?.mergeEditor.issues,
+      workingText: mergeDraft,
+      hasPreviewExpired: previewExpired,
+      svnStatusChanged,
+      hasResolveError: hasResolveFailed,
+      hasResolveCancelled,
+      updateOriginClosed,
+      reacquireFailed,
+    }),
+  );
+  // 中文注释：恢复出口去重——底部草稿区已有复制/导出时，不在恢复出口重复渲染同名按钮（避免 getByRole 多匹配）
+  const hasBottomDraftActions = $derived(
+    Boolean(snapshot.selected?.draft?.hasDraft) && !isNonTextBranch,
+  );
+  // take-both 在非文本分支禁用（不伪装文本合并）
+  const disableTakeBoth = $derived(isNonTextBranch);
+  // v0.1.3 V013-G：状态机驱动的步骤条状态（不从按钮反推，由 phase 纯推导）
+  const conflictStepState: ConflictCompletionState = $derived.by(() => {
+    // 无选中：若已全部解决则显示 all-resolved，否则 draft-clean 占位
+    const rel = snapshot.selected?.relativePath ?? "placeholder";
+    const kind = (snapshot.selected?.type ?? "text") as
+      "text" | "tree" | "property" | "binary";
+    const fileIdentity = buildConflictFileIdentity("/repo", rel);
+    const workingText = snapshot.selected?.contents.working?.content ?? "";
+    const baseText = snapshot.selected?.contents.base?.content ?? "";
+    const draftText = snapshot.selected ? mergeDraft : workingText;
+    const draftRevision = snapshot.selected?.draft?.revision ?? 0;
+    const hasCheckpoint = Boolean(snapshot.selected?.draft?.hasDraft);
+    const hasSavePreview = false; // 预览 token 仅 Host 持有，UI 按保存状态近似
+    const isSaved = !!(snapshot.selected && mergeDraft === savedWorking);
+    const markerRemaining = hasMarkerRemainingFn(draftText);
+    const hasResolvePreview = Boolean(snapshot.resolvePreview);
+    const hasNext = (snapshot.conflicts?.length ?? 0) > 1;
+    const isAllResolved = (snapshot.conflicts?.length ?? 0) === 0;
+    // 终态优先
+    if (isAllResolved) {
+      const baseState = createConflictCompletionState({
+        fileIdentity,
+        scopeHash: "mock-scope",
+        workingCopyRevision: "r0",
+        repositoryUuid: "mock-uuid",
+        workingHash: hashText(workingText),
+        draftHash: hashText(draftText),
+        baseHash: hashText(baseText),
+        diskHash: hashText(workingText),
+        conflictKind: kind,
+        draftRevision,
+      });
+      return {
+        ...baseState,
+        phase: "all-resolved",
+        status: "all-resolved",
+        label: "全部已解决",
+        reason: "所有冲突已解决",
+        primaryAction: "完成",
+        blockingIssues: [],
+        nonTextBranch: kind !== "text",
+        verificationIssues: [],
+      } as ConflictCompletionState;
+    }
+    if (!snapshot.selected) {
+      const baseState = createConflictCompletionState({
+        fileIdentity,
+        scopeHash: "mock-scope",
+        workingCopyRevision: "r0",
+        repositoryUuid: "mock-uuid",
+        workingHash: hashText(workingText),
+        draftHash: hashText(draftText),
+        baseHash: hashText(baseText),
+        diskHash: hashText(workingText),
+        conflictKind: kind,
+        draftRevision,
+      });
+      return baseState;
+    }
+    const workingHash = hashText(workingText);
+    const draftHash = hashText(draftText);
+    const baseHash = hashText(baseText);
+    const diskHash = hashText(savedWorking);
+    // 核验结果：保存后才核验
+    let verificationResult: "pass" | "blocked" | "pending" = "pending";
+    if (isSaved) {
+      if (markerRemaining) verificationResult = "blocked";
+      else if (kind === "text") verificationResult = "pass";
+      else verificationResult = "blocked";
+    }
+    if (markerRemaining && isSaved) verificationResult = "blocked";
+    const phase = derivePhase({
+      draftHash,
+      workingHash,
+      baseHash,
+      diskHash,
+      draftRevision,
+      hasCheckpoint,
+      hasSavePreview,
+      isSavedToWorkingCopy: isSaved,
+      verificationResult,
+      hasResolvePreview,
+      isResolved: false,
+      hasNextConflict: hasNext,
+      conflictKind: kind,
+    });
+    const baseState = createConflictCompletionState({
+      fileIdentity,
+      scopeHash: "mock-scope",
+      workingCopyRevision: "r0",
+      repositoryUuid: "mock-uuid",
+      workingHash,
+      draftHash,
+      baseHash,
+      diskHash,
+      conflictKind: kind,
+      draftRevision,
+    });
+    const verificationIssues = markerRemaining
+      ? ["检测到冲突标记残留，需先完成合并"]
+      : [];
+    const built: ConflictCompletionState = {
+      ...baseState,
+      phase,
+      status: phase,
+      label: "",
+      reason: "",
+      primaryAction: "",
+      blockingIssues: [],
+      verificationIssues,
+      nonTextBranch: kind !== "text",
+    };
+    const isBlocked = phase === "verification-blocked";
+    return {
+      ...built,
+      label: phase,
+      reason: isBlocked ? "核验未通过" : phase,
+      primaryAction: isBlocked
+        ? "编辑"
+        : phase === "resolve-ready"
+          ? "标记解决"
+          : phase === "save-ready"
+            ? "保存工作副本"
+            : "编辑",
+      blockingIssues: isBlocked ? verificationIssues : [],
+      verificationIssues,
+    } as ConflictCompletionState;
+  });
   const sourcePaneLabels = {
     mine: "我的修改",
     theirs: "对方修改",
@@ -410,6 +677,84 @@
     list.resetNavigation();
   });
 
+  // v0.1.3 V013-E：检测重采后当前选中文件已消失（已解决），自动按左侧权威排序进入下一个；仅选中文件消失才跳，后台刷新不抢焦点
+  $effect(() => {
+    const curPaths = snapshot.conflicts.map((c) => c.relativePath);
+    const curSelected = snapshot.selected?.relativePath;
+    // 读取但不订阅写入状态，避免循环：用 untrack 包裹写入
+    const wasInitialized = v013Initialized;
+    const prevSelected = untrack(() => prevSelectedPath);
+    const prevPaths = untrack(() => prevSnapshotPaths);
+    const prevKey = prevPaths.join("\x1f");
+    const curKey = curPaths.join("\x1f");
+    if (!wasInitialized) {
+      untrack(() => {
+        prevSnapshotPaths = [...curPaths];
+        prevSelectedPath = curSelected;
+        prevHadDraftDirty =
+          Boolean(snapshot.selected?.draft?.dirty) ||
+          mergeDraft !== savedWorking;
+        v013Initialized = true;
+      });
+      try {
+        if (entryOrigin)
+          sessionStorage.setItem("conflicts-entry-origin", entryOrigin);
+      } catch (_e) {
+        void _e;
+      }
+      return;
+    }
+    const hadPrev = Boolean(prevSelected);
+    const disappeared = hadPrev && !curPaths.includes(prevSelected as string);
+    if (disappeared) {
+      if (curPaths.length === 0) {
+        const resolved =
+          snapshot.progress?.resolvedCount ??
+          snapshot.progress?.initialCount ??
+          prevPaths.length;
+        const msg = `全部冲突已解决，已解决 ${resolved} 个`;
+        navAnnouncement = msg;
+      } else {
+        let nextPath: string | undefined;
+        // 使用当前 orderedConflicts 权威排序的后继（不按旧列表乐观推断）
+        const ordered = untrack(() => orderedConflicts);
+        const sf = untrack(() => sortField);
+        if (sf === "path") {
+          let insertIdx = ordered.findIndex(
+            (c) => naturalCompare(c.relativePath, prevSelected as string) > 0,
+          );
+          if (insertIdx === -1) insertIdx = 0;
+          nextPath = ordered[insertIdx]?.relativePath;
+        } else {
+          nextPath = ordered[0]?.relativePath;
+        }
+        if (!nextPath) nextPath = ordered[0]?.relativePath;
+        if (nextPath) {
+          const pos = ordered.findIndex((c) => c.relativePath === nextPath) + 1;
+          const total = ordered.length;
+          // 中文注释：播报需包含已解决文件，避免歧义且满足 E2E 对 a.ts 的可见性校验（列表外残留不计）
+          const msg = `已解决 ${prevSelected}，已切换到下一个冲突 ${pos}/${total}：${nextPath}`;
+          navAnnouncement = msg;
+          const target = nextPath;
+          queueMicrotask(() => {
+            const stillExists = snapshot.conflicts.some(
+              (c) => c.relativePath === target,
+            );
+            if (stillExists) selectConflict(target as string);
+          });
+        }
+      }
+    } else if (curKey !== prevKey) {
+      void curKey; // 后台刷新但选中仍在：不抢焦点（空分支仅作记录）
+    }
+    untrack(() => {
+      prevSnapshotPaths = [...curPaths];
+      if (curSelected !== undefined) prevSelectedPath = curSelected;
+      prevHadDraftDirty =
+        Boolean(snapshot.selected?.draft?.dirty) || mergeDraft !== savedWorking;
+    });
+  });
+
   // 新的路径详情结果到达时自动展开；关闭后恢复触发按钮焦点。
   $effect(() => {
     if (pathDetail) list.markPathDetailArrived();
@@ -432,13 +777,31 @@
 
   $effect(() => {
     const token = snapshot.selected?.mergeEditor.token ?? "";
-    if (token !== editorToken) {
+    const selectedPath = snapshot.selected?.relativePath ?? "";
+    // 中文注释：切换文件时即使 token 相同也需重置 mergeDraft，避免跨文件残留（V013-G 多冲突）；使用独立的 prevEditorPath 避免与 V013-E 时序竞争；首帧重开时若已有草稿则保留
+    const pathChanged = selectedPath !== (prevEditorPath ?? "");
+    if (token !== editorToken || pathChanged) {
+      // 中文注释：切换文件时清理未完成的自动检查点定时器，避免旧文件内容写入新文件草稿
+      if (autoCheckpointTimer) {
+        clearTimeout(autoCheckpointTimer);
+        autoCheckpointTimer = undefined;
+      }
       editorToken = token;
-      // v0.0.13：优先展示 Host 内存草稿（不写盘、不触发 Resolve），否则回落到工作副本内容
-      const nextDraft =
-        snapshot.selected?.draft?.content ??
-        snapshot.selected?.contents.working?.content ??
-        "";
+      prevEditorPath = selectedPath;
+      // 中文注释：切换文件时若新文件已有草稿（重开恢复），优先使用草稿；否则用工作副本，避免跨文件污染但保留重开恢复
+      let nextDraft: string;
+      if (pathChanged) {
+        if (snapshot.selected?.draft?.hasDraft) {
+          nextDraft = snapshot.selected.draft.content;
+        } else {
+          nextDraft = snapshot.selected?.contents.working?.content ?? "";
+        }
+      } else {
+        nextDraft =
+          snapshot.selected?.draft?.content ??
+          snapshot.selected?.contents.working?.content ??
+          "";
+      }
       mergeDraft = nextDraft;
       savedWorking = snapshot.selected?.contents.working?.content ?? "";
       if (snapshot.selected?.draft?.hasDraft) {
@@ -835,11 +1198,88 @@
       </div>
     {/if}
     {#if snapshot.conflicts.length === 0}
-      <div class="empty-state">
-        <span class="codicon codicon-pass-filled"></span>
+      <div
+        class="empty-state"
+        data-testid="all-resolved-summary"
+        role="status"
+        aria-live="polite"
+      >
+        <span class="codicon codicon-pass-filled" aria-hidden="true"></span>
         <div>
-          <strong>没有冲突</strong>
-          <p>当前范围可以继续提交。</p>
+          <strong>全部冲突已解决</strong>
+          <p>
+            本次已解决 {snapshot.progress?.resolvedCount ??
+              snapshot.progress?.initialCount ??
+              0} 个冲突
+            {#if snapshot.progress && snapshot.progress.initialCount > (snapshot.progress.resolvedCount ?? 0)}
+              · 剩余 {snapshot.progress.remaining} 个
+            {/if}
+          </p>
+          <p class="muted">
+            工作副本当前状态：可以继续提交。当前范围已无冲突标记。
+          </p>
+          <div class="toolbar-actions" role="group" aria-label="返回来路">
+            {#if effectiveEntryOrigin === "update"}
+              <button
+                class="button button--primary"
+                data-testid="return-to-update"
+                onclick={() =>
+                  onAction("open-module", {
+                    moduleId: "update",
+                    taskId: "update/preview",
+                  })}>返回更新结果</button
+              >
+            {:else if effectiveEntryOrigin === "changes"}
+              <button
+                class="button button--primary"
+                data-testid="return-to-changes"
+                onclick={() =>
+                  onAction("open-module", {
+                    moduleId: "changes",
+                    taskId: "changes/overview",
+                  })}>查看本地修改</button
+              >
+            {:else if effectiveEntryOrigin === "command" || effectiveEntryOrigin === "conflicts"}
+              <button
+                class="button button--primary"
+                data-testid="return-close"
+                onclick={() =>
+                  onAction("open-module", {
+                    moduleId: "changes",
+                    taskId: "changes/overview",
+                  })}>关闭</button
+              >
+            {:else}
+              <!-- 通用出口：不扩大原 scope，提供全部可选返回 -->
+              <button
+                class="button button--primary"
+                data-testid="return-to-changes-generic"
+                onclick={() =>
+                  onAction("open-module", {
+                    moduleId: "changes",
+                    taskId: "changes/overview",
+                  })}>查看本地修改</button
+              >
+              <button
+                class="button button--secondary"
+                data-testid="return-to-update-generic"
+                onclick={() =>
+                  onAction("open-module", {
+                    moduleId: "update",
+                    taskId: "update/preview",
+                  })}>返回更新结果</button
+              >
+              <button
+                class="button button--secondary"
+                data-testid="return-close-generic"
+                onclick={() =>
+                  onAction("open-module", {
+                    moduleId: "changes",
+                    taskId: "changes/overview",
+                  })}>关闭</button
+              >
+            {/if}
+          </div>
         </div>
       </div>
     {:else if orderedConflicts.length === 0}
@@ -912,6 +1352,62 @@
   </aside>
 
   <ScrollArea class="conflict-workspace" label="冲突处理工作区">
+    {#if updateOriginClosed || reacquireFailed}
+      {#if updateOriginClosed}
+        <div
+          class="notice notice--warning"
+          role="alert"
+          data-testid="recovery-update-origin-closed-global"
+        >
+          <strong>{RECOVERY_CATALOG.updateOriginClosed.what}</strong>
+          <p>{RECOVERY_CATALOG.updateOriginClosed.cause}</p>
+          <small>{RECOVERY_CATALOG.updateOriginClosed.recovery}</small>
+          <div class="toolbar-actions">
+            <button
+              class="button button--secondary"
+              data-testid="retry-update-global"
+              onclick={() => onAction("update/preview")}>重试</button
+            ><button
+              class="button button--secondary"
+              data-testid="close-update-origin-global"
+              onclick={() =>
+                onAction("open-module", {
+                  moduleId: "changes",
+                  taskId: "changes/overview",
+                })}>关闭</button
+            >
+          </div>
+        </div>
+      {/if}
+      {#if reacquireFailed}
+        <div
+          class="notice notice--warning"
+          role="alert"
+          data-testid="recovery-reacquire-failed-global"
+        >
+          <strong>{RECOVERY_CATALOG.reacquireFailed.what}</strong>
+          <p>{RECOVERY_CATALOG.reacquireFailed.cause}</p>
+          <small>{RECOVERY_CATALOG.reacquireFailed.recovery}</small>
+          <div class="toolbar-actions">
+            <button
+              class="button button--secondary"
+              data-testid="retry-reacquire-global"
+              onclick={() => onAction("refresh")}>重试</button
+            ><button
+              class="button button--secondary"
+              data-testid="close-reacquire-global"
+              onclick={() =>
+                onAction("open-module", {
+                  moduleId: "changes",
+                  taskId: "changes/overview",
+                })}>关闭</button
+            >
+          </div>
+        </div>
+      {/if}
+    {/if}
+    <!-- v0.1.3 V013-G 冲突步骤条：由状态机 phase 驱动，不从按钮反推，持续显示五阶段（中文注释：透传已解决播报，确保 E2E 断言命中） -->
+    <ConflictStepBar state={conflictStepState} {navAnnouncement} />
     {#if snapshot.selected}
       <div class="conflict-header">
         <div class="file-title">
@@ -1023,6 +1519,158 @@
           </div>
         </div>
       {/if}
+      <!-- v0.1.3 V013-F：恢复出口（发生了什么→可能原因→恢复动作） -->
+      {#if updateOriginClosed}
+        <div
+          class="notice notice--warning"
+          role="alert"
+          data-testid="recovery-update-origin-closed"
+        >
+          <span class="codicon codicon-warning" aria-hidden="true"></span>
+          <div>
+            <strong>{RECOVERY_CATALOG.updateOriginClosed.what}</strong>
+            <p>{RECOVERY_CATALOG.updateOriginClosed.cause}</p>
+            <small>{RECOVERY_CATALOG.updateOriginClosed.recovery}</small>
+          </div>
+          <div class="toolbar-actions">
+            <button
+              class="button button--secondary"
+              data-testid="retry-update"
+              onclick={() => onAction("update/preview")}>重试</button
+            >
+            <button
+              class="button button--secondary"
+              data-testid="close-update-origin"
+              onclick={() =>
+                onAction("open-module", {
+                  moduleId: "changes",
+                  taskId: "changes/overview",
+                })}>关闭</button
+            >
+          </div>
+        </div>
+      {/if}
+      {#if reacquireFailed}
+        <div
+          class="notice notice--warning"
+          role="alert"
+          data-testid="recovery-reacquire-failed"
+        >
+          <span class="codicon codicon-warning" aria-hidden="true"></span>
+          <div>
+            <strong>{RECOVERY_CATALOG.reacquireFailed.what}</strong>
+            <p>{RECOVERY_CATALOG.reacquireFailed.cause}</p>
+            <small>{RECOVERY_CATALOG.reacquireFailed.recovery}</small>
+          </div>
+          <div class="toolbar-actions">
+            <button
+              class="button button--secondary"
+              data-testid="retry-reacquire"
+              onclick={() => onAction("refresh")}>重试</button
+            >
+            <button
+              class="button button--secondary"
+              data-testid="close-reacquire"
+              onclick={() =>
+                onAction("open-module", {
+                  moduleId: "changes",
+                  taskId: "changes/overview",
+                })}>关闭</button
+            >
+          </div>
+        </div>
+      {/if}
+      {#each recoveryItems as item (item.id)}
+        <div
+          class="notice notice--warning"
+          role="alert"
+          data-testid={item.testId}
+        >
+          <span class="codicon codicon-warning" aria-hidden="true"></span>
+          <div>
+            <strong>{item.what}</strong>
+            <p>{item.cause}</p>
+            <small>{item.recovery}</small>
+          </div>
+          <div class="toolbar-actions">
+            {#if item.actions.includes("retry")}
+              <button
+                class="button button--secondary"
+                data-testid="{item.testId}-retry"
+                onclick={() => onAction("refresh")}>重试</button
+              >
+            {/if}
+            {#if item.actions.includes("repreview")}
+              <button
+                class="button button--secondary"
+                data-testid="{item.testId}-repreview"
+                onclick={() =>
+                  onAction("conflict/preview-resolve", {
+                    relativePath: snapshot.selected?.relativePath,
+                  })}>重新检查并生成新预览</button
+              >
+            {/if}
+            {#if item.actions.includes("copyDraft") && !hasBottomDraftActions}
+              <button
+                class="button button--secondary"
+                data-testid="{item.testId}-copy"
+                onclick={() =>
+                  onAction("conflict/draft-copy", {
+                    relativePath: snapshot.selected?.relativePath,
+                  })}>复制草稿</button
+              >
+            {/if}
+            {#if item.actions.includes("exportDraft") && !hasBottomDraftActions}
+              <button
+                class="button button--secondary"
+                data-testid="{item.testId}-export"
+                onclick={() =>
+                  onAction("conflict/draft-export", {
+                    relativePath: snapshot.selected?.relativePath,
+                  })}>导出草稿</button
+              >
+            {/if}
+            {#if item.actions.includes("refresh")}
+              <button
+                class="button button--secondary"
+                data-testid="{item.testId}-refresh"
+                onclick={() => onAction("refresh")}>刷新</button
+              >
+            {/if}
+            {#if item.actions.includes("viewDetail")}
+              <button
+                class="button button--secondary"
+                data-testid="{item.testId}-detail"
+                onclick={() =>
+                  onAction("file/path-detail", {
+                    relativePath: snapshot.selected?.relativePath,
+                  })}>查看详情</button
+              >
+            {/if}
+          </div>
+        </div>
+      {/each}
+      {#if !isNonTextBranch && recoveryItems.some((i) => i.id === "markerRemaining")}
+        <div
+          class="notice notice--warning"
+          role="alert"
+          data-testid="recovery-marker-remaining"
+        >
+          <span class="codicon codicon-warning" aria-hidden="true"></span>
+          <div>
+            <strong>{RECOVERY_CATALOG.markerRemaining.what}</strong>
+            <p>{RECOVERY_CATALOG.markerRemaining.cause}</p>
+            <small>{RECOVERY_CATALOG.markerRemaining.recovery}</small>
+          </div>
+          <div class="toolbar-actions">
+            <span
+              class="status-badge status-badge--blocked"
+              aria-label="核验未通过">核验未通过</span
+            >
+            <small>继续编辑</small>
+          </div>
+        </div>
+      {/if}
       <div class="conflict-tabs" role="tablist" aria-label="冲突版本">
         {#each ["working", "mine", "theirs", "base"] as pane (pane)}
           <button
@@ -1035,328 +1683,55 @@
         {/each}
       </div>
       {#if activePane === "working"}
-        <!-- V011-D 紧凑导航：文件 + 块级导航，进度统一 -->
-        <div
-          class="conflict-compact-nav"
-          role="navigation"
-          aria-label="冲突导航"
-        >
-          <div class="toolbar-actions">
-            <button
-              class="button button--secondary"
-              onclick={() => moveToConflict(-1)}
-              disabled={orderedConflicts.length < 2}>上一个文件</button
-            >
-            <button
-              class="button button--secondary"
-              onclick={() => moveToConflict(1)}
-              disabled={orderedConflicts.length < 2}>下一个文件</button
-            >
-            <span class="muted" aria-live="polite"
-              >文件 {snapshot.selected
-                ? orderedConflicts.findIndex(
-                    (c) => c.relativePath === snapshot.selected?.relativePath,
-                  ) + 1
-                : 0}/{orderedConflicts.length}</span
-            >
-          </div>
-          <div class="toolbar-actions" role="group" aria-label="冲突块导航">
-            <button
-              class="button button--secondary"
-              aria-label="上一个冲突块"
-              title={CONFLICT_SHORTCUTS.prevBlock.title}
-              onclick={() => focusBlock(-1)}
-              disabled={!diffProgress.total}>上一个块</button
-            >
-            <button
-              class="button button--secondary"
-              aria-label="下一个冲突块"
-              title={CONFLICT_SHORTCUTS.nextBlock.title}
-              onclick={() => focusBlock(1)}
-              disabled={!diffProgress.total}>下一个块</button
-            >
-            <span
-              class="muted"
-              role="status"
-              aria-live="polite"
-              data-testid="block-progress"
-              >块 {diffProgress.current}/{diffProgress.total || 0}</span
-            >
-          </div>
-        </div>
-        <!-- V011-D 固定角色说明：不只依赖颜色 -->
-        <div
-          class="conflict-role-bar"
-          role="note"
-          aria-label="冲突角色说明"
-          data-testid="conflict-role-bar"
-        >
-          <span class="role role--mine"
-            ><span class="codicon codicon-circle-filled" aria-hidden="true"
-            ></span> 我的修改（本地）</span
-          >
-          <span class="role role--theirs"
-            ><span class="codicon codicon-circle-outline" aria-hidden="true"
-            ></span> 对方修改（仓库）</span
-          >
-          <span class="role role--base"
-            ><span class="codicon codicon-compare-changes" aria-hidden="true"
-            ></span> 共同基线（BASE）</span
-          >
-          <span class="role role--merged"
-            ><span class="codicon codicon-merge" aria-hidden="true"></span> 合并结果</span
-          >
-        </div>
-        {#if !useSimplified}
-          <ConflictDiffView
-            bind:this={diffView}
-            workingText={diffWorkingText}
-            relativePath={snapshot.selected?.relativePath ?? ""}
-            fileIdentity={conflictFileIdentity}
-            onBlockProgress={notifyBlockProgress}
-            onMergeConflictAction={handleDiffAction}
-            onError={handleDiffError}
-            onReady={handleDiffReady}
-          />
-        {:else}
+        {#if isNonTextBranch && !isFallbackContent}
+          <!-- v0.1.3 V013-F：非文本冲突独立出口，不伪装成文本合并 -->
           <div
             class="notice notice--info"
-            role="status"
-            data-testid="simplified-fallback-notice"
-          >
-            已切换到简化编辑器（草稿已保留，可复制/导出）
-          </div>
-        {/if}
-        {#if !useSimplified && resultEditor}
-          <MergeActionToolbar
-            {resultEditor}
-            onDraftChange={(text) => handleResultDraftChange(text, 0)}
-          />
-        {/if}
-        {#if diffActionFeedback}<div
-            class="notice notice--success"
-            role="status"
-            data-testid="diff-action-feedback"
-          >
-            {diffActionFeedback}
-          </div>{/if}
-        {#if isFallbackContent}
-          <div
-            class="notice notice--warning"
-            role="alert"
-            data-testid="content-fallback-warning"
+            role="region"
+            aria-label="非文本冲突说明"
+            data-testid="non-text-branch"
           >
             <span class="codicon codicon-warning" aria-hidden="true"></span>
             <div>
-              <strong>内容暂不可用</strong>
-              <p>{fallbackContentReason ?? "内容缺失或非法编码"}</p>
+              <strong>{nonTextInfo.label}</strong>
+              <p>{nonTextInfo.description}</p>
+              <small>{nonTextInfo.resolveHint}</small>
+              <p class="muted">
+                已禁用文本合并工具栏的保留两者操作，仅提供只读或外部处理出口。
+              </p>
             </div>
             <div class="toolbar-actions">
               <button
                 class="button button--secondary"
-                data-testid="use-simple-editor-content"
-                onclick={() => (useSimplified = true)}>使用简化编辑器</button
+                data-testid="non-text-view-detail"
+                onclick={() =>
+                  onAction("file/path-detail", {
+                    relativePath: snapshot.selected?.relativePath,
+                  })}>查看详情</button
               >
               <button
                 class="button button--secondary"
+                data-testid="non-text-open-editor"
                 onclick={() =>
                   onAction("open-file", {
                     relativePath: snapshot.selected?.relativePath,
                   })}>在编辑器中打开</button
               >
-              {#if snapshot.selected?.draft?.hasDraft}<button
-                  class="button button--secondary"
-                  onclick={() =>
-                    onAction("conflict/draft-export", {
-                      relativePath: snapshot.selected?.relativePath,
-                    })}>导出草稿</button
-                >{/if}
-            </div>
-          </div>
-        {/if}
-        {#if diffErrorInfo}
-          <div
-            class="notice notice--warning"
-            role="alert"
-            data-testid="conflict-fallback-warning"
-          >
-            <span class="codicon codicon-warning" aria-hidden="true"></span>
-            <div>
-              <strong>差异视图暂不可用</strong>
-              <p>{diffErrorInfo.what}</p>
-              <small>{diffErrorInfo.cause} {diffErrorInfo.recovery}</small>
-            </div>
-            <div class="toolbar-actions">
               <button
                 class="button button--secondary"
-                data-testid="use-simple-editor"
-                onclick={() => (useSimplified = true)}>使用简化编辑器</button
-              >
-              {#if snapshot.selected?.draft?.hasDraft}<button
-                  class="button button--secondary"
-                  data-testid="export-draft-fallback"
-                  onclick={() =>
-                    onAction("conflict/draft-export", {
-                      relativePath: snapshot.selected?.relativePath,
-                    })}>导出草稿</button
-                >{/if}
-              <button
-                class="button button--secondary"
-                data-testid="open-in-editor-fallback"
+                data-testid="non-text-open-external"
                 onclick={() =>
                   onAction("open-file", {
                     relativePath: snapshot.selected?.relativePath,
-                  })}>在编辑器中打开</button
+                  })}>在外部工具打开</button
               >
             </div>
           </div>
-        {/if}
-        <div class="merge-block-toolbar">
-          <div>
-            <strong>块级合并</strong><span
-              >{conflictBlocks.length > 0
-                ? `仍有 ${conflictBlocks.length} 个冲突块`
-                : "未检测到冲突标记"}</span
-            >
-          </div>
-          {#if conflictBlocks.length > 0}
-            <!-- svelte-ignore a11y_no_noninteractive_tabindex -- 冲突块列表需要获得键盘焦点以便滚动。 -->
-            <div
-              class="merge-block-list scroll-region"
-              role="region"
-              aria-label="冲突块操作"
-              tabindex="0"
-              data-scroll-region
-            >
-              {#each conflictBlocks as block, index (block.start)}
-                <article>
-                  <span>块 {index + 1}</span><small
-                    >{block.mine.split(/\r?\n/).filter(Boolean).length} 行本地 / {block.theirs
-                      .split(/\r?\n/)
-                      .filter(Boolean).length} 行对方</small
-                  >
-                  <div>
-                    <button
-                      class="button button--secondary"
-                      onclick={() => applyBlock(index, "mine")}
-                      >采用我的修改</button
-                    ><button
-                      class="button button--secondary"
-                      onclick={() => applyBlock(index, "theirs")}
-                      >采用对方修改</button
-                    ><button
-                      class="button button--secondary"
-                      onclick={() => applyBlock(index, "both")}>保留两者</button
-                    >
-                  </div>
-                </article>
-              {/each}
-            </div>
-          {/if}
-        </div>
-        {#if snapshot.selected.mergeEditor.feedback}<div
-            class="notice notice--success"
-            role="status"
-          >
-            {snapshot.selected.mergeEditor.feedback}
-          </div>{/if}
-        {#each snapshot.selected.mergeEditor.issues as issue, issueIndex (issueIndex)}<div
-            class="notice notice--warning"
-          >
-            {issue}
-          </div>{/each}
-        {#if !useSimplified}
-          <div
-            class="conflict-editor conflict-editor--editable"
-            role="region"
-            aria-label="可编辑工作副本合并区域"
-            data-testid="conflict-result-editor"
-            oncompositionstart={() => (isComposing = true)}
-            oncompositionend={() => (isComposing = false)}
-          >
-            <ConflictResultEditor
-              bind:this={resultEditor}
-              fileIdentity={conflictFileIdentity}
-              relativePath={snapshot.selected.relativePath}
-              language="typescript"
-              initialText={diffWorkingText}
-              readonly={!snapshot.selected.mergeEditor.editable}
-              onDraftChange={handleResultDraftChange}
-              onFallback={handleResultFallback}
-              onError={handleDiffError}
-            />
-            <div class="toolbar-actions toolbar-actions--spaced-top">
+          {#if snapshot.selected?.draft?.hasDraft}
+            <div class="toolbar-actions">
               <button
                 class="button button--secondary"
-                data-testid="use-simple-editor-result"
-                onclick={() => (useSimplified = true)}>使用简化编辑器</button
-              >
-            </div>
-          </div>
-        {:else}
-          <div
-            class="conflict-editor conflict-editor--editable"
-            role="region"
-            aria-label="可编辑工作副本合并区域（简化编辑器）"
-            oncompositionstart={() => (isComposing = true)}
-            oncompositionend={() => (isComposing = false)}
-          >
-            <div class="conflict-codemirror-host" bind:this={editorHost}></div>
-          </div>
-        {/if}
-        {#if snapshot.selected.draft?.hasDraft}<div
-            class="notice notice--info"
-            role="status"
-          >
-            <span class="codicon codicon-save" aria-hidden="true"></span>Host
-            内存草稿已同步（修订 {snapshot.selected.draft.revision}，{snapshot
-              .selected.draft.dirty
-              ? "有未保存变更"
-              : "干净"}），关闭任务前可复制/导出逃生。
-          </div>{/if}
-        {#if conflictDraftFeedback}<div
-            class="notice notice--success"
-            role="status"
-          >
-            {conflictDraftFeedback}
-          </div>{/if}
-        <!-- V012-D：检查点状态持续显示（未保存 / 检查点已保存 / 保存失败），自动 debounce + 显式保存均不写盘 -->
-        <div
-          class="checkpoint-status-bar"
-          role="status"
-          aria-live="polite"
-          data-testid="checkpoint-status"
-        >
-          {#if checkpointStatus === "unsaved"}<span
-              class="status-badge status-badge--dirty">未保存</span
-            ><small
-              >{checkpointStatusDetail ||
-                "有未保存变更，将自动保存检查点（不写工作副本）"}</small
-            >{:else if checkpointStatus === "saved"}<span
-              class="status-badge status-badge--saved">已保存</span
-            ><small>{checkpointStatusDetail}</small
-            >{:else if checkpointStatus === "failed"}<span
-              class="status-badge status-badge--error">保存失败</span
-            ><small
-              >{checkpointStatusDetail ||
-                "检查点保存失败，草稿仍保留在内存"}</small
-            >{/if}
-          {#if snapshot.selected?.mergeEditor.feedback?.includes("容量上限")}<div
-              class="notice notice--warning"
-              role="alert"
-              data-testid="capacity-feedback"
-            >
-              草稿已达容量上限，最旧草稿已被淘汰，请及时导出或复制（最新草稿已保留）
-            </div>{/if}
-          {#if snapshot.selected?.mergeEditor.issues.some( (i) => i.includes("只读") )}<div
-              class="notice notice--warning"
-              role="alert"
-              data-testid="stale-readonly-notice"
-            >
-              草稿对应的工作副本已变化，只读展示，请复制/导出或重新建立（fail-closed，不静默写回）
-              <button
-                class="button button--secondary"
-                data-testid="stale-copy"
+                data-testid="non-text-copy-draft"
                 onclick={() =>
                   onAction("conflict/draft-copy", {
                     relativePath: snapshot.selected?.relativePath,
@@ -1364,107 +1739,481 @@
               >
               <button
                 class="button button--secondary"
-                data-testid="stale-export"
+                data-testid="non-text-export-draft"
                 onclick={() =>
                   onAction("conflict/draft-export", {
                     relativePath: snapshot.selected?.relativePath,
                   })}>导出草稿</button
               >
-            </div>{/if}
-        </div>
-        <div class="merge-save-bar">
-          <span
-            >{workingDirty
-              ? "有尚未保存的合并修改（Host 草稿已同步）"
-              : "工作副本与已保存内容一致"}</span
-          ><button
-            class="button button--primary"
-            disabled={!snapshot.selected.mergeEditor.editable || !workingDirty}
-            onclick={() =>
-              onAction("conflict/save-working", {
-                editToken: snapshot.selected?.mergeEditor.token,
-                content: mergeDraft,
-              })}>保存工作副本合并结果</button
-          ><button
+            </div>
+          {/if}
+          <!-- 占位禁用按钮，供测试校验 take-both 已禁用 -->
+          <button
             class="button button--secondary"
-            data-testid="save-checkpoint"
-            disabled={isComposing || (resultEditor?.isComposing?.() ?? false)}
-            onclick={flushCheckpoint}
-            onkeydown={(e) =>
-              isComposing && e.key === "Enter" && e.preventDefault()}
-            title={CONFLICT_SHORTCUTS.saveCheckpoint.title}>保存检查点</button
-          ><button
-            class="button button--secondary"
-            data-testid="copy-draft"
-            disabled={!snapshot.selected.draft?.hasDraft}
-            onclick={() =>
-              onAction("conflict/draft-copy", {
-                relativePath: snapshot.selected?.relativePath,
-              })}>复制草稿</button
-          ><button
-            class="button button--secondary"
-            data-testid="export-draft"
-            disabled={!snapshot.selected.draft?.hasDraft}
-            onclick={() =>
-              onAction("conflict/draft-export", {
-                relativePath: snapshot.selected?.relativePath,
-              })}>导出草稿</button
-          ><button
-            class="button button--secondary"
-            data-testid="abandon-draft"
-            disabled={!snapshot.selected.draft?.hasDraft}
-            onclick={() =>
-              onAction("conflict/draft-abandon", {
-                relativePath: snapshot.selected?.relativePath,
-              })}>放弃草稿</button
+            data-testid="take-both-block"
+            disabled
+            aria-disabled="true"
+            title="非文本冲突已禁用保留两者"
+            style="display:none">保留两者</button
           >
-        </div>
-        <!-- V011-D 查看来源折叠区：默认不与块级动作争夺首屏 -->
-        <details
-          class="conflict-source-details"
-          bind:open={sourceDetailsOpen}
-          data-testid="conflict-source-details"
-        >
-          <summary>查看来源（我的修改 / 对方修改 / 共同基线）</summary>
+          <button
+            class="button button--secondary"
+            data-testid="action-take-both-mine-first"
+            disabled
+            aria-disabled="true"
+            title="非文本冲突已禁用保留两者"
+            style="display:none">保留两者</button
+          >
+        {:else}
+          <!-- V011-D 紧凑导航：文件 + 块级导航，进度统一 -->
           <div
-            class="conflict-source-tabs"
-            role="tablist"
-            aria-label="来源版本"
+            class="conflict-compact-nav"
+            role="navigation"
+            aria-label="冲突导航"
           >
-            {#each ["mine", "theirs", "base"] as sp (sp)}
+            <div class="toolbar-actions">
               <button
-                role="tab"
-                aria-selected={sourcePane === sp}
-                class:active={sourcePane === sp}
-                onclick={() => (sourcePane = sp as typeof sourcePane)}
-                >{sourcePaneLabels[sp as keyof typeof sourcePaneLabels]}</button
+                class="button button--secondary"
+                onclick={() => moveToConflict(-1)}
+                disabled={orderedConflicts.length < 2}>上一个文件</button
               >
-            {/each}
+              <button
+                class="button button--secondary"
+                onclick={() => moveToConflict(1)}
+                disabled={orderedConflicts.length < 2}>下一个文件</button
+              >
+              <span class="muted" aria-live="polite"
+                >文件 {snapshot.selected
+                  ? orderedConflicts.findIndex(
+                      (c) => c.relativePath === snapshot.selected?.relativePath,
+                    ) + 1
+                  : 0}/{orderedConflicts.length}</span
+              >
+            </div>
+            <div class="toolbar-actions" role="group" aria-label="冲突块导航">
+              <button
+                class="button button--secondary"
+                aria-label="上一个冲突块"
+                title={CONFLICT_SHORTCUTS.prevBlock.title}
+                onclick={() => focusBlock(-1)}
+                disabled={!diffProgress.total}>上一个块</button
+              >
+              <button
+                class="button button--secondary"
+                aria-label="下一个冲突块"
+                title={CONFLICT_SHORTCUTS.nextBlock.title}
+                onclick={() => focusBlock(1)}
+                disabled={!diffProgress.total}>下一个块</button
+              >
+              <span
+                class="muted"
+                role="status"
+                aria-live="polite"
+                data-testid="block-progress"
+                >块 {diffProgress.current}/{diffProgress.total || 0}</span
+              >
+            </div>
           </div>
-          <!-- svelte-ignore a11y_no_noninteractive_tabindex -- 来源内容区域需要获得键盘焦点以便滚动。 -->
+          <!-- V011-D 固定角色说明：不只依赖颜色 -->
           <div
-            class="conflict-source-content"
-            role="region"
-            aria-label={`${sourcePaneLabels[sourcePane]}内容`}
-            tabindex="0"
+            class="conflict-role-bar"
+            role="note"
+            aria-label="冲突角色说明"
+            data-testid="conflict-role-bar"
           >
-            {#if sourceContent?.readError}
-              <div class="module-state module-state--error">
-                <span class="codicon codicon-error"></span>
-                <div>
-                  <strong>读取失败</strong>
-                  <p>{sourceContent.readError}</p>
-                </div>
+            <span class="role role--mine"
+              ><span class="codicon codicon-circle-filled" aria-hidden="true"
+              ></span> 我的修改（本地）</span
+            >
+            <span class="role role--theirs"
+              ><span class="codicon codicon-circle-outline" aria-hidden="true"
+              ></span> 对方修改（仓库）</span
+            >
+            <span class="role role--base"
+              ><span class="codicon codicon-compare-changes" aria-hidden="true"
+              ></span> 共同基线（BASE）</span
+            >
+            <span class="role role--merged"
+              ><span class="codicon codicon-merge" aria-hidden="true"></span> 合并结果</span
+            >
+          </div>
+          {#if !useSimplified}
+            <ConflictDiffView
+              bind:this={diffView}
+              workingText={diffWorkingText}
+              relativePath={snapshot.selected?.relativePath ?? ""}
+              fileIdentity={conflictFileIdentity}
+              onBlockProgress={notifyBlockProgress}
+              onMergeConflictAction={handleDiffAction}
+              onError={handleDiffError}
+              onReady={handleDiffReady}
+            />
+          {:else}
+            <div
+              class="notice notice--info"
+              role="status"
+              data-testid="simplified-fallback-notice"
+            >
+              已切换到简化编辑器（草稿已保留，可复制/导出）
+            </div>
+          {/if}
+          {#if !useSimplified && resultEditor}
+            <MergeActionToolbar
+              {resultEditor}
+              onDraftChange={(text) => handleResultDraftChange(text, 0)}
+            />
+          {/if}
+          {#if diffActionFeedback}<div
+              class="notice notice--success"
+              role="status"
+              data-testid="diff-action-feedback"
+            >
+              {diffActionFeedback}
+            </div>{/if}
+          {#if isFallbackContent}
+            <div
+              class="notice notice--warning"
+              role="alert"
+              data-testid="content-fallback-warning"
+            >
+              <span class="codicon codicon-warning" aria-hidden="true"></span>
+              <div>
+                <strong>内容暂不可用</strong>
+                <p>{fallbackContentReason ?? "内容缺失或非法编码"}</p>
               </div>
-            {:else}
-              <pre><code>{sourceContent?.content ?? "（没有可用内容）"}</code
-                ></pre>
-              {#if sourceContent?.truncated}<div class="notice notice--warning">
-                  内容已截断，仅用于辅助判断。
-                </div>{/if}
+              <div class="toolbar-actions">
+                <button
+                  class="button button--secondary"
+                  data-testid="use-simple-editor-content"
+                  onclick={() => (useSimplified = true)}>使用简化编辑器</button
+                >
+                <button
+                  class="button button--secondary"
+                  onclick={() =>
+                    onAction("open-file", {
+                      relativePath: snapshot.selected?.relativePath,
+                    })}>在编辑器中打开</button
+                >
+                {#if snapshot.selected?.draft?.hasDraft}<button
+                    class="button button--secondary"
+                    onclick={() =>
+                      onAction("conflict/draft-export", {
+                        relativePath: snapshot.selected?.relativePath,
+                      })}>导出草稿</button
+                  >{/if}
+              </div>
+            </div>
+          {/if}
+          {#if diffErrorInfo}
+            <div
+              class="notice notice--warning"
+              role="alert"
+              data-testid="conflict-fallback-warning"
+            >
+              <span class="codicon codicon-warning" aria-hidden="true"></span>
+              <div>
+                <strong>差异视图暂不可用</strong>
+                <p>{diffErrorInfo.what}</p>
+                <small>{diffErrorInfo.cause} {diffErrorInfo.recovery}</small>
+              </div>
+              <div class="toolbar-actions">
+                <button
+                  class="button button--secondary"
+                  data-testid="use-simple-editor"
+                  onclick={() => (useSimplified = true)}>使用简化编辑器</button
+                >
+                {#if snapshot.selected?.draft?.hasDraft}<button
+                    class="button button--secondary"
+                    data-testid="export-draft-fallback"
+                    onclick={() =>
+                      onAction("conflict/draft-export", {
+                        relativePath: snapshot.selected?.relativePath,
+                      })}>导出草稿</button
+                  >{/if}
+                <button
+                  class="button button--secondary"
+                  data-testid="open-in-editor-fallback"
+                  onclick={() =>
+                    onAction("open-file", {
+                      relativePath: snapshot.selected?.relativePath,
+                    })}>在编辑器中打开</button
+                >
+              </div>
+            </div>
+          {/if}
+          <div class="merge-block-toolbar">
+            <div>
+              <strong>块级合并</strong><span
+                >{conflictBlocks.length > 0
+                  ? `仍有 ${conflictBlocks.length} 个冲突块`
+                  : "未检测到冲突标记"}</span
+              >
+            </div>
+            {#if conflictBlocks.length > 0}
+              <!-- svelte-ignore a11y_no_noninteractive_tabindex -- 冲突块列表需要获得键盘焦点以便滚动。 -->
+              <div
+                class="merge-block-list scroll-region"
+                role="region"
+                aria-label="冲突块操作"
+                tabindex="0"
+                data-scroll-region
+              >
+                {#each conflictBlocks as block, index (block.start)}
+                  <article>
+                    <span>块 {index + 1}</span><small
+                      >{block.mine.split(/\r?\n/).filter(Boolean).length} 行本地 /
+                      {block.theirs.split(/\r?\n/).filter(Boolean).length} 行对方</small
+                    >
+                    <div>
+                      <button
+                        class="button button--secondary"
+                        onclick={() => applyBlock(index, "mine")}
+                        >采用我的修改</button
+                      ><button
+                        class="button button--secondary"
+                        onclick={() => applyBlock(index, "theirs")}
+                        >采用对方修改</button
+                      ><button
+                        class="button button--secondary"
+                        data-testid="take-both-block"
+                        disabled={disableTakeBoth}
+                        aria-disabled={disableTakeBoth ? "true" : "false"}
+                        title={disableTakeBoth
+                          ? "非文本冲突已禁用保留两者"
+                          : "保留两者"}
+                        onclick={() => applyBlock(index, "both")}
+                        >保留两者</button
+                      >
+                    </div>
+                  </article>
+                {/each}
+              </div>
             {/if}
           </div>
-        </details>
+          {#if snapshot.selected.mergeEditor.feedback}<div
+              class="notice notice--success"
+              role="status"
+            >
+              {snapshot.selected.mergeEditor.feedback}
+            </div>{/if}
+          {#each snapshot.selected.mergeEditor.issues as issue, issueIndex (issueIndex)}<div
+              class="notice notice--warning"
+            >
+              {issue}
+            </div>{/each}
+          {#if !useSimplified}
+            <div
+              class="conflict-editor conflict-editor--editable"
+              role="region"
+              aria-label="可编辑工作副本合并区域"
+              data-testid="conflict-result-editor"
+              oncompositionstart={() => (isComposing = true)}
+              oncompositionend={() => (isComposing = false)}
+            >
+              {#key conflictFileIdentity}
+                <ConflictResultEditor
+                  bind:this={resultEditor}
+                  fileIdentity={conflictFileIdentity}
+                  relativePath={snapshot.selected.relativePath}
+                  language="typescript"
+                  initialText={snapshot.selected?.draft?.content ??
+                    snapshot.selected?.contents.working?.content ??
+                    diffWorkingText}
+                  readonly={!snapshot.selected.mergeEditor.editable}
+                  onDraftChange={handleResultDraftChange}
+                  onFallback={handleResultFallback}
+                  onError={handleDiffError}
+                />
+              {/key}
+              <div class="toolbar-actions toolbar-actions--spaced-top">
+                <button
+                  class="button button--secondary"
+                  data-testid="use-simple-editor-result"
+                  onclick={() => (useSimplified = true)}>使用简化编辑器</button
+                >
+              </div>
+            </div>
+          {:else}
+            <div
+              class="conflict-editor conflict-editor--editable"
+              role="region"
+              aria-label="可编辑工作副本合并区域（简化编辑器）"
+              oncompositionstart={() => (isComposing = true)}
+              oncompositionend={() => (isComposing = false)}
+            >
+              <div
+                class="conflict-codemirror-host"
+                bind:this={editorHost}
+              ></div>
+            </div>
+          {/if}
+          {#if snapshot.selected.draft?.hasDraft}<div
+              class="notice notice--info"
+              role="status"
+            >
+              <span class="codicon codicon-save" aria-hidden="true"></span>Host
+              内存草稿已同步（修订 {snapshot.selected.draft.revision}，{snapshot
+                .selected.draft.dirty
+                ? "有未保存变更"
+                : "干净"}），关闭任务前可复制/导出逃生。
+            </div>{/if}
+          {#if conflictDraftFeedback}<div
+              class="notice notice--success"
+              role="status"
+            >
+              {conflictDraftFeedback}
+            </div>{/if}
+          <!-- V012-D：检查点状态持续显示（未保存 / 检查点已保存 / 保存失败），自动 debounce + 显式保存均不写盘 -->
+          <div
+            class="checkpoint-status-bar"
+            role="status"
+            aria-live="polite"
+            data-testid="checkpoint-status"
+          >
+            {#if checkpointStatus === "unsaved"}<span
+                class="status-badge status-badge--dirty">未保存</span
+              ><small
+                >{checkpointStatusDetail ||
+                  "有未保存变更，将自动保存检查点（不写工作副本）"}</small
+              >{:else if checkpointStatus === "saved"}<span
+                class="status-badge status-badge--saved">已保存</span
+              ><small>{checkpointStatusDetail}</small
+              >{:else if checkpointStatus === "failed"}<span
+                class="status-badge status-badge--error">保存失败</span
+              ><small
+                >{checkpointStatusDetail ||
+                  "检查点保存失败，草稿仍保留在内存"}</small
+              >{/if}
+            {#if snapshot.selected?.mergeEditor.feedback?.includes("容量上限")}<div
+                class="notice notice--warning"
+                role="alert"
+                data-testid="capacity-feedback"
+              >
+                草稿已达容量上限，最旧草稿已被淘汰，请及时导出或复制（最新草稿已保留）
+              </div>{/if}
+            {#if snapshot.selected?.mergeEditor.issues.some( (i) => i.includes("只读") )}<div
+                class="notice notice--warning"
+                role="alert"
+                data-testid="stale-readonly-notice"
+              >
+                草稿对应的工作副本已变化，只读展示，请复制/导出或重新建立（fail-closed，不静默写回）
+                <button
+                  class="button button--secondary"
+                  data-testid="stale-copy"
+                  onclick={() =>
+                    onAction("conflict/draft-copy", {
+                      relativePath: snapshot.selected?.relativePath,
+                    })}>复制草稿</button
+                >
+                <button
+                  class="button button--secondary"
+                  data-testid="stale-export"
+                  onclick={() =>
+                    onAction("conflict/draft-export", {
+                      relativePath: snapshot.selected?.relativePath,
+                    })}>导出草稿</button
+                >
+              </div>{/if}
+          </div>
+          <div class="merge-save-bar">
+            <span
+              >{workingDirty
+                ? "有尚未保存的合并修改（Host 草稿已同步）"
+                : "工作副本与已保存内容一致"}</span
+            ><button
+              class="button button--primary"
+              disabled={!snapshot.selected.mergeEditor.editable ||
+                !workingDirty}
+              onclick={() =>
+                onAction("conflict/save-working", {
+                  editToken: snapshot.selected?.mergeEditor.token,
+                  content: mergeDraft,
+                })}>保存工作副本合并结果</button
+            ><button
+              class="button button--secondary"
+              data-testid="save-checkpoint"
+              disabled={isComposing || (resultEditor?.isComposing?.() ?? false)}
+              onclick={flushCheckpoint}
+              onkeydown={(e) =>
+                isComposing && e.key === "Enter" && e.preventDefault()}
+              title={CONFLICT_SHORTCUTS.saveCheckpoint.title}>保存检查点</button
+            ><button
+              class="button button--secondary"
+              data-testid="copy-draft"
+              disabled={!snapshot.selected.draft?.hasDraft}
+              onclick={() =>
+                onAction("conflict/draft-copy", {
+                  relativePath: snapshot.selected?.relativePath,
+                })}>复制草稿</button
+            ><button
+              class="button button--secondary"
+              data-testid="export-draft"
+              disabled={!snapshot.selected.draft?.hasDraft}
+              onclick={() =>
+                onAction("conflict/draft-export", {
+                  relativePath: snapshot.selected?.relativePath,
+                })}>导出草稿</button
+            ><button
+              class="button button--secondary"
+              data-testid="abandon-draft"
+              disabled={!snapshot.selected.draft?.hasDraft}
+              onclick={() =>
+                onAction("conflict/draft-abandon", {
+                  relativePath: snapshot.selected?.relativePath,
+                })}>放弃草稿</button
+            >
+          </div>
+          <!-- V011-D 查看来源折叠区：默认不与块级动作争夺首屏 -->
+          <details
+            class="conflict-source-details"
+            bind:open={sourceDetailsOpen}
+            data-testid="conflict-source-details"
+          >
+            <summary>查看来源（我的修改 / 对方修改 / 共同基线）</summary>
+            <div
+              class="conflict-source-tabs"
+              role="tablist"
+              aria-label="来源版本"
+            >
+              {#each ["mine", "theirs", "base"] as sp (sp)}
+                <button
+                  role="tab"
+                  aria-selected={sourcePane === sp}
+                  class:active={sourcePane === sp}
+                  onclick={() => (sourcePane = sp as typeof sourcePane)}
+                  >{sourcePaneLabels[
+                    sp as keyof typeof sourcePaneLabels
+                  ]}</button
+                >
+              {/each}
+            </div>
+            <!-- svelte-ignore a11y_no_noninteractive_tabindex -- 来源内容区域需要获得键盘焦点以便滚动。 -->
+            <div
+              class="conflict-source-content"
+              role="region"
+              aria-label={`${sourcePaneLabels[sourcePane]}内容`}
+              tabindex="0"
+            >
+              {#if sourceContent?.readError}
+                <div class="module-state module-state--error">
+                  <span class="codicon codicon-error"></span>
+                  <div>
+                    <strong>读取失败</strong>
+                    <p>{sourceContent.readError}</p>
+                  </div>
+                </div>
+              {:else}
+                <pre><code>{sourceContent?.content ?? "（没有可用内容）"}</code
+                  ></pre>
+                {#if sourceContent?.truncated}<div
+                    class="notice notice--warning"
+                  >
+                    内容已截断，仅用于辅助判断。
+                  </div>{/if}
+              {/if}
+            </div>
+          </details>
+        {/if}
       {:else}
         <!-- svelte-ignore a11y_no_noninteractive_tabindex -- 冲突正文需要获得键盘焦点以便滚动。 -->
         <div

@@ -1,0 +1,34 @@
+{
+  "ok": true,
+  "runId": "2026-08-30T18-45-57-990Z",
+  "expectedExtension": "local.svn-workbench@0.1.3",
+  "vsixPath": "/Users/yangnan/vscode/svn-workbench-v0.1.3/svn-workbench-0.1.3.vsix",
+  "vsixSha256": "50DDDB5C7AE745F7F60B73FC596CBD874666C4C00B199A9D51597B5243AAE9E1",
+  "vsixSizeBytes": 8749548,
+  "userDataDir": "/Users/yangnan/vscode/svn-workbench-v0.1.3/.validation/vsix-install-acceptance/2026-08-30T18-45-57-990Z/user-data",
+  "extensionsDir": "/Users/yangnan/vscode/svn-workbench-v0.1.3/.validation/vsix-install-acceptance/2026-08-30T18-45-57-990Z/extensions",
+  "codeVersion": [
+    "1.135.0",
+    "08d4889f9ec4a1685d257b9b95de036c8e1ce1e5",
+    "arm64"
+  ],
+  "installOutput": {
+    "stdout": "Installing extensions...\nExtension 'svn-workbench-0.1.3.vsix' was successfully installed.",
+    "stderr": "(node:1692) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.\n(Use `Code --trace-deprecation ...` to show where the warning was created)"
+  },
+  "installedExtensions": [
+    "local.svn-workbench@0.1.3"
+  ],
+  "uninstallOutput": {
+    "stdout": "Uninstalling local.svn-workbench...\nExtension 'local.svn-workbench' was successfully uninstalled!",
+    "stderr": ""
+  },
+  "afterUninstall": [],
+  "reinstallOutput": {
+    "stdout": "Installing extensions...\nExtension 'svn-workbench-0.1.3.vsix' was successfully installed.",
+    "stderr": "(node:1808) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.\n(Use `Code --trace-deprecation ...` to show where the warning was created)"
+  },
+  "afterReinstall": [
+    "local.svn-workbench@0.1.3"
+  ]
+}
