@@ -1530,14 +1530,18 @@ export function startMockWorkbench(): void {
       }
     }
     if (action === "conflict/preview-resolve") {
+      // 中文注释：支持多冲突场景，预览路径取当前选中或首个剩余
+      const previewPath =
+        (typeof data.relativePath === "string" && data.relativePath) ||
+        (mockConflictsOverride?.[0]?.relativePath ?? "src/conflict/example.ts");
       injectSnapshot(
         "conflicts",
         conflictSnapshot({
           advice: mockConflictAdvice(),
           resolvePreview: {
             token: "mock-resolve",
-            relativePath: "src/conflict/example.ts",
-            command: 'svn resolve --accept working "src/conflict/example.ts"',
+            relativePath: previewPath,
+            command: `svn resolve --accept working "${previewPath}"`,
             canResolve: true,
             issues: [],
           },
@@ -1546,10 +1550,12 @@ export function startMockWorkbench(): void {
     }
     if (action === "conflict/resolve") {
       // v0.1.3 V013-E：模拟 Host 成功 resolve 后的重采——从列表移除目标并重发快照（按权威重采语义）
+      // 中文注释：支持多冲突，优先按 previewToken 对应首个剩余，其次 relativePath
+      const fallbackTarget =
+        mockConflictsOverride?.[0]?.relativePath ?? "src/conflict/example.ts";
       const target =
-        (data.previewToken
-          ? "src/conflict/example.ts"
-          : (data.relativePath as string)) || "src/conflict/example.ts";
+        (typeof data.relativePath === "string" && data.relativePath) ||
+        (data.previewToken ? fallbackTarget : fallbackTarget);
       // 若存在多冲突覆盖，则从覆盖中移除
       const current = mockConflictsOverride ?? [
         { relativePath: "src/conflict/example.ts" },
@@ -2337,6 +2343,29 @@ function conflictSnapshot(
   overrides: Record<string, unknown> = {},
 ): WorkbenchModuleSnapshot {
   // v0.1.3 V013-E：优先使用 override 注入的 conflicts（如测试或 resolve 后重采），否则按默认/滚动数据集生成
+  // 中文注释：支持 ?conflicts=multi 多冲突主路径 E2E（a.ts/b.ts 两个文本冲突）
+  if (
+    !isScrollDataset() &&
+    mockConflictsOverride === undefined &&
+    new URLSearchParams(window.location.search).get("conflicts") === "multi"
+  ) {
+    mockConflictsOverride = [
+      {
+        relativePath: "src/conflict/a.ts",
+        operation: "update" as const,
+        type: "text" as const,
+        sourceLeftRevision: "41",
+        sourceRightRevision: "42",
+      },
+      {
+        relativePath: "src/conflict/b.ts",
+        operation: "update" as const,
+        type: "text" as const,
+        sourceLeftRevision: "41",
+        sourceRightRevision: "42",
+      },
+    ];
+  }
   const baseConflicts = isScrollDataset()
     ? Array.from({ length: 36 }, (_, index) => ({
         relativePath: `项目资料/冲突/文件-${index + 1}.ts`,
