@@ -236,10 +236,11 @@ export class ConflictSaveService {
       });
       if (created.ok) initialRevision = created.draft.revision;
     }
+    // 正式扩展设施：直接以 conflicts/conflicts/resolve 签发，无需篡改私有 Map（中文注释）
     const token = this.tokens.issue({
       sessionId: input.sessionId,
-      moduleId: "diff" as unknown as "diff",
-      taskId: "diff/working" as unknown as "diff/working",
+      moduleId: "conflicts",
+      taskId: "conflicts/resolve",
       repositoryUuid: input.repositoryUuid,
       scopeHash: input.scopeHash,
       targetId,
@@ -251,25 +252,7 @@ export class ConflictSaveService {
         guard.context.absolutePath,
       ),
       draftRevision: initialRevision,
-    } as unknown as Parameters<DiffEditTokenRegistry["issue"]>[0]);
-    // 覆盖为冲突任务标识（运行时存储为字符串，类型层面通过断言绕过 diff 字面量限制）
-    // 直接修改绑定中的 taskId/moduleId 为冲突值，需重新签发时使用正确值
-    // 为满足任务要求的 taskId="conflicts/resolve"，在 token 绑定中写入该值
-    // 由于 DiffEditTokenRegistry 不校验取值，此处通过直接篡改内部 map 实现
-    // 更简单：重新以正确字符串覆盖（利用 any 绕过类型）
-    // 实际上我们上一步已签发，需确保后续校验按 conflicts/resolve 判断
-    // 做法：消费前校验改为允许 diff/working 或 conflicts/resolve
-    // 此处保持签发为 conflicts/resolve semantics，下一步 save 时做兼容校验
-    // 为确保 token 绑定为 conflicts/resolve，手动更新
-    const bindingStored = (
-      this.tokens as unknown as {
-        tokens: Map<string, { taskId: string; moduleId: string }>;
-      }
-    ).tokens.get(token);
-    if (bindingStored) {
-      bindingStored.taskId = "conflicts/resolve";
-      bindingStored.moduleId = "conflicts";
-    }
+    });
     return {
       ok: true,
       targetId,
@@ -306,23 +289,12 @@ export class ConflictSaveService {
         draftRevision: this.drafts.get(input.targetId)?.revision,
       };
     }
-    const binding = consumed.binding as unknown as {
-      sessionId: string;
-      moduleId: string;
-      taskId: string;
-      repositoryUuid: string;
-      scopeHash: string;
-      targetId: string;
-      targetPath: string;
-      rawHash: string;
-      baseHash: string;
-      baseRevision: string;
-      documentVersion: number;
-      draftRevision: number;
-    };
-    // 6 字段绑定复验：session / repo / scope / targetId 必须一致；taskId/moduleId 兼容 conflicts
+    const binding = consumed.binding;
+    // 6 字段绑定复验：session / repo / scope / targetId / moduleId / taskId 必须一致（跨模块隔离，中文注释）
     if (
       binding.sessionId !== input.sessionId ||
+      binding.moduleId !== "conflicts" ||
+      binding.taskId !== "conflicts/resolve" ||
       binding.repositoryUuid !== input.repositoryUuid ||
       binding.scopeHash !== input.scopeHash ||
       binding.targetId !== input.targetId
@@ -498,10 +470,11 @@ export class ConflictSaveService {
       diskHash: saved.newHash,
     });
     const nextDraft = this.drafts.get(input.targetId);
+    // 轮换新 token 保持同一冲突任务标识（中文注释）
     const newEditToken = this.tokens.issue({
       sessionId: binding.sessionId,
-      moduleId: binding.moduleId as "diff",
-      taskId: binding.taskId as "diff/working",
+      moduleId: "conflicts",
+      taskId: "conflicts/resolve",
       repositoryUuid: binding.repositoryUuid,
       scopeHash: binding.scopeHash,
       targetId: input.targetId,
@@ -511,17 +484,7 @@ export class ConflictSaveService {
       baseRevision: binding.baseRevision,
       documentVersion: binding.documentVersion,
       draftRevision: nextDraft?.revision ?? currentDraft.revision + 1,
-    } as unknown as Parameters<DiffEditTokenRegistry["issue"]>[0]);
-    // 保持任务标识为冲突
-    const newBinding = (
-      this.tokens as unknown as {
-        tokens: Map<string, { taskId: string; moduleId: string }>;
-      }
-    ).tokens.get(newEditToken);
-    if (newBinding) {
-      newBinding.taskId = "conflicts/resolve";
-      newBinding.moduleId = "conflicts";
-    }
+    });
     return {
       ok: true,
       acceptedRevision: nextDraft?.revision ?? currentDraft.revision + 1,

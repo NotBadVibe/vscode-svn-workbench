@@ -14,8 +14,9 @@ export const DEFAULT_EDIT_TOKEN_TTL_MS = 15 * 60 * 1000;
 
 export interface DiffEditTokenBinding {
   sessionId: string;
-  moduleId: "diff";
-  taskId: "diff/working";
+  /** 正式扩展：diff 与 conflicts 共享注册表，通过联合类型保持类型安全（中文注释） */
+  moduleId: "diff" | "conflicts";
+  taskId: "diff/working" | "conflicts/resolve";
   repositoryUuid: string;
   scopeHash: string;
   targetId: string;
