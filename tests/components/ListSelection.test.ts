@@ -262,7 +262,7 @@ describe("Changes 选择闭环（v0.0.8）", () => {
     });
     await fireEvent.click(header);
     expect(
-      screen.getByRole("button", { name: "生成提交预览（5000）" }),
+      screen.getByRole("button", { name: "预览提交 5000 个文件" }),
     ).toBeInTheDocument();
   });
 
@@ -563,7 +563,7 @@ describe("Commit 选择闭环（v0.0.8）", () => {
     ).not.toBeInTheDocument();
     // 无选择时预览按钮禁用并说明。
     expect(
-      screen.getByRole("button", { name: "生成提交预览（0）" }),
+      screen.getByRole("button", { name: "预览提交 0 个文件" }),
     ).toBeDisabled();
     expect(screen.getByText(/先选择至少 1 个可提交文件/)).toBeInTheDocument();
     // commit/update-selection 已同步 Host。

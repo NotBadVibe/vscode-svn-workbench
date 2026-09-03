@@ -83,18 +83,26 @@ test("SCR-01/02/09/10/11：小视口下 Shell 和变更列表完整可达", asyn
   await expect(page.getByText("更新于").first()).not.toContainText(/AM|PM/i);
 });
 
-test("SCR-03：提交双栏分别滚动，底部确认操作可达", async ({ page }) => {
+test("SCR-03：提交紧凑单栏滚动，文件列表独立滚动，底部确认操作可达", async ({
+  page,
+}) => {
   await page.setViewportSize({ width: 1024, height: 600 });
   await page.goto("/?dataset=scroll");
   await openModule(page, "提交");
+  // V014-D：首屏为摘要条 + 提交说明 + 本地检查 + 唯一主操作；
+  // 文件列表收进按需展开区，展开后独立滚动。
+  await expect(
+    page.getByRole("region", { name: "待提交文件摘要" }),
+  ).toBeVisible();
+  await page.getByText("完整文件选择与策略").click();
   const files = page.getByRole("list", { name: "提交候选文件" });
   await assertScrollable(files, files.getByRole("listitem").last());
 
   await page
     .getByRole("textbox", { name: "提交说明" })
     .fill("feat(中文界面): 验证小区域滚动");
-  await page.getByRole("button", { name: /生成提交预览/ }).click();
-  const compose = page.getByRole("region", { name: "提交说明与提交前检查" });
+  await page.getByRole("button", { name: /预览提交/ }).click();
+  const compose = page.getByRole("region", { name: "提交紧凑视图" });
   await assertScrollable(
     compose,
     page.getByRole("button", { name: /确认提交/ }),
@@ -306,6 +314,8 @@ test("ZH-01/02/03/04/09：公共状态、数量、时间和 AI 外发说明符�
     ).toEqual([]);
   }
   await openModule(page, "提交");
+  // V014-D：选择计数随控制台收进按需展开区，先展开再断言。
+  await page.getByText("完整文件选择与策略").click();
   await expect(page.getByText(/已选 \d+ \/ 候选 \d+ 个文件/)).toBeVisible();
   await openModule(page, "变更解读");
   await expect(page.getByText(/AI 不会修改文件或执行提交/)).toBeVisible();

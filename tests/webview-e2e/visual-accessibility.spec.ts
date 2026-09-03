@@ -126,6 +126,9 @@ test("reduced motion 下列表主操作无违规、无动画依赖（Task 2 缺�
   ).toBeVisible();
   // 无动画时操作不依赖延迟：立即响应。
   await page.getByRole("button", { name: /检查并提交所选（1）/ }).click();
+  // V014-D：首屏摘要条即时可见；完整计数随控制台收进按需展开区。
+  await expect(page.getByText("待提交 1 个文件")).toBeVisible();
+  await page.getByText("完整文件选择与策略").click();
   await expect(page.getByText(/已选 1 \/ 候选/)).toBeVisible();
 });
 

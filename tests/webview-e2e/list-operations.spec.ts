@@ -100,10 +100,16 @@ test("UX08-FLOW-01/02：筛选 7 个已修改文件后一次全选并进入 Comm
   // 表头全选 7 个；批量按钮数量一致。
   await page.getByRole("button", { name: "检查并提交所选（7）" }).click();
   // Commit 选中与候选数量一致：7 个已选（范围候选 10，含 blocked/excluded），
-  // 预览按钮与选择数量一致（7）。
+  // V014-D：选择控制台收进按需展开区，先展开再核对数量；
+  // 唯一主操作“预览提交 N 个文件”数量与选择一致（7）。
+  await expect(
+    page.getByRole("region", { name: "待提交文件摘要" }),
+  ).toBeVisible();
+  await expect(page.getByText("待提交 7 个文件")).toBeVisible();
+  await page.getByText("完整文件选择与策略").click();
   await expect(page.getByText(/已选 7 \/ 候选 10/)).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "生成提交预览（7）" }),
+    page.getByRole("button", { name: "预览提交 7 个文件" }),
   ).toBeVisible();
 });
 
