@@ -768,6 +768,22 @@
       >
         提交此文件
       </button>
+      <!--
+        V014-C2 · 返回本地修改：回到 Changes 唯一主路径（不新建全局导航
+        Rail）；返回后的选择/活动行/滚动恢复由 Changes 消费 continuityRestore
+        完成，本按钮只发起模块路由，不传递可写操作身份。
+      -->
+      <button
+        class="button button--secondary"
+        onclick={() =>
+          onAction("open-module", {
+            moduleId: "changes",
+            taskId: "changes/overview",
+          })}
+      >
+        <span class="codicon codicon-arrow-left" aria-hidden="true"
+        ></span>返回本地修改
+      </button>
     </div>
   </div>
 

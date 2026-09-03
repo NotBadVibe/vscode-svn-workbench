@@ -1,5 +1,6 @@
 <script lang="ts">
   import { ContextMenu } from "bits-ui";
+  import { tick } from "svelte";
   import type {
     ChangesSnapshot,
     HostToWebviewMessage,
@@ -7,6 +8,7 @@
     WorkbenchFileStatus,
     WorkbenchFileView,
   } from "@protocol/workbenchProtocol";
+  import { isContinuityRestoreView } from "@protocol/workbenchProtocol";
   import { formatZhTime } from "../../i18n/formatters";
   import {
     fileStatusLabels,
@@ -97,6 +99,17 @@
   let sortDirection = $state<SortDirection>("asc");
   let density = $state<ListDensity>("comfortable");
   let announcement = $state("");
+  /*
+   * V014-C2 · 往返恢复一次性消费标记（只记已消费的载荷标识，不缓存复用载荷值）。
+   * Host 恢复载荷只随快照下发一次；同一载荷对象重复渲染不再重放，保证用户
+   * 在恢复后对选择/草稿/视图的手动改动拥有最终决定权。
+   */
+  let consumedRestorePayload: unknown;
+  /*
+   * V014-C2 · 恢复当次的 reset 观察只跳过这一次（非响应式标记，避免二次调度
+   * 把重放后的活动行/滚动再清掉）；定位统一在 tick 后重放。
+   */
+  let suppressResetForRestore = false;
   let contextFile = $state<WorkbenchFileView | undefined>();
   /** 行菜单受控打开状态（Shift+F10 / Menu 键由键盘导航触发）。 */
   let rowMenuOpen = $state(false);
@@ -327,7 +340,115 @@
     query;
     activeStatus;
     onlySelected;
+    // V014-C2：恢复当次跳过回顶清活动行，定位由恢复流程在 tick 后重放。
+    if (suppressResetForRestore) return;
     list.resetNavigation();
+  });
+
+  /*
+   * V014-C2 · Changes ↔ Diff 往返恢复一次性消费（C1 协议字段，契约七步）。
+   * ① 非法载荷 fail-closed：视为缺省，不半应用；② 选择只接受与最新候选的交集；
+   * ③ 身份锚优先定位、像素仅辅助钳制；④ 视图有值回填、缺省保持现状；⑤ 本地已有
+   * 输入时丢弃载荷草稿；⑥ 移除原因与恢复提示经 role=status 逐条播报；⑦ 联调见
+   * `?continuity=restore` mock。同一载荷对象只消费一次，值不缓存、不复用。
+   */
+  $effect(() => {
+    const restore = snapshot.continuityRestore;
+    if (restore === undefined || restore === consumedRestorePayload) return;
+    consumedRestorePayload = restore;
+    if (!isContinuityRestoreView(restore)) return;
+    // ② 选择回填：只接受交集，不并入新文件（onlySelected 仅视图过滤）。
+    const validKeys = new Set(snapshot.files.map((file) => file.selectionKey));
+    selected = new Set(
+      restore.selectedKeys.filter((key) => validKeys.has(key)),
+    );
+    // ④ 视图回填：有值才回填，缺省保持现状。
+    const view = restore.changesView;
+    suppressResetForRestore = true;
+    if (view.query !== undefined) query = view.query;
+    if (
+      view.activeStatus !== undefined &&
+      (view.activeStatus === "all" || view.activeStatus in fileStatusLabels)
+    ) {
+      activeStatus = view.activeStatus as WorkbenchFileStatus | "all";
+    }
+    if (view.activeFileType !== undefined) {
+      activeFileType = view.activeFileType;
+    }
+    if (view.activePresetId !== undefined) {
+      activePresetId = view.activePresetId;
+    }
+    if (view.sort !== undefined) {
+      const [sortFieldText, sortDirectionText] = view.sort.split(":");
+      if (
+        (sortFieldText === "path" ||
+          sortFieldText === "fileName" ||
+          sortFieldText === "status" ||
+          sortFieldText === "recommendation" ||
+          sortFieldText === "ownership") &&
+        (sortDirectionText === "asc" || sortDirectionText === "desc")
+      ) {
+        sortField = sortFieldText;
+        sortDirection = sortDirectionText;
+        saveListPreferences("changes", {
+          sortField,
+          sortDirection,
+          density,
+        });
+      }
+    }
+    if (view.density !== undefined) {
+      density = view.density;
+      saveListPreferences("changes", { sortField, sortDirection, density });
+    }
+    if (view.onlySelected !== undefined) onlySelected = view.onlySelected;
+    // ⑤ 草稿第二道保守：本地已有输入时丢弃载荷草稿。
+    if (restore.commitDraft !== undefined && commitDraft.trim().length === 0) {
+      commitDraft = restore.commitDraft;
+      if (restore.commitDraft.trim().length > 0) draftExpanded = true;
+    }
+    // ⑥ 播报：移除原因逐条 + 恢复提示（SelectionSummary 经 role=status 播报）。
+    const restoreMessages = [
+      ...restore.removedEntries.map((entry) => entry.message),
+      ...restore.notices,
+    ].filter((message) => message.trim().length > 0);
+    if (restoreMessages.length > 0) announcement = restoreMessages.join("；");
+    // ③ 活动行/滚动：锚命中直接定位，像素仅锚失效时钳制，绝不用像素单独定位。
+    const activeKey = restore.activeFileKey;
+    const anchorKey = restore.scrollAnchorKey;
+    const assistPixels = restore.scrollAssistPixels;
+    void tick().then(() => {
+      suppressResetForRestore = false;
+      const fallbackAnchor =
+        anchorKey !== undefined && anchorKey !== activeKey
+          ? anchorKey
+          : undefined;
+      const directIndex =
+        activeKey !== undefined
+          ? sortedFiles.findIndex((file) => file.selectionKey === activeKey)
+          : -1;
+      const anchorIndex =
+        fallbackAnchor !== undefined
+          ? sortedFiles.findIndex(
+              (file) => file.selectionKey === fallbackAnchor,
+            )
+          : -1;
+      // 活动行优先；活动行缺失时回退到滚动锚对应行（邻项恢复已由 Host 定 active）。
+      const targetIndex = directIndex >= 0 ? directIndex : anchorIndex;
+      if (targetIndex >= 0) {
+        list.markActive(targetIndex);
+        list.setActiveRow(targetIndex);
+        return;
+      }
+      if (typeof assistPixels === "number" && list.element) {
+        const maxScrollTop =
+          list.element.scrollHeight - list.element.clientHeight;
+        list.element.scrollTop = Math.max(
+          0,
+          Math.min(assistPixels, Math.max(0, maxScrollTop)),
+        );
+      }
+    });
   });
 
   $effect(() => {
