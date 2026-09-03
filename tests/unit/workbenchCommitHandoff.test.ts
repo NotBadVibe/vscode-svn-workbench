@@ -599,7 +599,9 @@ describe("跨仓库交接不合并 revision", () => {
     expect(plan.canCommit).toBe(false);
     // 平台无关断言：Windows 上越界绝对路径会被规范化为盘符形式，只锚定结尾段。
     expect(
-      plan.issues.some((issue) => /[\\/]other-repo[\\/]b\.ts$/.test(issue.path)),
+      plan.issues.some((issue) =>
+        /[\\/]other-repo[\\/]b\.ts$/.test(issue.path),
+      ),
     ).toBe(true);
     // 合法路径仍可独立提交，不与越界路径合并为一次 revision 依据。
     const clean = buildCommitPlanPreview(scope, candidates, [
