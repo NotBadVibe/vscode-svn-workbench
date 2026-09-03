@@ -299,6 +299,19 @@ export const conflictStepLabels = {
   toggleCollapse: "折叠",
 } as const;
 
+/** v0.1.5 V015-B：共享任务骨架组件的默认文案（组件内不生造领域文案）。 */
+export const taskSkeletonLabels = {
+  summary: "任务状态摘要",
+  actionBar: "任务操作栏",
+  result: "任务结果与下一步",
+  emptyState: "空状态说明",
+  errorState: "错误说明",
+  busyFallback: "正在处理，请稍候…",
+  staleFallback: "结果已过期，请重新检查。",
+  diagnosticBlocked:
+    "诊断信息疑似包含密钥，已隐藏以保护安全。请复制前自行脱敏。",
+} as const;
+
 export function describeCommitSelectionEvaluation(
   evaluation: CommitSelectionExplanation,
 ): string {
