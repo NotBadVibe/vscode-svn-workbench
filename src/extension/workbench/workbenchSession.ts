@@ -20,6 +20,7 @@ import type {
   WorkbenchTaskId,
 } from "../../protocol/workbenchProtocol";
 import type { OperationScope } from "../../scope/operationScope";
+import type { TaskContinuityContext } from "./taskContinuity";
 import type {
   SvnAuthenticationContext,
   SvnCertificateTrustContext,
@@ -262,6 +263,12 @@ export interface WorkbenchSession extends OpenWorkbenchRequest {
     moduleId: WorkbenchModuleId;
     controller: AbortController;
   };
+  /**
+   * v0.1.4 V014-A：连续任务上下文（Changes → Diff → Commit 纯模型）。
+   * 仅类型挂载：本版本只记录与推导，不接入任何 controller/Webview 流程；
+   * 接线属于后续 V014-C/E。缺省表示尚未建立连续上下文。
+   */
+  taskContinuity?: TaskContinuityContext;
 }
 
 export interface CommitSessionState {
