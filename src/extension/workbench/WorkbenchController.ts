@@ -2848,6 +2848,11 @@ export class WorkbenchController implements vscode.Disposable {
           const state = session.historyState ?? { compareRevisions: [] };
           state.historyLimit = nextLimit;
           state.historyQuery = normalizedQuery.query;
+          // v0.1.5 V015-D2：加载更多携带本地比较选择时一并保留，快照刷新不丢选中；
+          // 未携带该键时保持既有选择不变。
+          if (data.compareRevisions !== undefined) {
+            state.compareRevisions = asRevisionArray(data.compareRevisions);
+          }
           const condition = describeHistoryQuery(normalizedQuery.query);
           state.feedback = condition
             ? `已按${condition}读取 ${page.revisions.length} 条修订。`

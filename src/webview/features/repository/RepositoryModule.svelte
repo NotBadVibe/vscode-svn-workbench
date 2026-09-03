@@ -14,7 +14,6 @@
     extractRelocateTarget,
     type OperationIntentKind,
   } from "../../../operation/operationIntent";
-  import { taskLabels } from "../../i18n/terminology";
   import {
     loadListPreferences,
     saveListPreferences,
@@ -345,13 +344,10 @@
 </script>
 
 <section class="repository-page" data-repository-task={currentTask}>
-  <header class="page-heading">
-    <div>
-      <span class="eyebrow">当前仓库任务</span>
-      <h1>{taskLabels[currentTask]}</h1>
-      <p>当前页面只显示这项任务；任何写操作都先生成精确预览，再由你确认。</p>
-    </div>
-  </header>
+  <!-- v0.1.5 V015-D2：任务标题由 ScopeBar H1 表达，页内不再重复；此处仅保留操作说明。 -->
+  <p class="repository-intro">
+    当前页面只显示这项任务；任何写操作都先生成精确预览，再由你确认。
+  </p>
 
   <ScrollArea class="repository-task-navigation" label="仓库任务导航">
     {#each taskGroups as group (group.id)}
@@ -391,17 +387,19 @@
     {/each}
   </ScrollArea>
 
+  <!-- v0.1.5 V015-D2：仓库名与工作副本修订版本由 ScopeBar 表达，此处仅保留仓库地址与复制出口。 -->
   <div class="repository-hero">
     <div class="repo-mark">
       <span class="codicon codicon-repo" aria-hidden="true"></span>
     </div>
     <div>
-      <strong>{snapshot.info.name}</strong><span title={snapshot.info.url}
+      <span class="repository-url-label">仓库地址</span><span
+        title={snapshot.info.url}
         >{snapshot.info.url ?? "未读取到仓库 URL"}</span
       >
     </div>
     <div class="repo-facts">
-      <span>工作副本 r{snapshot.info.revision ?? "?"}</span><button
+      <button
         class="icon-button"
         aria-label="复制仓库 URL"
         disabled={!snapshot.info.url}

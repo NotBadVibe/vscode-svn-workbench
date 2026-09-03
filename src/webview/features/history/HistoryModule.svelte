@@ -183,8 +183,16 @@
     loadQuery = { ...loadQuery, [key]: value };
   }
 
+  // v0.1.5 V015-D2：加载更多携带本地比较选择，Host 回显后快照刷新不丢选中；
+  // 为空时不发送该键，保持既有只读请求契约不变。
   function requestMoreHistory(): void {
-    onAction("history/load-more", { ...loadQuery });
+    const selection = [...compare];
+    onAction(
+      "history/load-more",
+      selection.length > 0
+        ? { ...loadQuery, compareRevisions: selection }
+        : { ...loadQuery },
+    );
   }
 
   function describeHistoryQuery(query: HistoryQueryView | undefined): string {
@@ -311,7 +319,7 @@
       <SearchInput
         bind:value={query}
         ariaLabel="筛选历史"
-        placeholder="作者、说明、修订号…"
+        placeholder="筛选已加载结果：作者、说明、修订号…"
         compact
       />
       <ResultCount count={orderedRevisions.length} suffix="条修订" />
@@ -338,6 +346,10 @@
         </select>
       </div>
     </div>
+    <!-- v0.1.5 V015-D2：本地筛选与仓库查询的语义边界——搜索框只过滤已加载结果，历史请求只走下方条件。 -->
+    <p class="history-filter-hint">
+      修订搜索仅在已加载结果内筛选，不会向仓库请求；需要更早修订时，请用下方的条件表单发起新的只读请求。
+    </p>
     <details class="history-load-conditions">
       <summary>按条件加载更早修订</summary>
       <div class="history-load-conditions__fields">

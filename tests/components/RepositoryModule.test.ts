@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, within } from "@testing-library/svelte";
 import { describe, expect, it, vi } from "vitest";
 import RepositoryModule from "../../src/webview/features/repository/RepositoryModule.svelte";
+import { saveListPreferences } from "../../src/webview/app/listPreferences";
 import type { RepositorySnapshot } from "../../src/protocol/workbenchProtocol";
 
 describe("RepositoryModule", () => {
@@ -443,5 +444,115 @@ describe("RepositoryModule", () => {
       "repository/execute-advanced",
       expect.anything(),
     );
+  });
+
+  // v0.1.5 V015-D2：页内 H1 与 ScopeBar H1 逐字重复已删（任务标题由 ScopeBar 表达）。
+  it("页内不重复任务 H1；子任务标题保持 h2 层级", async () => {
+    render(RepositoryModule, {
+      snapshot: {
+        kind: "repository",
+        info: { name: "repo", revision: "5" },
+        properties: { available: true, target: ".", items: [] },
+        cleanup: { available: true, target: "." },
+        advanced: {},
+      },
+      taskId: "repository/browse",
+      onAction: vi.fn(),
+    });
+    // 子任务异步加载完成后，页内只有 h2（仓库浏览器），没有第二个 H1。
+    await screen.findByRole("heading", { name: "仓库浏览器" });
+    expect(screen.queryByRole("heading", { level: 1 })).toBeNull();
+    expect(screen.getByRole("heading", { name: "仓库浏览器" }).tagName).toBe(
+      "H2",
+    );
+  });
+
+  // v0.1.5 V015-D2：hero 卡不再重复仓库名与工作副本 rN（ScopeBar 已表达）。
+  it("hero 卡仅保留仓库地址与复制出口，不重复仓库名/rN", async () => {
+    render(RepositoryModule, {
+      snapshot: {
+        kind: "repository",
+        info: {
+          name: "workbench-repo",
+          url: "https://svn.example.test/repos/workbench",
+          revision: "42",
+        },
+        properties: { available: true, target: ".", items: [] },
+        cleanup: { available: true, target: "." },
+        advanced: {},
+      },
+      taskId: "repository/browse",
+      onAction: vi.fn(),
+    });
+    await screen.findByRole("heading", { name: "仓库浏览器" });
+    expect(screen.queryByText("workbench-repo")).toBeNull();
+    expect(screen.queryByText(/工作副本 r42/)).toBeNull();
+    expect(
+      screen.getByText("https://svn.example.test/repos/workbench"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "复制仓库 URL" }),
+    ).toBeInTheDocument();
+  });
+
+  // v0.1.5 V015-D2：默认入口为 Browse；当前 task 所在组始终可见。
+  it("默认入口为浏览仓库；折叠偏好下当前任务所在组仍强制可见", async () => {
+    const browseSnapshot: RepositorySnapshot = {
+      kind: "repository",
+      info: { name: "repo", revision: "5" },
+      properties: { available: true, target: ".", items: [] },
+      cleanup: { available: true, target: "." },
+      advanced: {},
+    };
+    // 省略 taskId：默认进入浏览仓库。
+    const first = render(RepositoryModule, {
+      snapshot: browseSnapshot,
+      onAction: vi.fn(),
+    });
+    expect(
+      await first.findByRole("button", { name: "浏览仓库" }),
+    ).toHaveAttribute("aria-current", "page");
+    first.unmount();
+    // 即使偏好折叠了危险操作组，当前任务（重定位）所在组仍强制展开。
+    saveListPreferences("repository", { expandedGroups: ["integration"] });
+    render(RepositoryModule, {
+      snapshot: browseSnapshot,
+      taskId: "repository/relocate",
+      onAction: vi.fn(),
+    });
+    const dangerous = screen.getByRole("group", {
+      name: /危险操作（2 个任务）/,
+    });
+    expect(
+      dangerous
+        .querySelector(".task-group__toggle")
+        ?.getAttribute("aria-expanded"),
+    ).toBe("true");
+    expect(
+      within(dangerous).getByRole("button", { name: "重定位" }),
+    ).toHaveAttribute("aria-current", "page");
+  });
+
+  // v0.1.5 V015-D2：危险操作不被“最近使用”提升为全局主动作（无此类机制）。
+  it("危险操作无最近使用提升：分组内直达，无全局主动作", async () => {
+    const onAction = vi.fn();
+    render(RepositoryModule, {
+      snapshot: {
+        kind: "repository",
+        info: { name: "repo", revision: "5" },
+        properties: { available: true, target: ".", items: [] },
+        cleanup: { available: true, target: "." },
+        advanced: {},
+      },
+      taskId: "repository/browse",
+      onAction,
+    });
+    await screen.findByRole("heading", { name: "仓库浏览器" });
+    expect(screen.queryByText(/最近使用/)).toBeNull();
+    // 切换/重定位只出现在危险操作分组内，不在分组外另设主动作。
+    const outsideDangerous = screen
+      .queryAllByRole("button", { name: "切换" })
+      .filter((button) => !button.closest('[data-task-group="dangerous"]'));
+    expect(outsideDangerous).toHaveLength(0);
   });
 });

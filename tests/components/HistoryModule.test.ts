@@ -378,4 +378,73 @@ describe("HistoryModule", () => {
       expect.anything(),
     );
   });
+
+  // v0.1.5 V015-D2：加载更多携带比较选择；快照增长后选中修订、比较选择与滚动容器不丢。
+  it("加载更多携带比较选择，快照增长后选中与滚动位置不丢", async () => {
+    const onAction = vi.fn();
+    const { rerender } = render(HistoryModule, {
+      snapshot: { ...snapshot, hasMore: true },
+      onAction,
+    });
+    const listEl = document.querySelector(".revision-list");
+    expect(listEl).not.toBeNull();
+    await fireEvent.click(screen.getByLabelText("选择修订 12 进行比较"));
+    await fireEvent.click(screen.getByLabelText("选择修订 11 进行比较"));
+    await fireEvent.click(
+      screen.getByRole("button", { name: "加载更早修订（已加载 2）" }),
+    );
+    // 比较选择随只读请求一并发送，Host 回显后保留。
+    expect(onAction).toHaveBeenCalledWith("history/load-more", {
+      compareRevisions: ["12", "11"],
+    });
+    // Host 回显：新增更早修订，选中修订与比较选择保持，滚动容器不重建。
+    await rerender({
+      snapshot: {
+        ...snapshot,
+        hasMore: false,
+        revisions: [
+          ...snapshot.revisions,
+          {
+            revision: "10",
+            author: "cara",
+            date: "2026-07-28T08:00:00Z",
+            message: "更早的修订",
+            changedPaths: [],
+          },
+        ],
+        selectedRevision: "12",
+        compareRevisions: ["12", "11"],
+      },
+      onAction,
+    });
+    expect(
+      (screen.getByLabelText("选择修订 12 进行比较") as HTMLInputElement)
+        .checked,
+    ).toBe(true);
+    expect(
+      (screen.getByLabelText("选择修订 11 进行比较") as HTMLInputElement)
+        .checked,
+    ).toBe(true);
+    expect(document.querySelector(".revision-row.active")).toHaveTextContent(
+      "r12",
+    );
+    expect(document.querySelector(".revision-list")).toBe(listEl);
+  });
+
+  // v0.1.5 V015-D2：本地筛选与仓库查询的语义边界文案。
+  it("本地筛选与仓库查询的范围分别说明", async () => {
+    render(HistoryModule, {
+      snapshot: { ...snapshot, hasMore: true },
+      onAction: vi.fn(),
+    });
+    // 搜索框声明只作用于已加载结果。
+    expect(screen.getByPlaceholderText(/筛选已加载结果/)).toBeInTheDocument();
+    // 搜索框与条件表单之间的边界说明：前者不发请求，后者发起只读请求。
+    expect(
+      screen.getByText(/仅在已加载结果内筛选，不会向仓库请求/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/条件只限制本次只读历史请求，不改变当前范围/),
+    ).toBeInTheDocument();
+  });
 });
