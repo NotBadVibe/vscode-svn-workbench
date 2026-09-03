@@ -21,7 +21,8 @@ export type OperationIntentKind =
   | "cleanup"
   | "property"
   | "changelist-apply"
-  | "file-operation";
+  | "file-operation"
+  | "history-restore";
 
 export const OPERATION_INTENT_KINDS: readonly OperationIntentKind[] = [
   "commit",
@@ -38,6 +39,7 @@ export const OPERATION_INTENT_KINDS: readonly OperationIntentKind[] = [
   "property",
   "changelist-apply",
   "file-operation",
+  "history-restore",
 ] as const;
 
 export function isOperationIntentKind(
@@ -67,6 +69,7 @@ export const OPERATION_INTENT_ACTION_LABELS: Record<
   property: "修改属性",
   "changelist-apply": "应用变更集",
   "file-operation": "文件操作",
+  "history-restore": "历史恢复",
 };
 
 /**
@@ -85,6 +88,7 @@ export function operationIntentTitle(
   if (kind === "cleanup") return `清理工作副本`;
   if (kind === "changelist-apply") return `应用变更集 ${count} 个文件`;
   if (kind === "file-operation") return `${action} ${count} 个文件`;
+  if (kind === "history-restore") return `历史恢复 ${count} 个文件`;
   if (kind === "branch") return `创建分支`;
   if (kind === "tag") return `创建标签`;
   if (kind === "relocate") return `重定位`;
@@ -112,8 +116,12 @@ export interface OperationIntentView {
   scopeHash?: string;
   /** 候选集合 hash（hashCandidateState 等），候选变化后失效。 */
   candidateHash?: string;
-  /** 工作副本 revision，变化后失效（可选）。 */
+  /** 工作副本 revision，变化后失效（可选）；意向单展示“修订版本”行。 */
   revision?: string;
+  /** 人类可读的项目/仓库 + scope 摘要（各调用方按领域填充，缺省不行，不虚构）。 */
+  scopeText?: string;
+  /** 可恢复性说明（各调用方按领域填充，复用各领域现有文案，缺省不行）。 */
+  recoverability?: string;
   repositoryUuid?: string;
   createdAt: string;
   canExecute: boolean;

@@ -8,7 +8,8 @@ import {
  * v0.0.14 批次 B Host 层四分支测试（成功 / 失效 token / 候选变化 / 带 issues）
  * 参照 WorkbenchController / RepositoryWorkbenchActions 的通用校验模式：
  * 用 Host 自存预览重建 intent 校验对象，Webview 只作展示。
- * 每种操作各 4 分支，共 12 种操作（commit/resolve/update/property/cleanup/changelist/file-operation/switch/branch/tag/relocate/merge）。
+ * 每种操作各 4 分支，共 13 种操作（commit/resolve/update/property/cleanup/changelist/file-operation/switch/branch/tag/relocate/merge/history-restore，
+ * 其中 history-restore 由 Webview 意向单确认、Host 侧仍走 token + contentHash 复验）。
  */
 
 function baseIntent(
@@ -37,7 +38,7 @@ const current = {
   candidateHash: "cand-1",
 };
 
-describe("Host 通用意向单校验四分支（12 操作）", () => {
+describe("Host 通用意向单校验四分支（13 操作）", () => {
   const cases: Array<{
     kind: OperationIntentView["kind"];
     title: string;
@@ -79,6 +80,11 @@ describe("Host 通用意向单校验四分支（12 操作）", () => {
       paths: ["https://svn.example/new-root"],
     },
     { kind: "merge", title: "合并 2 个路径", paths: ["src/a.ts", "src/b.ts"] },
+    {
+      kind: "history-restore",
+      title: "历史恢复 1 个文件",
+      paths: ["src/extension.ts"],
+    },
   ];
 
   for (const c of cases) {

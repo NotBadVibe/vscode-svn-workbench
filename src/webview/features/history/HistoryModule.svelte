@@ -15,6 +15,8 @@
   import ResultNextStep from "../../components/task/ResultNextStep.svelte";
   import TaskEmptyState from "../../components/task/TaskEmptyState.svelte";
   import TaskSummary from "../../components/task/TaskSummary.svelte";
+  import OperationIntentDialog from "../../components/operation/OperationIntentDialog.svelte";
+  import type { OperationIntentView } from "../../../operation/operationIntent";
   import { naturalCompare } from "../../../selection/selectionSort";
   import { formatZhDateTime } from "../../i18n/formatters";
   import {
@@ -232,6 +234,49 @@
       snapshot.feedback.includes("尚未提交"),
     ),
   );
+
+  /*
+   * v0.1.5 V015-C1：历史恢复接入通用意向单（唯一未走意向单的写操作）。
+   * kind 扩展为 history-restore（单文件覆盖恢复与 revert 语义不同，不复用
+   * file-operation）；Host 侧 token + contentHash 复验链不动。
+   * 新 token 到达即打开对话框；取消后同 token 不再自动重开，重新预览
+   * 产生新 token 才会再次打开。
+   */
+  let restoreIntentOpen = $state(false);
+  let restoreTriggerEl = $state<HTMLElement | null>(null);
+  let seenRestoreToken = $state<string | undefined>(undefined);
+  const restoreIntent = $derived.by((): OperationIntentView | undefined => {
+    const preview = snapshot.restorePreview;
+    if (!preview) return undefined;
+    const title = `历史恢复 1 个文件`;
+    return {
+      token: preview.token,
+      kind: "history-restore" as const,
+      title,
+      summary: `${title} · 将用 r${preview.revision} 覆盖工作副本文件，执行前将重新校验`,
+      paths: [preview.relativePath],
+      scopeText: preview.relativePath,
+      revision: `r${preview.revision}`,
+      recoverability:
+        "将用所选修订覆盖工作副本文件，但不会自动提交；原内容不可自动恢复。",
+      createdAt: new Date().toISOString(),
+      canExecute: preview.canExecute,
+      issues: preview.issues,
+      commands: [preview.command],
+      stale: false,
+    };
+  });
+  $effect(() => {
+    const token = snapshot.restorePreview?.token;
+    if (token && token !== seenRestoreToken) {
+      seenRestoreToken = token;
+      restoreIntentOpen = true;
+    }
+    if (!token) {
+      seenRestoreToken = undefined;
+      restoreIntentOpen = false;
+    }
+  });
 
   /** ResultNextStep / TaskEmptyState 动作纯透传：只映射页面已知标识。 */
   function handleHistoryResultAction(action: string): void {
@@ -454,10 +499,12 @@
               onclick={() => onAction("history/blame")}>查看逐行责任</button
             ><button
               class="button button--secondary"
-              onclick={() =>
+              onclick={(event) => {
+                restoreTriggerEl = event.currentTarget as HTMLElement | null;
                 onAction("history/preview-restore", {
                   revision: selected.revision,
-                })}>从此修订恢复</button
+                });
+              }}>从此修订恢复</button
             >{/if}
           <span class="status-badge">{selected.author}</span>
         </div>
@@ -602,69 +649,29 @@
             </div>{/each}
         </ScrollArea>
       {/if}
-      {#if snapshot.restorePreview}
-        <div
-          class="restore-preview scroll-region"
-          role="dialog"
-          aria-label="修订恢复预览"
-          tabindex="0"
-          data-scroll-region
-        >
-          <div class="section-heading">
-            <div>
-              <span class="eyebrow">危险操作预览</span>
-              <h2>恢复 {snapshot.restorePreview.relativePath}</h2>
-            </div>
-            <div class="toolbar-actions">
-              <button
-                type="button"
-                class="icon-button icon-button--small"
-                aria-label={`复制恢复目标路径 ${snapshot.restorePreview.relativePath}`}
-                title="复制恢复目标路径"
-                onclick={() =>
-                  onAction("copy-text", {
-                    text: snapshot.restorePreview?.relativePath ?? "",
-                  })}
-                ><span class="codicon codicon-copy" aria-hidden="true"
-                ></span></button
-              >
-              <button
-                type="button"
-                class="icon-button icon-button--small"
-                aria-label={`查看 ${snapshot.restorePreview.relativePath} 路径详情`}
-                title="路径详情"
-                onclick={(event) =>
-                  list.requestPathDetail(
-                    snapshot.restorePreview?.relativePath ?? "",
-                    event.currentTarget,
-                  )}
-                ><span class="codicon codicon-info" aria-hidden="true"
-                ></span></button
-              >
-              <span class="status-badge"
-                >r{snapshot.restorePreview.revision}</span
-              >
-            </div>
-          </div>
-          <div class="notice notice--warning">
-            将用所选修订覆盖工作副本文件，但不会自动提交。现有未提交内容会丢失。
-          </div>
-          <code>{snapshot.restorePreview.command}</code>
-          {#each snapshot.restorePreview.issues as issue, issueIndex (issueIndex)}<div
-              class="notice notice--error"
-            >
-              {issue}
-            </div>{/each}
-          <button
-            class="button button--primary commit-button"
-            disabled={!snapshot.restorePreview.canExecute}
-            onclick={() =>
-              onAction("history/execute-restore", {
-                previewToken: snapshot.restorePreview?.token,
-              })}>确认覆盖工作副本文件</button
-          >
-        </div>
-      {/if}
+      <!-- v0.1.5 V015-C1：恢复预览改走通用意向单（自建 dialog 已删除；issues/命令并入意向单）。
+           Host 侧 history/execute-restore 的 token + contentHash 复验链不动。 -->
+      <OperationIntentDialog
+        intent={restoreIntent}
+        open={restoreIntentOpen && Boolean(restoreIntent)}
+        confirmLabel={`确认覆盖 ${restoreIntent?.paths.length ?? 0} 个文件`}
+        cancelLabel="取消"
+        recheckLabel="重新检查"
+        triggerElement={restoreTriggerEl}
+        {onAction}
+        {pathDetail}
+        onConfirm={(token) => {
+          restoreIntentOpen = false;
+          onAction("history/execute-restore", { previewToken: token });
+        }}
+        onCancel={() => (restoreIntentOpen = false)}
+        onRecheck={() => {
+          restoreIntentOpen = false;
+          onAction("history/preview-restore", {
+            revision: snapshot.restorePreview?.revision,
+          });
+        }}
+      />
     {:else}
       <!-- v0.1.5 V015-B2：空态两句→TaskEmptyState，补齐第三句（调整条件 / 加载更早）。 -->
       <TaskEmptyState

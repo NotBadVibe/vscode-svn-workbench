@@ -208,12 +208,24 @@
               : preview.operation === "switch"
                 ? "switch"
                 : "file-operation";
+    // v0.1.5 V015-C1 九要素补齐：scope 摘要取 Host 下发的仓库名；revision 取工作副本修订；
+    // 可恢复性按操作诚实映射——远端生效类（branch/tag/switch/relocate/merge）复用活动记录
+    // “此操作不能在工作台中一键撤销”固定文案，patch/shelf 复用“只写入工作副本，不会自动提交”。
+    const recoverability =
+      kind === "file-operation"
+        ? "只写入工作副本，不会自动提交。"
+        : "此操作不能在工作台中一键撤销。";
     return {
       token: preview.token,
       kind,
       title,
       summary,
       paths,
+      scopeText: snapshot.info.name,
+      revision: snapshot.info.revision
+        ? `r${snapshot.info.revision}`
+        : undefined,
+      recoverability,
       createdAt: new Date().toISOString(),
       canExecute:
         preview.canExecute && (!preview.destructive || advancedConfirmed),

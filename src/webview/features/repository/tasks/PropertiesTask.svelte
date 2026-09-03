@@ -56,12 +56,17 @@
       ? `删除属性 ${preview.name}`
       : `修改属性 ${preview.name}（1 个路径）`;
     const summary = `${title} · 目标：${snapshot.properties.target}，执行前将重新校验`;
+    // v0.1.5 V015-C1 九要素补齐：scope 即属性目标；可恢复性说明属性语义
+    // （只写工作副本、不自动提交，提交前可再次修改）；revision 无权威来源，不虚构。
     return {
       token: preview.token,
       kind: "property" as const,
       title,
       summary,
       paths: [snapshot.properties.target],
+      scopeText: snapshot.properties.target,
+      recoverability:
+        "属性变更只写入工作副本，不会自动提交；提交前可再次修改或还原。",
       createdAt: new Date().toISOString(),
       canExecute: preview.canExecute,
       issues: preview.issues,
@@ -231,6 +236,7 @@
             open={propertyIntentOpen && Boolean(propertyIntent)}
             confirmLabel={propertyConfirmLabel}
             cancelLabel="取消"
+            recheckLabel="重新检查"
             triggerElement={propertyTriggerEl}
             onAction={(a, d) => onAction(a, d)}
             onConfirm={(token) => {
@@ -238,6 +244,16 @@
               onAction("repository/execute-property", { previewToken: token });
             }}
             onCancel={() => (propertyIntentOpen = false)}
+            onRecheck={() => {
+              propertyIntentOpen = false;
+              const current = snapshot.properties.preview;
+              if (!current) return;
+              onAction("repository/preview-property", {
+                name: current.name,
+                value: current.value ?? propertyValue,
+                remove: current.remove,
+              });
+            }}
           />
         </div>{/if}
     </div>

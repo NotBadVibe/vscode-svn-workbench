@@ -393,12 +393,16 @@
       ? `移出变更集 ${count} 个文件`
       : `应用变更集到 ${count} 个文件`;
     const summary = `${title} · 目标：${preview.name ?? "未命名"}，执行前将重新校验`;
+    // v0.1.5 V015-C1 九要素补齐：scope 即目标变更集；可恢复性说明 changelist 语义
+    // （只调本地归属，不改文件内容）；revision 无权威来源，不虚构。
     return {
       token: preview.token,
       kind: "changelist-apply" as const,
       title,
       summary,
       paths: preview.paths,
+      scopeText: `变更集“${preview.name ?? "未命名"}”`,
+      recoverability: "只调整本地变更集归属，不修改文件内容；不会自动提交。",
       createdAt: new Date().toISOString(),
       canExecute: preview.canExecute,
       issues: preview.issues,
@@ -931,6 +935,7 @@
               ? "确认移出变更集"
               : "确认应用变更集"}
             cancelLabel="取消"
+            recheckLabel="重新检查"
             triggerElement={changelistTriggerEl}
             {onAction}
             {pathDetail}
@@ -939,6 +944,16 @@
               onAction("changelist/execute-apply", { previewToken: token });
             }}
             onCancel={() => (changelistIntentOpen = false)}
+            onRecheck={() => {
+              changelistIntentOpen = false;
+              const current = snapshot.preview;
+              if (!current) return;
+              onAction("changelist/preview-apply", {
+                name: current.name,
+                paths: current.paths,
+                remove: current.remove,
+              });
+            }}
           />
         </div>
       {/if}

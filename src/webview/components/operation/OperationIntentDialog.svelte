@@ -25,6 +25,8 @@
     confirmLabel,
     cancelLabel = "取消",
     triggerElement,
+    recheckLabel,
+    onRecheck,
   }: {
     intent?: OperationIntentView;
     open: boolean;
@@ -39,6 +41,13 @@
     cancelLabel?: string;
     /** 触发按钮，用于焦点返回 */
     triggerElement?: HTMLElement | null;
+    /**
+     * v0.1.5 V015-C1：stale/不可执行态的“重新检查”次级按钮文案。
+     * 仅当同时提供 onRecheck 时渲染；点击后透传页面既定的重新预览动作，
+     * 组件不拼 action 名。缺省时保持原双按钮结构。
+     */
+    recheckLabel?: string;
+    onRecheck?: () => void;
   } = $props();
 
   let dialogEl = $state<HTMLDialogElement | undefined>(undefined);
@@ -188,6 +197,29 @@
         {/if}
       </div>
 
+      <!-- v0.1.5 V015-C1：九要素补齐行（范围 / 修订版本 / 可恢复性，有则展示，无不虚构） -->
+      {#if intent.scopeText}
+        <div class="notice" role="note">
+          <span class="codicon codicon-repo" aria-hidden="true"></span><span
+            ><strong>范围：</strong>{intent.scopeText}</span
+          >
+        </div>
+      {/if}
+      {#if intent.revision}
+        <div class="notice" role="note">
+          <span class="codicon codicon-history" aria-hidden="true"></span><span
+            ><strong>修订版本：</strong>{intent.revision}</span
+          >
+        </div>
+      {/if}
+      {#if intent.recoverability}
+        <div class="notice notice--warning" role="note">
+          <span class="codicon codicon-info" aria-hidden="true"></span><span
+            ><strong>可恢复性：</strong>{intent.recoverability}</span
+          >
+        </div>
+      {/if}
+
       <!-- 影响清单：可搜索/复制，复用 PreviewPathList 底座 -->
       <PreviewPathList
         paths={intent.paths}
@@ -219,6 +251,17 @@
             isComposing && e.key === "Enter" && e.preventDefault()}
           >{cancelLabel}</button
         >
+        {#if recheckLabel && onRecheck && (intent.stale || !intent.canExecute)}
+          <button
+            type="button"
+            class="button button--secondary"
+            onclick={() => onRecheck?.()}
+            onkeydown={(e) =>
+              isComposing && e.key === "Enter" && e.preventDefault()}
+            title="关闭当前意向单，按页面既定流程重新生成预览"
+            >{recheckLabel}</button
+          >
+        {/if}
         <button
           bind:this={confirmButtonEl}
           type="button"

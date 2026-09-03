@@ -137,7 +137,10 @@ describe("ChangesModule", () => {
       onAction,
     });
     const execute = screen.getByRole("button", { name: "确认还原本地修改" });
-    expect(screen.getByText(/可恢复性：/)).toBeInTheDocument();
+    // V015-C1：预览步骤与意向单均展示可恢复性（意向单直传 Host 权威文案；
+    // 对话框元素在打开前已渲染，仅未 showModal）。
+    expect(screen.getAllByText(/可恢复性：/).length).toBe(2);
+    expect(screen.getAllByText("SVN 无法恢复。").length).toBe(2);
     expect(execute).toBeDisabled();
     await fireEvent.click(
       screen.getByRole("checkbox", { name: /逐项核对文件清单/ }),

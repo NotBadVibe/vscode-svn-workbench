@@ -617,12 +617,27 @@
     const title = `提交 ${count} 个文件`;
     const summary = `提交 ${count} 个文件 · 执行前将重新校验范围、文件状态与远端更新`;
     const stale = selectionOutOfSync;
+    // v0.1.5 V015-C1 九要素补齐：revision 取预览远端修订；scope 摘要取已选文件的
+    // 项目/仓库分组（与首屏摘要条同一快照来源，不虚构）；可恢复性复用活动记录固定文案。
+    const scopeNames: string[] = [];
+    for (const selectedPath of preview.selectedPaths) {
+      const file = snapshot.files.find(
+        (candidate) => candidate.relativePath === selectedPath,
+      );
+      const name = file?.projectName ?? file?.repositoryName ?? "";
+      if (name && !scopeNames.includes(name)) scopeNames.push(name);
+    }
     return {
       token: preview.token,
       kind: "commit" as const,
       title,
       summary,
       paths: preview.selectedPaths,
+      scopeText: scopeNames.length > 0 ? scopeNames.join("、") : undefined,
+      revision: preview.remoteRevision
+        ? `r${preview.remoteRevision}`
+        : undefined,
+      recoverability: "此操作不能在工作台中一键撤销。",
       createdAt: preview.createdAt,
       canExecute: preview.canExecute && !stale,
       issues: preview.issues,
@@ -1802,6 +1817,7 @@
     open={intentOpen && Boolean(commitIntent)}
     confirmLabel={`确认提交（${commitIntent?.paths.length ?? 0}）`}
     cancelLabel="取消"
+    recheckLabel="重新检查"
     triggerElement={intentTriggerEl}
     {onAction}
     {pathDetail}
@@ -1810,6 +1826,13 @@
       onAction("commit/execute", { previewToken: token });
     }}
     onCancel={() => (intentOpen = false)}
+    onRecheck={() => {
+      intentOpen = false;
+      onAction("commit/preview", {
+        selectedPaths: selectedPaths(),
+        message,
+      });
+    }}
   />
 </section>
 

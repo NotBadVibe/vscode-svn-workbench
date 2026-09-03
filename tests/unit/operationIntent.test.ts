@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   buildOperationIntentSummary,
+  isOperationIntentKind,
   isOperationIntentStale,
+  OPERATION_INTENT_ACTION_LABELS,
+  OPERATION_INTENT_KINDS,
   operationIntentTitle,
   validateOperationIntentForExecute,
   type OperationIntentView,
@@ -11,6 +14,14 @@ describe("operationIntentTitle", () => {
   it("提交数量标题", () => {
     expect(operationIntentTitle("commit", 3)).toBe("提交 3 个文件");
     expect(operationIntentTitle("commit", 1)).toBe("提交 1 个文件");
+  });
+  it("历史恢复标题（V015-C1 新增 kind）", () => {
+    expect(operationIntentTitle("history-restore", 1)).toBe(
+      "历史恢复 1 个文件",
+    );
+    expect(isOperationIntentKind("history-restore")).toBe(true);
+    expect(OPERATION_INTENT_KINDS).toContain("history-restore");
+    expect(OPERATION_INTENT_ACTION_LABELS["history-restore"]).toBe("历史恢复");
   });
   it("还原等标题", () => {
     expect(operationIntentTitle("revert", 2)).toBe("还原 2 个文件");

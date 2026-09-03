@@ -301,4 +301,81 @@ describe("HistoryModule", () => {
       relativePath: "/trunk/a.ts",
     });
   });
+
+  // v0.1.5 V015-C1：历史恢复走通用意向单（九要素 + 确认携带 token 执行）
+  it("恢复预览打开意向单：标题/数量/修订/可恢复性齐全，确认透传 token", async () => {
+    const onAction = vi.fn();
+    render(HistoryModule, {
+      snapshot: {
+        ...snapshot,
+        restorePreview: {
+          token: "tok-restore",
+          revision: "12",
+          relativePath: "src/extension.ts",
+          command: 'svn cat -r 12 "src/extension.ts" > <working-file>',
+          canExecute: true,
+          issues: [],
+        },
+      },
+      onAction,
+    });
+    // 新 token 到达即自动打开意向单
+    const dialog = await screen.findByRole("dialog", {
+      name: "历史恢复 1 个文件",
+    });
+    expect(dialog).toBeInTheDocument();
+    expect(screen.getByText(/将用 r12 覆盖工作副本文件/)).toBeInTheDocument();
+    // 范围行与候选清单均含目标路径（同一快照来源的两处展示）。
+    expect(screen.getAllByText("src/extension.ts").length).toBe(2);
+    const scopeLabel = screen.getByText("范围：");
+    expect(scopeLabel.parentElement).toHaveTextContent("src/extension.ts");
+    const revisionLabel = screen.getByText("修订版本：");
+    expect(revisionLabel.parentElement).toHaveTextContent("r12");
+    expect(screen.getByText(/原内容不可自动恢复/)).toBeInTheDocument();
+    expect(screen.getByText(/svn cat -r 12/)).toBeInTheDocument();
+    const confirm = screen.getByRole("button", {
+      name: "确认覆盖 1 个文件",
+    });
+    expect(confirm).not.toBeDisabled();
+    await fireEvent.click(confirm);
+    expect(onAction).toHaveBeenCalledWith("history/execute-restore", {
+      previewToken: "tok-restore",
+    });
+  });
+
+  // v0.1.5 V015-C1：恢复预览不可执行时确认禁用 + “重新检查”透传重新预览
+  it("恢复预览有阻止项时确认禁用，重新检查透传 history/preview-restore", async () => {
+    const onAction = vi.fn();
+    render(HistoryModule, {
+      snapshot: {
+        ...snapshot,
+        restorePreview: {
+          token: "tok-blocked",
+          revision: "12",
+          relativePath: "src/extension.ts",
+          command: 'svn cat -r 12 "src/extension.ts" > <working-file>',
+          canExecute: false,
+          issues: ["工作副本文件已变化，请重新检查后恢复。"],
+        },
+      },
+      onAction,
+    });
+    await screen.findByRole("dialog", { name: "历史恢复 1 个文件" });
+    const confirm = screen.getByRole("button", {
+      name: "确认覆盖 1 个文件",
+    });
+    expect(confirm).toBeDisabled();
+    expect(
+      screen.getByText("工作副本文件已变化，请重新检查后恢复。"),
+    ).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "重新检查" }));
+    expect(onAction).toHaveBeenCalledWith("history/preview-restore", {
+      revision: "12",
+    });
+    // 重新检查不直接执行
+    expect(onAction).not.toHaveBeenCalledWith(
+      "history/execute-restore",
+      expect.anything(),
+    );
+  });
 });

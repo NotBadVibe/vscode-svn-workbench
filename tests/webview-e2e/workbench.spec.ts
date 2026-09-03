@@ -671,10 +671,15 @@ test("requires explicit confirmation when restoring a file revision", async ({
   await page.getByRole("button", { name: "查看逐行责任" }).click();
   await expect(page.getByLabel("文件逐行责任")).toContainText("yangnan");
   await page.getByRole("button", { name: "从此修订恢复" }).click();
-  await expect(
-    page.getByRole("dialog", { name: "修订恢复预览" }),
-  ).toContainText("不会自动提交");
-  await page.getByRole("button", { name: "确认覆盖工作副本文件" }).click();
+  // v0.1.5 V015-C1：恢复预览改走通用意向单（仍为显式确认，信息更全）。
+  const restoreDialog = page.getByRole("dialog", {
+    name: "历史恢复 1 个文件",
+  });
+  await expect(restoreDialog).toContainText("不会自动提交");
+  await expect(restoreDialog).toContainText("原内容不可自动恢复");
+  await restoreDialog
+    .getByRole("button", { name: "确认覆盖 1 个文件" })
+    .click();
   await expect(
     page.getByText("src/extension.ts 已恢复为 r42 内容；尚未提交。"),
   ).toBeVisible();

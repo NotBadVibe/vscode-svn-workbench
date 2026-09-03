@@ -1302,7 +1302,12 @@ export function startMockWorkbench(): void {
         }),
       );
     }
-    if (action === "history/preview-restore")
+    // v0.1.5 V015-C1：?historyRestore=blocked 演示不可执行的恢复预览
+    // （issues 非空 → 意向单确认禁用 + “重新检查”），默认保持旧语义。
+    if (action === "history/preview-restore") {
+      const blocked =
+        new URLSearchParams(window.location.search).get("historyRestore") ===
+        "blocked";
       injectSnapshot(
         "history",
         historySnapshot({
@@ -1311,11 +1316,12 @@ export function startMockWorkbench(): void {
             revision: typeof data.revision === "string" ? data.revision : "42",
             relativePath: "src/extension.ts",
             command: 'svn cat -r 42 "src/extension.ts" > <working-file>',
-            canExecute: true,
-            issues: [],
+            canExecute: !blocked,
+            issues: blocked ? ["工作副本文件已变化，请重新检查后恢复。"] : [],
           },
         }),
       );
+    }
     if (action === "history/execute-restore")
       injectSnapshot(
         "history",

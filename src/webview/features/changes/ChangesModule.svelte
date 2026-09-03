@@ -129,12 +129,25 @@
     const title = `${actionLabel} ${count} 个文件`;
     const summary = `${title} · 执行前将重新校验范围与候选状态`;
     const stale = previewSelectionOutOfSync;
+    // v0.1.5 V015-C1 九要素补齐：可恢复性直传 Host 预览权威文案
+    // （fileOperationRecoverability）；scope 摘要取候选文件的项目/仓库分组
+    // （快照同一来源，不虚构）；revision 无权威来源，不虚构。
+    const scopeNames: string[] = [];
+    for (const previewPath of preview.paths) {
+      const file = snapshot.files.find(
+        (candidate) => candidate.relativePath === previewPath,
+      );
+      const name = file?.projectName ?? file?.repositoryName ?? "";
+      if (name && !scopeNames.includes(name)) scopeNames.push(name);
+    }
     return {
       token: preview.token,
       kind: "file-operation" as const,
       title,
       summary,
       paths: preview.paths,
+      scopeText: scopeNames.length > 0 ? scopeNames.join("、") : undefined,
+      recoverability: preview.recoverability,
       createdAt: new Date().toISOString(),
       canExecute:
         preview.canExecute &&
@@ -1472,6 +1485,7 @@
         open={fileOpIntentOpen && Boolean(fileOpIntent)}
         confirmLabel={`确认${snapshot.operationPreview ? operationLabels[snapshot.operationPreview.operation] : ""}（${fileOpIntent?.paths.length ?? 0}）`}
         cancelLabel="取消"
+        recheckLabel="重新检查"
         triggerElement={fileOpTriggerEl}
         {onAction}
         {pathDetail}
@@ -1480,6 +1494,16 @@
           onAction("changes/execute-operation", { previewToken: token });
         }}
         onCancel={() => (fileOpIntentOpen = false)}
+        onRecheck={() => {
+          fileOpIntentOpen = false;
+          const current = snapshot.operationPreview;
+          if (!current) return;
+          onAction("changes/preview-operation", {
+            operation: current.operation,
+            paths: current.paths,
+            ignoreMode: current.ignoreMode,
+          });
+        }}
       />
     </div>
   {/if}

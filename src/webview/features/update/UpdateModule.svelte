@@ -48,12 +48,18 @@
     const summary = hasRemoteCount
       ? `更新 ${remoteCount} 个远端变更 · 重叠风险 ${preview.overlapPaths.length} 个路径，执行前将重新校验范围与远端状态`
       : "更新当前范围 · 远端数量待检测，执行前将重新校验范围与远端状态";
+    // v0.1.5 V015-C1 九要素补齐：scope 摘要取 Host 下发的仓库名；revision 取检查修订
+    // 回退工作副本修订；可恢复性复用结果页 recoveryHint 同一文案。
+    const checkedRevision = preview.checkedRevision ?? snapshot.info.revision;
     return {
       token: preview.token,
       kind: "update" as const,
       title,
       summary,
       paths: preview.overlapPaths,
+      scopeText: snapshot.info.name,
+      revision: checkedRevision ? `r${checkedRevision}` : undefined,
+      recoverability: "如需回退，请使用历史记录恢复到更新前的修订。",
       createdAt: new Date().toISOString(),
       canExecute: preview.canExecute,
       issues: [],
@@ -347,6 +353,7 @@
         open={updateIntentOpen && Boolean(updateIntent)}
         {confirmLabel}
         cancelLabel="取消"
+        recheckLabel="重新检查"
         triggerElement={updateTriggerEl}
         {onAction}
         {pathDetail}
@@ -355,6 +362,10 @@
           onAction("update/execute", { previewToken: token });
         }}
         onCancel={() => (updateIntentOpen = false)}
+        onRecheck={() => {
+          updateIntentOpen = false;
+          onAction("update/preview");
+        }}
       />
     {:else if !snapshot.result}
       <!-- v0.1.5 V015-B2：空预览→TaskEmptyState（原文三句直搬 + 生成预览主动作）。 -->
