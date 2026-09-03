@@ -1,3 +1,4 @@
+import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkbenchController } from "../../src/extension/workbench/WorkbenchController";
 import type { WorkbenchSession } from "../../src/extension/workbench/workbenchSession";
@@ -607,6 +608,9 @@ describe("跨仓库交接不合并 revision", () => {
     const clean = buildCommitPlanPreview(scope, candidates, [
       `${WC_ROOT}/app/a.ts`,
     ]);
-    expect(clean.commitPaths).toEqual([`${WC_ROOT}/app/a.ts`]);
+    // 平台无关断言：buildCommitPlanPreview 内部经宿主 path.resolve 规范化
+    //（Windows 上 POSIX 字面量会带盘符前缀），期望值同样经 path.resolve
+    // 计算；数量/成员/顺序语义不变（沿用 commitPlanBuilder.test.ts 既有手法）。
+    expect(clean.commitPaths).toEqual([path.resolve(`${WC_ROOT}/app/a.ts`)]);
   });
 });
