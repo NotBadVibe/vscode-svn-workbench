@@ -106,6 +106,40 @@ describe("buildCommitHandoff 整批复验", () => {
       result.removedEntries.every((entry) => entry.reason === "disappeared"),
     ).toBe(true);
   });
+
+  it("V014-E3 必修 4：同名路径异仓库 → cross-repository 整批拒绝", () => {
+    // 同名 a.ts 在当前仓库合法，但来源仓库不同：不得误判 accepted。
+    const result = buildCommitHandoff(["a.ts"], candidates, {
+      currentRepositoryUuid: "uuid-A",
+      originRepositoryUuid: "uuid-B",
+    });
+    expect(result.verdict).toBe("rejected");
+    expect(result.kept).toEqual([]);
+    expect(result.requestedCount).toBe(1);
+    expect(result.keptCount).toBe(0);
+    expect(result.removedEntries).toEqual([
+      {
+        path: "a.ts",
+        reason: "cross-repository",
+        message: '"a.ts"属于其他仓库，不能与当前仓库合并提交',
+      },
+    ]);
+  });
+
+  it("V014-E3 必修 4：仓库 UUID 一致时不受跨仓库分支影响", () => {
+    const result = buildCommitHandoff(["a.ts"], candidates, {
+      currentRepositoryUuid: "uuid-A",
+      originRepositoryUuid: "uuid-A",
+    });
+    expect(result.verdict).toBe("accepted");
+    expect(result.kept).toEqual(["a.ts"]);
+  });
+
+  it("V014-E3 必修 4：缺省仓库信息时保持原有消失口径", () => {
+    const result = buildCommitHandoff(["ghost.ts"], candidates);
+    expect(result.verdict).toBe("rejected");
+    expect(result.removedEntries[0].reason).toBe("disappeared");
+  });
 });
 
 describe("createCommitHandoffView 与版本", () => {

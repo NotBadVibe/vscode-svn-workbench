@@ -358,9 +358,21 @@
     consumedRestorePayload = restore;
     if (!isContinuityRestoreView(restore)) return;
     // ② 选择回填：只接受交集，不并入新文件（onlySelected 仅视图过滤）。
+    // V014-E3 纵深：Host 回归时 Webview 仍排除 blocked/excluded（防旧
+    // preview/选择残留进入提交篮）。
     const validKeys = new Set(snapshot.files.map((file) => file.selectionKey));
+    const selectableKeys = new Set(
+      snapshot.files
+        .filter(
+          (file) =>
+            file.selection !== "blocked" && file.selection !== "excluded",
+        )
+        .map((file) => file.selectionKey),
+    );
     selected = new Set(
-      restore.selectedKeys.filter((key) => validKeys.has(key)),
+      restore.selectedKeys.filter(
+        (key) => validKeys.has(key) && selectableKeys.has(key),
+      ),
     );
     // ④ 视图回填：有值才回填，缺省保持现状。
     const view = restore.changesView;

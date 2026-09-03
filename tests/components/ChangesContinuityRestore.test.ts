@@ -239,4 +239,36 @@ describe("ChangesModule continuityRestore（V014-C2）", () => {
       "b.ts",
     );
   });
+
+  it("V014-E3 纵深：恢复选择排除 blocked/excluded（防 Host 回归）", async () => {
+    render(ChangesModule, {
+      snapshot: baseSnapshot({
+        files: [
+          file("src/a.ts"),
+          file("src/blocked.ts", {
+            selection: "blocked",
+            reason: "冲突阻止项",
+          }),
+          file("src/excluded.ts", {
+            selection: "excluded",
+            reason: "已排除",
+          }),
+        ],
+        summary: { modified: 3 },
+        continuityRestore: restorePayload({
+          selectedKeys: [
+            key("src/a.ts"),
+            key("src/blocked.ts"),
+            key("src/excluded.ts"),
+          ],
+        }),
+      }),
+      onAction: vi.fn(),
+    });
+
+    // 合法项保留；阻止/排除项即使在交集中也不回填选择。
+    expect(screen.getByLabelText("选择 src/a.ts")).toBeChecked();
+    expect(screen.getByLabelText("选择 src/blocked.ts")).not.toBeChecked();
+    expect(screen.getByLabelText("选择 src/excluded.ts")).not.toBeChecked();
+  });
 });

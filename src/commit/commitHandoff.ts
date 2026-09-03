@@ -2,9 +2,10 @@
  * v0.1.4 V014-E Changes → Commit 交接纯逻辑（无 vscode/SVN 依赖）。
  *
  * 职责：
- * - 交接选择整批复验：用权威候选逐项判定（消失/排除项/阻止项），
- *   全部非法 → rejected（调用方拒绝打开 Commit），部分非法 → shrunk
- *   （收缩为合法交集转发，移除项进入 handoff），全合法 → accepted；
+ * - 交接选择整批复验：用权威候选逐项判定（消失/排除项/阻止项/
+ *   跨仓库），全部非法 → rejected（调用方拒绝打开 Commit），部分非法
+ *   → shrunk（收缩为合法交集转发，移除项进入 handoff），全合法 →
+ *   accepted；
  * - 交接版本：COMMIT_HANDOFF_SELECTION_VERSION，旧版本载荷由 Host 忽略；
  * - 快照挂载决策：selectCommitHandoffForSnapshot（stale 即丢弃）。
  *
@@ -36,17 +37,54 @@ export interface CommitHandoffBuildResult {
 }
 
 /**
- * 整批复验交接选择：去重 + 权威候选逐项判定。
+ * v0.1.4 V014-E3：跨仓库判定输入（方案①：build 产出 cross-repository）。
+ * - currentRepositoryUuid：当前会话仓库 UUID（Host 权威）；
+ * - originRepositoryUuid：交接来源仓库 UUID（跨窗口时为源会话 UUID，
+ *   同窗时与当前一致；缺省视为同仓库，不猜测）。
+ * 两者齐备且不一致时，全部请求项记 cross-repository（同名相对路径跨
+ * 仓库也不得误判 accepted）；调用方仍须前置拒绝混合仓库合并（纵深）。
+ */
+export interface CommitHandoffRepositoryScope {
+  currentRepositoryUuid?: string;
+  originRepositoryUuid?: string;
+}
+
+/**
+ * 整批复验交接选择：去重 + 跨仓库前置判定 + 权威候选逐项判定。
  * missing → disappeared（“已从工作副本快照中消失”），与
  * filterCommitSelectionByCandidates 中文口径一致；excluded/blocked 按
- * 阻止项/排除项说明；调用方如掌握跨仓库证据，可先行以 cross-repository
- * 标记（本函数视候选缺失统一记 disappeared，不猜测仓库归属）。
+ * 阻止项/排除项说明；跨仓库（来源与当前仓库 UUID 不一致）统一记
+ * cross-repository，不按消失处理（同名路径异仓库不得误判 accepted）。
  */
 export function buildCommitHandoff(
   requested: readonly string[],
   candidates: readonly CommitSelectionCandidateView[],
+  repositoryScope?: CommitHandoffRepositoryScope,
 ): CommitHandoffBuildResult {
   const deduped = [...new Set(requested)];
+  // v0.1.4 V014-E3 必修 4：仓库不一致即整批跨仓库（死分支激活）。
+  if (
+    deduped.length > 0 &&
+    repositoryScope?.currentRepositoryUuid !== undefined &&
+    repositoryScope?.originRepositoryUuid !== undefined &&
+    repositoryScope.originRepositoryUuid !==
+      repositoryScope.currentRepositoryUuid
+  ) {
+    const removedEntries: CommitHandoffView["removedEntries"] = deduped.map(
+      (relativePath) => ({
+        path: relativePath,
+        reason: "cross-repository" as const,
+        message: `"${relativePath}"属于其他仓库，不能与当前仓库合并提交`,
+      }),
+    );
+    return {
+      kept: [],
+      removedEntries,
+      verdict: "rejected",
+      requestedCount: deduped.length,
+      keptCount: 0,
+    };
+  }
   const candidateByPath = new Map(
     candidates.map((candidate) => [candidate.relativePath, candidate]),
   );

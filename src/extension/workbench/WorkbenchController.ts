@@ -766,6 +766,9 @@ export class WorkbenchController implements vscode.Disposable {
       const handoffVerdict = await this.applyCommitHandoffSelection(
         this.session,
         request.selectedPaths,
+        // v0.1.4 V014-E3 必修 4：跨窗口交接携带源会话仓库 UUID，跨仓库
+        // 同名路径记 cross-repository（缺省视为同仓库，不猜测）。
+        previousSession?.repositoryUuid,
       );
       if (handoffVerdict === "rejected") {
         this.session = previousSession;
@@ -1221,6 +1224,15 @@ export class WorkbenchController implements vscode.Disposable {
         session.taskId = taskId;
         session.selectedPaths = asStringArray(data.selectedPaths);
         session.targetFile = undefined;
+        // v0.1.4 V014-E3 必修 3：空交接落入通用分支时同样初始化 commit
+        // 选择并显式失效旧 preview/token 与 handoff（apply 内已处理，
+        // 此处兜底保证通用直写不残留旧预览有效）。
+        if (moduleId === "commit") {
+          const commitState = this.ensureCommitState(session);
+          commitState.selectedPaths = [...(session.selectedPaths ?? [])];
+          commitState.preview = undefined;
+          commitState.handoff = undefined;
+        }
         // v0.1.4 V014-C1：同窗内选择变化使旧连续交集失效（弱失效，保留待复核）。
         noteContinuityEvent(session, "selection-change");
         this.panel!.title = getModuleTitle(moduleId, taskId);
@@ -9533,21 +9545,33 @@ export class WorkbenchController implements vscode.Disposable {
    *   交接选择虚构成手动选择，也不得抹掉真实手动 provenance：既有手动项
    *   仍在交集内的由快照收敛保留）。
    *
-   * 候选来源：优先复用 commitState.candidates（最近一次快照缓存），
-   * 缺省时经 collectScopeCandidates 采集（与快照构建同一采集器）。
+   * 候选来源：V014-E3 起交接复验一律新鲜采集（与 commit/preview、
+   * commit/generate-message 一致），禁用 commitState.candidates 陈旧缓存。
    */
   private async applyCommitHandoffSelection(
     session: WorkbenchSession,
     requested: readonly string[] | undefined,
+    originRepositoryUuid?: string,
   ): Promise<"accepted" | "shrunk" | "rejected" | "empty"> {
     const deduped = [...new Set(requested ?? [])];
+    const state = this.ensureCommitState(session);
     if (deduped.length === 0) {
+      // v0.1.4 V014-E3 必修 3：空交接同样初始化 commit 选择并显式失效旧
+      // preview/token 与 handoff（旧预览残留有效即阻断失败）。
+      state.selectedPaths = [];
+      session.selectedPaths = [];
+      state.preview = undefined;
+      state.handoff = undefined;
       return "empty";
     }
-    const state = this.ensureCommitState(session);
-    const candidates =
-      state.candidates ?? (await this.collectScopeCandidates(session));
-    const build = buildCommitHandoff(deduped, candidates);
+    // v0.1.4 V014-E3 必修 1：交接复验禁用陈旧候选缓存，一律新鲜采集。
+    const candidates = await this.collectScopeCandidates(session);
+    // v0.1.4 V014-E3 必修 4：传入仓库 UUID，跨仓库同名路径记
+    // cross-repository（不得误判 accepted）。
+    const build = buildCommitHandoff(deduped, candidates, {
+      currentRepositoryUuid: session.repositoryUuid,
+      originRepositoryUuid,
+    });
     if (build.verdict === "rejected") {
       return "rejected";
     }

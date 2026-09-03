@@ -344,6 +344,55 @@ describe("V014-C1 接线 helper：身份键与选择交集过滤", () => {
     expect(view!.notices.length).toBeGreaterThan(0);
   });
 
+  it("V014-E3 必修 2：恢复载荷任何字段不含绝对路径", () => {
+    const session = makeSession({
+      selectedPaths: [
+        path.join(WC_ROOT, "appA/src/a.ts"),
+        path.join(WC_ROOT, "appA/src/gone.ts"),
+      ],
+      targetFile: path.join(WC_ROOT, "appA/src/a.ts"),
+    });
+    const context = createContinuityContext(session, {
+      resolveKey: continuityResolveKey(WC_ROOT, hostSemantics),
+    });
+    const files = [
+      {
+        selectionKey: continuityResolveKey(
+          WC_ROOT,
+          hostSemantics,
+        )(path.join(WC_ROOT, "appA/src/a.ts")),
+        relativePath: "appA/src/a.ts",
+      },
+    ] as never;
+    const { view, stale } = buildContinuityRestore(
+      {
+        context,
+        candidates: [candidate("appA/src/a.ts")],
+        files,
+        sessionId: "session-1",
+        repositoryUuid: "uuid-1",
+        includeExternals: false,
+        currentDraftMessage: "",
+      },
+      hostSemantics,
+    );
+    expect(stale).toBe(false);
+    expect(view).toBeDefined();
+    // 消失项 gone.ts 回退 pathByKey 绝对路径：载荷必须派生为相对路径。
+    expect(view!.removedEntries.map((entry) => entry.reason)).toEqual([
+      "disappeared",
+    ]);
+    for (const entry of view!.removedEntries) {
+      expect(path.isAbsolute(entry.path)).toBe(false);
+      expect(entry.path).toBe("appA/src/gone.ts");
+    }
+    // 恢复载荷的 path 字段不得含有工作副本绝对根（key 为不透明选择
+    // 身份，属既有契约，不属路径下发口径，不在此断言）。
+    expect(
+      view!.removedEntries.map((entry) => entry.path).join("\n"),
+    ).not.toContain(WC_ROOT);
+  });
+
   it("stale：延迟旧 sessionId 的快照被忽略", () => {
     const session = makeSession({
       selectedPaths: [path.join(WC_ROOT, "appA/src/a.ts")],
@@ -910,5 +959,71 @@ describe("V014-C1 控制器：重建迁移 + 快照恢复下发（一次性消�
       expect(restore).toBeDefined();
       expect(restore!.commitDraft).toBeUndefined();
     });
+  });
+
+  it("Host 贯通：合法恢复载荷快照接受，非法载荷整快照拒绝", async () => {
+    const controller = createController({
+      onOpenInOtherWindow: () => undefined,
+    });
+    collectorControl.candidates = [candidate("appA/src/a.ts")];
+    await controller.open({
+      moduleId: "changes",
+      svnPath: "svn",
+      scope: baseScope(),
+    });
+    const first = sessionOf(controller);
+    first.selectedPaths = [path.join(WC_ROOT, "appA/src/a.ts")];
+    sendToController(
+      controller,
+      actionMessage(first, "open-diff", { relativePath: "appA/src/a.ts" }),
+    );
+    await vi.waitFor(() =>
+      expect(sessionOf(controller).taskContinuity).toBeDefined(),
+    );
+    await controller.open({
+      moduleId: "changes",
+      svnPath: "svn",
+      scope: baseScope(),
+    });
+    recordPosts();
+    sendToController(controller, {
+      protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+      type: "webview/ready",
+      moduleId: "changes",
+      payload: {},
+    });
+    let snapshot: ChangesSnapshot | undefined;
+    await vi.waitFor(() => {
+      const snapshots = postedSnapshots().filter(
+        (message) =>
+          message.type === "module/snapshot" &&
+          message.payload.snapshot?.kind === "changes",
+      );
+      expect(snapshots.length).toBeGreaterThan(0);
+      snapshot = snapshots[0].payload.snapshot as ChangesSnapshot;
+      expect(snapshot.continuityRestore).toBeDefined();
+    });
+    // Host 实产快照经守卫接受；篡改移除原因后整快照拒绝。
+    expect(isChangesSnapshot(snapshot)).toBe(true);
+    expect(
+      isChangesSnapshot({
+        ...snapshot!,
+        continuityRestore: {
+          ...(snapshot!.continuityRestore as object),
+          removedEntries: [
+            { key: "k", path: "p", reason: "invented", message: "m" },
+          ],
+        },
+      }),
+    ).toBe(false);
+    expect(
+      isChangesSnapshot({
+        ...snapshot!,
+        continuityRestore: {
+          ...(snapshot!.continuityRestore as object),
+          selectedKeys: [42],
+        },
+      }),
+    ).toBe(false);
   });
 });

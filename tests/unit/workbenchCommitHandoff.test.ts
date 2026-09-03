@@ -6,6 +6,7 @@ import { buildCommitPlanPreview } from "../../src/commit/commitPlanBuilder";
 import type { CommitCandidate } from "../../src/commit/commitCandidateCollector";
 import {
   WORKBENCH_PROTOCOL_VERSION,
+  isCommitSnapshot,
   type HostToWebviewMessage,
 } from "../../src/protocol/workbenchProtocol";
 import { __resetWebviewPanels, __webviewPanels } from "../mocks/vscode";
@@ -440,6 +441,130 @@ describe("交接后失效链", () => {
       expect(commitSnapshots(posted).length).toBeGreaterThan(0),
     );
     expect(commitSnapshots(posted).at(-1)!.handoff).toBeUndefined();
+  });
+});
+
+describe("V014-E3 必修 Host 复验", () => {
+  it("必修 1：交接复验禁用陈旧候选缓存（磁盘已冲突 → 拒绝）", async () => {
+    const controller = createController("commit");
+    await controller.open({
+      moduleId: "commit",
+      svnPath: "svn",
+      scope: makeScope(),
+      selectedPaths: ["app/a.ts"],
+    });
+    const session = sessionOf(controller);
+    expect(session.commitState?.selectedPaths).toEqual(["app/a.ts"]);
+    // 植入陈旧缓存：a.ts 在缓存中仍记为可选；磁盘最新已冲突（blocked）。
+    session.commitState!.candidates = [
+      {
+        absolutePath: `${WC_ROOT}/app/a.ts`,
+        relativePath: "app/a.ts",
+        status: "modified",
+        selection: "selected",
+      },
+    ] as never;
+    collectorControl.candidates = collectorControl.candidates.map((item) =>
+      item.relativePath === "app/a.ts"
+        ? { ...item, status: "conflicted", selection: "blocked" }
+        : item,
+    );
+    const posted = trackPosts();
+    await send(session, "open-module", {
+      moduleId: "commit",
+      selectedPaths: ["app/a.ts"],
+    });
+    // 新鲜复验判定 blocked → rejected（复用缓存则会误判 accepted）。
+    await vi.waitFor(() =>
+      expect(errorMessages(posted).length).toBeGreaterThan(0),
+    );
+    expect(errorMessages(posted)[0]).toContain("已全部失效");
+    expect(session.commitState?.selectedPaths).toEqual(["app/a.ts"]);
+  });
+
+  it("必修 3：空交接清空旧 preview 与 handoff", async () => {
+    const controller = createController("commit");
+    await controller.open({
+      moduleId: "commit",
+      svnPath: "svn",
+      scope: makeScope(),
+      selectedPaths: ["app/a.ts"],
+    });
+    const session = sessionOf(controller);
+    const posted = trackPosts();
+    await send(session, "commit/preview", {});
+    await vi.waitFor(() => expect(session.commitState?.preview).toBeDefined());
+    expect(session.commitState?.handoff?.source).toBe("changes");
+    posted.length = 0;
+    await send(session, "open-module", {
+      moduleId: "commit",
+      selectedPaths: [],
+    });
+    await vi.waitFor(() =>
+      expect(commitSnapshots(posted).length).toBeGreaterThan(0),
+    );
+    // 空交接同样失效旧 preview/token 并清空 handoff。
+    expect(session.commitState?.preview).toBeUndefined();
+    expect(session.commitState?.handoff).toBeUndefined();
+    expect(session.commitState?.selectedPaths).toEqual([]);
+  });
+
+  it("必修 4 Host：跨仓库来源同名路径整批拒绝", async () => {
+    const controller = createController("commit");
+    await controller.open({
+      moduleId: "commit",
+      svnPath: "svn",
+      scope: makeScope(),
+      selectedPaths: ["app/a.ts"],
+    });
+    const first = sessionOf(controller);
+    expect(first.commitState?.selectedPaths).toEqual(["app/a.ts"]);
+    // 伪造源会话来自另一仓库：同名相对路径也不得带入。
+    first.repositoryUuid = "uuid-source-repo";
+    await controller.open({
+      moduleId: "commit",
+      svnPath: "svn",
+      scope: makeScope(),
+      selectedPaths: ["app/a.ts"],
+    });
+    // 拒绝后恢复旧会话，不创建新交接。
+    const current = sessionOf(controller);
+    expect(current).toBe(first);
+    expect(current.commitState?.selectedPaths).toEqual(["app/a.ts"]);
+    expect(current.commitState?.handoff?.keptCount).toBe(1);
+  });
+
+  it("Host 贯通：合法 handoff 快照接受，非法 handoff 整快照拒绝", async () => {
+    const controller = createController("commit");
+    await controller.open({
+      moduleId: "commit",
+      svnPath: "svn",
+      scope: makeScope(),
+      selectedPaths: ["app/a.ts", "app/ghost.ts"],
+    });
+    const session = sessionOf(controller);
+    const posted = trackPosts();
+    await send(session, "commit/update-draft", { message: "feat: 贯通" });
+    await vi.waitFor(() =>
+      expect(commitSnapshots(posted).length).toBeGreaterThan(0),
+    );
+    const snapshot = commitSnapshots(posted).at(-1)! as Record<string, unknown>;
+    expect(isCommitSnapshot(snapshot)).toBe(true);
+    expect(
+      isCommitSnapshot({
+        ...snapshot,
+        handoff: { ...(snapshot.handoff as object), source: "diff" },
+      }),
+    ).toBe(false);
+    expect(
+      isCommitSnapshot({
+        ...snapshot,
+        handoff: {
+          ...(snapshot.handoff as object),
+          removedEntries: [{ path: "x", reason: "invented", message: "错" }],
+        },
+      }),
+    ).toBe(false);
   });
 });
 

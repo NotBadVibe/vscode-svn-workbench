@@ -1,3 +1,4 @@
+import * as path from "node:path";
 import type { CommitCandidate } from "../../commit/commitCandidateCollector";
 import type {
   ChangesSnapshot,
@@ -119,11 +120,42 @@ export function noteContinuityEvent(
   session.taskContinuity = invalidateContinuity(session.taskContinuity, event);
 }
 
-/** 恢复装配的最小候选投影（blocked/external 由调用方按权威候选判定）。 */
+/** 恢复装配的最小候选投影（blocked/external 由调用方按权威候选判定）。
+ *
+ * v0.1.4 V014-E3 必修 2：恢复载荷（continuityRestore.removedEntries[].path）
+ * 只下发项目内相对路径（与 CommitHandoffView 口径一致），不得下发
+ * candidate.absolutePath；pathByKey 的绝对路径只保留在 Host 内存，不下发。
+ */
 export interface ContinuityRestoreCandidate {
   absolutePath: string;
+  /**
+   * 项目内相对路径：恢复载荷 path 唯一口径。缺省时由调用方按仓库根派生
+   *（兼容旧测试夹具；生产经完整 CommitCandidate 传入恒有值）。
+   */
+  relativePath?: string;
   selection: CommitCandidate["selection"];
   status: CommitCandidate["status"];
+}
+
+/** 本地相对路径归一（分隔符统一为 `/`，与快照视图口径一致）。 */
+function normalizeContinuityPayloadPath(value: string): string {
+  return value.split(path.sep).join("/") || ".";
+}
+
+/**
+ * 恢复载荷 path 装配：相对路径直传；绝对路径按仓库根派生为相对路径
+ * （disappeared 项回退 pathByKey 绝对路径时同样去绝对路径化）。
+ */
+function toContinuityPayloadPath(
+  absoluteOrRelative: string,
+  repositoryRoot: string,
+): string {
+  if (!path.isAbsolute(absoluteOrRelative)) {
+    return absoluteOrRelative;
+  }
+  return normalizeContinuityPayloadPath(
+    path.relative(repositoryRoot, absoluteOrRelative),
+  );
 }
 
 export interface BuildContinuityRestoreInput {
@@ -175,7 +207,14 @@ export function buildContinuityRestore(
   const entries: ContinuitySnapshotEntry[] = input.candidates.map(
     (candidate) => ({
       key: resolveKey(candidate.absolutePath),
-      path: candidate.absolutePath,
+      // v0.1.4 V014-E3 必修 2：快照条目 path 即载荷口径，只用相对路径
+      //（缺省时按仓库根由绝对路径派生，不下发绝对路径）。
+      path:
+        candidate.relativePath ??
+        toContinuityPayloadPath(
+          candidate.absolutePath,
+          context.originRepositoryRoot,
+        ),
       repositoryUuid: input.repositoryUuid,
       blocked: candidate.selection === "blocked",
       external: candidate.status === "external",
@@ -235,7 +274,9 @@ export function buildContinuityRestore(
     ...(commitDraft !== undefined ? { commitDraft } : {}),
     removedEntries: restore.removedEntries.map((entry) => ({
       key: entry.key,
-      path: entry.path,
+      // v0.1.4 V014-E3 必修 2：disappeared 项回退 pathByKey 绝对路径时
+      // 同样去绝对路径化；pathByKey 本身只保留 Host 内存，不下发。
+      path: toContinuityPayloadPath(entry.path, context.originRepositoryRoot),
       reason: entry.reason,
       message: entry.message,
     })),
