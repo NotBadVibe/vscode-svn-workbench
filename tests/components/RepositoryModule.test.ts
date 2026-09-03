@@ -115,7 +115,7 @@ describe("RepositoryModule", () => {
     expect(screen.getByText("执行安全清理。")).toBeInTheDocument();
   });
 
-  it("破坏性高级操作需要二次勾选后才能使用 Host 预览令牌执行", async () => {
+  it("Switch/Merge 无前置复选框：预览后直开意向单一次确认", async () => {
     const onAction = vi.fn();
     const snapshot: RepositorySnapshot = {
       kind: "repository",
@@ -143,8 +143,8 @@ describe("RepositoryModule", () => {
     const execute = screen.getByRole("button", {
       name: "确认执行切换工作副本",
     });
-    expect(execute).toBeDisabled();
-    await fireEvent.click(screen.getByRole("checkbox"));
+    // V015-C2：前置复选框已移除（Switch/Merge/Branch/Tag/Patch/Shelf 直开意向单）。
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
     expect(execute).toBeEnabled();
     await fireEvent.click(execute);
     // 批次 D：确认执行先打开通用操作意向单对话框
@@ -254,5 +254,66 @@ describe("RepositoryModule", () => {
     expect(screen.queryByText("alpha")).toBeNull();
     await fireEvent.click(screen.getByRole("button", { name: "清除筛选" }));
     expect(screen.getByText("3 个条目")).toBeInTheDocument();
+  });
+
+  it("Relocate 白名单：复述正确放行、错误拒绝、尾斜杠/大小写归一化", async () => {
+    const target = "https://svn.example.test/repos/workbench";
+    const relocateSnapshot: RepositorySnapshot = {
+      kind: "repository",
+      info: { name: "repo", revision: "5" },
+      properties: { available: true, target: ".", items: [] },
+      cleanup: { available: true, target: "." },
+      advanced: {
+        preview: {
+          token: "relocate-1",
+          operation: "relocate",
+          title: "重定位仓库根地址",
+          commands: ["svn switch --relocate …"],
+          details: ["旧根：https://old.example.test/repo", `新根：${target}`],
+          issues: [],
+          canExecute: true,
+          destructive: true,
+        },
+      },
+    };
+    const onAction = vi.fn();
+    render(RepositoryModule, {
+      snapshot: relocateSnapshot,
+      taskId: "repository/relocate",
+      onAction,
+    });
+    // 预览侧无复选框，直开意向单。
+    expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
+    await fireEvent.click(
+      screen.getByRole("button", { name: "确认执行重定位仓库地址" }),
+    );
+    const dialog = screen.getByRole("dialog", {
+      name: "重定位仓库根地址",
+    });
+    const challenge = within(dialog).getByLabelText("复述新的仓库根 URL");
+    const confirm = within(dialog)
+      .getAllByRole("button")
+      .find((b) => b.textContent?.includes("确认执行重定位仓库地址")) as
+      HTMLElement | undefined;
+    expect(confirm).toBeDefined();
+    // 初始未复述禁止确认。
+    expect(confirm!).toBeDisabled();
+    // 错误复述拒绝。
+    await fireEvent.input(challenge, {
+      target: { value: "https://wrong.example.test/other" },
+    });
+    expect(confirm!).toBeDisabled();
+    expect(
+      within(dialog).getByText(/复述目标与预览的新根地址不一致/),
+    ).toBeInTheDocument();
+    // 尾斜杠 + 大小写归一化后放行。
+    await fireEvent.input(challenge, {
+      target: { value: `${target.toUpperCase()}/` },
+    });
+    expect(confirm!).toBeEnabled();
+    await fireEvent.click(confirm!);
+    expect(onAction).toHaveBeenCalledWith("repository/execute-advanced", {
+      previewToken: "relocate-1",
+    });
   });
 });

@@ -10,7 +10,10 @@
   import ScrollArea from "../../components/ui/ScrollArea.svelte";
   import PreviewPathList from "../../components/list/PreviewPathList.svelte";
   import OperationIntentDialog from "../../components/operation/OperationIntentDialog.svelte";
-  import type { OperationIntentKind } from "../../../operation/operationIntent";
+  import {
+    extractRelocateTarget,
+    type OperationIntentKind,
+  } from "../../../operation/operationIntent";
   import { taskLabels } from "../../i18n/terminology";
   import {
     loadListPreferences,
@@ -86,7 +89,7 @@
     {
       id: "dangerous",
       label: "危险操作",
-      hint: "改变工作副本绑定地址，执行前必须二次确认",
+      hint: "改变工作副本绑定地址，执行前经意向单一次确认；重定位另需复述目标",
       tasks: [
         { id: "repository/switch", label: "切换" },
         { id: "repository/relocate", label: "重定位" },
@@ -180,7 +183,6 @@
     });
   }
 
-  let advancedConfirmed = $state(false);
   let previewToken = $state<string | undefined>();
   // v0.0.14 批次 D：高级操作意向单（Switch/Relocate/Merge 等）
   let advancedIntentOpen = $state(false);
@@ -227,11 +229,27 @@
         : undefined,
       recoverability,
       createdAt: new Date().toISOString(),
-      canExecute:
-        preview.canExecute && (!preview.destructive || advancedConfirmed),
+      // v0.1.5 V015-C2：一次确认——前置复选框已移除；
+      // 白名单：仅 relocate 附加目标复述挑战（不可逆 + 无恢复出口）。
+      canExecute: preview.canExecute,
       issues: preview.issues,
       commands: preview.commands,
       stale: false,
+      confirmationChallenge:
+        preview.operation === "relocate"
+          ? (() => {
+              const expected = extractRelocateTarget(preview.details);
+              if (!expected) return undefined;
+              return {
+                prompt:
+                  "重定位会改写工作副本的仓库绑定，填错后难以恢复。请在下方准确复述预览中的“新根”地址（去尾斜杠、忽略大小写后比对一致方可确认）。",
+                expected,
+                mismatchMessage:
+                  "复述目标与预览的新根地址不一致，无法确认。请对照预览复制准确地址后重试。",
+                placeholder: expected,
+              };
+            })()
+          : undefined,
     };
   });
   const advancedConfirmLabel = $derived.by(() => {
@@ -244,7 +262,6 @@
     const token = snapshot.advanced.preview?.token;
     if (token !== previewToken) {
       previewToken = token;
-      advancedConfirmed = false;
     }
   });
 
@@ -393,16 +410,23 @@
         >
           {issue}
         </div>{/each}
-      {#if snapshot.advanced.preview.destructive}<label
-          class="destructive-confirm"
-          ><input type="checkbox" bind:checked={advancedConfirmed} /><span
-            >我已核对命令、目标和影响；理解该操作会修改工作副本或其绑定地址。</span
-          ></label
-        >{/if}
+      {#if snapshot.advanced.preview.destructive && snapshot.advanced.preview.operation !== "relocate"}
+        <div class="notice notice--warning" role="note">
+          <span class="codicon codicon-warning" aria-hidden="true"></span><span
+            >该操作会修改工作副本或其绑定地址，命令与影响以弹出的意向单为准，确认前请核对。</span
+          >
+        </div>
+      {/if}
+      {#if snapshot.advanced.preview.operation === "relocate"}
+        <div class="notice notice--warning" role="note">
+          <span class="codicon codicon-shield" aria-hidden="true"></span><span
+            >重定位会改写仓库绑定且难以恢复，意向单内需复述新仓库根地址方可确认。</span
+          >
+        </div>
+      {/if}
       <button
         class="button button--primary"
-        disabled={!snapshot.advanced.preview.canExecute ||
-          (snapshot.advanced.preview.destructive && !advancedConfirmed)}
+        disabled={!snapshot.advanced.preview.canExecute}
         onclick={(event) => {
           advancedTriggerEl = event.currentTarget as HTMLElement;
           advancedIntentOpen = true;

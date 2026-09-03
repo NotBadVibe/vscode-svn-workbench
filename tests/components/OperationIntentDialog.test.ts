@@ -255,4 +255,55 @@ describe("OperationIntentDialog", () => {
     expect(onConfirm).not.toHaveBeenCalled();
     await fireEvent.compositionEnd(dialog);
   });
+
+  it("V015-C2 白名单挑战：错误拒绝、归一化放行、IME 复述 Enter 不确认", async () => {
+    const onConfirm = vi.fn();
+    const challengeIntent: OperationIntentView = {
+      ...baseIntent,
+      kind: "relocate",
+      title: "重定位仓库根地址",
+      confirmationChallenge: {
+        prompt: "请复述新根地址。",
+        expected: "https://svn.example.test/repos/wb",
+        mismatchMessage: "复述目标与预览的新根地址不一致，无法确认。",
+      },
+    };
+    const { container } = render(OperationIntentDialog, {
+      props: {
+        intent: challengeIntent,
+        open: true,
+        confirmLabel: "确认执行重定位仓库地址",
+        onConfirm,
+        onCancel: vi.fn(),
+        onAction: vi.fn(),
+      },
+    });
+    // jsdom 中 showModal 异步生效，先等 dialog 打开再查询内部元素（同文件既有模式）。
+    const dialog = container.querySelector("dialog") as HTMLDialogElement;
+    await waitFor(() => expect(dialog).toHaveAttribute("open"));
+    const input = screen.getByLabelText("复述新的仓库根 URL");
+    const confirm = screen.getByRole("button", {
+      name: /确认执行重定位仓库地址/,
+    });
+    expect(confirm).toBeDisabled();
+    await fireEvent.input(input, {
+      target: { value: "https://wrong.example.test/x" },
+    });
+    expect(confirm).toBeDisabled();
+    expect(
+      screen.getByText("复述目标与预览的新根地址不一致，无法确认。"),
+    ).toBeInTheDocument();
+    // IME 候选 Enter 不触发确认。
+    await fireEvent.compositionStart(input);
+    await fireEvent.keyDown(input, { key: "Enter" });
+    expect(onConfirm).not.toHaveBeenCalled();
+    await fireEvent.compositionEnd(input);
+    // 尾斜杠 + 大小写归一化放行。
+    await fireEvent.input(input, {
+      target: { value: "HTTPS://SVN.EXAMPLE.TEST/repos/wb/" },
+    });
+    expect(confirm).toBeEnabled();
+    await fireEvent.click(confirm);
+    expect(onConfirm).toHaveBeenCalledWith("tok-1");
+  });
 });

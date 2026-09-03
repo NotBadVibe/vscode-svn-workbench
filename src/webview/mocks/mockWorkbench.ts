@@ -1963,7 +1963,15 @@ export function startMockWorkbench(): void {
                         `svn ${operation} <validated-source> <validated-target>`,
                       ],
               details: destructive
-                ? ["只修改当前工作副本；不会自动提交。", "执行后重新采集状态。"]
+                ? operation === "relocate"
+                  ? [
+                      "旧根：https://svn.example.test/repos/workbench",
+                      `新根：${typeof data.targetUrl === "string" && data.targetUrl.trim().length > 0 ? data.targetUrl.trim() : "https://svn.example.test/repos/workbench-new"}`,
+                    ]
+                  : [
+                      "只修改当前工作副本；不会自动提交。",
+                      "执行后重新采集状态。",
+                    ]
                 : ["仓库端操作，不包含本地未提交修改。"],
             },
           },

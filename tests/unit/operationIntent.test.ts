@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   buildOperationIntentSummary,
+  extractRelocateTarget,
+  isConfirmationChallengeSatisfied,
   isOperationIntentKind,
   isOperationIntentStale,
+  normalizeConfirmationTarget,
   OPERATION_INTENT_ACTION_LABELS,
   OPERATION_INTENT_KINDS,
   operationIntentTitle,
@@ -176,5 +179,34 @@ describe("validateOperationIntentForExecute", () => {
         candidateHash: "c1",
       }).ok,
     ).toBe(false);
+  });
+});
+
+describe("V015-C2 Relocate 白名单目标复述", () => {
+  it("归一化去空白/尾斜杠/大小写", () => {
+    expect(
+      normalizeConfirmationTarget("  HTTPS://svn.example.test/Repo/ "),
+    ).toBe("https://svn.example.test/repo");
+    expect(normalizeConfirmationTarget("https://h/r///")).toBe("https://h/r");
+  });
+  it("正确/错误/空值判定", () => {
+    const expected = "https://svn.example.test/repos/wb";
+    expect(isConfirmationChallengeSatisfied(expected, expected)).toBe(true);
+    expect(
+      isConfirmationChallengeSatisfied(expected, `${expected.toUpperCase()}/`),
+    ).toBe(true);
+    expect(isConfirmationChallengeSatisfied(expected, "https://other/x")).toBe(
+      false,
+    );
+    expect(isConfirmationChallengeSatisfied(expected, "")).toBe(false);
+    expect(isConfirmationChallengeSatisfied("", expected)).toBe(false);
+  });
+  it("从 details 提取新根，不虚构", () => {
+    expect(
+      extractRelocateTarget(["旧根：https://old/r", "新根：https://new/r"]),
+    ).toBe("https://new/r");
+    expect(extractRelocateTarget(["旧根：https://old/r"])).toBeUndefined();
+    expect(extractRelocateTarget(["新根：未填写"])).toBeUndefined();
+    expect(extractRelocateTarget(undefined)).toBeUndefined();
   });
 });

@@ -116,7 +116,6 @@
   let commitDraft = $state("");
   let synchronizedCommitDraft = $state("");
   let draftExpanded = $state(false);
-  let destructiveConfirmed = $state(false);
   let operationPreviewToken = $state<string | undefined>();
   // v0.0.14 批次 D：文件操作意向单（还原/删除等）
   let fileOpIntentOpen = $state(false);
@@ -149,10 +148,9 @@
       scopeText: scopeNames.length > 0 ? scopeNames.join("、") : undefined,
       recoverability: preview.recoverability,
       createdAt: new Date().toISOString(),
-      canExecute:
-        preview.canExecute &&
-        !stale &&
-        (!preview.destructive || destructiveConfirmed),
+      // v0.1.5 V015-C2：一次确认——前置“我已核对”复选框已移除，
+      // 可恢复性与清单由意向单承担；Host 复验链不变。
+      canExecute: preview.canExecute && !stale,
       issues: preview.issues,
       commands: [preview.command],
       stale,
@@ -488,7 +486,6 @@
     const token = snapshot.operationPreview?.token;
     if (token !== operationPreviewToken) {
       operationPreviewToken = token;
-      destructiveConfirmed = false;
     }
   });
 
@@ -1464,17 +1461,17 @@
           选择已变化，旧预览已失效；请重新预览后再执行。
         </div>
       {/if}
-      {#if snapshot.operationPreview.destructive}<label
-          class="destructive-confirm"
-          ><input type="checkbox" bind:checked={destructiveConfirmed} /><span
-            >我已逐项核对文件清单，并理解未提交内容可能无法从 SVN 恢复。</span
-          ></label
-        >{/if}
+      {#if snapshot.operationPreview.destructive}
+        <div class="notice notice--warning" role="note">
+          <span class="codicon codicon-warning" aria-hidden="true"></span><span
+            >还原/删除将丢弃未提交内容，清单与可恢复性以弹出的意向单为准，确认前请逐项核对。</span
+          >
+        </div>
+      {/if}
       <button
         class="button button--primary commit-button"
         disabled={!snapshot.operationPreview.canExecute ||
-          previewSelectionOutOfSync ||
-          (snapshot.operationPreview.destructive && !destructiveConfirmed)}
+          previewSelectionOutOfSync}
         onclick={(event) => {
           fileOpTriggerEl = event.currentTarget as HTMLElement;
           fileOpIntentOpen = true;

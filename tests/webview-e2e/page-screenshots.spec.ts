@@ -227,7 +227,12 @@ test("保存每个 Svelte 功能页面的验收截图", async ({ page }) => {
     await expect(
       page.getByRole("heading", { name: "切换工作副本", exact: true }).last(),
     ).toBeVisible();
-    await page.getByRole("checkbox", { name: /核对命令、目标和影响/ }).check();
+    // V015-C2：前置复选框已移除，预览后直开意向单一次确认。
+    await expect(page.getByRole("checkbox")).toHaveCount(0);
+    await page.getByRole("button", { name: "确认执行切换工作副本" }).click();
+    await expect(
+      page.getByRole("dialog", { name: "切换工作副本" }),
+    ).toBeVisible();
     await capture(page, "10b-repository-destructive-preview");
   });
 
