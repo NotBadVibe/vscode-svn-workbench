@@ -68,6 +68,11 @@ import {
   filterCommitSelectionByCandidates,
   validateCommitSelection,
 } from "../../commit/commitSelectionValidation";
+import {
+  buildCommitHandoff,
+  createCommitHandoffView,
+  selectCommitHandoffForSnapshot,
+} from "../../commit/commitHandoff";
 import { describeSelectionChange } from "../../commit/selectionChangeSummary";
 import {
   CommitSelectionRuleService,
@@ -753,6 +758,31 @@ export class WorkbenchController implements vscode.Disposable {
     // 项目切换后恢复该项目保留的草稿（仅提交说明与手动选择；旧预览、
     // 确认令牌与 AI 结果永不恢复）。
     await this.restoreProjectDraft(this.session);
+    // v0.1.4 V014-E：跨窗口交接（目标为 commit 且带选择）整批复验。
+    // 交接选择优先于项目草稿恢复的选择（更新近的显式用户动作）。
+    // 全部非法时拒绝打开：恢复旧会话（无旧会话时丢弃新会话），
+    // 中文反馈原因，不创建面板、不改动任何选择与草稿。
+    if (this.session.moduleId === "commit") {
+      const handoffVerdict = await this.applyCommitHandoffSelection(
+        this.session,
+        request.selectedPaths,
+      );
+      if (handoffVerdict === "rejected") {
+        this.session = previousSession;
+        // 面板尚未创建时错误消息无法投递到 Webview，同步记入输出通道
+        // （仅固定中文原因，不含路径等交接数据）。
+        appendOutput(
+          "已拒绝来自本地修改的交接选择（全部失效），未打开提交页。",
+        );
+        await this.sendError(
+          "commit",
+          "无法带入提交选择",
+          "来自本地修改的交接选择已全部失效（文件消失或为排除/阻止项），未打开提交页；请在本地修改中重新选择后重试。",
+          true,
+        );
+        return;
+      }
+    }
     // 一控制器最多持有一个仓库安全引用：首次会话 acquire；同仓库重开保持
     // 既有引用（不重复 acquire）；换仓库时先 release 旧引用再 acquire 新引用。
     this.syncSecurityReference(this.session.scope.repositoryRoot);
@@ -1158,6 +1188,35 @@ export class WorkbenchController implements vscode.Disposable {
           );
           return;
         }
+        // v0.1.4 V014-E：同窗交接（目标为 commit 且带选择）整批复验，
+        // 与跨窗口 open() 共用 applyCommitHandoffSelection，语义一致。
+        // 全部非法时拒绝切换，不改动当前模块、选择与草稿。
+        if (moduleId === "commit") {
+          const handoffVerdict = await this.applyCommitHandoffSelection(
+            session,
+            asStringArray(data.selectedPaths),
+          );
+          if (handoffVerdict === "rejected") {
+            await this.sendError(
+              session.moduleId,
+              "无法带入提交选择",
+              "来自本地修改的交接选择已全部失效（文件消失或为排除/阻止项），未切换到提交页；请在本地修改中重新选择后重试。",
+              true,
+              message.requestId,
+            );
+            return;
+          }
+          if (handoffVerdict !== "empty") {
+            session.moduleId = moduleId;
+            session.taskId = taskId;
+            session.targetFile = undefined;
+            // v0.1.4 V014-C1：同窗内选择变化使旧连续交集失效（弱失效，保留待复核）。
+            noteContinuityEvent(session, "selection-change");
+            this.panel!.title = getModuleTitle(moduleId, taskId);
+            await this.loadModule(moduleId, undefined, message.requestId);
+            return;
+          }
+        }
         session.moduleId = moduleId;
         session.taskId = taskId;
         session.selectedPaths = asStringArray(data.selectedPaths);
@@ -1480,6 +1539,8 @@ export class WorkbenchController implements vscode.Disposable {
         session.selectedPaths = [...recommended];
         state.manualSelectedPaths = undefined;
         state.preview = undefined;
+        // v0.1.4 V014-E：规则推荐接管选择，旧交接来源失效。
+        state.handoff = undefined;
         // v0.1.4 V014-C1：规则应用覆盖选择，旧连续交集失效。
         noteContinuityEvent(session, "selection-change");
         state.feedback = {
@@ -1544,6 +1605,8 @@ export class WorkbenchController implements vscode.Disposable {
         session.selectedPaths = [...state.selectedPaths];
         state.manualSelectedPaths = undefined;
         state.preview = undefined;
+        // v0.1.4 V014-E：AI 建议接管选择，旧交接来源失效。
+        state.handoff = undefined;
         // v0.1.4 V014-C1：AI 建议覆盖选择，旧连续交集失效。
         noteContinuityEvent(session, "selection-change");
         state.ai = {
@@ -9198,6 +9261,8 @@ export class WorkbenchController implements vscode.Disposable {
       state.selectedPaths,
       candidates,
     );
+    // v0.1.4 V014-E：记录过滤前已选，供下方冲突移除判定（赋值后即丢失）。
+    const selectedBeforeFilter = [...(state.selectedPaths ?? [])];
     state.selectedPaths = filtered.kept;
     // v0.0.13 批次 C：每次快照确保共享选择与 Commit 内部选择一致（不静默扩大）。
     session.selectedPaths = [...state.selectedPaths];
@@ -9216,15 +9281,35 @@ export class WorkbenchController implements vscode.Disposable {
       state.manualSelectedPaths = manualKept;
     }
     const removedReasons = filtered.removedReasons;
-    if (removedReasons.length > 0 && !state.feedback) {
-      state.feedback = {
-        tone: "warning",
-        message: `刷新后移除 ${removedReasons.length} 个失效选择（${removedReasons
-          .slice(0, 3)
-          .join(
-            "；",
-          )}${removedReasons.length > 3 ? "…" : ""}）。请确认当前选择。`,
-      };
+    // v0.1.4 V014-E 交接后失效链：快照过滤移除了已选路径（含交接后出现
+    // 冲突/阻止项）→ 旧 preview/token 立即失效，禁止旧预览继续可用；
+    // message 草稿保留。冲突导致收缩时 feedback 给出“处理冲突”指引。
+    if (removedReasons.length > 0) {
+      const hadPreview = state.preview !== undefined;
+      state.preview = undefined;
+      const keptSet = new Set(filtered.kept);
+      // 仅已选后被移除的路径参与冲突判定：未选中的冲突项不得触发指引。
+      const removedSet = new Set(
+        selectedBeforeFilter.filter((item) => !keptSet.has(item)),
+      );
+      const conflictRemoved = candidates.some(
+        (candidate) =>
+          removedSet.has(candidate.relativePath) &&
+          (candidate.status === "conflicted" ||
+            candidate.propStatus === "conflicted"),
+      );
+      if (!state.feedback) {
+        const reasonsText = `${removedReasons.slice(0, 3).join("；")}${
+          removedReasons.length > 3 ? "…" : ""
+        }`;
+        state.feedback = {
+          tone: "warning",
+          message:
+            conflictRemoved || hadPreview
+              ? `选择已变化，旧提交预览已失效（${reasonsText}）。${conflictRemoved ? "请先到冲突模块处理冲突，再重新预检；" : ""}提交说明草稿已保留，请确认当前选择后重新预览。`
+              : `刷新后移除 ${removedReasons.length} 个失效选择（${reasonsText}）。请确认当前选择。`,
+        };
+      }
     }
 
     const convention = await resolveCommitConventionConfig(
@@ -9308,6 +9393,10 @@ export class WorkbenchController implements vscode.Disposable {
       }
     }
 
+    // v0.1.4 V014-E：交接记录随快照下发（E2 展示）；版本过期即丢弃，
+    // 快照其余部分不受影响（stale handoff 忽略）。
+    state.handoff = selectCommitHandoffForSnapshot(state.handoff);
+
     return {
       kind: "commit",
       files: keyedCandidates.map(({ candidate, selectionKey }) =>
@@ -9348,6 +9437,7 @@ export class WorkbenchController implements vscode.Disposable {
       filterPresets: session.filterPresets,
       feedback,
       ai,
+      handoff: state.handoff,
       messageSuggestion,
       aiPrivacy: [
         {
@@ -9417,9 +9507,68 @@ export class WorkbenchController implements vscode.Disposable {
       state.manualSelectedPaths = validation.selectedPaths;
       // v0.1.4 V014-C1：用户逐项勾选使旧连续交集失效（弱失效）。
       noteContinuityEvent(session, "selection-change");
+      // v0.1.4 V014-E：Commit 侧手动改选后，交接记录失效（旧 preview/token
+      // 同步失效，message 草稿保留）；交接选择不得冒充手动选择，反之新的
+      // 手动选择也不再挂载旧交接来源。
+      state.handoff = undefined;
     }
     state.preview = undefined;
     return undefined;
+  }
+
+  /**
+   * v0.1.4 V014-E Changes → Commit 交接整批复验（目标打开时落点）。
+   *
+   * 落点理由：跨模块转发经窗口管理器到达目标窗口，源窗口（Changes）没有
+   * Commit 权威候选缓存，源侧复验需额外全量 svn status；目标打开 Commit 时
+   * 本就要采集同一批候选构建快照，复用该批候选复验既最新又无额外采集。
+   * 同窗 open-module 走同一入口，保证两条路径语义一致。
+   *
+   * - 空交接（未带选择）：返回 "empty"，调用方保持原有打开行为；
+   * - 全部非法：返回 "rejected"，不修改任何选择与草稿，调用方拒绝打开
+   *   Commit 并给出中文原因；
+   * - 部分非法：收缩为合法交集写入选择，移除项记入 handoff，旧 preview/
+   *   token 立即失效，message 草稿保留；
+   * - 交接选择只写入 selectedPaths，绝不写入 manualSelectedPaths（不得把
+   *   交接选择虚构成手动选择，也不得抹掉真实手动 provenance：既有手动项
+   *   仍在交集内的由快照收敛保留）。
+   *
+   * 候选来源：优先复用 commitState.candidates（最近一次快照缓存），
+   * 缺省时经 collectScopeCandidates 采集（与快照构建同一采集器）。
+   */
+  private async applyCommitHandoffSelection(
+    session: WorkbenchSession,
+    requested: readonly string[] | undefined,
+  ): Promise<"accepted" | "shrunk" | "rejected" | "empty"> {
+    const deduped = [...new Set(requested ?? [])];
+    if (deduped.length === 0) {
+      return "empty";
+    }
+    const state = this.ensureCommitState(session);
+    const candidates =
+      state.candidates ?? (await this.collectScopeCandidates(session));
+    const build = buildCommitHandoff(deduped, candidates);
+    if (build.verdict === "rejected") {
+      return "rejected";
+    }
+    state.selectedPaths = [...build.kept];
+    session.selectedPaths = [...build.kept];
+    // 交接是新的选择事实：旧 preview/token 立即失效，草稿保留。
+    state.preview = undefined;
+    state.handoff = createCommitHandoffView(build);
+    // 收缩交接经一次性 feedback 播报（快照下发后清除）：来源、数量与
+    // 中文移除原因；范围未扩大由 kept ⊆ requested 保证。
+    if (build.verdict === "shrunk" && !state.feedback) {
+      const reasonsText = `${build.removedEntries
+        .slice(0, 3)
+        .map((entry) => entry.message)
+        .join("；")}${build.removedEntries.length > 3 ? "…" : ""}`;
+      state.feedback = {
+        tone: "warning",
+        message: `已从本地修改带入 ${build.keptCount} 个文件（范围未扩大），移除 ${build.removedEntries.length} 个失效项（${reasonsText}）。请确认当前选择。`,
+      };
+    }
+    return build.verdict;
   }
 
   private resolveSelectedAbsolutePaths(

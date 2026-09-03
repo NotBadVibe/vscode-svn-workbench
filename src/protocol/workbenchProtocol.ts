@@ -638,6 +638,47 @@ export interface CommitSnapshot {
     historyIncluded: boolean;
     historyCount?: number;
   }>;
+  /**
+   * v0.1.4 V014-E：Changes → Commit 交接记录（可选，向后兼容）。
+   * Host 在目标打开 Commit 时用权威候选整批复验交接选择后写入：
+   * 全部合法时如实记录来源，部分非法时收缩为合法交集并逐项说明移除原因。
+   * 缺省表示本次快照非交接进入（直接打开 Commit、旧快照或已失效）；
+   * Webview 仅做展示（“来自本地修改，范围未扩大”与移除清单），
+   * 绝不据此扩大操作范围。UI 消费属 E2，本字段缺省时保持现状。
+   */
+  handoff?: CommitHandoffView;
+}
+
+/**
+ * v0.1.4 V014-E：Changes → Commit 交接记录视图（随 Commit 快照下发）。
+ *
+ * 语义：
+ * - source 固定为 changes：当前唯一跨模块携带选择进入 Commit 的发送方
+ *   为 Changes 主操作；若未来新增发送方，需经 OpenWorkbenchRequest 显式
+ *   传递来源，不得复用本字段虚构来源。
+ * - selectionVersion 为交接选择版本号（COMMIT_HANDOFF_SELECTION_VERSION），
+ *   版本不匹配的载荷由 Host 忽略（fail-closed，不下发）。
+ * - removedEntries 逐项说明复验剔除的原因（消失/排除项/阻止项/跨仓库），
+ *   message 为可直接展示的中文原因；新文件绝不因交接自动加入。
+ * - 只携带项目内相对路径，不暴露本地绝对路径，不进入日志与 URI。
+ */
+export interface CommitHandoffView {
+  /** 交接来源模块（V014-E 固定为 changes，由 Host 写入）。 */
+  source: "changes";
+  /** 交接选择版本号（与 COMMIT_HANDOFF_SELECTION_VERSION 同源）。 */
+  selectionVersion: number;
+  /** 交接请求的选择数量（去重后）。 */
+  requestedCount: number;
+  /** 复验保留的合法交集数量。 */
+  keptCount: number;
+  /** 复验剔除清单（含中文原因，直接可播报）。 */
+  removedEntries: Array<{
+    path: string;
+    reason: "disappeared" | "excluded" | "blocked" | "cross-repository";
+    message: string;
+  }>;
+  /** 交接复验时间（ISO）。 */
+  receivedAt: string;
 }
 
 export interface HistoryRevisionView {
@@ -1821,6 +1862,77 @@ export function isChangesSnapshot(value: unknown): value is ChangesSnapshot {
     value.continuityRestore !== undefined &&
     !isContinuityRestoreView(value.continuityRestore)
   ) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * v0.1.4 V014-E：CommitHandoffView 类型守卫（Host/Webview/Mock 共用）。
+ * 可选字段无（全必填）；来源非 changes、版本号非有限数值、数量非数值、
+ * 移除项原因非法或中文说明缺失一律拒绝（fail-closed，调用方按“无交接”
+ * 处理，保持现状，不扩大范围）。
+ */
+export function isCommitHandoffView(
+  value: unknown,
+): value is CommitHandoffView {
+  if (!isRecord(value)) {
+    return false;
+  }
+  if (
+    value.source !== "changes" ||
+    typeof value.selectionVersion !== "number" ||
+    !Number.isFinite(value.selectionVersion) ||
+    typeof value.requestedCount !== "number" ||
+    !Number.isFinite(value.requestedCount) ||
+    typeof value.keptCount !== "number" ||
+    !Number.isFinite(value.keptCount) ||
+    !Array.isArray(value.removedEntries) ||
+    typeof value.receivedAt !== "string"
+  ) {
+    return false;
+  }
+  const reasons = new Set([
+    "disappeared",
+    "excluded",
+    "blocked",
+    "cross-repository",
+  ]);
+  for (const entry of value.removedEntries as unknown[]) {
+    if (!isRecord(entry)) {
+      return false;
+    }
+    if (
+      typeof entry.path !== "string" ||
+      typeof entry.reason !== "string" ||
+      !reasons.has(entry.reason) ||
+      typeof entry.message !== "string"
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * v0.1.4 V014-E：CommitSnapshot 交接字段校验（新增 handoff 可选字段）。
+ * 无 handoff 的旧快照继续接受（向后兼容）；携带时必须通过
+ * isCommitHandoffView，否则整快照拒绝。
+ */
+export function isCommitSnapshot(value: unknown): value is CommitSnapshot {
+  if (!isRecord(value)) {
+    return false;
+  }
+  if (
+    value.kind !== "commit" ||
+    !Array.isArray(value.files) ||
+    !isRecord(value.summary) ||
+    !Array.isArray(value.selectedPaths) ||
+    typeof value.message !== "string"
+  ) {
+    return false;
+  }
+  if (value.handoff !== undefined && !isCommitHandoffView(value.handoff)) {
     return false;
   }
   return true;
