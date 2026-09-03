@@ -439,6 +439,26 @@ export const taskSkeletonLabels = {
     "诊断信息疑似包含密钥，已隐藏以保护安全。请复制前自行脱敏。",
 } as const;
 
+/**
+ * v0.1.6 V016-B：共享帮助容器统一文案（AssistancePanel 专用）。
+ * - 组件内不生造领域文案：入口、分组、外发说明、过期、错误出口全部收口此处。
+ * - 本地结果禁止显示 AI 字样：本地分组与未配置提示均不含“AI/智能”。
+ */
+export const assistanceLabels = {
+  needHelp: "需要帮助",
+  collapse: "收起帮助",
+  localGroup: "本地检查",
+  modelGroup: "模型辅助（需确认后外发）",
+  unconfiguredHint: "未配置外部模型，本地检查仍可用；模型辅助需先配置。",
+  modelExplainPrefix: "已选择“",
+  modelExplainSuffix: "”，将按外发回执确认后才外发；本地动作不会外发。",
+  staleAdoptHint:
+    "范围或候选已变化，该结果只能查看，不能直接采用；请重新获取建议。",
+  errorActions: "错误恢复操作",
+  retry: "重试",
+  discard: "放弃",
+} as const;
+
 export function describeCommitSelectionEvaluation(
   evaluation: CommitSelectionExplanation,
 ): string {
