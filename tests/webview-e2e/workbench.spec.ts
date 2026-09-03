@@ -477,7 +477,8 @@ test("requires an update preview before running svn update", async ({
   ).toBeVisible();
   await page.getByRole("button", { name: "生成更新预览" }).click();
   await expect(page.getByText("中风险")).toBeVisible();
-  await page.getByRole("button", { name: "确认更新当前范围" }).click();
+  // v0.1.5 V015-B2：预览工具栏已迁入 PrimaryActionBar，主动作含远端数量。
+  await page.getByRole("button", { name: "确认更新（2）" }).click();
   const updateDialog = page.getByRole("dialog", {
     name: /更新 (\d+ 个远端变更|当前范围)/,
   });
@@ -491,7 +492,8 @@ test("requires an update preview before running svn update", async ({
   const conflictCta = page.locator("[data-update-conflict-cta]");
   await expect(conflictCta).toBeVisible();
   await expect(conflictCta.getByText("当前范围有 2 个冲突")).toBeVisible();
-  await conflictCta.getByRole("button", { name: "处理 2 个冲突" }).click();
+  // v0.1.5 V015-B2：结果出口已给出处理冲突主动作，冲突栏不再重复同名 primary，全页仅此一个。
+  await page.getByRole("button", { name: "处理 2 个冲突" }).click();
   await expect(
     page.getByRole("heading", { name: "处理文件冲突" }),
   ).toBeVisible();

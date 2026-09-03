@@ -299,6 +299,37 @@ export const conflictStepLabels = {
   toggleCollapse: "折叠",
 } as const;
 
+/**
+ * v0.1.5 V015-B2：Update / History 共享任务骨架迁移的页面文案。
+ * 全部复用既有术语（冲突数量、确认更新、重新检查等），不生造同义文案；
+ * 参数化标签由函数生成，避免页面各自拼字符串。
+ */
+export function updateConflictStatus(count: number): string {
+  return `当前范围有 ${count} 个冲突`;
+}
+
+export function updateConflictPrimaryLabel(count: number): string {
+  return `处理 ${count} 个冲突`;
+}
+
+export function updateConflictFilesSummary(count: number): string {
+  return `查看冲突文件（${count}）`;
+}
+
+export function updateConfirmLabel(remoteCount?: number): string {
+  return typeof remoteCount === "number"
+    ? `确认更新（${remoteCount}）`
+    : "确认更新当前范围";
+}
+
+export function historyLoadedStatus(count: number, hasMore?: boolean): string {
+  return `已加载最近 ${count} 条修订${hasMore ? "（可能还有更早修订）" : "（已是全部历史）"}`;
+}
+
+export function historyCompareCount(selected: number, total = 2): string {
+  return `已选择 ${selected}/${total} 条修订`;
+}
+
 /** v0.1.5 V015-B：共享任务骨架组件的默认文案（组件内不生造领域文案）。 */
 export const taskSkeletonLabels = {
   summary: "任务状态摘要",

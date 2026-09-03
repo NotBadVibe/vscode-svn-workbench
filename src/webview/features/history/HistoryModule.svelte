@@ -11,8 +11,16 @@
   import ResultCount from "../../components/list/ResultCount.svelte";
   import FilePathDetail from "../../components/svn/FilePathDetail.svelte";
   import { useFileList } from "../../components/list/useFileList.svelte";
+  import PrimaryActionBar from "../../components/task/PrimaryActionBar.svelte";
+  import ResultNextStep from "../../components/task/ResultNextStep.svelte";
+  import TaskEmptyState from "../../components/task/TaskEmptyState.svelte";
+  import TaskSummary from "../../components/task/TaskSummary.svelte";
   import { naturalCompare } from "../../../selection/selectionSort";
   import { formatZhDateTime } from "../../i18n/formatters";
+  import {
+    historyCompareCount,
+    historyLoadedStatus,
+  } from "../../i18n/terminology";
 
   /*
    * v0.0.10 跨模块列表迁移：修订列表复用共享搜索（清除、结果数量）、
@@ -197,6 +205,47 @@
   const appliedQueryDescription = $derived(
     describeHistoryQuery(snapshot.query),
   );
+
+  // v0.1.5 V015-B2：已加载数量 + 只读条件 + 快照新鲜度收敛进一条 TaskSummary compact（计算逻辑不动）。
+  const loadedStatus = $derived(
+    historyLoadedStatus(snapshot.revisions.length, snapshot.hasMore),
+  );
+  const loadedReason = $derived(
+    appliedQueryDescription
+      ? `当前按${appliedQueryDescription}加载；再次加载会保留这些条件。`
+      : undefined,
+  );
+  const loadedNextStep = $derived(
+    staleness.stale
+      ? `此结果基于 ${staleness.minutesAgo} 分钟前的状态，工作副本可能已变化，建议刷新`
+      : undefined,
+  );
+
+  /**
+   * v0.1.5 V015-B2：恢复执行结果（Host 模板“已恢复为 rN 内容；尚未提交。”）
+   * 才走 ResultNextStep；blame / 加载更早等其他 feedback 保持原 notice。
+   */
+  const isRestoreFeedback = $derived(
+    Boolean(
+      snapshot.feedback &&
+      snapshot.feedback.includes("已恢复为") &&
+      snapshot.feedback.includes("尚未提交"),
+    ),
+  );
+
+  /** ResultNextStep / TaskEmptyState 动作纯透传：只映射页面已知标识。 */
+  function handleHistoryResultAction(action: string): void {
+    if (action === "history-view-changes") {
+      onAction("open-module", {
+        moduleId: "changes",
+        taskId: "changes/overview",
+      });
+      return;
+    }
+    if (action === "history/load-more") {
+      requestMoreHistory();
+    }
+  }
 </script>
 
 <section class="history-layout">
@@ -204,12 +253,15 @@
     <div class="feature-toolbar feature-toolbar--compact">
       <div>
         <h2>修订历史</h2>
-        <!-- v0.0.18 批次 C（C-06）：明确“已加载最近 N 条”，区分没有更多与尚未加载。 -->
-        <p>
-          已加载最近 {snapshot.revisions.length} 条修订{snapshot.hasMore
-            ? "（可能还有更早修订）"
-            : "（已是全部历史）"}
-        </p>
+        <!-- v0.1.5 V015-B2：已加载数量 + 条件 + 新鲜度→TaskSummary compact（v0.0.18 C-06 文案不动）。 -->
+        <TaskSummary
+          variant="compact"
+          tone={staleness.stale ? "warning" : "info"}
+          icon="codicon-history"
+          status={loadedStatus}
+          reason={loadedReason}
+          nextStep={loadedNextStep}
+        />
       </div>
       <SearchInput
         bind:value={query}
@@ -316,27 +368,24 @@
         条件只限制本次只读历史请求，不改变当前范围；条件变化后会从首批重新读取。加载期间可使用页面顶部的“取消”。
       </p>
     </details>
-    {#if appliedQueryDescription}
-      <p class="history-load-conditions__applied" role="status">
-        当前按{appliedQueryDescription}加载；再次加载会保留这些条件。
-      </p>
-    {/if}
-    <div class="history-compare-bar">
-      <span role="status"
-        >已选择 {compare.size}/2 条修订；再选一条会替换最早选择的修订</span
-      >
-      <button
-        class="button button--secondary"
-        disabled={compare.size === 0}
-        onclick={clearCompare}>清空比较选择</button
-      >
-      <button
-        class="button button--primary"
-        disabled={compare.size !== 2}
-        onclick={() => onAction("history/compare", { revisions: [...compare] })}
-        >比较所选修订（{compare.size}/2）</button
-      >
-    </div>
+    <!-- v0.1.5 V015-B2：比较栏→PrimaryActionBar（唯一 primary + 数量口径一致；修订不可变，不接 stale）。 -->
+    <PrimaryActionBar
+      countText={historyCompareCount(compare.size)}
+      primary={{
+        label: "比较所选修订",
+        disabled: compare.size !== 2,
+        disabledReason: "请选择 2 条修订后再比较。",
+        onClick: () => onAction("history/compare", { revisions: [...compare] }),
+      }}
+      secondary={[
+        {
+          label: "清空比较选择",
+          disabled: compare.size === 0,
+          onClick: clearCompare,
+        },
+      ]}
+      ariaLabel="修订比较操作栏"
+    />
     <ScrollArea
       class="revision-list"
       role="list"
@@ -413,13 +462,26 @@
           <span class="status-badge">{selected.author}</span>
         </div>
       </div>
-      {#if staleness.stale}<div class="notice notice--warning" role="status">
-          <span class="codicon codicon-warning" aria-hidden="true"></span>
-          <span
-            >此结果基于 {staleness.minutesAgo} 分钟前的状态，工作副本可能已变化，建议刷新</span
-          >
-        </div>{/if}
-      {#if snapshot.feedback}<div class="notice notice--success" role="status">
+      <!-- v0.1.5 V015-B2：新鲜度已并入列表区 TaskSummary；恢复结果用 ResultNextStep，其余 feedback 保持原 notice。 -->
+      {#if isRestoreFeedback && snapshot.feedback}
+        <ResultNextStep
+          tone="success"
+          result={snapshot.feedback}
+          nextStep="下一步：查看本地修改，确认恢复内容符合预期后再决定是否提交。"
+          recoveryHint="如需撤销，可从历史记录再次恢复，或在本地修改中还原该文件。"
+          actions={[
+            {
+              label: "查看本地修改",
+              action: "history-view-changes",
+              kind: "primary",
+            },
+          ]}
+          onAction={handleHistoryResultAction}
+        />
+      {:else if snapshot.feedback}<div
+          class="notice notice--success"
+          role="status"
+        >
           {snapshot.feedback}
         </div>{/if}
       <p class="revision-message">{selected.message || "无提交说明"}</p>
@@ -604,13 +666,23 @@
         </div>
       {/if}
     {:else}
-      <div class="empty-state empty-state--large">
-        <span class="codicon codicon-history"></span>
-        <div>
-          <strong>暂无历史</strong>
-          <p>当前范围没有可显示的修订记录。</p>
-        </div>
-      </div>
+      <!-- v0.1.5 V015-B2：空态两句→TaskEmptyState，补齐第三句（调整条件 / 加载更早）。 -->
+      <TaskEmptyState
+        icon="codicon-history"
+        what="暂无历史"
+        whyNormal="当前范围没有可显示的修订记录。"
+        whatNow="调整加载条件，或加载更早修订后重试。"
+        actions={snapshot.hasMore
+          ? [
+              {
+                label: "加载更早修订",
+                action: "history/load-more",
+                kind: "primary",
+              },
+            ]
+          : []}
+        onAction={handleHistoryResultAction}
+      />
     {/if}
   </ScrollArea>
 </section>

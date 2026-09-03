@@ -123,9 +123,7 @@ describe("HistoryModule", () => {
 
     await fireEvent.click(screen.getByLabelText("选择修订 12 进行比较"));
     await fireEvent.click(screen.getByLabelText("选择修订 11 进行比较"));
-    await fireEvent.click(
-      screen.getByRole("button", { name: "比较所选修订（2/2）" }),
-    );
+    await fireEvent.click(screen.getByRole("button", { name: "比较所选修订" }));
 
     expect(onAction).toHaveBeenCalledWith("history/compare", {
       revisions: ["12", "11"],
@@ -193,6 +191,96 @@ describe("HistoryModule", () => {
     expect(screen.getByText("0 条路径")).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "清除筛选" }));
     expect(screen.getByText("1 条路径")).toBeInTheDocument();
+  });
+
+  it("V015-B2 骨架：数量/条件/新鲜度收敛进一条 compact 摘要", () => {
+    const staleAt = new Date(Date.now() - 10 * 60_000).toISOString();
+    render(HistoryModule, {
+      snapshot: {
+        ...snapshot,
+        hasMore: true,
+        query: { author: "alice" },
+        freshness: { capturedAt: staleAt, scopeHash: "abc" },
+      },
+      onAction: vi.fn(),
+    });
+    // 过期摘要按骨架约定走 warning→role="alert"（状态不只靠颜色）。
+    const summary = screen.getByRole("alert", { name: "任务状态摘要" });
+    expect(summary).toHaveClass("task-summary--compact");
+    expect(summary).toHaveClass("task-summary--warning");
+    expect(summary).toHaveTextContent(
+      "已加载最近 2 条修订（可能还有更早修订）",
+    );
+    expect(summary).toHaveTextContent(/作者“alice”/);
+    expect(summary).toHaveTextContent(/10 分钟前的状态/);
+    // 条件不再单独成段，避免与摘要重复。
+    expect(
+      document.querySelector(".history-load-conditions__applied"),
+    ).toBeNull();
+  });
+
+  it("V015-B2 骨架：比较栏唯一 primary 与数量口径一致", async () => {
+    const onAction = vi.fn();
+    render(HistoryModule, { snapshot, onAction });
+    const toolbar = screen.getByRole("toolbar", {
+      name: "修订比较操作栏",
+    });
+    expect(toolbar.textContent).toContain("已选择 0/2 条修订");
+    const primary = screen.getByRole("button", { name: "比较所选修订" });
+    expect(primary).toBeDisabled();
+    expect(toolbar.querySelectorAll(".button--primary")).toHaveLength(1);
+    await fireEvent.click(screen.getByLabelText("选择修订 12 进行比较"));
+    await fireEvent.click(screen.getByLabelText("选择修订 11 进行比较"));
+    expect(toolbar.textContent).toContain("已选择 2/2 条修订");
+    await fireEvent.click(primary);
+    expect(onAction).toHaveBeenCalledWith("history/compare", {
+      revisions: ["12", "11"],
+    });
+  });
+
+  it("V015-B2 结果出口：恢复结果用 ResultNextStep 且动作透传", async () => {
+    const onAction = vi.fn();
+    render(HistoryModule, {
+      snapshot: {
+        ...snapshot,
+        feedback: "src/extension.ts 已恢复为 r42 内容；尚未提交。",
+      },
+      onAction,
+    });
+    const resultRegion = screen.getByRole("status", {
+      name: "任务结果与下一步",
+    });
+    expect(resultRegion).toHaveTextContent(/尚未提交/);
+    await fireEvent.click(screen.getByRole("button", { name: "查看本地修改" }));
+    expect(onAction).toHaveBeenCalledWith("open-module", {
+      moduleId: "changes",
+      taskId: "changes/overview",
+    });
+  });
+
+  it("V015-B2 结果出口：非恢复 feedback 保持原 notice", () => {
+    render(HistoryModule, {
+      snapshot: { ...snapshot, feedback: "已读取 1 行逐行责任信息。" },
+      onAction: vi.fn(),
+    });
+    expect(
+      screen.queryByRole("status", { name: "任务结果与下一步" }),
+    ).toBeNull();
+    expect(screen.getByText("已读取 1 行逐行责任信息。")).toBeInTheDocument();
+  });
+
+  it("V015-B2 空态：三句话 + 加载更早透传且不丢比较选择逻辑", async () => {
+    const onAction = vi.fn();
+    render(HistoryModule, {
+      snapshot: { ...snapshot, revisions: [], hasMore: true },
+      onAction,
+    });
+    const emptyState = screen.getByRole("status", { name: "空状态说明" });
+    expect(emptyState).toHaveTextContent("暂无历史");
+    expect(emptyState).toHaveTextContent("当前范围没有可显示的修订记录。");
+    expect(emptyState).toHaveTextContent(/调整加载条件/);
+    await fireEvent.click(screen.getByRole("button", { name: "加载更早修订" }));
+    expect(onAction).toHaveBeenCalledWith("history/load-more", {});
   });
 
   it("变更路径行提供复制与路径详情入口", async () => {
