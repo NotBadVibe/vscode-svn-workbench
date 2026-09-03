@@ -459,6 +459,23 @@ export const assistanceLabels = {
   discard: "放弃",
 } as const;
 
+/**
+ * v0.1.6 V016-C：Commit 提交说明帮助面板领域文案。
+ * - 提交说明旁只保留一个“生成建议草稿”模型入口；模式选择收进面板展开区。
+ * - 选择辅助降级为本地规则默认：此处不出现“AI/智能”字样，结果进本地检查摘要。
+ */
+export const commitAssistanceLabels = {
+  panelTitle: "提交说明帮助",
+  panelSummary: "生成建议草稿、查看外发回执与证据；建议不覆盖已填提交说明。",
+  generateModeLabel: "生成输入模式",
+  metadataOnly: "仅文件信息",
+  limitedDiff: "含差异（需确认）",
+  limitedDiffNote:
+    "受限差异模式：生成前会先展示外发回执（数据类型、文件数、预算与排除项），确认后才发送脱敏差异正文；不会发送本地绝对路径、范围外内容或凭据。",
+  selectionDemotedHint:
+    "选择建议默认使用本地规则，结果见下方本地检查摘要；模型选择已收起。",
+} as const;
+
 export function describeCommitSelectionEvaluation(
   evaluation: CommitSelectionExplanation,
 ): string {
