@@ -66,7 +66,8 @@ test("UX08-SORT-01/02：aria-sort、图标与中文方向文字；恢复默认�
   page,
 }) => {
   await page.goto("/");
-  const fileHeader = page.getByRole("button", { name: /文件/ });
+  // v0.1.4 V014-B：主按钮文案含“文件”二字，锚定表头须用 /^文件/ 避免 strict 命中主按钮。
+  const fileHeader = page.getByRole("button", { name: /^文件/ });
   await fileHeader.click();
   // 方向有中文文字与 aria-sort。
   await expect(page.getByText("升序").first()).toBeVisible();

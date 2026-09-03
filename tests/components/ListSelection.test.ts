@@ -106,7 +106,7 @@ describe("Changes 选择闭环（v0.0.8）", () => {
       .map((row) => row.getAttribute("data-row-index"));
     expect(before).toEqual(["0", "1", "2"]);
     // 自然排序：file2 < file10。
-    await fireEvent.click(screen.getByRole("button", { name: /文件/ }));
+    await fireEvent.click(screen.getByRole("button", { name: /^文件/ }));
     const names = screen
       .getAllByRole("listitem")
       .map((row) => row.textContent ?? "");
@@ -114,7 +114,7 @@ describe("Changes 选择闭环（v0.0.8）", () => {
     expect(names[1]).toContain("z2.ts");
     expect(names[2]).toContain("z10.ts");
     // 状态排序：冲突优先级最高；再次点击反向。
-    await fireEvent.click(screen.getByRole("button", { name: /状态/ }));
+    await fireEvent.click(screen.getByRole("button", { name: /^状态/ }));
     expect(screen.getAllByRole("listitem")[0].textContent).toContain("a.ts");
     // aria-sort 与中文方向文字。
     expect(
@@ -182,18 +182,20 @@ describe("Changes 选择闭环（v0.0.8）", () => {
     expect(excludedBox).not.toBeDisabled();
     await fireEvent.click(excludedBox);
     expect(excludedBox).toBeChecked();
-    // 提交按钮被阻止：role=status 提示 + 数量显示可提交数（0），payload 不发。
+    // V014-B：所选全阻止时唯一主操作为“查看阻止原因”，不渲染提交按钮
+    //（fail-closed，不静默过滤）；阻断提示保留。
     expect(screen.getByText(/有 1 个所选文件不可提交/)).toBeInTheDocument();
-    const submit = screen.getByRole("button", {
-      name: "检查并提交所选（0）",
-    });
-    expect(submit).toBeDisabled();
-    // 取消 excluded 后按钮恢复，数量与 payload 一致。
+    expect(
+      screen.getByRole("button", { name: "查看阻止原因（1）" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /检查并提交所选/ }),
+    ).not.toBeInTheDocument();
+    // 取消 excluded 后回到 suggest 态（无选择且有推荐），数量来自权威集合。
     await fireEvent.click(excludedBox);
-    const ok = screen.getByRole("button", {
-      name: "检查并提交所选（0）",
-    });
-    expect(ok).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "选择建议的 1 个文件" }),
+    ).toBeInTheDocument();
     await fireEvent.click(screen.getByLabelText("选择 src/a.ts"));
     const ready = screen.getByRole("button", {
       name: "检查并提交所选（1）",
