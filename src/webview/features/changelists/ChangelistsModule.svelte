@@ -41,7 +41,12 @@
   } from "../../app/listPreferences";
   import { SvelteMap, SvelteSet } from "svelte/reactivity";
   import OperationIntentDialog from "../../components/operation/OperationIntentDialog.svelte";
-  import { fileStatusLabels, sourceLabels } from "../../i18n/terminology";
+  import TaskEmptyState from "../../components/task/TaskEmptyState.svelte";
+  import {
+    fileStatusLabels,
+    sourceLabels,
+    taskStateCopy,
+  } from "../../i18n/terminology";
 
   /*
    * v0.0.10 跨模块列表迁移：变更集与未分组文件复用 v0.0.8 共享底座
@@ -393,12 +398,16 @@
       ? `移出变更集 ${count} 个文件`
       : `应用变更集到 ${count} 个文件`;
     const summary = `${title} · 目标：${preview.name ?? "未命名"}，执行前将重新校验`;
+    // v0.1.5 V015-C1 九要素补齐：scope 即目标变更集；可恢复性说明 changelist 语义
+    // （只调本地归属，不改文件内容）；revision 无权威来源，不虚构。
     return {
       token: preview.token,
       kind: "changelist-apply" as const,
       title,
       summary,
       paths: preview.paths,
+      scopeText: `变更集“${preview.name ?? "未命名"}”`,
+      recoverability: "只调整本地变更集归属，不修改文件内容；不会自动提交。",
       createdAt: new Date().toISOString(),
       canExecute: preview.canExecute,
       issues: preview.issues,
@@ -684,13 +693,35 @@
         onkeydown={list.handleKeydown}
       >
         {#if sections.every((section) => section.matchedCount === 0)}
-          <div class="mini-empty">
-            {allEntries().length === 0
-              ? "当前范围没有可分组的本地修改。"
-              : onlySelected
-                ? "已选文件不在当前筛选中；关闭“只看已选”或调整筛选条件。"
-                : "没有匹配的文件；调整搜索词或清除筛选后重试。"}
-          </div>
+          <!-- v0.1.5 V015-E：手写 mini-empty→TaskEmptyState（三句复用 taskStateCopy）。 -->
+          {#if allEntries().length === 0}
+            <TaskEmptyState
+              icon="codicon-folder"
+              what="当前范围没有可分组的本地修改"
+              whyNormal={taskStateCopy.emptyClean.whyNormal}
+              whatNow={taskStateCopy.emptyClean.whatNow}
+              actions={[]}
+              onAction={() => {}}
+            />
+          {:else if onlySelected}
+            <TaskEmptyState
+              icon="codicon-filter"
+              what={taskStateCopy.filterSelectedHidden.what}
+              whyNormal={taskStateCopy.filterSelectedHidden.whyNormal}
+              whatNow={taskStateCopy.filterSelectedHidden.whatNow}
+              actions={[]}
+              onAction={() => {}}
+            />
+          {:else}
+            <TaskEmptyState
+              icon="codicon-search"
+              what={taskStateCopy.filterNoMatch.what}
+              whyNormal={taskStateCopy.filterNoMatch.whyNormal}
+              whatNow={taskStateCopy.filterNoMatch.whatNow}
+              actions={[]}
+              onAction={() => {}}
+            />
+          {/if}
         {:else}
           {#each sections as section (section.key)}
             <div class="changelist-section-head">
@@ -931,6 +962,7 @@
               ? "确认移出变更集"
               : "确认应用变更集"}
             cancelLabel="取消"
+            recheckLabel="重新检查"
             triggerElement={changelistTriggerEl}
             {onAction}
             {pathDetail}
@@ -939,6 +971,16 @@
               onAction("changelist/execute-apply", { previewToken: token });
             }}
             onCancel={() => (changelistIntentOpen = false)}
+            onRecheck={() => {
+              changelistIntentOpen = false;
+              const current = snapshot.preview;
+              if (!current) return;
+              onAction("changelist/preview-apply", {
+                name: current.name,
+                paths: current.paths,
+                remove: current.remove,
+              });
+            }}
           />
         </div>
       {/if}

@@ -1,11 +1,12 @@
 <script lang="ts">
   import { isImeComposing } from "../../i18n/keyboard";
   import PreviewPathList from "../list/PreviewPathList.svelte";
+  import { isConfirmationChallengeSatisfied } from "../../../operation/operationIntent";
+  import type { OperationIntentView } from "../../../operation/operationIntent";
   import type {
     HostToWebviewMessage,
     WebviewAction,
   } from "@protocol/workbenchProtocol";
-  import type { OperationIntentView } from "../../../operation/operationIntent";
 
   /**
    * v0.0.14 通用操作意向单对话框
@@ -25,6 +26,8 @@
     confirmLabel,
     cancelLabel = "取消",
     triggerElement,
+    recheckLabel,
+    onRecheck,
   }: {
     intent?: OperationIntentView;
     open: boolean;
@@ -39,18 +42,38 @@
     cancelLabel?: string;
     /** 触发按钮，用于焦点返回 */
     triggerElement?: HTMLElement | null;
+    /**
+     * v0.1.5 V015-C1：stale/不可执行态的“重新检查”次级按钮文案。
+     * 仅当同时提供 onRecheck 时渲染；点击后透传页面既定的重新预览动作，
+     * 组件不拼 action 名。缺省时保持原双按钮结构。
+     */
+    recheckLabel?: string;
+    onRecheck?: () => void;
   } = $props();
 
   let dialogEl = $state<HTMLDialogElement | undefined>(undefined);
   let isComposing = $state(false);
   let previousFocus = $state<HTMLElement | null>(null);
   let confirmButtonEl = $state<HTMLButtonElement | null>(null);
+  let challengeInput = $state("");
+  let lastChallengeToken = $state<string | undefined>();
+  const challengeSatisfied = $derived(
+    !intent?.confirmationChallenge ||
+      isConfirmationChallengeSatisfied(
+        intent.confirmationChallenge.expected,
+        challengeInput,
+      ),
+  );
 
-  // 打开时保存触发点，showModal 并把焦点移到确认按钮（首个主操作）
+  // 打开时保存触发点，白名单挑战优先聚焦复述框，否则聚焦确认按钮
   $effect(() => {
     if (open && intent) {
       previousFocus = (triggerElement ??
         (document.activeElement as HTMLElement | null)) as HTMLElement | null;
+      if (intent.token !== lastChallengeToken) {
+        lastChallengeToken = intent.token;
+        challengeInput = "";
+      }
       queueMicrotask(() => {
         if (!dialogEl) return;
         try {
@@ -58,8 +81,15 @@
         } catch {
           dialogEl.setAttribute("open", "");
         }
-        // 焦点锁定起点：优先确认按钮，其次对话框自身
+        // 焦点锁定起点：白名单挑战优先复述输入框，否则优先确认按钮
         queueMicrotask(() => {
+          const challengeField = dialogEl?.querySelector<HTMLElement>(
+            "[data-challenge-input]",
+          );
+          if (challengeField && intent?.confirmationChallenge) {
+            challengeField.focus();
+            return;
+          }
           const first = dialogEl?.querySelector<HTMLButtonElement>(
             "button[data-primary]",
           );
@@ -85,6 +115,7 @@
   function handleConfirm(): void {
     if (!intent) return;
     if (intent.stale || !intent.canExecute) return;
+    if (intent.confirmationChallenge && !challengeSatisfied) return;
     onConfirm(intent.token);
   }
 
@@ -188,6 +219,29 @@
         {/if}
       </div>
 
+      <!-- v0.1.5 V015-C1：九要素补齐行（范围 / 修订版本 / 可恢复性，有则展示，无不虚构） -->
+      {#if intent.scopeText}
+        <div class="notice" role="note">
+          <span class="codicon codicon-repo" aria-hidden="true"></span><span
+            ><strong>范围：</strong>{intent.scopeText}</span
+          >
+        </div>
+      {/if}
+      {#if intent.revision}
+        <div class="notice" role="note">
+          <span class="codicon codicon-history" aria-hidden="true"></span><span
+            ><strong>修订版本：</strong>{intent.revision}</span
+          >
+        </div>
+      {/if}
+      {#if intent.recoverability}
+        <div class="notice notice--warning" role="note">
+          <span class="codicon codicon-info" aria-hidden="true"></span><span
+            ><strong>可恢复性：</strong>{intent.recoverability}</span
+          >
+        </div>
+      {/if}
+
       <!-- 影响清单：可搜索/复制，复用 PreviewPathList 底座 -->
       <PreviewPathList
         paths={intent.paths}
@@ -206,6 +260,36 @@
         </details>
       {/if}
 
+      {#if intent.confirmationChallenge}
+        <div class="notice notice--warning" role="note">
+          <span class="codicon codicon-shield" aria-hidden="true"></span><span
+            ><strong>额外确认（白名单）：</strong>{intent.confirmationChallenge
+              .prompt}</span
+          >
+        </div>
+        <label class="field">
+          <span>复述新的仓库根 URL</span>
+          <input
+            data-challenge-input
+            bind:value={challengeInput}
+            placeholder={intent.confirmationChallenge.placeholder ??
+              "与预览目标完全一致，含协议与路径"}
+            aria-label="复述新的仓库根 URL"
+            autocomplete="off"
+            spellcheck={false}
+            onkeydown={(e) => {
+              if (isComposing && e.key === "Enter") e.preventDefault();
+              if (e.key === "Enter") e.preventDefault();
+            }}
+          />
+        </label>
+        {#if challengeInput.trim().length > 0 && !challengeSatisfied}
+          <div class="notice notice--error" role="alert">
+            {intent.confirmationChallenge.mismatchMessage}
+          </div>
+        {/if}
+      {/if}
+
       <div
         class="operation-intent-dialog__actions"
         role="group"
@@ -219,18 +303,33 @@
             isComposing && e.key === "Enter" && e.preventDefault()}
           >{cancelLabel}</button
         >
+        {#if recheckLabel && onRecheck && (intent.stale || !intent.canExecute)}
+          <button
+            type="button"
+            class="button button--secondary"
+            onclick={() => onRecheck?.()}
+            onkeydown={(e) =>
+              isComposing && e.key === "Enter" && e.preventDefault()}
+            title="关闭当前意向单，按页面既定流程重新生成预览"
+            >{recheckLabel}</button
+          >
+        {/if}
         <button
           bind:this={confirmButtonEl}
           type="button"
           class="button button--primary"
           data-primary="true"
-          disabled={intent.stale || !intent.canExecute}
-          aria-disabled={intent.stale || !intent.canExecute}
+          disabled={intent.stale || !intent.canExecute || !challengeSatisfied}
+          aria-disabled={intent.stale ||
+            !intent.canExecute ||
+            !challengeSatisfied}
           title={intent.stale
             ? "意向单已失效，请重新预览"
             : !intent.canExecute
               ? "存在校验问题，无法执行"
-              : confirmLabel}
+              : !challengeSatisfied
+                ? "复述目标与预览不一致，无法确认"
+                : confirmLabel}
           onkeydown={(e) =>
             isComposing && e.key === "Enter" && e.preventDefault()}
           onclick={handleConfirm}

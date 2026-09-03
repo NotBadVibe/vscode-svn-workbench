@@ -123,9 +123,7 @@ describe("HistoryModule", () => {
 
     await fireEvent.click(screen.getByLabelText("选择修订 12 进行比较"));
     await fireEvent.click(screen.getByLabelText("选择修订 11 进行比较"));
-    await fireEvent.click(
-      screen.getByRole("button", { name: "比较所选修订（2/2）" }),
-    );
+    await fireEvent.click(screen.getByRole("button", { name: "比较所选修订" }));
 
     expect(onAction).toHaveBeenCalledWith("history/compare", {
       revisions: ["12", "11"],
@@ -195,6 +193,96 @@ describe("HistoryModule", () => {
     expect(screen.getByText("1 条路径")).toBeInTheDocument();
   });
 
+  it("V015-B2 骨架：数量/条件/新鲜度收敛进一条 compact 摘要", () => {
+    const staleAt = new Date(Date.now() - 10 * 60_000).toISOString();
+    render(HistoryModule, {
+      snapshot: {
+        ...snapshot,
+        hasMore: true,
+        query: { author: "alice" },
+        freshness: { capturedAt: staleAt, scopeHash: "abc" },
+      },
+      onAction: vi.fn(),
+    });
+    // 过期摘要按骨架约定走 warning→role="alert"（状态不只靠颜色）。
+    const summary = screen.getByRole("alert", { name: "任务状态摘要" });
+    expect(summary).toHaveClass("task-summary--compact");
+    expect(summary).toHaveClass("task-summary--warning");
+    expect(summary).toHaveTextContent(
+      "已加载最近 2 条修订（可能还有更早修订）",
+    );
+    expect(summary).toHaveTextContent(/作者“alice”/);
+    expect(summary).toHaveTextContent(/10 分钟前的状态/);
+    // 条件不再单独成段，避免与摘要重复。
+    expect(
+      document.querySelector(".history-load-conditions__applied"),
+    ).toBeNull();
+  });
+
+  it("V015-B2 骨架：比较栏唯一 primary 与数量口径一致", async () => {
+    const onAction = vi.fn();
+    render(HistoryModule, { snapshot, onAction });
+    const toolbar = screen.getByRole("toolbar", {
+      name: "修订比较操作栏",
+    });
+    expect(toolbar.textContent).toContain("已选择 0/2 条修订");
+    const primary = screen.getByRole("button", { name: "比较所选修订" });
+    expect(primary).toBeDisabled();
+    expect(toolbar.querySelectorAll(".button--primary")).toHaveLength(1);
+    await fireEvent.click(screen.getByLabelText("选择修订 12 进行比较"));
+    await fireEvent.click(screen.getByLabelText("选择修订 11 进行比较"));
+    expect(toolbar.textContent).toContain("已选择 2/2 条修订");
+    await fireEvent.click(primary);
+    expect(onAction).toHaveBeenCalledWith("history/compare", {
+      revisions: ["12", "11"],
+    });
+  });
+
+  it("V015-B2 结果出口：恢复结果用 ResultNextStep 且动作透传", async () => {
+    const onAction = vi.fn();
+    render(HistoryModule, {
+      snapshot: {
+        ...snapshot,
+        feedback: "src/extension.ts 已恢复为 r42 内容；尚未提交。",
+      },
+      onAction,
+    });
+    const resultRegion = screen.getByRole("status", {
+      name: "任务结果与下一步",
+    });
+    expect(resultRegion).toHaveTextContent(/尚未提交/);
+    await fireEvent.click(screen.getByRole("button", { name: "查看本地修改" }));
+    expect(onAction).toHaveBeenCalledWith("open-module", {
+      moduleId: "changes",
+      taskId: "changes/overview",
+    });
+  });
+
+  it("V015-B2 结果出口：非恢复 feedback 保持原 notice", () => {
+    render(HistoryModule, {
+      snapshot: { ...snapshot, feedback: "已读取 1 行逐行责任信息。" },
+      onAction: vi.fn(),
+    });
+    expect(
+      screen.queryByRole("status", { name: "任务结果与下一步" }),
+    ).toBeNull();
+    expect(screen.getByText("已读取 1 行逐行责任信息。")).toBeInTheDocument();
+  });
+
+  it("V015-B2 空态：三句话 + 加载更早透传且不丢比较选择逻辑", async () => {
+    const onAction = vi.fn();
+    render(HistoryModule, {
+      snapshot: { ...snapshot, revisions: [], hasMore: true },
+      onAction,
+    });
+    const emptyState = screen.getByRole("status", { name: "空状态说明" });
+    expect(emptyState).toHaveTextContent("暂无历史");
+    expect(emptyState).toHaveTextContent("当前范围没有可显示的修订记录。");
+    expect(emptyState).toHaveTextContent(/调整加载条件/);
+    await fireEvent.click(screen.getByRole("button", { name: "加载更早修订" }));
+    expect(onAction).toHaveBeenCalledWith("history/load-more", {});
+  });
+
   it("变更路径行提供复制与路径详情入口", async () => {
     const onAction = vi.fn();
     render(HistoryModule, { snapshot, onAction });
@@ -212,5 +300,151 @@ describe("HistoryModule", () => {
     expect(onAction).toHaveBeenCalledWith("file/path-detail", {
       relativePath: "/trunk/a.ts",
     });
+  });
+
+  // v0.1.5 V015-C1：历史恢复走通用意向单（九要素 + 确认携带 token 执行）
+  it("恢复预览打开意向单：标题/数量/修订/可恢复性齐全，确认透传 token", async () => {
+    const onAction = vi.fn();
+    render(HistoryModule, {
+      snapshot: {
+        ...snapshot,
+        restorePreview: {
+          token: "tok-restore",
+          revision: "12",
+          relativePath: "src/extension.ts",
+          command: 'svn cat -r 12 "src/extension.ts" > <working-file>',
+          canExecute: true,
+          issues: [],
+        },
+      },
+      onAction,
+    });
+    // 新 token 到达即自动打开意向单
+    const dialog = await screen.findByRole("dialog", {
+      name: "历史恢复 1 个文件",
+    });
+    expect(dialog).toBeInTheDocument();
+    expect(screen.getByText(/将用 r12 覆盖工作副本文件/)).toBeInTheDocument();
+    // 范围行与候选清单均含目标路径（同一快照来源的两处展示）。
+    expect(screen.getAllByText("src/extension.ts").length).toBe(2);
+    const scopeLabel = screen.getByText("范围：");
+    expect(scopeLabel.parentElement).toHaveTextContent("src/extension.ts");
+    const revisionLabel = screen.getByText("修订版本：");
+    expect(revisionLabel.parentElement).toHaveTextContent("r12");
+    expect(screen.getByText(/原内容不可自动恢复/)).toBeInTheDocument();
+    expect(screen.getByText(/svn cat -r 12/)).toBeInTheDocument();
+    const confirm = screen.getByRole("button", {
+      name: "确认覆盖 1 个文件",
+    });
+    expect(confirm).not.toBeDisabled();
+    await fireEvent.click(confirm);
+    expect(onAction).toHaveBeenCalledWith("history/execute-restore", {
+      previewToken: "tok-restore",
+    });
+  });
+
+  // v0.1.5 V015-C1：恢复预览不可执行时确认禁用 + “重新检查”透传重新预览
+  it("恢复预览有阻止项时确认禁用，重新检查透传 history/preview-restore", async () => {
+    const onAction = vi.fn();
+    render(HistoryModule, {
+      snapshot: {
+        ...snapshot,
+        restorePreview: {
+          token: "tok-blocked",
+          revision: "12",
+          relativePath: "src/extension.ts",
+          command: 'svn cat -r 12 "src/extension.ts" > <working-file>',
+          canExecute: false,
+          issues: ["工作副本文件已变化，请重新检查后恢复。"],
+        },
+      },
+      onAction,
+    });
+    await screen.findByRole("dialog", { name: "历史恢复 1 个文件" });
+    const confirm = screen.getByRole("button", {
+      name: "确认覆盖 1 个文件",
+    });
+    expect(confirm).toBeDisabled();
+    expect(
+      screen.getByText("工作副本文件已变化，请重新检查后恢复。"),
+    ).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "重新检查" }));
+    expect(onAction).toHaveBeenCalledWith("history/preview-restore", {
+      revision: "12",
+    });
+    // 重新检查不直接执行
+    expect(onAction).not.toHaveBeenCalledWith(
+      "history/execute-restore",
+      expect.anything(),
+    );
+  });
+
+  // v0.1.5 V015-D2：加载更多携带比较选择；快照增长后选中修订、比较选择与滚动容器不丢。
+  it("加载更多携带比较选择，快照增长后选中与滚动位置不丢", async () => {
+    const onAction = vi.fn();
+    const { rerender } = render(HistoryModule, {
+      snapshot: { ...snapshot, hasMore: true },
+      onAction,
+    });
+    const listEl = document.querySelector(".revision-list");
+    expect(listEl).not.toBeNull();
+    await fireEvent.click(screen.getByLabelText("选择修订 12 进行比较"));
+    await fireEvent.click(screen.getByLabelText("选择修订 11 进行比较"));
+    await fireEvent.click(
+      screen.getByRole("button", { name: "加载更早修订（已加载 2）" }),
+    );
+    // 比较选择随只读请求一并发送，Host 回显后保留。
+    expect(onAction).toHaveBeenCalledWith("history/load-more", {
+      compareRevisions: ["12", "11"],
+    });
+    // Host 回显：新增更早修订，选中修订与比较选择保持，滚动容器不重建。
+    await rerender({
+      snapshot: {
+        ...snapshot,
+        hasMore: false,
+        revisions: [
+          ...snapshot.revisions,
+          {
+            revision: "10",
+            author: "cara",
+            date: "2026-07-28T08:00:00Z",
+            message: "更早的修订",
+            changedPaths: [],
+          },
+        ],
+        selectedRevision: "12",
+        compareRevisions: ["12", "11"],
+      },
+      onAction,
+    });
+    expect(
+      (screen.getByLabelText("选择修订 12 进行比较") as HTMLInputElement)
+        .checked,
+    ).toBe(true);
+    expect(
+      (screen.getByLabelText("选择修订 11 进行比较") as HTMLInputElement)
+        .checked,
+    ).toBe(true);
+    expect(document.querySelector(".revision-row.active")).toHaveTextContent(
+      "r12",
+    );
+    expect(document.querySelector(".revision-list")).toBe(listEl);
+  });
+
+  // v0.1.5 V015-D2：本地筛选与仓库查询的语义边界文案。
+  it("本地筛选与仓库查询的范围分别说明", async () => {
+    render(HistoryModule, {
+      snapshot: { ...snapshot, hasMore: true },
+      onAction: vi.fn(),
+    });
+    // 搜索框声明只作用于已加载结果。
+    expect(screen.getByPlaceholderText(/筛选已加载结果/)).toBeInTheDocument();
+    // 搜索框与条件表单之间的边界说明：前者不发请求，后者发起只读请求。
+    expect(
+      screen.getByText(/仅在已加载结果内筛选，不会向仓库请求/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/条件只限制本次只读历史请求，不改变当前范围/),
+    ).toBeInTheDocument();
   });
 });

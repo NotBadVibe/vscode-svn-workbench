@@ -24,6 +24,8 @@
     statusExplanations,
   } from "../../i18n/terminology";
   import StatusExplanation from "../../components/svn/StatusExplanation.svelte";
+  import TaskEmptyState from "../../components/task/TaskEmptyState.svelte";
+  import { taskStateCopy } from "../../i18n/terminology";
   import {
     diffDraftAgainstSuggestion,
     insertSuggestionBlankFields,
@@ -617,12 +619,27 @@
     const title = `提交 ${count} 个文件`;
     const summary = `提交 ${count} 个文件 · 执行前将重新校验范围、文件状态与远端更新`;
     const stale = selectionOutOfSync;
+    // v0.1.5 V015-C1 九要素补齐：revision 取预览远端修订；scope 摘要取已选文件的
+    // 项目/仓库分组（与首屏摘要条同一快照来源，不虚构）；可恢复性复用活动记录固定文案。
+    const scopeNames: string[] = [];
+    for (const selectedPath of preview.selectedPaths) {
+      const file = snapshot.files.find(
+        (candidate) => candidate.relativePath === selectedPath,
+      );
+      const name = file?.projectName ?? file?.repositoryName ?? "";
+      if (name && !scopeNames.includes(name)) scopeNames.push(name);
+    }
     return {
       token: preview.token,
       kind: "commit" as const,
       title,
       summary,
       paths: preview.selectedPaths,
+      scopeText: scopeNames.length > 0 ? scopeNames.join("、") : undefined,
+      revision: preview.remoteRevision
+        ? `r${preview.remoteRevision}`
+        : undefined,
+      recoverability: "此操作不能在工作台中一键撤销。",
       createdAt: preview.createdAt,
       canExecute: preview.canExecute && !stale,
       issues: preview.issues,
@@ -710,6 +727,24 @@
   $effect(() => {
     if (snapshot.ai) aiExpanded = true;
   });
+
+  /* v0.1.5 V015-E：提交空态动作（无候选时去本地修改确认范围 / 检查远端更新）。 */
+  function handlePreviewEmptyAction(action: string): void {
+    if (action === "commit-goto-changes") {
+      onAction("open-module", {
+        moduleId: "changes",
+        taskId: "changes/overview",
+      });
+      return;
+    }
+    if (action === "commit-check-update") {
+      onAction("open-module", {
+        moduleId: "update",
+        taskId: "update/preview",
+      });
+      return;
+    }
+  }
 </script>
 
 <section class="commit-layout commit-layout--compact">
@@ -1777,12 +1812,37 @@
           <span class="codicon codicon-shield" aria-hidden="true"></span>
           <p>执行前将重新校验范围、文件状态、团队规范和远端更新。</p>
           {#if selected.size === 0}
-            <!-- v0.0.17 批次 F（C-02）：空态回答发生了什么/是否正常/能做什么。 -->
-            <p class="preview-empty__hint" role="note">
-              {snapshot.files.length === 0
-                ? "当前范围没有可提交的候选文件——如果工作副本很干净，这是正常状态。可回到“本地修改”确认范围，或检查远端更新。"
-                : "先选择至少 1 个可提交文件；也可以点击“选择推荐项”按本地规则补全选择。"}
-            </p>
+            <!-- v0.1.5 V015-E：预览空态→TaskEmptyState（三句复用 taskStateCopy，第三句带明确下一步）。 -->
+            {#if snapshot.files.length === 0}
+              <TaskEmptyState
+                icon="codicon-shield"
+                what={taskStateCopy.emptyNoCandidate.what}
+                whyNormal={taskStateCopy.emptyNoCandidate.whyNormal}
+                whatNow={taskStateCopy.emptyNoCandidate.whatNow}
+                actions={[
+                  {
+                    label: "回到本地修改",
+                    action: "commit-goto-changes",
+                    kind: "secondary",
+                  },
+                  {
+                    label: "检查远端更新",
+                    action: "commit-check-update",
+                    kind: "secondary",
+                  },
+                ]}
+                onAction={handlePreviewEmptyAction}
+              />
+            {:else}
+              <TaskEmptyState
+                icon="codicon-shield"
+                what={taskStateCopy.emptyUnselected.what}
+                whyNormal={taskStateCopy.emptyUnselected.whyNormal}
+                whatNow={taskStateCopy.emptyUnselected.whatNow}
+                actions={[]}
+                onAction={handlePreviewEmptyAction}
+              />
+            {/if}
           {/if}
           <button
             class="button button--primary"
@@ -1802,6 +1862,7 @@
     open={intentOpen && Boolean(commitIntent)}
     confirmLabel={`确认提交（${commitIntent?.paths.length ?? 0}）`}
     cancelLabel="取消"
+    recheckLabel="重新检查"
     triggerElement={intentTriggerEl}
     {onAction}
     {pathDetail}
@@ -1810,6 +1871,13 @@
       onAction("commit/execute", { previewToken: token });
     }}
     onCancel={() => (intentOpen = false)}
+    onRecheck={() => {
+      intentOpen = false;
+      onAction("commit/preview", {
+        selectedPaths: selectedPaths(),
+        message,
+      });
+    }}
   />
 </section>
 

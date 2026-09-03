@@ -52,16 +52,32 @@ test("V014-F1：日常主路径 Changes→Diff→返回→Commit→意向单无�
     .locator("diffs-container")
     .locator('[contenteditable="true"]')
     .first();
+  // 编辑器挂载竞态双门：先确认节点已挂载且可编辑，再点击聚焦。
+  await expect(editable).toBeAttached();
+  await expect(editable).toBeEditable();
   await editable.click();
   await expect(editable).toBeFocused();
   // 编辑会话完全建立后再输入（目标切换后 Editor 异步挂载，逐字输入更可靠）。
   await expect(page.getByText("编辑只作用于工作副本")).toBeVisible();
+  const saveButton = page.getByRole("button", { name: "保存到工作副本" });
+  await expect(saveButton).toBeVisible();
   await editable.pressSequentially("// daily-path-edit", { delay: 10 });
   await expect(page.getByText(/有未保存的修改/)).toBeVisible();
-  const saveButton = page.getByRole("button", { name: "保存到工作副本" });
+  // 保存按钮 enabled 为执行保存前的输入完成门。
   await expect(saveButton).toBeEnabled();
   await page.keyboard.press("Control+s");
-  await expect(saveButton).toBeDisabled();
+  // 保存完成以轮询收敛异步落盘与快照刷新：按钮回到禁用或脏标消失。
+  await expect
+    .poll(
+      async () => {
+        const disabled = await saveButton.isDisabled().catch(() => true);
+        const dirtyCount = await page.getByText(/有未保存的修改/).count();
+        return disabled || dirtyCount === 0;
+      },
+      { timeout: 10000 },
+    )
+    .toBe(true);
+  await expect(page.getByText(/有未保存的修改/)).toHaveCount(0);
   // 保存后先回到审阅态（退出编辑），再使用返回入口回到本地修改。
   await page.getByRole("button", { name: "回到审阅" }).click();
   await expect(page.getByText("正在编辑工作副本")).toHaveCount(0);

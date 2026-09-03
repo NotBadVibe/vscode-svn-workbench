@@ -276,12 +276,17 @@
     // V013-D：标题保持，不加前置复选框，一次确认；summary 已补充状态与不可逆影响
 
     const stale = false;
+    // v0.1.5 V015-C1 九要素补齐：单冲突文件即范围（与候选清单同一来源）；
+    // 可恢复性复用 Host 解决预览摘要中的不可逆文案；revision 无权威来源，不虚构。
     return {
       token: preview.token,
       kind: "resolve" as const,
       title,
       summary,
       paths: [snapshot.selected.relativePath],
+      scopeText: snapshot.selected.relativePath,
+      recoverability:
+        "执行 svn resolve --accept working 将清除冲突标记，确认后不可自动撤销。",
       createdAt: new Date().toISOString(),
       canExecute: preview.canResolve && !stale,
       issues: preview.issues,
@@ -2454,6 +2459,7 @@
     open={resolveIntentOpen && Boolean(resolveIntent)}
     confirmLabel="确认标记解决"
     cancelLabel="取消"
+    recheckLabel="重新检查"
     triggerElement={resolveTriggerEl}
     {onAction}
     {pathDetail}
@@ -2462,6 +2468,12 @@
       onAction("conflict/resolve", { previewToken: token });
     }}
     onCancel={() => (resolveIntentOpen = false)}
+    onRecheck={() => {
+      resolveIntentOpen = false;
+      onAction("conflict/preview-resolve", {
+        relativePath: snapshot.selected?.relativePath,
+      });
+    }}
   />
   {#if conflictSwitchRequest}
     <dialog

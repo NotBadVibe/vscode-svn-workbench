@@ -3,7 +3,12 @@
     WorkbenchScopeView,
     WorkbenchTaskId,
   } from "@protocol/workbenchProtocol";
-  import { taskLabels } from "../../i18n/terminology";
+  import {
+    isScopeFinalCandidateTask,
+    scopeFinalCandidateLabel,
+    scopeRangeCountLabel,
+    taskLabels,
+  } from "../../i18n/terminology";
 
   let {
     scope,
@@ -22,8 +27,10 @@
 
   /*
    * v0.0.18 批次 E（U-07 收尾）：范围栏快捷事实——候选数、工作副本
-   * revision、入口来源；范围清单可展开逐条复制，长路径键盘可达
-   * （不依赖悬停 title）。
+   * revision、入口来源；范围清单可展开逐条复制，长路径键盘可达。
+   * v0.1.5 V015-D1：数量口径按任务区分——写操作（Commit/Update）显示
+   * 「最终候选数」，普通浏览显示「范围数」，两者文案不混用；收起态长路径
+   * 截断时以 title 提供悬停 Tooltip（设计基线 §2.3），完整值经展开清单复制。
    */
   const sourceLabels: Record<WorkbenchScopeView["source"], string> = {
     explorer: "资源管理器右键",
@@ -42,6 +49,15 @@
         ? scope.roots[0].relativePath
         : `${scope.roots.length} 个操作范围`
       : "",
+  );
+
+  // v0.1.5 V015-D1：写操作显示最终候选数，普通浏览显示范围数。
+  const scopeCountLabel = $derived(
+    scope?.candidateCount === undefined
+      ? undefined
+      : isScopeFinalCandidateTask(taskId)
+        ? scopeFinalCandidateLabel(scope.candidateCount)
+        : scopeRangeCountLabel(scope.candidateCount),
   );
 
   function toggleRoots(event: Event): void {
@@ -87,10 +103,10 @@
   <div class="scope-actions">
     {#if scope}
       <div class="scope-facts" aria-label="范围快捷事实">
-        {#if scope.candidateCount !== undefined}
+        {#if scopeCountLabel}
           <span class="scope-fact"
             ><span class="codicon codicon-files" aria-hidden="true"></span>
-            {scope.candidateCount} 个候选</span
+            {scopeCountLabel}</span
           >
         {/if}
         {#if scope.workingCopyRevision}
@@ -108,6 +124,7 @@
         class="scope-chip"
         aria-expanded={rootsExpanded}
         aria-controls="scope-roots-list"
+        title={rootsSummary}
         onclick={toggleRoots}
         onkeydown={handleRootsKeydown}
       >

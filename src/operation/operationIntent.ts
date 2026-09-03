@@ -21,7 +21,8 @@ export type OperationIntentKind =
   | "cleanup"
   | "property"
   | "changelist-apply"
-  | "file-operation";
+  | "file-operation"
+  | "history-restore";
 
 export const OPERATION_INTENT_KINDS: readonly OperationIntentKind[] = [
   "commit",
@@ -38,6 +39,7 @@ export const OPERATION_INTENT_KINDS: readonly OperationIntentKind[] = [
   "property",
   "changelist-apply",
   "file-operation",
+  "history-restore",
 ] as const;
 
 export function isOperationIntentKind(
@@ -67,6 +69,7 @@ export const OPERATION_INTENT_ACTION_LABELS: Record<
   property: "修改属性",
   "changelist-apply": "应用变更集",
   "file-operation": "文件操作",
+  "history-restore": "历史恢复",
 };
 
 /**
@@ -85,12 +88,31 @@ export function operationIntentTitle(
   if (kind === "cleanup") return `清理工作副本`;
   if (kind === "changelist-apply") return `应用变更集 ${count} 个文件`;
   if (kind === "file-operation") return `${action} ${count} 个文件`;
+  if (kind === "history-restore") return `历史恢复 ${count} 个文件`;
   if (kind === "branch") return `创建分支`;
   if (kind === "tag") return `创建标签`;
   if (kind === "relocate") return `重定位`;
   if (kind === "merge") return `合并 ${count} 个路径`;
   // 通用回退：动作 + 数量
   return `${action} ${count} ${count === 1 ? "个文件" : "个文件"}`;
+}
+
+/**
+ * v0.1.5 V015-C2：极高风险白名单确认挑战（仅 Relocate 使用）。
+ * - Relocate 一旦绑定错误地址即失去恢复出口，且 SVN 不提供安全一键恢复，
+ *   因此在通用一次确认之外要求用户复述新仓库根 URL。
+ * - 这是展示层附加守卫，最终防线仍是 Host 的 token/scopeHash/candidateHash
+ *   执行前复验；挑战不改变 stale/重新检查契约。
+ */
+export interface OperationIntentConfirmationChallenge {
+  /** 输入框前的中文说明（含期望目标的用途，不直接给出答案的复制按钮）。 */
+  prompt: string;
+  /** 与预览目标精确比对的期望值（Host 预览 details 的“新根”行）。 */
+  expected: string;
+  /** 不一致时展示的中文错误（说明发生了什么与恢复动作）。 */
+  mismatchMessage: string;
+  /** 输入框占位文案（可选）。 */
+  placeholder?: string;
 }
 
 /**
@@ -112,8 +134,12 @@ export interface OperationIntentView {
   scopeHash?: string;
   /** 候选集合 hash（hashCandidateState 等），候选变化后失效。 */
   candidateHash?: string;
-  /** 工作副本 revision，变化后失效（可选）。 */
+  /** 工作副本 revision，变化后失效（可选）；意向单展示“修订版本”行。 */
   revision?: string;
+  /** 人类可读的项目/仓库 + scope 摘要（各调用方按领域填充，缺省不行，不虚构）。 */
+  scopeText?: string;
+  /** 可恢复性说明（各调用方按领域填充，复用各领域现有文案，缺省不行）。 */
+  recoverability?: string;
   repositoryUuid?: string;
   createdAt: string;
   canExecute: boolean;
@@ -121,6 +147,11 @@ export interface OperationIntentView {
   commands?: string[];
   /** Host 已判定为过期的只读意向单（仍可查看/复制，不可确认）。 */
   stale?: boolean;
+  /**
+   * v0.1.5 V015-C2：可选确认挑战（白名单，仅 relocate 填充）。
+   * 缺省时保持原一次确认；有值时确认按钮需先通过挑战。
+   */
+  confirmationChallenge?: OperationIntentConfirmationChallenge;
 }
 
 export interface OperationIntentBinding {
@@ -197,4 +228,56 @@ export function validateOperationIntentForExecute(
     };
   }
   return { ok: true };
+}
+
+/**
+ * v0.1.5 V015-C3b 应修 6：确认挑战目标归一化（去首尾空白 + 去尾斜杠，
+ * 仅 scheme + host 小写，path 保持原样）。
+ * - 去尾斜杠：`https://host/repo/` 与 `https://host/repo` 视为同一目标；
+ * - scheme/host 小写：避免因协议/主机大小写拼写差异误拒；
+ * - path 保持原样：SVN 路径大小写敏感，大小写不一致必须拒绝；
+ *   最终目标仍以 Host 预览的原始值为准执行。
+ */
+export function normalizeConfirmationTarget(value: string): string {
+  const trimmed = value.trim().replace(/\/+$/, "");
+  const schemeEnd = trimmed.indexOf("://");
+  // 无 scheme 时不折叠大小写（fail-closed，宁可误拒一次复述）。
+  if (schemeEnd < 0) return trimmed;
+  const scheme = trimmed.slice(0, schemeEnd).toLowerCase();
+  const rest = trimmed.slice(schemeEnd + 3);
+  const slash = rest.indexOf("/");
+  // 只有主机没有路径：主机整体小写。
+  if (slash < 0) return `${scheme}://${rest.toLowerCase()}`;
+  const host = rest.slice(0, slash).toLowerCase();
+  // 路径保持原样（含查询串，不做大小写折叠）。
+  const pathPart = rest.slice(slash);
+  return `${scheme}://${host}${pathPart}`;
+}
+
+/** 确认挑战是否通过（归一化后精确比对，不一致禁止确认）。 */
+export function isConfirmationChallengeSatisfied(
+  expected: string,
+  actual: string,
+): boolean {
+  if (!expected.trim() || !actual.trim()) return false;
+  return (
+    normalizeConfirmationTarget(expected) ===
+    normalizeConfirmationTarget(actual)
+  );
+}
+
+/** 从 Relocate 预览 details 提取“新根：<url>”行的期望目标（缺省返回 undefined，不虚构）。 */
+export function extractRelocateTarget(
+  details: readonly string[] | undefined,
+): string | undefined {
+  if (!details) return undefined;
+  for (const line of details) {
+    const prefix = "新根：";
+    const index = line.indexOf(prefix);
+    if (index >= 0) {
+      const target = line.slice(index + prefix.length).trim();
+      if (target && target !== "未填写") return target;
+    }
+  }
+  return undefined;
 }

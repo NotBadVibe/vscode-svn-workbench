@@ -25,6 +25,8 @@
   import ResultCount from "../../components/list/ResultCount.svelte";
   import PreviewPathList from "../../components/list/PreviewPathList.svelte";
   import OperationIntentDialog from "../../components/operation/OperationIntentDialog.svelte";
+  import TaskEmptyState from "../../components/task/TaskEmptyState.svelte";
+  import { taskStateCopy } from "../../i18n/terminology";
   import { useFileList } from "../../components/list/useFileList.svelte";
   import {
     computeTriState,
@@ -116,7 +118,6 @@
   let commitDraft = $state("");
   let synchronizedCommitDraft = $state("");
   let draftExpanded = $state(false);
-  let destructiveConfirmed = $state(false);
   let operationPreviewToken = $state<string | undefined>();
   // v0.0.14 批次 D：文件操作意向单（还原/删除等）
   let fileOpIntentOpen = $state(false);
@@ -129,17 +130,29 @@
     const title = `${actionLabel} ${count} 个文件`;
     const summary = `${title} · 执行前将重新校验范围与候选状态`;
     const stale = previewSelectionOutOfSync;
+    // v0.1.5 V015-C1 九要素补齐：可恢复性直传 Host 预览权威文案
+    // （fileOperationRecoverability）；scope 摘要取候选文件的项目/仓库分组
+    // （快照同一来源，不虚构）；revision 无权威来源，不虚构。
+    const scopeNames: string[] = [];
+    for (const previewPath of preview.paths) {
+      const file = snapshot.files.find(
+        (candidate) => candidate.relativePath === previewPath,
+      );
+      const name = file?.projectName ?? file?.repositoryName ?? "";
+      if (name && !scopeNames.includes(name)) scopeNames.push(name);
+    }
     return {
       token: preview.token,
       kind: "file-operation" as const,
       title,
       summary,
       paths: preview.paths,
+      scopeText: scopeNames.length > 0 ? scopeNames.join("、") : undefined,
+      recoverability: preview.recoverability,
       createdAt: new Date().toISOString(),
-      canExecute:
-        preview.canExecute &&
-        !stale &&
-        (!preview.destructive || destructiveConfirmed),
+      // v0.1.5 V015-C2：一次确认——前置“我已核对”复选框已移除，
+      // 可恢复性与清单由意向单承担；Host 复验链不变。
+      canExecute: preview.canExecute && !stale,
       issues: preview.issues,
       commands: [preview.command],
       stale,
@@ -475,7 +488,6 @@
     const token = snapshot.operationPreview?.token;
     if (token !== operationPreviewToken) {
       operationPreviewToken = token;
-      destructiveConfirmed = false;
     }
   });
 
@@ -630,6 +642,27 @@
     unlock: "解锁文件",
     ignore: "添加到忽略列表",
   };
+
+  /*
+   * v0.1.5 V015-E：空态动作纯透传（只映射页面已知标识，不拼接协议名）。
+   * 文案三句复用 taskStateCopy，动作保持原“检查远端更新 / 查看历史”。
+   */
+  function handleEmptyAction(action: string): void {
+    if (action === "changes-check-update") {
+      onAction("open-module", {
+        moduleId: "update",
+        taskId: "update/preview",
+      });
+      return;
+    }
+    if (action === "changes-view-history") {
+      onAction("open-module", {
+        moduleId: "history",
+        taskId: "history/revisions",
+      });
+      return;
+    }
+  }
 
   /*
    * v0.0.17 批次 E：预设保存/应用/删除。预设经会话状态总线存取
@@ -931,46 +964,47 @@
       </div>
     </div>
     {#if filteredFiles.length === 0}
-      <div class="empty-state">
-        <span class="codicon codicon-check-all" aria-hidden="true"></span>
-        <strong
-          >{snapshot.files.length === 0
-            ? "工作副本很干净"
-            : onlySelected
-              ? "已选文件不在当前筛选中"
-              : "没有匹配的文件"}</strong
-        >
-        <p>
-          {snapshot.files.length === 0
-            ? "当前范围没有本地修改，这是正常状态。"
-            : onlySelected
-              ? "已选文件被当前筛选隐藏；关闭“只看已选”或调整筛选即可看到。"
-              : "当前筛选没有匹配文件；调整搜索词、状态或类型筛选即可。"}
-        </p>
-        {#if snapshot.files.length === 0}
-          <!-- V014-B：干净态“检查远端更新”升为唯一 primary，查看历史保持次级。 -->
-          <div class="toolbar-actions">
-            <button
-              class="button button--primary"
-              onclick={() =>
-                onAction("open-module", {
-                  moduleId: "update",
-                  taskId: "update/preview",
-                })}
-              ><span class="codicon codicon-sync" aria-hidden="true"
-              ></span>检查远端更新</button
-            >
-            <button
-              class="button button--secondary"
-              onclick={() =>
-                onAction("open-module", {
-                  moduleId: "history",
-                  taskId: "history/revisions",
-                })}>查看历史</button
-            >
-          </div>
-        {/if}
-      </div>
+      <!-- v0.1.5 V015-E：手写空态→TaskEmptyState（三句复用 taskStateCopy，动作与语义不变）。 -->
+      {#if snapshot.files.length === 0}
+        <TaskEmptyState
+          icon="codicon-check-all"
+          what={taskStateCopy.emptyClean.what}
+          whyNormal={taskStateCopy.emptyClean.whyNormal}
+          whatNow={taskStateCopy.emptyClean.whatNow}
+          actions={[
+            {
+              label: "检查远端更新",
+              action: "changes-check-update",
+              kind: "primary",
+              icon: "codicon-sync",
+            },
+            {
+              label: "查看历史",
+              action: "changes-view-history",
+              kind: "secondary",
+            },
+          ]}
+          onAction={handleEmptyAction}
+        />
+      {:else if onlySelected}
+        <TaskEmptyState
+          icon="codicon-filter"
+          what={taskStateCopy.filterSelectedHidden.what}
+          whyNormal={taskStateCopy.filterSelectedHidden.whyNormal}
+          whatNow={taskStateCopy.filterSelectedHidden.whatNow}
+          actions={[]}
+          onAction={handleEmptyAction}
+        />
+      {:else}
+        <TaskEmptyState
+          icon="codicon-search"
+          what={taskStateCopy.filterNoMatch.what}
+          whyNormal={taskStateCopy.filterNoMatch.whyNormal}
+          whatNow={taskStateCopy.filterNoMatch.whatNow}
+          actions={[]}
+          onAction={handleEmptyAction}
+        />
+      {/if}
     {:else}
       <ContextMenu.Root
         open={rowMenuOpen}
@@ -1451,17 +1485,17 @@
           选择已变化，旧预览已失效；请重新预览后再执行。
         </div>
       {/if}
-      {#if snapshot.operationPreview.destructive}<label
-          class="destructive-confirm"
-          ><input type="checkbox" bind:checked={destructiveConfirmed} /><span
-            >我已逐项核对文件清单，并理解未提交内容可能无法从 SVN 恢复。</span
-          ></label
-        >{/if}
+      {#if snapshot.operationPreview.destructive}
+        <div class="notice notice--warning" role="note">
+          <span class="codicon codicon-warning" aria-hidden="true"></span><span
+            >还原/删除将丢弃未提交内容，清单与可恢复性以弹出的意向单为准，确认前请逐项核对。</span
+          >
+        </div>
+      {/if}
       <button
         class="button button--primary commit-button"
         disabled={!snapshot.operationPreview.canExecute ||
-          previewSelectionOutOfSync ||
-          (snapshot.operationPreview.destructive && !destructiveConfirmed)}
+          previewSelectionOutOfSync}
         onclick={(event) => {
           fileOpTriggerEl = event.currentTarget as HTMLElement;
           fileOpIntentOpen = true;
@@ -1472,6 +1506,7 @@
         open={fileOpIntentOpen && Boolean(fileOpIntent)}
         confirmLabel={`确认${snapshot.operationPreview ? operationLabels[snapshot.operationPreview.operation] : ""}（${fileOpIntent?.paths.length ?? 0}）`}
         cancelLabel="取消"
+        recheckLabel="重新检查"
         triggerElement={fileOpTriggerEl}
         {onAction}
         {pathDetail}
@@ -1480,6 +1515,16 @@
           onAction("changes/execute-operation", { previewToken: token });
         }}
         onCancel={() => (fileOpIntentOpen = false)}
+        onRecheck={() => {
+          fileOpIntentOpen = false;
+          const current = snapshot.operationPreview;
+          if (!current) return;
+          onAction("changes/preview-operation", {
+            operation: current.operation,
+            paths: current.paths,
+            ignoreMode: current.ignoreMode,
+          });
+        }}
       />
     </div>
   {/if}

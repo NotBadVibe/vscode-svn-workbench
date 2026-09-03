@@ -11,8 +11,18 @@
   import ResultCount from "../../components/list/ResultCount.svelte";
   import FilePathDetail from "../../components/svn/FilePathDetail.svelte";
   import { useFileList } from "../../components/list/useFileList.svelte";
+  import PrimaryActionBar from "../../components/task/PrimaryActionBar.svelte";
+  import ResultNextStep from "../../components/task/ResultNextStep.svelte";
+  import TaskEmptyState from "../../components/task/TaskEmptyState.svelte";
+  import TaskSummary from "../../components/task/TaskSummary.svelte";
+  import OperationIntentDialog from "../../components/operation/OperationIntentDialog.svelte";
+  import type { OperationIntentView } from "../../../operation/operationIntent";
   import { naturalCompare } from "../../../selection/selectionSort";
   import { formatZhDateTime } from "../../i18n/formatters";
+  import {
+    historyCompareCount,
+    historyLoadedStatus,
+  } from "../../i18n/terminology";
 
   /*
    * v0.0.10 跨模块列表迁移：修订列表复用共享搜索（清除、结果数量）、
@@ -173,8 +183,16 @@
     loadQuery = { ...loadQuery, [key]: value };
   }
 
+  // v0.1.5 V015-D2：加载更多携带本地比较选择，Host 回显后快照刷新不丢选中；
+  // 为空时不发送该键，保持既有只读请求契约不变。
   function requestMoreHistory(): void {
-    onAction("history/load-more", { ...loadQuery });
+    const selection = [...compare];
+    onAction(
+      "history/load-more",
+      selection.length > 0
+        ? { ...loadQuery, compareRevisions: selection }
+        : { ...loadQuery },
+    );
   }
 
   function describeHistoryQuery(query: HistoryQueryView | undefined): string {
@@ -197,6 +215,90 @@
   const appliedQueryDescription = $derived(
     describeHistoryQuery(snapshot.query),
   );
+
+  // v0.1.5 V015-B2：已加载数量 + 只读条件 + 快照新鲜度收敛进一条 TaskSummary compact（计算逻辑不动）。
+  const loadedStatus = $derived(
+    historyLoadedStatus(snapshot.revisions.length, snapshot.hasMore),
+  );
+  const loadedReason = $derived(
+    appliedQueryDescription
+      ? `当前按${appliedQueryDescription}加载；再次加载会保留这些条件。`
+      : undefined,
+  );
+  const loadedNextStep = $derived(
+    staleness.stale
+      ? `此结果基于 ${staleness.minutesAgo} 分钟前的状态，工作副本可能已变化，建议刷新`
+      : undefined,
+  );
+
+  /**
+   * v0.1.5 V015-B2：恢复执行结果（Host 模板“已恢复为 rN 内容；尚未提交。”）
+   * 才走 ResultNextStep；blame / 加载更早等其他 feedback 保持原 notice。
+   */
+  const isRestoreFeedback = $derived(
+    Boolean(
+      snapshot.feedback &&
+      snapshot.feedback.includes("已恢复为") &&
+      snapshot.feedback.includes("尚未提交"),
+    ),
+  );
+
+  /*
+   * v0.1.5 V015-C1：历史恢复接入通用意向单（唯一未走意向单的写操作）。
+   * kind 扩展为 history-restore（单文件覆盖恢复与 revert 语义不同，不复用
+   * file-operation）；Host 侧 token + contentHash 复验链不动。
+   * 新 token 到达即打开对话框；取消后同 token 不再自动重开，重新预览
+   * 产生新 token 才会再次打开。
+   */
+  let restoreIntentOpen = $state(false);
+  let restoreTriggerEl = $state<HTMLElement | null>(null);
+  let seenRestoreToken = $state<string | undefined>(undefined);
+  const restoreIntent = $derived.by((): OperationIntentView | undefined => {
+    const preview = snapshot.restorePreview;
+    if (!preview) return undefined;
+    const title = `历史恢复 1 个文件`;
+    return {
+      token: preview.token,
+      kind: "history-restore" as const,
+      title,
+      summary: `${title} · 将用 r${preview.revision} 覆盖工作副本文件，执行前将重新校验`,
+      paths: [preview.relativePath],
+      scopeText: preview.relativePath,
+      revision: `r${preview.revision}`,
+      recoverability:
+        "将用所选修订覆盖工作副本文件，但不会自动提交；原内容不可自动恢复。",
+      createdAt: new Date().toISOString(),
+      canExecute: preview.canExecute,
+      issues: preview.issues,
+      commands: [preview.command],
+      stale: false,
+    };
+  });
+  $effect(() => {
+    const token = snapshot.restorePreview?.token;
+    if (token && token !== seenRestoreToken) {
+      seenRestoreToken = token;
+      restoreIntentOpen = true;
+    }
+    if (!token) {
+      seenRestoreToken = undefined;
+      restoreIntentOpen = false;
+    }
+  });
+
+  /** ResultNextStep / TaskEmptyState 动作纯透传：只映射页面已知标识。 */
+  function handleHistoryResultAction(action: string): void {
+    if (action === "history-view-changes") {
+      onAction("open-module", {
+        moduleId: "changes",
+        taskId: "changes/overview",
+      });
+      return;
+    }
+    if (action === "history/load-more") {
+      requestMoreHistory();
+    }
+  }
 </script>
 
 <section class="history-layout">
@@ -204,17 +306,20 @@
     <div class="feature-toolbar feature-toolbar--compact">
       <div>
         <h2>修订历史</h2>
-        <!-- v0.0.18 批次 C（C-06）：明确“已加载最近 N 条”，区分没有更多与尚未加载。 -->
-        <p>
-          已加载最近 {snapshot.revisions.length} 条修订{snapshot.hasMore
-            ? "（可能还有更早修订）"
-            : "（已是全部历史）"}
-        </p>
+        <!-- v0.1.5 V015-B2：已加载数量 + 条件 + 新鲜度→TaskSummary compact（v0.0.18 C-06 文案不动）。 -->
+        <TaskSummary
+          variant="compact"
+          tone={staleness.stale ? "warning" : "info"}
+          icon="codicon-history"
+          status={loadedStatus}
+          reason={loadedReason}
+          nextStep={loadedNextStep}
+        />
       </div>
       <SearchInput
         bind:value={query}
         ariaLabel="筛选历史"
-        placeholder="作者、说明、修订号…"
+        placeholder="筛选已加载结果：作者、说明、修订号…"
         compact
       />
       <ResultCount count={orderedRevisions.length} suffix="条修订" />
@@ -241,6 +346,10 @@
         </select>
       </div>
     </div>
+    <!-- v0.1.5 V015-D2：本地筛选与仓库查询的语义边界——搜索框只过滤已加载结果，历史请求只走下方条件。 -->
+    <p class="history-filter-hint">
+      修订搜索仅在已加载结果内筛选，不会向仓库请求；需要更早修订时，请用下方的条件表单发起新的只读请求。
+    </p>
     <details class="history-load-conditions">
       <summary>按条件加载更早修订</summary>
       <div class="history-load-conditions__fields">
@@ -316,27 +425,24 @@
         条件只限制本次只读历史请求，不改变当前范围；条件变化后会从首批重新读取。加载期间可使用页面顶部的“取消”。
       </p>
     </details>
-    {#if appliedQueryDescription}
-      <p class="history-load-conditions__applied" role="status">
-        当前按{appliedQueryDescription}加载；再次加载会保留这些条件。
-      </p>
-    {/if}
-    <div class="history-compare-bar">
-      <span role="status"
-        >已选择 {compare.size}/2 条修订；再选一条会替换最早选择的修订</span
-      >
-      <button
-        class="button button--secondary"
-        disabled={compare.size === 0}
-        onclick={clearCompare}>清空比较选择</button
-      >
-      <button
-        class="button button--primary"
-        disabled={compare.size !== 2}
-        onclick={() => onAction("history/compare", { revisions: [...compare] })}
-        >比较所选修订（{compare.size}/2）</button
-      >
-    </div>
+    <!-- v0.1.5 V015-B2：比较栏→PrimaryActionBar（唯一 primary + 数量口径一致；修订不可变，不接 stale）。 -->
+    <PrimaryActionBar
+      countText={historyCompareCount(compare.size)}
+      primary={{
+        label: "比较所选修订",
+        disabled: compare.size !== 2,
+        disabledReason: "请选择 2 条修订后再比较。",
+        onClick: () => onAction("history/compare", { revisions: [...compare] }),
+      }}
+      secondary={[
+        {
+          label: "清空比较选择",
+          disabled: compare.size === 0,
+          onClick: clearCompare,
+        },
+      ]}
+      ariaLabel="修订比较操作栏"
+    />
     <ScrollArea
       class="revision-list"
       role="list"
@@ -405,21 +511,36 @@
               onclick={() => onAction("history/blame")}>查看逐行责任</button
             ><button
               class="button button--secondary"
-              onclick={() =>
+              onclick={(event) => {
+                restoreTriggerEl = event.currentTarget as HTMLElement | null;
                 onAction("history/preview-restore", {
                   revision: selected.revision,
-                })}>从此修订恢复</button
+                });
+              }}>从此修订恢复</button
             >{/if}
           <span class="status-badge">{selected.author}</span>
         </div>
       </div>
-      {#if staleness.stale}<div class="notice notice--warning" role="status">
-          <span class="codicon codicon-warning" aria-hidden="true"></span>
-          <span
-            >此结果基于 {staleness.minutesAgo} 分钟前的状态，工作副本可能已变化，建议刷新</span
-          >
-        </div>{/if}
-      {#if snapshot.feedback}<div class="notice notice--success" role="status">
+      <!-- v0.1.5 V015-B2：新鲜度已并入列表区 TaskSummary；恢复结果用 ResultNextStep，其余 feedback 保持原 notice。 -->
+      {#if isRestoreFeedback && snapshot.feedback}
+        <ResultNextStep
+          tone="success"
+          result={snapshot.feedback}
+          nextStep="下一步：查看本地修改，确认恢复内容符合预期后再决定是否提交。"
+          recoveryHint="如需撤销，可从历史记录再次恢复，或在本地修改中还原该文件。"
+          actions={[
+            {
+              label: "查看本地修改",
+              action: "history-view-changes",
+              kind: "primary",
+            },
+          ]}
+          onAction={handleHistoryResultAction}
+        />
+      {:else if snapshot.feedback}<div
+          class="notice notice--success"
+          role="status"
+        >
           {snapshot.feedback}
         </div>{/if}
       <p class="revision-message">{selected.message || "无提交说明"}</p>
@@ -540,77 +661,47 @@
             </div>{/each}
         </ScrollArea>
       {/if}
-      {#if snapshot.restorePreview}
-        <div
-          class="restore-preview scroll-region"
-          role="dialog"
-          aria-label="修订恢复预览"
-          tabindex="0"
-          data-scroll-region
-        >
-          <div class="section-heading">
-            <div>
-              <span class="eyebrow">危险操作预览</span>
-              <h2>恢复 {snapshot.restorePreview.relativePath}</h2>
-            </div>
-            <div class="toolbar-actions">
-              <button
-                type="button"
-                class="icon-button icon-button--small"
-                aria-label={`复制恢复目标路径 ${snapshot.restorePreview.relativePath}`}
-                title="复制恢复目标路径"
-                onclick={() =>
-                  onAction("copy-text", {
-                    text: snapshot.restorePreview?.relativePath ?? "",
-                  })}
-                ><span class="codicon codicon-copy" aria-hidden="true"
-                ></span></button
-              >
-              <button
-                type="button"
-                class="icon-button icon-button--small"
-                aria-label={`查看 ${snapshot.restorePreview.relativePath} 路径详情`}
-                title="路径详情"
-                onclick={(event) =>
-                  list.requestPathDetail(
-                    snapshot.restorePreview?.relativePath ?? "",
-                    event.currentTarget,
-                  )}
-                ><span class="codicon codicon-info" aria-hidden="true"
-                ></span></button
-              >
-              <span class="status-badge"
-                >r{snapshot.restorePreview.revision}</span
-              >
-            </div>
-          </div>
-          <div class="notice notice--warning">
-            将用所选修订覆盖工作副本文件，但不会自动提交。现有未提交内容会丢失。
-          </div>
-          <code>{snapshot.restorePreview.command}</code>
-          {#each snapshot.restorePreview.issues as issue, issueIndex (issueIndex)}<div
-              class="notice notice--error"
-            >
-              {issue}
-            </div>{/each}
-          <button
-            class="button button--primary commit-button"
-            disabled={!snapshot.restorePreview.canExecute}
-            onclick={() =>
-              onAction("history/execute-restore", {
-                previewToken: snapshot.restorePreview?.token,
-              })}>确认覆盖工作副本文件</button
-          >
-        </div>
-      {/if}
+      <!-- v0.1.5 V015-C1：恢复预览改走通用意向单（自建 dialog 已删除；issues/命令并入意向单）。
+           Host 侧 history/execute-restore 的 token + contentHash 复验链不动。 -->
+      <OperationIntentDialog
+        intent={restoreIntent}
+        open={restoreIntentOpen && Boolean(restoreIntent)}
+        confirmLabel={`确认覆盖 ${restoreIntent?.paths.length ?? 0} 个文件`}
+        cancelLabel="取消"
+        recheckLabel="重新检查"
+        triggerElement={restoreTriggerEl}
+        {onAction}
+        {pathDetail}
+        onConfirm={(token) => {
+          restoreIntentOpen = false;
+          onAction("history/execute-restore", { previewToken: token });
+        }}
+        onCancel={() => (restoreIntentOpen = false)}
+        onRecheck={() => {
+          restoreIntentOpen = false;
+          onAction("history/preview-restore", {
+            revision: snapshot.restorePreview?.revision,
+          });
+        }}
+      />
     {:else}
-      <div class="empty-state empty-state--large">
-        <span class="codicon codicon-history"></span>
-        <div>
-          <strong>暂无历史</strong>
-          <p>当前范围没有可显示的修订记录。</p>
-        </div>
-      </div>
+      <!-- v0.1.5 V015-B2：空态两句→TaskEmptyState，补齐第三句（调整条件 / 加载更早）。 -->
+      <TaskEmptyState
+        icon="codicon-history"
+        what="暂无历史"
+        whyNormal="当前范围没有可显示的修订记录。"
+        whatNow="调整加载条件，或加载更早修订后重试。"
+        actions={snapshot.hasMore
+          ? [
+              {
+                label: "加载更早修订",
+                action: "history/load-more",
+                kind: "primary",
+              },
+            ]
+          : []}
+        onAction={handleHistoryResultAction}
+      />
     {/if}
   </ScrollArea>
 </section>

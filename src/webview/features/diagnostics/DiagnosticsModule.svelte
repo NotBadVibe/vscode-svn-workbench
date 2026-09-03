@@ -6,6 +6,8 @@
   } from "@protocol/workbenchProtocol";
   import ScrollArea from "../../components/ui/ScrollArea.svelte";
   import ResultCount from "../../components/list/ResultCount.svelte";
+  import TaskEmptyState from "../../components/task/TaskEmptyState.svelte";
+  import { taskStateCopy } from "../../i18n/terminology";
   import { formatZhDateTime } from "../../i18n/formatters";
 
   /*
@@ -283,11 +285,26 @@
         </div>
         <ScrollArea class="diagnostic-list" label="环境检查项目">
           {#if visibleChecks.length === 0}
-            <div class="mini-empty">
-              {snapshot.checks.length === 0
-                ? "尚未运行环境检查。"
-                : "没有匹配状态的检查项；调整筛选后重试。"}
-            </div>
+            <!-- v0.1.5 V015-E：mini-empty→TaskEmptyState（三句复用 taskStateCopy）。 -->
+            {#if snapshot.checks.length === 0}
+              <TaskEmptyState
+                icon="codicon-heart"
+                what="尚未运行环境检查"
+                whyNormal={taskStateCopy.initialLoading.whyNormal}
+                whatNow="可使用“重新检测”运行检查，完成后在此查看结论与修复动作。"
+                actions={[]}
+                onAction={() => {}}
+              />
+            {:else}
+              <TaskEmptyState
+                icon="codicon-search"
+                what={taskStateCopy.filterNoMatch.what}
+                whyNormal={taskStateCopy.filterNoMatch.whyNormal}
+                whatNow={taskStateCopy.filterNoMatch.whatNow}
+                actions={[]}
+                onAction={() => {}}
+              />
+            {/if}
           {/if}
           {#each visibleChecks as check (check.id)}
             <article class="diagnostic-row">

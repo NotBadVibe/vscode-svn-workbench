@@ -22,12 +22,17 @@
     if (!preview) return undefined;
     const title = "清理工作副本";
     const summary = `清理工作副本 · 目标：${snapshot.cleanup.target}，执行前将重新校验`;
+    // v0.1.5 V015-C1 九要素补齐：scope 即清理目标；可恢复性说明 cleanup 语义
+    // （只释放锁与中断状态，不改动文件内容）；revision 无权威来源，不虚构。
     return {
       token: preview.token,
       kind: "cleanup" as const,
       title,
       summary,
       paths: [snapshot.cleanup.target],
+      scopeText: snapshot.cleanup.target,
+      recoverability:
+        "清理只释放工作副本锁与中断状态，不改动文件内容；不会自动提交。",
       createdAt: new Date().toISOString(),
       canExecute: preview.canExecute,
       issues: preview.issues,
@@ -102,6 +107,7 @@
           open={cleanupIntentOpen && Boolean(cleanupIntent)}
           confirmLabel="确认清理工作副本"
           cancelLabel="取消"
+          recheckLabel="重新检查"
           triggerElement={cleanupTriggerEl}
           onAction={(a, d) => onAction(a, d)}
           onConfirm={(token) => {
@@ -109,6 +115,10 @@
             onAction("repository/execute-cleanup", { previewToken: token });
           }}
           onCancel={() => (cleanupIntentOpen = false)}
+          onRecheck={() => {
+            cleanupIntentOpen = false;
+            onAction("repository/preview-cleanup");
+          }}
         />
       </div>{:else}<button
         class="button button--primary"

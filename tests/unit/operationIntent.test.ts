@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   buildOperationIntentSummary,
+  extractRelocateTarget,
+  isConfirmationChallengeSatisfied,
+  isOperationIntentKind,
   isOperationIntentStale,
+  normalizeConfirmationTarget,
+  OPERATION_INTENT_ACTION_LABELS,
+  OPERATION_INTENT_KINDS,
   operationIntentTitle,
   validateOperationIntentForExecute,
   type OperationIntentView,
@@ -11,6 +17,14 @@ describe("operationIntentTitle", () => {
   it("提交数量标题", () => {
     expect(operationIntentTitle("commit", 3)).toBe("提交 3 个文件");
     expect(operationIntentTitle("commit", 1)).toBe("提交 1 个文件");
+  });
+  it("历史恢复标题（V015-C1 新增 kind）", () => {
+    expect(operationIntentTitle("history-restore", 1)).toBe(
+      "历史恢复 1 个文件",
+    );
+    expect(isOperationIntentKind("history-restore")).toBe(true);
+    expect(OPERATION_INTENT_KINDS).toContain("history-restore");
+    expect(OPERATION_INTENT_ACTION_LABELS["history-restore"]).toBe("历史恢复");
   });
   it("还原等标题", () => {
     expect(operationIntentTitle("revert", 2)).toBe("还原 2 个文件");
@@ -165,5 +179,62 @@ describe("validateOperationIntentForExecute", () => {
         candidateHash: "c1",
       }).ok,
     ).toBe(false);
+  });
+});
+
+describe("V015-C2 Relocate 白名单目标复述", () => {
+  it("归一化去空白/尾斜杠，仅 scheme+host 小写", () => {
+    // v0.1.5 V015-C3b 应修 6：path 保持原样（SVN 路径大小写敏感）。
+    expect(
+      normalizeConfirmationTarget("  HTTPS://svn.example.test/Repo/ "),
+    ).toBe("https://svn.example.test/Repo");
+    expect(normalizeConfirmationTarget("https://h/r///")).toBe("https://h/r");
+    expect(normalizeConfirmationTarget("HTTPS://H")).toBe("https://h");
+  });
+  it("V015-C3b 应修 6：path 大小写不一致拒绝，host 大小写不一致放行", () => {
+    const expected = "https://svn.example.test/repos/wb";
+    // 主机大小写不同：放行。
+    expect(
+      isConfirmationChallengeSatisfied(
+        expected,
+        "HTTPS://SVN.EXAMPLE.TEST/repos/wb/",
+      ),
+    ).toBe(true);
+    // 路径大小写不同：拒绝。
+    expect(
+      isConfirmationChallengeSatisfied(
+        expected,
+        "https://svn.example.test/Repos/wb",
+      ),
+    ).toBe(false);
+    expect(
+      isConfirmationChallengeSatisfied(
+        expected,
+        "https://svn.example.test/repos/WB",
+      ),
+    ).toBe(false);
+  });
+  it("正确/错误/空值判定", () => {
+    const expected = "https://svn.example.test/repos/wb";
+    expect(isConfirmationChallengeSatisfied(expected, expected)).toBe(true);
+    expect(
+      isConfirmationChallengeSatisfied(
+        expected,
+        "HTTPS://SVN.EXAMPLE.TEST/repos/wb/",
+      ),
+    ).toBe(true);
+    expect(isConfirmationChallengeSatisfied(expected, "https://other/x")).toBe(
+      false,
+    );
+    expect(isConfirmationChallengeSatisfied(expected, "")).toBe(false);
+    expect(isConfirmationChallengeSatisfied("", expected)).toBe(false);
+  });
+  it("从 details 提取新根，不虚构", () => {
+    expect(
+      extractRelocateTarget(["旧根：https://old/r", "新根：https://new/r"]),
+    ).toBe("https://new/r");
+    expect(extractRelocateTarget(["旧根：https://old/r"])).toBeUndefined();
+    expect(extractRelocateTarget(["新根：未填写"])).toBeUndefined();
+    expect(extractRelocateTarget(undefined)).toBeUndefined();
   });
 });

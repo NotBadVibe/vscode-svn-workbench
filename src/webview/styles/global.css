@@ -2125,6 +2125,13 @@ button.path-detail__value:hover {
   margin: 7px 0 0;
   line-height: 1.45;
 }
+/* v0.1.5 V015-D2：本地筛选与仓库查询的语义边界说明（搜索框只过滤已加载结果）。 */
+.history-filter-hint {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
 .history-load-conditions__applied {
   padding: 0 1px;
   color: var(--muted);
@@ -2954,8 +2961,15 @@ button.path-detail__value:hover {
   min-height: 100%;
   padding: 22px;
 }
+/* v0.1.5 V015-D2：任务标题由 ScopeBar H1 表达，页内仅保留操作说明。 */
+.repository-intro {
+  margin: 0 0 14px;
+  color: var(--muted);
+}
 .repository-task-navigation {
   display: flex;
+  flex-wrap: wrap;
+  row-gap: 8px;
   gap: 5px;
   padding: 4px;
   margin: -6px 0 14px;
@@ -2984,9 +2998,12 @@ button.path-detail__value:hover {
   background: var(--surface-active);
 }
 /* v0.0.17 批次 D：仓库任务分组导航（分支与集成/维护与迁移/危险操作）。 */
+/* v0.1.5 V015-D2：分组行允许换行，小屏下纵向堆叠，不横向铺开所有任务。 */
 .repository-task-navigation .task-group {
   flex: 0 0 auto;
   display: flex;
+  flex-wrap: wrap;
+  row-gap: 4px;
   align-items: center;
 }
 .task-group__toggle {
@@ -3013,6 +3030,7 @@ button.path-detail__value:hover {
 }
 .task-group__items {
   display: flex;
+  flex-wrap: wrap;
   gap: 5px;
 }
 .task-group__items button {
@@ -3300,6 +3318,10 @@ button.path-detail__value:hover {
   color: var(--muted);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* v0.1.5 V015-D2：hero 卡仅保留仓库地址（仓库名/rN 由 ScopeBar 表达）。 */
+.repository-url-label {
+  color: var(--vscode-foreground);
 }
 .repo-facts {
   display: flex;
@@ -4112,6 +4134,15 @@ button.path-detail__value:hover {
   }
   .repository-page {
     padding: 14px;
+  }
+  /* v0.1.5 V015-D2：720 宽度下任务分组纵向堆叠，不横向铺开所有任务。 */
+  .repository-task-navigation {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .repository-task-navigation .task-group {
+    flex-direction: column;
+    align-items: stretch;
   }
   .repository-grid {
     grid-template-columns: 1fr;

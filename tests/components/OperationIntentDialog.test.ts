@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/svelte";
+import { render, screen, fireEvent, waitFor } from "@testing-library/svelte";
 import OperationIntentDialog from "../../src/webview/components/operation/OperationIntentDialog.svelte";
 import type { OperationIntentView } from "../../src/operation/operationIntent";
 
@@ -96,6 +96,146 @@ describe("OperationIntentDialog", () => {
     expect(onCancel).toHaveBeenCalledTimes(2);
   });
 
+  // v0.1.5 V015-C1：九要素补齐行（范围 / 修订版本 / 可恢复性，有则展示）
+  it("展示范围、修订版本与可恢复性行；缺省时不行", async () => {
+    const fullIntent: OperationIntentView = {
+      ...baseIntent,
+      scopeText: "项目 A",
+      revision: "r42",
+      recoverability: "覆盖工作副本文件，原内容不可自动恢复。",
+    };
+    const { unmount } = render(OperationIntentDialog, {
+      props: {
+        intent: fullIntent,
+        open: true,
+        confirmLabel: "确认提交（2）",
+        onConfirm: vi.fn(),
+        onCancel: vi.fn(),
+        onAction: vi.fn(),
+      },
+    });
+    expect(screen.getByText("范围：")).toBeInTheDocument();
+    expect(screen.getByText("项目 A")).toBeInTheDocument();
+    expect(screen.getByText("修订版本：")).toBeInTheDocument();
+    expect(screen.getByText("r42")).toBeInTheDocument();
+    expect(screen.getByText("可恢复性：")).toBeInTheDocument();
+    expect(
+      screen.getByText("覆盖工作副本文件，原内容不可自动恢复。"),
+    ).toBeInTheDocument();
+    unmount();
+    // 缺省时不行，不虚构
+    render(OperationIntentDialog, {
+      props: {
+        intent: baseIntent,
+        open: true,
+        confirmLabel: "确认提交（2）",
+        onConfirm: vi.fn(),
+        onCancel: vi.fn(),
+        onAction: vi.fn(),
+      },
+    });
+    expect(screen.queryByText("范围：")).not.toBeInTheDocument();
+    expect(screen.queryByText("修订版本：")).not.toBeInTheDocument();
+    expect(screen.queryByText("可恢复性：")).not.toBeInTheDocument();
+  });
+
+  // v0.1.5 V015-C1：stale/不可执行态的“重新检查”次级按钮
+  it("失效时显示重新检查并透传页面动作；可执行时不显示", async () => {
+    const onRecheck = vi.fn();
+    const onConfirm = vi.fn();
+    const staleIntent: OperationIntentView = {
+      ...baseIntent,
+      stale: true,
+      canExecute: false,
+      issues: ["范围已变化，请重新预览。"],
+    };
+    const { unmount } = render(OperationIntentDialog, {
+      props: {
+        intent: staleIntent,
+        open: true,
+        confirmLabel: "确认提交（2）",
+        onConfirm,
+        onCancel: vi.fn(),
+        onAction: vi.fn(),
+        recheckLabel: "重新检查",
+        onRecheck,
+      },
+    });
+    // 未 open 的 <dialog> 不在可访问树中，role 查询需 hidden:true（setup polyfill 约定）。
+    const recheck = screen.getByRole("button", {
+      name: "重新检查",
+      hidden: true,
+    });
+    expect(recheck).toBeInTheDocument();
+    expect(recheck).not.toBeDisabled();
+    await fireEvent.click(recheck);
+    expect(onRecheck).toHaveBeenCalledTimes(1);
+    expect(onConfirm).not.toHaveBeenCalled();
+    unmount();
+    // 未提供 onRecheck 时不渲染
+    render(OperationIntentDialog, {
+      props: {
+        intent: staleIntent,
+        open: true,
+        confirmLabel: "确认提交（2）",
+        onConfirm: vi.fn(),
+        onCancel: vi.fn(),
+        onAction: vi.fn(),
+        recheckLabel: "重新检查",
+      },
+    });
+    expect(
+      screen.queryByRole("button", { name: "重新检查", hidden: true }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("可执行意向单不显示重新检查按钮", async () => {
+    render(OperationIntentDialog, {
+      props: {
+        intent: baseIntent,
+        open: true,
+        confirmLabel: "确认提交（2）",
+        onConfirm: vi.fn(),
+        onCancel: vi.fn(),
+        onAction: vi.fn(),
+        recheckLabel: "重新检查",
+        onRecheck: vi.fn(),
+      },
+    });
+    expect(
+      screen.queryByRole("button", { name: "重新检查", hidden: true }),
+    ).not.toBeInTheDocument();
+  });
+
+  // v0.1.5 V015-C1：Tab 焦点循环回归锁定
+  it("Tab 在对话框内首尾循环", async () => {
+    const { container } = render(OperationIntentDialog, {
+      props: {
+        intent: baseIntent,
+        open: true,
+        confirmLabel: "确认提交（2）",
+        onConfirm: vi.fn(),
+        onCancel: vi.fn(),
+        onAction: vi.fn(),
+      },
+    });
+    const dialog = container.querySelector("dialog") as HTMLDialogElement;
+    // 等待 showModal effect 落定：未 open 的 dialog 内元素为 inert，焦点行为与真实不一致。
+    await waitFor(() => expect(dialog).toHaveAttribute("open"));
+    // 首个可聚焦元素是影响清单搜索框（PreviewPathList 底座），末尾是确认按钮
+    const search = screen.getByPlaceholderText("路径…");
+    const confirm = screen.getByRole("button", { name: /确认提交/ });
+    // 真实按键事件的目标是焦点元素（冒泡到 dialog 处理器），测试同样从焦点元素派发。
+    // 焦点在末尾确认按钮时 Tab 回到首个可聚焦元素
+    confirm.focus();
+    await fireEvent.keyDown(confirm, { key: "Tab" });
+    expect(document.activeElement).toBe(search);
+    // Shift+Tab 在首个元素时回到末尾确认按钮
+    search.focus();
+    await fireEvent.keyDown(search, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(confirm);
+  });
+
   it("IME 候选阶段 Enter 不触发确认", async () => {
     const onConfirm = vi.fn();
     const { container } = render(OperationIntentDialog, {
@@ -114,5 +254,218 @@ describe("OperationIntentDialog", () => {
     await fireEvent.keyDown(dialog, { key: "Enter" });
     expect(onConfirm).not.toHaveBeenCalled();
     await fireEvent.compositionEnd(dialog);
+  });
+
+  it("V015-C2 白名单挑战：错误拒绝、归一化放行、IME 复述 Enter 不确认", async () => {
+    const onConfirm = vi.fn();
+    const challengeIntent: OperationIntentView = {
+      ...baseIntent,
+      kind: "relocate",
+      title: "重定位仓库根地址",
+      confirmationChallenge: {
+        prompt: "请复述新根地址。",
+        expected: "https://svn.example.test/repos/wb",
+        mismatchMessage: "复述目标与预览的新根地址不一致，无法确认。",
+      },
+    };
+    const { container } = render(OperationIntentDialog, {
+      props: {
+        intent: challengeIntent,
+        open: true,
+        confirmLabel: "确认执行重定位仓库地址",
+        onConfirm,
+        onCancel: vi.fn(),
+        onAction: vi.fn(),
+      },
+    });
+    // jsdom 中 showModal 异步生效，先等 dialog 打开再查询内部元素（同文件既有模式）。
+    const dialog = container.querySelector("dialog") as HTMLDialogElement;
+    await waitFor(() => expect(dialog).toHaveAttribute("open"));
+    const input = screen.getByLabelText("复述新的仓库根 URL");
+    const confirm = screen.getByRole("button", {
+      name: /确认执行重定位仓库地址/,
+    });
+    expect(confirm).toBeDisabled();
+    await fireEvent.input(input, {
+      target: { value: "https://wrong.example.test/x" },
+    });
+    expect(confirm).toBeDisabled();
+    expect(
+      screen.getByText("复述目标与预览的新根地址不一致，无法确认。"),
+    ).toBeInTheDocument();
+    // IME 候选 Enter 不触发确认。
+    await fireEvent.compositionStart(input);
+    await fireEvent.keyDown(input, { key: "Enter" });
+    expect(onConfirm).not.toHaveBeenCalled();
+    await fireEvent.compositionEnd(input);
+    // 尾斜杠 + 大小写归一化放行。
+    await fireEvent.input(input, {
+      target: { value: "HTTPS://SVN.EXAMPLE.TEST/repos/wb/" },
+    });
+    expect(confirm).toBeEnabled();
+    await fireEvent.click(confirm);
+    expect(onConfirm).toHaveBeenCalledWith("tok-1");
+  });
+
+  // v0.1.5 V015-F2：意向单九要素字段级断言（只增测试，不动业务源码）。
+  describe("V015-F2 九要素字段级断言", () => {
+    const nineElementIntent: OperationIntentView = {
+      token: "tok-nine",
+      kind: "commit",
+      title: "提交 2 个文件",
+      summary: "提交 2 个文件 · 范围：项目 A",
+      paths: ["src/a.ts", "src/b.ts"],
+      scopeHash: "s1",
+      candidateHash: "c1",
+      repositoryUuid: "r1",
+      scopeText: "项目 A · trunk",
+      revision: "r42",
+      recoverability: "提交后远端即生效，工作台不提供一键撤销。",
+      createdAt: new Date().toISOString(),
+      canExecute: true,
+      issues: [],
+      commands: ["svn commit src/a.ts src/b.ts -F msg.txt"],
+    };
+
+    it("scopeText/revision/recoverability 三行渲染为 role=note，缺省不渲染", async () => {
+      const { unmount } = render(OperationIntentDialog, {
+        props: {
+          intent: nineElementIntent,
+          open: true,
+          confirmLabel: "确认提交（2）",
+          onConfirm: vi.fn(),
+          onCancel: vi.fn(),
+          onAction: vi.fn(),
+        },
+      });
+      // 三行均为独立 role=note 行，不只靠颜色（文字 + 图标 + note）。
+      const notes = screen.getAllByRole("note", { hidden: true });
+      expect(notes).toHaveLength(3);
+      expect(screen.getByText("范围：")).toBeInTheDocument();
+      expect(screen.getByText("项目 A · trunk")).toBeInTheDocument();
+      expect(screen.getByText("修订版本：")).toBeInTheDocument();
+      expect(screen.getByText("r42")).toBeInTheDocument();
+      expect(screen.getByText("可恢复性：")).toBeInTheDocument();
+      expect(
+        screen.getByText("提交后远端即生效，工作台不提供一键撤销。"),
+      ).toBeInTheDocument();
+      unmount();
+      // 缺省时不行，不虚构：三行与 note 行均不出现。
+      render(OperationIntentDialog, {
+        props: {
+          intent: baseIntent,
+          open: true,
+          confirmLabel: "确认提交（2）",
+          onConfirm: vi.fn(),
+          onCancel: vi.fn(),
+          onAction: vi.fn(),
+        },
+      });
+      expect(screen.queryByText("范围：")).not.toBeInTheDocument();
+      expect(screen.queryByText("修订版本：")).not.toBeInTheDocument();
+      expect(screen.queryByText("可恢复性：")).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("note", { hidden: true }),
+      ).not.toBeInTheDocument();
+    });
+
+    it("九要素齐全：动作/数量/项目仓库/scope/revision/清单/命令/阻止项/可恢复性", async () => {
+      render(OperationIntentDialog, {
+        props: {
+          intent: nineElementIntent,
+          open: true,
+          confirmLabel: "确认提交（2）",
+          onConfirm: vi.fn(),
+          onCancel: vi.fn(),
+          onAction: vi.fn(),
+        },
+      });
+      // 1 动作：标题含中文动作。
+      expect(
+        screen.getAllByText("提交 2 个文件").length,
+      ).toBeGreaterThanOrEqual(1);
+      // 2 数量：标题数量 + 影响 N 个路径口径一致。
+      expect(screen.getByText("影响 2 个路径")).toBeInTheDocument();
+      // 3 项目仓库 + 4 scope：scopeText 行含项目与范围摘要。
+      expect(screen.getByText("项目 A · trunk")).toBeInTheDocument();
+      expect(
+        screen.getByText("提交 2 个文件 · 范围：项目 A"),
+      ).toBeInTheDocument();
+      // 5 revision。
+      expect(screen.getByText("r42")).toBeInTheDocument();
+      // 6 清单：可搜索 + 两条路径均在清单。
+      expect(screen.getByPlaceholderText("路径…")).toBeInTheDocument();
+      expect(screen.getByText("src/a.ts")).toBeInTheDocument();
+      expect(screen.getByText("src/b.ts")).toBeInTheDocument();
+      expect(screen.getByText("复制清单（2）")).toBeInTheDocument();
+      // 7 命令：折叠区数量 + 命令原文。
+      expect(screen.getByText(/查看将执行的命令（1）/)).toBeInTheDocument();
+      expect(screen.getByText(/svn commit/)).toBeInTheDocument();
+      // 8 阻止项：可执行且无 issues 时无 role=alert。
+      expect(
+        screen.queryByRole("alert", { hidden: true }),
+      ).not.toBeInTheDocument();
+      // 阻止项非空时如实展示（同九要素内的第 8 要素）。
+      const { unmount } = render(OperationIntentDialog, {
+        props: {
+          intent: {
+            ...nineElementIntent,
+            canExecute: false,
+            issues: ["存在未解决校验：目标已锁定。"],
+          },
+          open: true,
+          confirmLabel: "确认提交（2）",
+          onConfirm: vi.fn(),
+          onCancel: vi.fn(),
+          onAction: vi.fn(),
+        },
+      });
+      expect(screen.getByText(/存在未解决校验/)).toBeInTheDocument();
+      unmount();
+      // 9 可恢复性。
+      expect(screen.getByText("可恢复性：")).toBeInTheDocument();
+    });
+
+    it("stale 时重新检查出现且确认禁用", async () => {
+      const onConfirm = vi.fn();
+      const onRecheck = vi.fn();
+      render(OperationIntentDialog, {
+        props: {
+          intent: {
+            ...nineElementIntent,
+            stale: true,
+            canExecute: false,
+            issues: ["范围已变化，请重新预览。"],
+          },
+          open: true,
+          confirmLabel: "确认提交（2）",
+          onConfirm,
+          onCancel: vi.fn(),
+          onAction: vi.fn(),
+          recheckLabel: "重新检查",
+          onRecheck,
+        },
+      });
+      // 只读标记 + stale 警告。
+      expect(screen.getByText("已失效（只读）")).toBeInTheDocument();
+      expect(screen.getByText(/范围已变化/)).toBeInTheDocument();
+      // 重新检查次级按钮出现且可用，点击透传页面动作且不触发确认。
+      const recheck = screen.getByRole("button", {
+        name: "重新检查",
+        hidden: true,
+      });
+      expect(recheck).not.toBeDisabled();
+      await fireEvent.click(recheck);
+      expect(onRecheck).toHaveBeenCalledTimes(1);
+      expect(onConfirm).not.toHaveBeenCalled();
+      // 确认禁用（含已失效后缀），点击不透传 token。
+      const confirm = screen.getByRole("button", {
+        name: /确认提交.*已失效/,
+        hidden: true,
+      });
+      expect(confirm).toBeDisabled();
+      await fireEvent.click(confirm);
+      expect(onConfirm).not.toHaveBeenCalled();
+    });
   });
 });

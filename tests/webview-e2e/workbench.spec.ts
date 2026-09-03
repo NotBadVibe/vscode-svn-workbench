@@ -475,9 +475,13 @@ test("requires an update preview before running svn update", async ({
   await expect(
     page.getByRole("heading", { name: "更新当前范围" }).first(),
   ).toBeVisible();
+  // v0.1.5 V015-D1 三状态：未检查（空态三句话）+ 写操作范围栏显示最终候选数。
+  await expect(page.getByText("尚未生成更新预览")).toBeVisible();
+  await expect(page.getByText("最终候选数 4 个")).toBeVisible();
   await page.getByRole("button", { name: "生成更新预览" }).click();
   await expect(page.getByText("中风险")).toBeVisible();
-  await page.getByRole("button", { name: "确认更新当前范围" }).click();
+  // v0.1.5 V015-B2：预览工具栏已迁入 PrimaryActionBar，主动作含远端数量。
+  await page.getByRole("button", { name: "确认更新（2）" }).click();
   const updateDialog = page.getByRole("dialog", {
     name: /更新 (\d+ 个远端变更|当前范围)/,
   });
@@ -491,7 +495,8 @@ test("requires an update preview before running svn update", async ({
   const conflictCta = page.locator("[data-update-conflict-cta]");
   await expect(conflictCta).toBeVisible();
   await expect(conflictCta.getByText("当前范围有 2 个冲突")).toBeVisible();
-  await conflictCta.getByRole("button", { name: "处理 2 个冲突" }).click();
+  // v0.1.5 V015-B2：结果出口已给出处理冲突主动作，冲突栏不再重复同名 primary，全页仅此一个。
+  await page.getByRole("button", { name: "处理 2 个冲突" }).click();
   await expect(
     page.getByRole("heading", { name: "处理文件冲突" }),
   ).toBeVisible();
@@ -669,10 +674,15 @@ test("requires explicit confirmation when restoring a file revision", async ({
   await page.getByRole("button", { name: "查看逐行责任" }).click();
   await expect(page.getByLabel("文件逐行责任")).toContainText("yangnan");
   await page.getByRole("button", { name: "从此修订恢复" }).click();
-  await expect(
-    page.getByRole("dialog", { name: "修订恢复预览" }),
-  ).toContainText("不会自动提交");
-  await page.getByRole("button", { name: "确认覆盖工作副本文件" }).click();
+  // v0.1.5 V015-C1：恢复预览改走通用意向单（仍为显式确认，信息更全）。
+  const restoreDialog = page.getByRole("dialog", {
+    name: "历史恢复 1 个文件",
+  });
+  await expect(restoreDialog).toContainText("不会自动提交");
+  await expect(restoreDialog).toContainText("原内容不可自动恢复");
+  await restoreDialog
+    .getByRole("button", { name: "确认覆盖 1 个文件" })
+    .click();
   await expect(
     page.getByText("src/extension.ts 已恢复为 r42 内容；尚未提交。"),
   ).toBeVisible();

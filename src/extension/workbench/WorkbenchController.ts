@@ -2848,6 +2848,11 @@ export class WorkbenchController implements vscode.Disposable {
           const state = session.historyState ?? { compareRevisions: [] };
           state.historyLimit = nextLimit;
           state.historyQuery = normalizedQuery.query;
+          // v0.1.5 V015-D2：加载更多携带本地比较选择时一并保留，快照刷新不丢选中；
+          // 未携带该键时保持既有选择不变。
+          if (data.compareRevisions !== undefined) {
+            state.compareRevisions = asRevisionArray(data.compareRevisions);
+          }
           const condition = describeHistoryQuery(normalizedQuery.query);
           state.feedback = condition
             ? `已按${condition}读取 ${page.revisions.length} 条修订。`
@@ -2938,6 +2943,19 @@ export class WorkbenchController implements vscode.Disposable {
             "history",
             "恢复预览已失效",
             "请重新生成文件恢复预览。",
+            true,
+            message.requestId,
+          );
+          return;
+        }
+        // v0.1.5 V015-C3b 应修 7：历史恢复显式路径一致性——预览目标文件与
+        // 当前单文件范围不一致时直接作废预览（不只依赖信封 scopeHash 兜底）。
+        if (normalizeRelative(fileRoot.relativePath) !== preview.relativePath) {
+          session.historyState!.restorePreview = undefined;
+          await this.sendError(
+            "history",
+            "恢复目标已变化",
+            "当前文件与预览时的恢复目标不一致，请重新生成文件恢复预览。",
             true,
             message.requestId,
           );

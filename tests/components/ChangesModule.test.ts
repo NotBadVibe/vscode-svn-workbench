@@ -117,7 +117,7 @@ describe("ChangesModule", () => {
     });
   });
 
-  it("Revert 必须展示不可恢复说明并完成二次勾选", async () => {
+  it("Revert 无前置复选框：预览后直开意向单一次确认", async () => {
     const onAction = vi.fn();
     render(ChangesModule, {
       snapshot: {
@@ -137,11 +137,14 @@ describe("ChangesModule", () => {
       onAction,
     });
     const execute = screen.getByRole("button", { name: "确认还原本地修改" });
-    expect(screen.getByText(/可恢复性：/)).toBeInTheDocument();
-    expect(execute).toBeDisabled();
-    await fireEvent.click(
-      screen.getByRole("checkbox", { name: /逐项核对文件清单/ }),
-    );
+    // V015-C1：预览步骤与意向单均展示可恢复性（意向单直传 Host 权威文案；
+    // 对话框元素在打开前已渲染，仅未 showModal）。
+    expect(screen.getAllByText(/可恢复性：/).length).toBe(2);
+    expect(screen.getAllByText("SVN 无法恢复。").length).toBe(2);
+    // V015-C2：前置“我已核对”复选框已移除，预览后直开意向单一次确认。
+    expect(
+      screen.queryByRole("checkbox", { name: /逐项核对文件清单/ }),
+    ).not.toBeInTheDocument();
     expect(execute).toBeEnabled();
     await fireEvent.click(execute);
     // 批次 D：确认还原先打开通用操作意向单对话框

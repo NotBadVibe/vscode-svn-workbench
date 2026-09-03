@@ -443,12 +443,12 @@
     },
     {
       "version": "0.1.5",
-      "status": "draft",
-      "phase": "planned",
+      "status": "released",
+      "phase": "released",
       "baseVersion": "0.1.4",
       "canonicalEntry": "releases/v0.1.5/README.md",
       "manifest": "releases/v0.1.5/manifest.json",
-      "releasedFact": false,
+      "releasedFact": true,
       "topics": [
         "task-summary",
         "operation-intent",
