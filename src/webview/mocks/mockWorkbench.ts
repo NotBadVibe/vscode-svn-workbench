@@ -2149,6 +2149,42 @@ function mockContinuityRestore(): ContinuityRestoreView {
   };
 }
 
+/**
+ * v0.1.4 V014-F2：5000 文件恢复演示载荷（`?continuity=restore-large`）。
+ * key 全部指向 large 数据集文件（`src/generated/deep/path/file-NNNN.ts`，
+ * 2500/2501 均为 modified 可选项）；默认 `?continuity=restore` 语义不变。
+ */
+function mockContinuityRestoreLarge(): ContinuityRestoreView {
+  return {
+    contextVersion: 1,
+    originModule: "changes",
+    changesView: {
+      query: "",
+      sort: "path:asc",
+      density: "comfortable",
+      onlySelected: false,
+    },
+    selectedKeys: [
+      mockSelectionKey("src/generated/deep/path/file-2500.ts"),
+      mockSelectionKey("src/generated/deep/path/file-2501.ts"),
+    ],
+    activeFileKey: mockSelectionKey("src/generated/deep/path/file-2500.ts"),
+    scrollAnchorKey: mockSelectionKey("src/generated/deep/path/file-2500.ts"),
+    commitDraft: "feat(workbench): 完善统一 Svelte 工作台",
+    removedEntries: [
+      {
+        key: mockSelectionKey("src/generated/deep/path/file-9999.ts"),
+        path: "/mock/vscode-svn/src/generated/deep/path/file-9999.ts",
+        reason: "disappeared",
+        message:
+          "文件已不在最新快照中，可能已被删除、移走或状态变化，已从选择中移除。",
+      },
+    ],
+    notices: ["已按最新快照保留 2 个选择，移除 1 个失效项。"],
+    restoredAt: new Date().toISOString(),
+  };
+}
+
 function changesSnapshot(
   overrides: Record<string, unknown> = {},
 ): WorkbenchModuleSnapshot {
@@ -2157,9 +2193,14 @@ function changesSnapshot(
       ? new URLSearchParams(window.location.search).get("dataset")
       : undefined;
   // v0.1.4 V014-C1：`?continuity=restore` 演示往返恢复载荷（C2 联调用）。
+  // v0.1.4 V014-F2：`?continuity=restore-large` 指向 large 数据集的恢复载荷。
   const withContinuityRestore =
     typeof window !== "undefined" &&
     new URLSearchParams(window.location.search).get("continuity") === "restore";
+  const withContinuityRestoreLarge =
+    typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).get("continuity") ===
+      "restore-large";
   const snapshotFiles =
     dataset === "large" || dataset === "scroll"
       ? Array.from(
@@ -2208,6 +2249,9 @@ function changesSnapshot(
     refreshedAt: new Date().toISOString(),
     ...(withContinuityRestore
       ? { continuityRestore: mockContinuityRestore() }
+      : {}),
+    ...(withContinuityRestoreLarge
+      ? { continuityRestore: mockContinuityRestoreLarge() }
       : {}),
     ...overrides,
   } as WorkbenchModuleSnapshot;
