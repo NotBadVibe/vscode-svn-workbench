@@ -306,4 +306,166 @@ describe("OperationIntentDialog", () => {
     await fireEvent.click(confirm);
     expect(onConfirm).toHaveBeenCalledWith("tok-1");
   });
+
+  // v0.1.5 V015-F2：意向单九要素字段级断言（只增测试，不动业务源码）。
+  describe("V015-F2 九要素字段级断言", () => {
+    const nineElementIntent: OperationIntentView = {
+      token: "tok-nine",
+      kind: "commit",
+      title: "提交 2 个文件",
+      summary: "提交 2 个文件 · 范围：项目 A",
+      paths: ["src/a.ts", "src/b.ts"],
+      scopeHash: "s1",
+      candidateHash: "c1",
+      repositoryUuid: "r1",
+      scopeText: "项目 A · trunk",
+      revision: "r42",
+      recoverability: "提交后远端即生效，工作台不提供一键撤销。",
+      createdAt: new Date().toISOString(),
+      canExecute: true,
+      issues: [],
+      commands: ["svn commit src/a.ts src/b.ts -F msg.txt"],
+    };
+
+    it("scopeText/revision/recoverability 三行渲染为 role=note，缺省不渲染", async () => {
+      const { unmount } = render(OperationIntentDialog, {
+        props: {
+          intent: nineElementIntent,
+          open: true,
+          confirmLabel: "确认提交（2）",
+          onConfirm: vi.fn(),
+          onCancel: vi.fn(),
+          onAction: vi.fn(),
+        },
+      });
+      // 三行均为独立 role=note 行，不只靠颜色（文字 + 图标 + note）。
+      const notes = screen.getAllByRole("note", { hidden: true });
+      expect(notes).toHaveLength(3);
+      expect(screen.getByText("范围：")).toBeInTheDocument();
+      expect(screen.getByText("项目 A · trunk")).toBeInTheDocument();
+      expect(screen.getByText("修订版本：")).toBeInTheDocument();
+      expect(screen.getByText("r42")).toBeInTheDocument();
+      expect(screen.getByText("可恢复性：")).toBeInTheDocument();
+      expect(
+        screen.getByText("提交后远端即生效，工作台不提供一键撤销。"),
+      ).toBeInTheDocument();
+      unmount();
+      // 缺省时不行，不虚构：三行与 note 行均不出现。
+      render(OperationIntentDialog, {
+        props: {
+          intent: baseIntent,
+          open: true,
+          confirmLabel: "确认提交（2）",
+          onConfirm: vi.fn(),
+          onCancel: vi.fn(),
+          onAction: vi.fn(),
+        },
+      });
+      expect(screen.queryByText("范围：")).not.toBeInTheDocument();
+      expect(screen.queryByText("修订版本：")).not.toBeInTheDocument();
+      expect(screen.queryByText("可恢复性：")).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("note", { hidden: true }),
+      ).not.toBeInTheDocument();
+    });
+
+    it("九要素齐全：动作/数量/项目仓库/scope/revision/清单/命令/阻止项/可恢复性", async () => {
+      render(OperationIntentDialog, {
+        props: {
+          intent: nineElementIntent,
+          open: true,
+          confirmLabel: "确认提交（2）",
+          onConfirm: vi.fn(),
+          onCancel: vi.fn(),
+          onAction: vi.fn(),
+        },
+      });
+      // 1 动作：标题含中文动作。
+      expect(
+        screen.getAllByText("提交 2 个文件").length,
+      ).toBeGreaterThanOrEqual(1);
+      // 2 数量：标题数量 + 影响 N 个路径口径一致。
+      expect(screen.getByText("影响 2 个路径")).toBeInTheDocument();
+      // 3 项目仓库 + 4 scope：scopeText 行含项目与范围摘要。
+      expect(screen.getByText("项目 A · trunk")).toBeInTheDocument();
+      expect(
+        screen.getByText("提交 2 个文件 · 范围：项目 A"),
+      ).toBeInTheDocument();
+      // 5 revision。
+      expect(screen.getByText("r42")).toBeInTheDocument();
+      // 6 清单：可搜索 + 两条路径均在清单。
+      expect(screen.getByPlaceholderText("路径…")).toBeInTheDocument();
+      expect(screen.getByText("src/a.ts")).toBeInTheDocument();
+      expect(screen.getByText("src/b.ts")).toBeInTheDocument();
+      expect(screen.getByText("复制清单（2）")).toBeInTheDocument();
+      // 7 命令：折叠区数量 + 命令原文。
+      expect(screen.getByText(/查看将执行的命令（1）/)).toBeInTheDocument();
+      expect(screen.getByText(/svn commit/)).toBeInTheDocument();
+      // 8 阻止项：可执行且无 issues 时无 role=alert。
+      expect(
+        screen.queryByRole("alert", { hidden: true }),
+      ).not.toBeInTheDocument();
+      // 阻止项非空时如实展示（同九要素内的第 8 要素）。
+      const { unmount } = render(OperationIntentDialog, {
+        props: {
+          intent: {
+            ...nineElementIntent,
+            canExecute: false,
+            issues: ["存在未解决校验：目标已锁定。"],
+          },
+          open: true,
+          confirmLabel: "确认提交（2）",
+          onConfirm: vi.fn(),
+          onCancel: vi.fn(),
+          onAction: vi.fn(),
+        },
+      });
+      expect(screen.getByText(/存在未解决校验/)).toBeInTheDocument();
+      unmount();
+      // 9 可恢复性。
+      expect(screen.getByText("可恢复性：")).toBeInTheDocument();
+    });
+
+    it("stale 时重新检查出现且确认禁用", async () => {
+      const onConfirm = vi.fn();
+      const onRecheck = vi.fn();
+      render(OperationIntentDialog, {
+        props: {
+          intent: {
+            ...nineElementIntent,
+            stale: true,
+            canExecute: false,
+            issues: ["范围已变化，请重新预览。"],
+          },
+          open: true,
+          confirmLabel: "确认提交（2）",
+          onConfirm,
+          onCancel: vi.fn(),
+          onAction: vi.fn(),
+          recheckLabel: "重新检查",
+          onRecheck,
+        },
+      });
+      // 只读标记 + stale 警告。
+      expect(screen.getByText("已失效（只读）")).toBeInTheDocument();
+      expect(screen.getByText(/范围已变化/)).toBeInTheDocument();
+      // 重新检查次级按钮出现且可用，点击透传页面动作且不触发确认。
+      const recheck = screen.getByRole("button", {
+        name: "重新检查",
+        hidden: true,
+      });
+      expect(recheck).not.toBeDisabled();
+      await fireEvent.click(recheck);
+      expect(onRecheck).toHaveBeenCalledTimes(1);
+      expect(onConfirm).not.toHaveBeenCalled();
+      // 确认禁用（含已失效后缀），点击不透传 token。
+      const confirm = screen.getByRole("button", {
+        name: /确认提交.*已失效/,
+        hidden: true,
+      });
+      expect(confirm).toBeDisabled();
+      await fireEvent.click(confirm);
+      expect(onConfirm).not.toHaveBeenCalled();
+    });
+  });
 });
