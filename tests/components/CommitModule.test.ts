@@ -139,7 +139,12 @@ describe("CommitModule", () => {
   it("始终提供“应用本地规则”，AI 已配置时提供“获取 AI 建议”", async () => {
     const onAction = renderCommit();
 
-    await fireEvent.click(screen.getByRole("button", { name: "应用本地规则" }));
+    // V014-D：文件选择折叠区与团队规则折叠区各有一个入口，均发送同一动作。
+    const applyButtons = screen.getAllByRole("button", {
+      name: "应用本地规则",
+    });
+    expect(applyButtons).toHaveLength(2);
+    await fireEvent.click(applyButtons[0]);
     expect(onAction).toHaveBeenCalledWith("commit/apply-local-rules");
 
     await fireEvent.click(screen.getByRole("button", { name: "获取 AI 建议" }));
@@ -160,9 +165,10 @@ describe("CommitModule", () => {
     expect(
       screen.queryByRole("button", { name: /AI 建议选择/ }),
     ).not.toBeInTheDocument();
+    // V014-D：手动规则入口收进折叠区（文件选择与团队规则各一），首屏无按钮。
     expect(
-      screen.getByRole("button", { name: "应用本地规则" }),
-    ).toBeInTheDocument();
+      screen.getAllByRole("button", { name: "应用本地规则" }),
+    ).toHaveLength(2);
 
     await fireEvent.click(screen.getByRole("button", { name: "配置 AI" }));
     expect(onAction).toHaveBeenCalledWith("open-module", {
@@ -195,11 +201,12 @@ describe("CommitModule", () => {
     // 当前选择不被失败结果替换。
     expect(screen.getByLabelText("选择 src/a.ts")).toBeChecked();
 
-    // 工具栏与失败卡片各有一个“应用本地规则”；失败卡片上的为恢复动作。
+    // V014-D：文件选择折叠区、团队规则折叠区各有一个“应用本地规则”，
+    // 失败卡片上的为恢复动作。
     const recoverButtons = screen.getAllByRole("button", {
       name: "应用本地规则",
     });
-    expect(recoverButtons).toHaveLength(2);
+    expect(recoverButtons).toHaveLength(3);
     await fireEvent.click(recoverButtons[1]);
     expect(onAction).toHaveBeenCalledWith("commit/apply-local-rules");
   });
@@ -846,5 +853,197 @@ describe("CommitModule 有证据的提交说明（v0.0.11 §4）", () => {
     expect(
       screen.queryByRole("list", { name: "建议逐条说明" }),
     ).not.toBeInTheDocument();
+  });
+});
+
+describe("CommitModule 紧凑模式（v0.1.4 V014-D）", () => {
+  function renderCompact(overrides: Partial<CommitSnapshot> = {}) {
+    const onAction = vi.fn();
+    const view = render(CommitModule, {
+      snapshot: { ...snapshot, ...overrides },
+      onAction,
+    });
+    return { onAction, ...view };
+  }
+
+  it("首屏摘要条来自权威选择：待提交计数、分组与阻止项，附调整文件入口", () => {
+    renderCompact();
+    expect(
+      screen.getByRole("region", { name: "待提交文件摘要" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("待提交 1 个文件")).toBeInTheDocument();
+    expect(screen.getByText("阻止项 0 个")).toBeInTheDocument();
+    expect(screen.getByText("未归属项目 1 个文件")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "调整文件" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+  });
+
+  it("四个按需展开区默认收起，调整文件可展开完整选择", async () => {
+    const { container } = renderCompact();
+    const folds = Array.from(
+      container.querySelectorAll("details.commit-compact-details"),
+    );
+    expect(folds).toHaveLength(4);
+    for (const fold of folds) {
+      expect((fold as HTMLDetailsElement).open).toBe(false);
+    }
+    await fireEvent.click(screen.getByRole("button", { name: "调整文件" }));
+    expect(
+      screen.getByRole("button", { name: "收起文件选择" }),
+    ).toBeInTheDocument();
+    expect(
+      (
+        container.querySelector(
+          "details.commit-compact-details--files",
+        ) as HTMLDetailsElement
+      ).open,
+    ).toBe(true);
+    // 展开后文件选择功能与现状一致。
+    expect(
+      screen.getByRole("list", { name: "提交候选文件" }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("选择 src/a.ts")).toBeInTheDocument();
+  });
+
+  it("首屏本地检查摘要写“本地检查”，手动规则入口只在折叠区", () => {
+    renderCompact();
+    expect(
+      screen.getByRole("region", { name: "本地检查摘要" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "本地检查" }),
+    ).toBeInTheDocument();
+    const applyButtons = screen.getAllByRole("button", {
+      name: "应用本地规则",
+    });
+    expect(applyButtons).toHaveLength(2);
+    for (const button of applyButtons) {
+      expect(button.closest("details")).not.toBeNull();
+    }
+  });
+
+  it("本地规则结果自动运行时首屏展示本地检查摘要", () => {
+    renderCompact({
+      ai: {
+        source: "local-rule",
+        summary: "已按本地规则应用推荐选择 1 个文件。",
+        warnings: [],
+      },
+    });
+    expect(
+      screen.getByText("本地检查：已按本地规则应用推荐选择 1 个文件。"),
+    ).toBeInTheDocument();
+  });
+
+  it("有可用预览时唯一主操作为确认提交，且首屏只有一个 primary", async () => {
+    const { container, onAction } = renderCompact();
+    const confirm = screen.getByRole("button", { name: "确认提交（1）" });
+    expect(confirm.classList.contains("button--primary")).toBe(true);
+    // 意向单对话框关闭态的确认按钮不在紧凑滚动区内，不计入首屏 primary。
+    expect(
+      container.querySelectorAll(".commit-compact .button--primary"),
+    ).toHaveLength(1);
+    await fireEvent.click(confirm);
+    expect(
+      screen.getByRole("dialog", { name: "提交 1 个文件" }),
+    ).toBeInTheDocument();
+    expect(onAction).not.toHaveBeenCalledWith(
+      "commit/execute",
+      expect.anything(),
+    );
+  });
+
+  it("无预览时唯一主操作为预览提交 N 个文件（改名对齐规划）", () => {
+    const { container } = renderCompact({ preview: undefined });
+    const previewButton = screen.getByRole("button", {
+      name: "预览提交 1 个文件",
+    });
+    expect(previewButton.classList.contains("button--primary")).toBe(true);
+    expect(
+      container.querySelectorAll(".commit-compact .button--primary"),
+    ).toHaveLength(1);
+    expect(
+      screen.queryByRole("button", { name: /生成提交预览/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /确认提交/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("团队规则折叠区展示规范原文与本地规则应用入口", async () => {
+    const { container, onAction } = renderCompact();
+    const teamFold = container.querySelector(
+      "details.commit-compact-details--team",
+    ) as HTMLElement;
+    expect(teamFold.textContent).toContain("前缀：feat");
+    const teamApply = Array.from(teamFold.querySelectorAll("button")).find(
+      (button) => button.textContent?.includes("应用本地规则"),
+    ) as HTMLElement;
+    await fireEvent.click(teamApply);
+    expect(onAction).toHaveBeenCalledWith("commit/apply-local-rules");
+  });
+
+  it("完整命令与证据折叠区收纳命令预览", () => {
+    const { container } = renderCompact();
+    const evidenceFold = container.querySelector(
+      "details.commit-compact-details--evidence",
+    ) as HTMLElement;
+    expect(evidenceFold.textContent).toContain("查看命令预览");
+    expect(evidenceFold.textContent).toContain(
+      'svn commit "src/a.ts" -F <message-file>',
+    );
+  });
+
+  it("已配置时选择场景外发预览收进文件选择折叠区", () => {
+    renderCompact();
+    const privacyNote = screen.getByText(/最多 200 个文件/);
+    expect(
+      privacyNote.closest("details.commit-compact-details--files"),
+    ).not.toBeNull();
+  });
+
+  it("无回执与建议时 AI 折叠区保持收起，回执卡不打扰首屏", () => {
+    const { container } = renderCompact();
+    expect(
+      (
+        container.querySelector(
+          "details.commit-compact-details--ai",
+        ) as HTMLDetailsElement
+      ).open,
+    ).toBe(false);
+    expect(
+      screen.queryByRole("region", { name: "受限差异外发回执" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("建议到达时自动展开 AI 折叠区", () => {
+    const { container } = renderCompact({
+      messageSuggestion: {
+        token: "suggestion-compact-1",
+        message: "feat(core): update",
+        source: "local-rule",
+        metadataOnly: true,
+        diffMode: "metadata-only",
+        warnings: [],
+        binding: {
+          repositoryUuid: "uuid-1",
+          scopeHash: "scope-1",
+          candidateHash: "candidates-1",
+          generatedAt: "2026-07-30T10:00:00.000Z",
+        },
+      },
+    });
+    expect(
+      screen.getByRole("region", { name: "提交说明建议草稿" }),
+    ).toBeInTheDocument();
+    expect(
+      (
+        container.querySelector(
+          "details.commit-compact-details--ai",
+        ) as HTMLDetailsElement
+      ).open,
+    ).toBe(true);
   });
 });

@@ -359,6 +359,20 @@ describe("DiffModule（@pierre/diffs 适配层）", () => {
     await screen.findByText("二进制文件无法进行文本对比");
     expect(pierreMocks.records).toHaveLength(0);
   });
+
+  it("V014-C2：工具栏提供返回本地修改次级按钮并路由到 Changes", async () => {
+    const onAction = vi.fn();
+    render(DiffModule, { snapshot: workingSnapshot, onAction });
+    const backButton = await screen.findByRole("button", {
+      name: "返回本地修改",
+    });
+    expect(backButton).not.toHaveClass("button--primary");
+    await fireEvent.click(backButton);
+    expect(onAction).toHaveBeenCalledWith("open-module", {
+      moduleId: "changes",
+      taskId: "changes/overview",
+    });
+  });
 });
 
 describe("差异语言映射", () => {

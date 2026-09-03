@@ -68,6 +68,11 @@ import {
   filterCommitSelectionByCandidates,
   validateCommitSelection,
 } from "../../commit/commitSelectionValidation";
+import {
+  buildCommitHandoff,
+  createCommitHandoffView,
+  selectCommitHandoffForSnapshot,
+} from "../../commit/commitHandoff";
 import { describeSelectionChange } from "../../commit/selectionChangeSummary";
 import {
   CommitSelectionRuleService,
@@ -162,6 +167,13 @@ import { toDisplayPath } from "../../scope/pathBrands";
 import { nativePathSemantics } from "../../scope/nativePathSemantics";
 import { createScopedFileKey } from "../../scope/projectIdentity";
 import type { PathIdentityKey } from "../../scope/pathIdentity";
+import { createContinuityContext } from "./taskContinuity";
+import {
+  buildContinuityRestore,
+  continuityResolveKey,
+  migrateContinuityForReopen,
+  noteContinuityEvent,
+} from "./taskContinuityWiring";
 import { validatePathsInScope } from "../../scope/pathBoundaryGuard";
 import { isPathInScope } from "../../scope/pathBoundaryGuard";
 import { projectRelativePath } from "../../scope/projectIdentity";
@@ -717,6 +729,8 @@ export class WorkbenchController implements vscode.Disposable {
       this.context.secrets,
       repositoryUuid,
     );
+    // v0.1.4 V014-C1：重建前保留旧会话引用，用于连续上下文迁移判定。
+    const previousSession = this.session;
     this.session = {
       ...request,
       sessionId: randomUUID(),
@@ -733,9 +747,45 @@ export class WorkbenchController implements vscode.Disposable {
         hasStoredAuthentication: Boolean(storedAuthentication),
       },
     };
+    // v0.1.4 V014-C1：request.moduleId 为 changes 且旧会话有未失效的连续
+    // 上下文时迁移到新会话（scope 只缩不扩、项目切换/跨仓库/扩大即丢弃）。
+    // 非 changes 目标不携带连续上下文。
+    this.session.taskContinuity = migrateContinuityForReopen(
+      previousSession,
+      this.session,
+      nativePathSemantics,
+    );
     // 项目切换后恢复该项目保留的草稿（仅提交说明与手动选择；旧预览、
     // 确认令牌与 AI 结果永不恢复）。
     await this.restoreProjectDraft(this.session);
+    // v0.1.4 V014-E：跨窗口交接（目标为 commit 且带选择）整批复验。
+    // 交接选择优先于项目草稿恢复的选择（更新近的显式用户动作）。
+    // 全部非法时拒绝打开：恢复旧会话（无旧会话时丢弃新会话），
+    // 中文反馈原因，不创建面板、不改动任何选择与草稿。
+    if (this.session.moduleId === "commit") {
+      const handoffVerdict = await this.applyCommitHandoffSelection(
+        this.session,
+        request.selectedPaths,
+        // v0.1.4 V014-E3 必修 4：跨窗口交接携带源会话仓库 UUID，跨仓库
+        // 同名路径记 cross-repository（缺省视为同仓库，不猜测）。
+        previousSession?.repositoryUuid,
+      );
+      if (handoffVerdict === "rejected") {
+        this.session = previousSession;
+        // 面板尚未创建时错误消息无法投递到 Webview，同步记入输出通道
+        // （仅固定中文原因，不含路径等交接数据）。
+        appendOutput(
+          "已拒绝来自本地修改的交接选择（全部失效），未打开提交页。",
+        );
+        await this.sendError(
+          "commit",
+          "无法带入提交选择",
+          "来自本地修改的交接选择已全部失效（文件消失或为排除/阻止项），未打开提交页；请在本地修改中重新选择后重试。",
+          true,
+        );
+        return;
+      }
+    }
     // 一控制器最多持有一个仓库安全引用：首次会话 acquire；同仓库重开保持
     // 既有引用（不重复 acquire）；换仓库时先 release 旧引用再 acquire 新引用。
     this.syncSecurityReference(this.session.scope.repositoryRoot);
@@ -810,6 +860,8 @@ export class WorkbenchController implements vscode.Disposable {
     const referenceRoot = this.securityReferenceRoot;
     // 先摘除会话与引用跟踪，再释放安全引用，避免 panel.dispose() 触发的
     // onDidDispose 对同一仓库重复释放（引用计数下溢或重复广播）。
+    // v0.1.4 V014-C1 window-close 强失效：会话随控制器释放丢弃，
+    // 连续上下文不复用（旧选择/锚点/草稿定位一律不再下发）。
     this.session = undefined;
     this.diffTargetKey = undefined;
     this.clearPendingDiffOpen();
@@ -964,6 +1016,8 @@ export class WorkbenchController implements vscode.Disposable {
         const referenceRoot = this.securityReferenceRoot;
         // 先摘除会话与引用跟踪，再释放安全引用：release 在最后引用时会同步
         // 广播失效事件，此时本控制器已无活动会话，不会把刚清除的上下文写回。
+        // v0.1.4 V014-C1 window-close 强失效：会话随面板关闭丢弃，
+        // 连续上下文不复用（旧选择/锚点/草稿定位一律不再下发）。
         this.session = undefined;
         this.diffTargetKey = undefined;
         this.clearPendingDiffOpen();
@@ -1137,10 +1191,50 @@ export class WorkbenchController implements vscode.Disposable {
           );
           return;
         }
+        // v0.1.4 V014-E：同窗交接（目标为 commit 且带选择）整批复验，
+        // 与跨窗口 open() 共用 applyCommitHandoffSelection，语义一致。
+        // 全部非法时拒绝切换，不改动当前模块、选择与草稿。
+        if (moduleId === "commit") {
+          const handoffVerdict = await this.applyCommitHandoffSelection(
+            session,
+            asStringArray(data.selectedPaths),
+          );
+          if (handoffVerdict === "rejected") {
+            await this.sendError(
+              session.moduleId,
+              "无法带入提交选择",
+              "来自本地修改的交接选择已全部失效（文件消失或为排除/阻止项），未切换到提交页；请在本地修改中重新选择后重试。",
+              true,
+              message.requestId,
+            );
+            return;
+          }
+          if (handoffVerdict !== "empty") {
+            session.moduleId = moduleId;
+            session.taskId = taskId;
+            session.targetFile = undefined;
+            // v0.1.4 V014-C1：同窗内选择变化使旧连续交集失效（弱失效，保留待复核）。
+            noteContinuityEvent(session, "selection-change");
+            this.panel!.title = getModuleTitle(moduleId, taskId);
+            await this.loadModule(moduleId, undefined, message.requestId);
+            return;
+          }
+        }
         session.moduleId = moduleId;
         session.taskId = taskId;
         session.selectedPaths = asStringArray(data.selectedPaths);
         session.targetFile = undefined;
+        // v0.1.4 V014-E3 必修 3：空交接落入通用分支时同样初始化 commit
+        // 选择并显式失效旧 preview/token 与 handoff（apply 内已处理，
+        // 此处兜底保证通用直写不残留旧预览有效）。
+        if (moduleId === "commit") {
+          const commitState = this.ensureCommitState(session);
+          commitState.selectedPaths = [...(session.selectedPaths ?? [])];
+          commitState.preview = undefined;
+          commitState.handoff = undefined;
+        }
+        // v0.1.4 V014-C1：同窗内选择变化使旧连续交集失效（弱失效，保留待复核）。
+        noteContinuityEvent(session, "selection-change");
         this.panel!.title = getModuleTitle(moduleId, taskId);
         await this.loadModule(moduleId, undefined, message.requestId);
         return;
@@ -1177,6 +1271,12 @@ export class WorkbenchController implements vscode.Disposable {
           return;
         }
         // 非 Diff 窗口统一路由到独立 Diff 窗口；Diff 窗口内保持当前会话（目标变化）。
+        // v0.1.4 V014-C1：源模块为 changes 时先快照连续任务上下文
+        // （Host 权威选择 + 本次目标文件 + 可得的视图偏好/草稿引用），
+        // 写入源 Changes 会话，再按现状转发 Diff 窗口。
+        if (session.moduleId === "changes") {
+          this.captureContinuityForDiff(session, absolutePath);
+        }
         if (this.servedModule !== "diff") {
           if (this.onOpenInOtherWindow) {
             await this.onOpenInOtherWindow(
@@ -1451,6 +1551,10 @@ export class WorkbenchController implements vscode.Disposable {
         session.selectedPaths = [...recommended];
         state.manualSelectedPaths = undefined;
         state.preview = undefined;
+        // v0.1.4 V014-E：规则推荐接管选择，旧交接来源失效。
+        state.handoff = undefined;
+        // v0.1.4 V014-C1：规则应用覆盖选择，旧连续交集失效。
+        noteContinuityEvent(session, "selection-change");
         state.feedback = {
           tone: "success",
           message: `已按本地规则应用推荐选择 ${recommended.length} 个文件（${describeSelectionChange(previousManual, recommended)}）；${needsReview} 个文件待确认，可手动勾选。`,
@@ -1513,6 +1617,10 @@ export class WorkbenchController implements vscode.Disposable {
         session.selectedPaths = [...state.selectedPaths];
         state.manualSelectedPaths = undefined;
         state.preview = undefined;
+        // v0.1.4 V014-E：AI 建议接管选择，旧交接来源失效。
+        state.handoff = undefined;
+        // v0.1.4 V014-C1：AI 建议覆盖选择，旧连续交集失效。
+        noteContinuityEvent(session, "selection-change");
         state.ai = {
           source,
           summary: `建议选择 ${state.selectedPaths.length} 个文件（${describeSelectionChange(previousManual, state.selectedPaths)}）；${effective.needsReview.length} 个需要人工确认，${effective.excluded.length} 个建议排除。`,
@@ -5270,6 +5378,8 @@ export class WorkbenchController implements vscode.Disposable {
       presets.push(preset);
     }
     session.filterPresets = presets;
+    // v0.1.4 V014-C1：筛选变化使旧连续交集失效（弱失效，保留待复核）。
+    noteContinuityEvent(session, "filter-change");
   }
 
   /** v0.0.17 批次 E：删除命名筛选预设；未知 id 静默忽略。 */
@@ -5284,6 +5394,8 @@ export class WorkbenchController implements vscode.Disposable {
     session.filterPresets = session.filterPresets.filter(
       (preset) => preset.id !== id,
     );
+    // v0.1.4 V014-C1：筛选变化使旧连续交集失效（弱失效，保留待复核）。
+    noteContinuityEvent(session, "filter-change");
   }
 
   private async buildSnapshot(
@@ -5300,6 +5412,12 @@ export class WorkbenchController implements vscode.Disposable {
         session.scopeView.repositoryName,
         session.scope,
       );
+      // v0.1.4 V014-C1：用同一批权威候选装配往返恢复载荷（一次性消费）。
+      const continuityRestore = this.consumeContinuityRestoreForChanges(
+        session,
+        candidates,
+        files,
+      );
       return {
         kind: "changes",
         commitDraft: this.ensureCommitState(session).message,
@@ -5307,6 +5425,7 @@ export class WorkbenchController implements vscode.Disposable {
         summary: summary.statuses,
         refreshedAt: new Date().toISOString(),
         filterPresets: session.filterPresets,
+        ...(continuityRestore ? { continuityRestore } : {}),
         operationPreview: preview
           ? {
               token: preview.token,
@@ -8163,6 +8282,81 @@ export class WorkbenchController implements vscode.Disposable {
     });
   }
 
+  /**
+   * v0.1.4 V014-C1：open-diff 前快照源 Changes 会话的连续任务上下文。
+   * - 选择来自 Host 权威（session.selectedPaths / commitState）；
+   * - 活动文件与滚动锚 = 本次 Diff 目标文件对应的身份键；
+   * - changesView 只存 Webview 已上报通道可得的偏好（C1 暂无实时通道，记空对象）；
+   * - commitDraft 引用当前 Host 草稿（message + 版本号 0：C1 暂无 draftRevision
+   *   追踪，恢复侧保守处理）；
+   * - diffTarget 指向本次目标并标记返回动作；originScopeHash 实时重算。
+   * 身份键经 continuityResolveKey 生成（与文件视图 selectionKey 同源）；
+   * 快照内容不进日志/URI。
+   */
+  private captureContinuityForDiff(
+    session: WorkbenchSession,
+    targetAbsolutePath: string,
+  ): void {
+    if (session.moduleId !== "changes") {
+      return;
+    }
+    const resolveKey = continuityResolveKey(
+      session.scope.repositoryRoot,
+      nativePathSemantics,
+    );
+    const context = createContinuityContext(session, {
+      resolveKey,
+      diffReturnAction: "back-to-changes",
+    });
+    const activeKey = resolveKey(targetAbsolutePath);
+    context.originScopeHash = hashOperationScope(session.scope);
+    context.activeFileKey = activeKey;
+    context.scrollAnchorKey = activeKey;
+    context.pathByKey[activeKey as string] ??= targetAbsolutePath;
+    context.diffTarget = {
+      targetKey: activeKey as string,
+      returnAction: "back-to-changes",
+    };
+    session.taskContinuity = context;
+  }
+
+  /**
+   * v0.1.4 V014-C1：为 Changes 快照装配 continuityRestore（一次性消费）。
+   * 用本次快照同一批权威候选计算合法交集，不另行重采；无论成功、stale
+   * 还是失效，计算后都消费（清空）session.taskContinuity，避免后续刷新
+   * 重复下发旧恢复载荷覆盖用户新选择。stale（延迟旧快照）直接丢弃。
+   */
+  private consumeContinuityRestoreForChanges(
+    session: WorkbenchSession,
+    candidates: Awaited<ReturnType<typeof collectCommitCandidates>>,
+    files: import("../../protocol/workbenchProtocol").WorkbenchFileView[],
+  ):
+    | import("../../protocol/workbenchProtocol").ContinuityRestoreView
+    | undefined {
+    const context = session.taskContinuity;
+    if (!context || session.moduleId !== "changes") {
+      return undefined;
+    }
+    const { view, stale } = buildContinuityRestore(
+      {
+        context,
+        candidates,
+        files,
+        sessionId: session.sessionId,
+        repositoryUuid: session.repositoryUuid,
+        includeExternals: session.scope.includeExternals === true,
+        currentDraftMessage: session.commitState?.message ?? "",
+      },
+      nativePathSemantics,
+    );
+    // 一次性消费：成功、stale、失效一律清空，不再下发旧载荷。
+    session.taskContinuity = undefined;
+    if (stale) {
+      return undefined;
+    }
+    return view;
+  }
+
   private async sendChangesSnapshot(
     session: WorkbenchSession,
     requestId?: string,
@@ -8208,6 +8402,15 @@ export class WorkbenchController implements vscode.Disposable {
           : undefined,
         feedback: session.changesState?.feedback,
       };
+    // v0.1.4 V014-C1：用同一批权威候选装配往返恢复载荷（一次性消费）。
+    const continuityRestore = this.consumeContinuityRestoreForChanges(
+      session,
+      candidates,
+      snapshot.files,
+    );
+    if (continuityRestore) {
+      snapshot.continuityRestore = continuityRestore;
+    }
     await this.post({
       protocolVersion: WORKBENCH_PROTOCOL_VERSION,
       type: "module/snapshot",
@@ -9070,6 +9273,8 @@ export class WorkbenchController implements vscode.Disposable {
       state.selectedPaths,
       candidates,
     );
+    // v0.1.4 V014-E：记录过滤前已选，供下方冲突移除判定（赋值后即丢失）。
+    const selectedBeforeFilter = [...(state.selectedPaths ?? [])];
     state.selectedPaths = filtered.kept;
     // v0.0.13 批次 C：每次快照确保共享选择与 Commit 内部选择一致（不静默扩大）。
     session.selectedPaths = [...state.selectedPaths];
@@ -9088,15 +9293,35 @@ export class WorkbenchController implements vscode.Disposable {
       state.manualSelectedPaths = manualKept;
     }
     const removedReasons = filtered.removedReasons;
-    if (removedReasons.length > 0 && !state.feedback) {
-      state.feedback = {
-        tone: "warning",
-        message: `刷新后移除 ${removedReasons.length} 个失效选择（${removedReasons
-          .slice(0, 3)
-          .join(
-            "；",
-          )}${removedReasons.length > 3 ? "…" : ""}）。请确认当前选择。`,
-      };
+    // v0.1.4 V014-E 交接后失效链：快照过滤移除了已选路径（含交接后出现
+    // 冲突/阻止项）→ 旧 preview/token 立即失效，禁止旧预览继续可用；
+    // message 草稿保留。冲突导致收缩时 feedback 给出“处理冲突”指引。
+    if (removedReasons.length > 0) {
+      const hadPreview = state.preview !== undefined;
+      state.preview = undefined;
+      const keptSet = new Set(filtered.kept);
+      // 仅已选后被移除的路径参与冲突判定：未选中的冲突项不得触发指引。
+      const removedSet = new Set(
+        selectedBeforeFilter.filter((item) => !keptSet.has(item)),
+      );
+      const conflictRemoved = candidates.some(
+        (candidate) =>
+          removedSet.has(candidate.relativePath) &&
+          (candidate.status === "conflicted" ||
+            candidate.propStatus === "conflicted"),
+      );
+      if (!state.feedback) {
+        const reasonsText = `${removedReasons.slice(0, 3).join("；")}${
+          removedReasons.length > 3 ? "…" : ""
+        }`;
+        state.feedback = {
+          tone: "warning",
+          message:
+            conflictRemoved || hadPreview
+              ? `选择已变化，旧提交预览已失效（${reasonsText}）。${conflictRemoved ? "请先到冲突模块处理冲突，再重新预检；" : ""}提交说明草稿已保留，请确认当前选择后重新预览。`
+              : `刷新后移除 ${removedReasons.length} 个失效选择（${reasonsText}）。请确认当前选择。`,
+        };
+      }
     }
 
     const convention = await resolveCommitConventionConfig(
@@ -9180,6 +9405,10 @@ export class WorkbenchController implements vscode.Disposable {
       }
     }
 
+    // v0.1.4 V014-E：交接记录随快照下发（E2 展示）；版本过期即丢弃，
+    // 快照其余部分不受影响（stale handoff 忽略）。
+    state.handoff = selectCommitHandoffForSnapshot(state.handoff);
+
     return {
       kind: "commit",
       files: keyedCandidates.map(({ candidate, selectionKey }) =>
@@ -9220,6 +9449,7 @@ export class WorkbenchController implements vscode.Disposable {
       filterPresets: session.filterPresets,
       feedback,
       ai,
+      handoff: state.handoff,
       messageSuggestion,
       aiPrivacy: [
         {
@@ -9287,9 +9517,82 @@ export class WorkbenchController implements vscode.Disposable {
     // AI → 直接预览/AI 说明”会把推荐集合重新虚构成手动选择）。
     if (options.trackManualSelection) {
       state.manualSelectedPaths = validation.selectedPaths;
+      // v0.1.4 V014-C1：用户逐项勾选使旧连续交集失效（弱失效）。
+      noteContinuityEvent(session, "selection-change");
+      // v0.1.4 V014-E：Commit 侧手动改选后，交接记录失效（旧 preview/token
+      // 同步失效，message 草稿保留）；交接选择不得冒充手动选择，反之新的
+      // 手动选择也不再挂载旧交接来源。
+      state.handoff = undefined;
     }
     state.preview = undefined;
     return undefined;
+  }
+
+  /**
+   * v0.1.4 V014-E Changes → Commit 交接整批复验（目标打开时落点）。
+   *
+   * 落点理由：跨模块转发经窗口管理器到达目标窗口，源窗口（Changes）没有
+   * Commit 权威候选缓存，源侧复验需额外全量 svn status；目标打开 Commit 时
+   * 本就要采集同一批候选构建快照，复用该批候选复验既最新又无额外采集。
+   * 同窗 open-module 走同一入口，保证两条路径语义一致。
+   *
+   * - 空交接（未带选择）：返回 "empty"，调用方保持原有打开行为；
+   * - 全部非法：返回 "rejected"，不修改任何选择与草稿，调用方拒绝打开
+   *   Commit 并给出中文原因；
+   * - 部分非法：收缩为合法交集写入选择，移除项记入 handoff，旧 preview/
+   *   token 立即失效，message 草稿保留；
+   * - 交接选择只写入 selectedPaths，绝不写入 manualSelectedPaths（不得把
+   *   交接选择虚构成手动选择，也不得抹掉真实手动 provenance：既有手动项
+   *   仍在交集内的由快照收敛保留）。
+   *
+   * 候选来源：V014-E3 起交接复验一律新鲜采集（与 commit/preview、
+   * commit/generate-message 一致），禁用 commitState.candidates 陈旧缓存。
+   */
+  private async applyCommitHandoffSelection(
+    session: WorkbenchSession,
+    requested: readonly string[] | undefined,
+    originRepositoryUuid?: string,
+  ): Promise<"accepted" | "shrunk" | "rejected" | "empty"> {
+    const deduped = [...new Set(requested ?? [])];
+    const state = this.ensureCommitState(session);
+    if (deduped.length === 0) {
+      // v0.1.4 V014-E3 必修 3：空交接同样初始化 commit 选择并显式失效旧
+      // preview/token 与 handoff（旧预览残留有效即阻断失败）。
+      state.selectedPaths = [];
+      session.selectedPaths = [];
+      state.preview = undefined;
+      state.handoff = undefined;
+      return "empty";
+    }
+    // v0.1.4 V014-E3 必修 1：交接复验禁用陈旧候选缓存，一律新鲜采集。
+    const candidates = await this.collectScopeCandidates(session);
+    // v0.1.4 V014-E3 必修 4：传入仓库 UUID，跨仓库同名路径记
+    // cross-repository（不得误判 accepted）。
+    const build = buildCommitHandoff(deduped, candidates, {
+      currentRepositoryUuid: session.repositoryUuid,
+      originRepositoryUuid,
+    });
+    if (build.verdict === "rejected") {
+      return "rejected";
+    }
+    state.selectedPaths = [...build.kept];
+    session.selectedPaths = [...build.kept];
+    // 交接是新的选择事实：旧 preview/token 立即失效，草稿保留。
+    state.preview = undefined;
+    state.handoff = createCommitHandoffView(build);
+    // 收缩交接经一次性 feedback 播报（快照下发后清除）：来源、数量与
+    // 中文移除原因；范围未扩大由 kept ⊆ requested 保证。
+    if (build.verdict === "shrunk" && !state.feedback) {
+      const reasonsText = `${build.removedEntries
+        .slice(0, 3)
+        .map((entry) => entry.message)
+        .join("；")}${build.removedEntries.length > 3 ? "…" : ""}`;
+      state.feedback = {
+        tone: "warning",
+        message: `已从本地修改带入 ${build.keptCount} 个文件（范围未扩大），移除 ${build.removedEntries.length} 个失效项（${reasonsText}）。请确认当前选择。`,
+      };
+    }
+    return build.verdict;
   }
 
   private resolveSelectedAbsolutePaths(

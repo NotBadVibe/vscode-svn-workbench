@@ -1,5 +1,6 @@
 <script lang="ts">
   import { ContextMenu } from "bits-ui";
+  import { tick } from "svelte";
   import type {
     ChangesSnapshot,
     HostToWebviewMessage,
@@ -7,6 +8,7 @@
     WorkbenchFileStatus,
     WorkbenchFileView,
   } from "@protocol/workbenchProtocol";
+  import { isContinuityRestoreView } from "@protocol/workbenchProtocol";
   import { formatZhTime } from "../../i18n/formatters";
   import {
     fileStatusLabels,
@@ -97,6 +99,17 @@
   let sortDirection = $state<SortDirection>("asc");
   let density = $state<ListDensity>("comfortable");
   let announcement = $state("");
+  /*
+   * V014-C2 · 往返恢复一次性消费标记（只记已消费的载荷标识，不缓存复用载荷值）。
+   * Host 恢复载荷只随快照下发一次；同一载荷对象重复渲染不再重放，保证用户
+   * 在恢复后对选择/草稿/视图的手动改动拥有最终决定权。
+   */
+  let consumedRestorePayload: unknown;
+  /*
+   * V014-C2 · 恢复当次的 reset 观察只跳过这一次（非响应式标记，避免二次调度
+   * 把重放后的活动行/滚动再清掉）；定位统一在 tick 后重放。
+   */
+  let suppressResetForRestore = false;
   let contextFile = $state<WorkbenchFileView | undefined>();
   /** 行菜单受控打开状态（Shift+F10 / Menu 键由键盘导航触发）。 */
   let rowMenuOpen = $state(false);
@@ -212,6 +225,61 @@
     selected.size - commitBlockedSelectedCount,
   );
 
+  /*
+   * V014-B · Changes 唯一主操作派生（五态互斥，每态只渲染一个 button--primary）。
+   * 数量口径均为权威合法集合（整快照 snapshot.files + isActionableForMode），
+   * 禁止来自 filteredFiles 等过滤后可见行数；blocked 永不进入可提交集合。
+   */
+  const committableTotalCount = $derived(
+    snapshot.files.filter((file) => isActionableForMode(file, MODE)).length,
+  );
+  const recommendedCommittableCount = $derived(
+    snapshot.files.filter(
+      (file) =>
+        file.selection === "selected" && isActionableForMode(file, MODE),
+    ).length,
+  );
+  const blockedRangeFiles = $derived(
+    snapshot.files.filter(
+      (file) => file.selection === "blocked" || file.selection === "excluded",
+    ),
+  );
+  /** 阻止态主按钮数量：有选择时取所选阻止数，否则取范围阻止数。 */
+  const blockedRelevantCount = $derived(
+    selected.size > 0 ? commitBlockedSelectedCount : blockedRangeFiles.length,
+  );
+  type PrimaryActionKind =
+    | "clean"
+    | "ready"
+    | "conflicts-only"
+    | "blocked"
+    | "suggest"
+    | "select-committable";
+  /**
+   * V014-B · 唯一主操作判定（优先级从上到下互斥）：
+   * clean（空工作副本）> ready（已选含可提交）> conflicts-only（可提交为 0 且有冲突）
+   * > blocked（所选全阻止或范围无可提交）> suggest（无选择且有推荐）
+   * > select-committable（无选择、有可提交但无推荐时的兜底，只灌选择）。
+   */
+  const primaryAction = $derived.by((): { kind: PrimaryActionKind } => {
+    if (snapshot.files.length === 0) return { kind: "clean" };
+    if (committableSelectedCount > 0) return { kind: "ready" };
+    if (committableTotalCount === 0 && conflictedCount > 0)
+      return { kind: "conflicts-only" };
+    if (
+      committableSelectedCount === 0 &&
+      (selected.size > 0 || committableTotalCount === 0)
+    )
+      return { kind: "blocked" };
+    if (selected.size === 0 && recommendedCommittableCount > 0)
+      return { kind: "suggest" };
+    return { kind: "select-committable" };
+  });
+  let moreOpen = $state(false);
+  let moreTriggerEl = $state<HTMLElement | null>(null);
+  let blockedReasonsOpen = $state(false);
+  let blockedReasonsEl = $state<HTMLElement | null>(null);
+
   // 刷新合法交集：只保留新快照中仍存在且未变 blocked 的选择；新文件不自动加入。
   let lastRefreshedFiles: WorkbenchFileView[] | undefined;
   $effect(() => {
@@ -272,7 +340,127 @@
     query;
     activeStatus;
     onlySelected;
+    // V014-C2：恢复当次跳过回顶清活动行，定位由恢复流程在 tick 后重放。
+    if (suppressResetForRestore) return;
     list.resetNavigation();
+  });
+
+  /*
+   * V014-C2 · Changes ↔ Diff 往返恢复一次性消费（C1 协议字段，契约七步）。
+   * ① 非法载荷 fail-closed：视为缺省，不半应用；② 选择只接受与最新候选的交集；
+   * ③ 身份锚优先定位、像素仅辅助钳制；④ 视图有值回填、缺省保持现状；⑤ 本地已有
+   * 输入时丢弃载荷草稿；⑥ 移除原因与恢复提示经 role=status 逐条播报；⑦ 联调见
+   * `?continuity=restore` mock。同一载荷对象只消费一次，值不缓存、不复用。
+   */
+  $effect(() => {
+    const restore = snapshot.continuityRestore;
+    if (restore === undefined || restore === consumedRestorePayload) return;
+    consumedRestorePayload = restore;
+    if (!isContinuityRestoreView(restore)) return;
+    // ② 选择回填：只接受交集，不并入新文件（onlySelected 仅视图过滤）。
+    // V014-E3 纵深：Host 回归时 Webview 仍排除 blocked/excluded（防旧
+    // preview/选择残留进入提交篮）。
+    const validKeys = new Set(snapshot.files.map((file) => file.selectionKey));
+    const selectableKeys = new Set(
+      snapshot.files
+        .filter(
+          (file) =>
+            file.selection !== "blocked" && file.selection !== "excluded",
+        )
+        .map((file) => file.selectionKey),
+    );
+    selected = new Set(
+      restore.selectedKeys.filter(
+        (key) => validKeys.has(key) && selectableKeys.has(key),
+      ),
+    );
+    // ④ 视图回填：有值才回填，缺省保持现状。
+    const view = restore.changesView;
+    suppressResetForRestore = true;
+    if (view.query !== undefined) query = view.query;
+    if (
+      view.activeStatus !== undefined &&
+      (view.activeStatus === "all" || view.activeStatus in fileStatusLabels)
+    ) {
+      activeStatus = view.activeStatus as WorkbenchFileStatus | "all";
+    }
+    if (view.activeFileType !== undefined) {
+      activeFileType = view.activeFileType;
+    }
+    if (view.activePresetId !== undefined) {
+      activePresetId = view.activePresetId;
+    }
+    if (view.sort !== undefined) {
+      const [sortFieldText, sortDirectionText] = view.sort.split(":");
+      if (
+        (sortFieldText === "path" ||
+          sortFieldText === "fileName" ||
+          sortFieldText === "status" ||
+          sortFieldText === "recommendation" ||
+          sortFieldText === "ownership") &&
+        (sortDirectionText === "asc" || sortDirectionText === "desc")
+      ) {
+        sortField = sortFieldText;
+        sortDirection = sortDirectionText;
+        saveListPreferences("changes", {
+          sortField,
+          sortDirection,
+          density,
+        });
+      }
+    }
+    if (view.density !== undefined) {
+      density = view.density;
+      saveListPreferences("changes", { sortField, sortDirection, density });
+    }
+    if (view.onlySelected !== undefined) onlySelected = view.onlySelected;
+    // ⑤ 草稿第二道保守：本地已有输入时丢弃载荷草稿。
+    if (restore.commitDraft !== undefined && commitDraft.trim().length === 0) {
+      commitDraft = restore.commitDraft;
+      if (restore.commitDraft.trim().length > 0) draftExpanded = true;
+    }
+    // ⑥ 播报：移除原因逐条 + 恢复提示（SelectionSummary 经 role=status 播报）。
+    const restoreMessages = [
+      ...restore.removedEntries.map((entry) => entry.message),
+      ...restore.notices,
+    ].filter((message) => message.trim().length > 0);
+    if (restoreMessages.length > 0) announcement = restoreMessages.join("；");
+    // ③ 活动行/滚动：锚命中直接定位，像素仅锚失效时钳制，绝不用像素单独定位。
+    const activeKey = restore.activeFileKey;
+    const anchorKey = restore.scrollAnchorKey;
+    const assistPixels = restore.scrollAssistPixels;
+    void tick().then(() => {
+      suppressResetForRestore = false;
+      const fallbackAnchor =
+        anchorKey !== undefined && anchorKey !== activeKey
+          ? anchorKey
+          : undefined;
+      const directIndex =
+        activeKey !== undefined
+          ? sortedFiles.findIndex((file) => file.selectionKey === activeKey)
+          : -1;
+      const anchorIndex =
+        fallbackAnchor !== undefined
+          ? sortedFiles.findIndex(
+              (file) => file.selectionKey === fallbackAnchor,
+            )
+          : -1;
+      // 活动行优先；活动行缺失时回退到滚动锚对应行（邻项恢复已由 Host 定 active）。
+      const targetIndex = directIndex >= 0 ? directIndex : anchorIndex;
+      if (targetIndex >= 0) {
+        list.markActive(targetIndex);
+        list.setActiveRow(targetIndex);
+        return;
+      }
+      if (typeof assistPixels === "number" && list.element) {
+        const maxScrollTop =
+          list.element.scrollHeight - list.element.clientHeight;
+        list.element.scrollTop = Math.max(
+          0,
+          Math.min(assistPixels, Math.max(0, maxScrollTop)),
+        );
+      }
+    });
   });
 
   $effect(() => {
@@ -346,6 +534,38 @@
 
   function selectRecommended(): void {
     selected = mergeRecommendedSelection(filteredSelectable, selected);
+  }
+
+  /*
+   * V014-B · 权威推荐灌选择：作用于整快照可提交集合（非可见行），只灌入
+   * 选择、不跳转、不打开 Commit；数量口径 = recommendedCommittableCount。
+   */
+  function selectRecommendedAuthoritative(): void {
+    selected = mergeRecommendedSelection(
+      toSelectableItems(snapshot.files, MODE),
+      selected,
+    );
+  }
+
+  /*
+   * V014-B · 范围可提交全灌选择：等效表头全选可操作项语义，但作用于整快照
+   * 权威集合（非可见行）；只灌入选择，不直接打开 Commit。
+   */
+  function selectAllCommittableInScope(): void {
+    selected = selectActionable(
+      toSelectableItems(snapshot.files, MODE),
+      selected,
+    );
+    moreOpen = false;
+  }
+
+  function toggleBlockedReasons(trigger: HTMLElement | null): void {
+    blockedReasonsOpen = !blockedReasonsOpen;
+    if (blockedReasonsOpen) {
+      window.setTimeout(() => blockedReasonsEl?.focus(), 0);
+    } else if (trigger) {
+      trigger.focus();
+    }
   }
 
   function clearHidden(): void {
@@ -539,16 +759,20 @@
         {count}
       </button>
     {/each}
-    <!-- v0.0.17 批次 B（U-06）：存在冲突时提供直达冲突处理的 CTA。 -->
+    <!-- V014-B：冲突 CTA 主次由 primaryAction 决定；conflicts-only 态升为唯一 primary。 -->
     {#if conflictedCount > 0}
       <button
-        class="button button--secondary"
+        class={primaryAction.kind === "conflicts-only"
+          ? "button button--primary"
+          : "button button--secondary"}
         data-changes-conflict-cta
         onclick={() =>
           onAction("open-module", {
             moduleId: "conflicts",
             taskId: "conflicts/resolve",
-          })}>处理 {conflictedCount} 个冲突</button
+          })}
+        ><span class="codicon codicon-warning" aria-hidden="true"></span>处理 {conflictedCount}
+        个冲突</button
       >
     {/if}
   </div>
@@ -724,15 +948,17 @@
               : "当前筛选没有匹配文件；调整搜索词、状态或类型筛选即可。"}
         </p>
         {#if snapshot.files.length === 0}
-          <!-- v0.0.17 批次 F（C-02）：空工作副本快捷动作（C-09）。 -->
+          <!-- V014-B：干净态“检查远端更新”升为唯一 primary，查看历史保持次级。 -->
           <div class="toolbar-actions">
             <button
-              class="button button--secondary"
+              class="button button--primary"
               onclick={() =>
                 onAction("open-module", {
                   moduleId: "update",
                   taskId: "update/preview",
-                })}>检查远端更新</button
+                })}
+              ><span class="codicon codicon-sync" aria-hidden="true"
+              ></span>检查远端更新</button
             >
             <button
               class="button button--secondary"
@@ -1020,6 +1246,12 @@
         </ContextMenu.Portal>
       </ContextMenu.Root>
     {/if}
+    <!--
+      V014-B · 唯一主操作底栏：五态互斥，每态最多一个 button--primary。
+      ready 态主操作“检查并提交所选”；suggest/select-committable 态主操作只灌选择
+      不跳转；blocked 态主操作展开阻止原因；conflicts-only/clean 态主操作分别位于
+      状态筛选区与空状态，本栏只保留次级动作（加入变更集 + 更多），不渲染 primary。
+    -->
     <BulkActionBar summary={`已选 ${selected.size}`}>
       <button
         class="button button--secondary"
@@ -1039,34 +1271,124 @@
           >有 {commitBlockedSelectedCount} 个所选文件不可提交，请取消选择后继续</span
         >
       {/if}
-      <button
-        class="button button--primary"
-        disabled={selected.size === 0 || commitBlockedSelectedCount > 0}
-        title={selected.size === 0
-          ? "先选择至少 1 个文件"
-          : commitBlockedSelectedCount > 0
-            ? "所选文件包含不可提交项"
-            : undefined}
-        onclick={() =>
-          onAction("open-module", {
-            moduleId: "commit",
-            taskId: "commit/compose",
-            selectedPaths: selectedPaths(),
-          })}
-      >
-        检查并提交所选（{committableSelectedCount}）
-      </button>
-      <button
-        class="button button--secondary"
-        onclick={() =>
-          onAction("open-module", {
-            moduleId: "commit",
-            taskId: "commit/compose",
-          })}
-      >
-        检查当前范围并提交（{snapshot.files.length}）
-      </button>
+      {#if primaryAction.kind === "ready"}
+        <button
+          class="button button--primary"
+          disabled={selected.size === 0 || commitBlockedSelectedCount > 0}
+          title={selected.size === 0
+            ? "先选择至少 1 个文件"
+            : commitBlockedSelectedCount > 0
+              ? "所选文件包含不可提交项"
+              : undefined}
+          onclick={() =>
+            onAction("open-module", {
+              moduleId: "commit",
+              taskId: "commit/compose",
+              selectedPaths: selectedPaths(),
+            })}
+        >
+          <span class="codicon codicon-check" aria-hidden="true"></span>
+          检查并提交所选（{committableSelectedCount}）
+        </button>
+      {:else if primaryAction.kind === "suggest"}
+        <button
+          class="button button--primary"
+          onclick={selectRecommendedAuthoritative}
+        >
+          <span class="codicon codicon-checklist" aria-hidden="true"></span>
+          选择建议的 {recommendedCommittableCount} 个文件
+        </button>
+      {:else if primaryAction.kind === "select-committable"}
+        <button
+          class="button button--primary"
+          disabled={committableTotalCount === 0}
+          onclick={selectAllCommittableInScope}
+        >
+          <span class="codicon codicon-checklist" aria-hidden="true"></span>
+          选择当前范围可提交的 {committableTotalCount} 个文件
+        </button>
+      {:else if primaryAction.kind === "blocked"}
+        <button
+          class="button button--primary"
+          onclick={(event) =>
+            toggleBlockedReasons(event.currentTarget as HTMLElement)}
+          aria-expanded={blockedReasonsOpen}
+        >
+          <span class="codicon codicon-warning" aria-hidden="true"></span>
+          查看阻止原因（{blockedRelevantCount}）
+        </button>
+      {/if}
+      <div class="toolbar-more">
+        <button
+          class="button button--secondary"
+          bind:this={moreTriggerEl}
+          aria-haspopup="menu"
+          aria-expanded={moreOpen}
+          aria-label="更多批量操作"
+          onclick={() => (moreOpen = !moreOpen)}
+          onkeydown={(event) => {
+            if (event.key === "Escape" && moreOpen) {
+              event.stopPropagation();
+              moreOpen = false;
+              moreTriggerEl?.focus();
+            }
+          }}>更多</button
+        >
+        {#if moreOpen}
+          <div class="toolbar-more-menu" role="menu" aria-label="更多批量操作">
+            <button
+              role="menuitem"
+              class="button button--secondary"
+              disabled={committableTotalCount === 0}
+              title="只把当前范围全部可提交项加入选择，不打开提交页"
+              onclick={selectAllCommittableInScope}
+            >
+              选择当前范围可提交的 {committableTotalCount} 个文件
+            </button>
+            <div class="toolbar-more-hint" role="note">
+              只灌入选择、不打开提交页；等效表头全选可操作项，作用于当前范围权威集合
+            </div>
+          </div>
+        {/if}
+      </div>
     </BulkActionBar>
+    {#if primaryAction.kind === "blocked" && blockedReasonsOpen}
+      <div
+        class="blocked-reasons"
+        role="status"
+        aria-label="阻止提交原因"
+        tabindex="-1"
+        bind:this={blockedReasonsEl}
+        onkeydown={(event) => {
+          if (event.key === "Escape") {
+            event.stopPropagation();
+            blockedReasonsOpen = false;
+            document
+              .querySelector<HTMLButtonElement>(
+                ".bulk-action-bar .button--primary",
+              )
+              ?.focus();
+          }
+        }}
+      >
+        <p>
+          <span class="codicon codicon-warning" aria-hidden="true"></span>
+          当前没有可提交项：所选或范围内文件被安全规则阻止（冲突、外部工作副本或已排除项不会进入提交）。
+        </p>
+        {#if blockedRangeFiles.length > 0}
+          <ul>
+            {#each blockedRangeFiles as file (file.selectionKey)}
+              <li>
+                {file.relativePath} · {file.reason ??
+                  (file.selection === "blocked" ? "不可提交" : "已排除")}
+              </li>
+            {/each}
+          </ul>
+        {:else}
+          <p>请选择可提交文件，或前往环境诊断排查工作副本状态。</p>
+        {/if}
+      </div>
+    {/if}
   </div>
   <footer class="feature-footer">
     <span>更新于 {formatZhTime(snapshot.refreshedAt)}</span>
@@ -1162,3 +1484,37 @@
     </div>
   {/if}
 </section>
+
+<style>
+  /* V014-B · 更多菜单与阻止原因区（复用冲突页 toolbar-more 模式，不引入新依赖）。 */
+  .toolbar-more {
+    position: relative;
+  }
+  .toolbar-more-menu {
+    position: absolute;
+    bottom: 100%;
+    right: 0;
+    min-width: 240px;
+    padding: 8px;
+    border: 1px solid var(--vscode-panel-border);
+    background: var(--vscode-dropdown-background);
+    border-radius: 6px;
+    z-index: 4;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .toolbar-more-hint {
+    font-size: 12px;
+    color: var(--vscode-descriptionForeground);
+  }
+  .blocked-reasons {
+    border-top: 1px solid var(--border);
+    padding: 8px 10px;
+    font-size: 12px;
+  }
+  .blocked-reasons ul {
+    margin: 6px 0 0;
+    padding-left: 18px;
+  }
+</style>

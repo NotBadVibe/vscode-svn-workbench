@@ -33,15 +33,25 @@
       "version-readme",
       "accepted-evidence"
     ],
-    "futurePlans": ["planned-or-developing-version-readme"],
-    "historicalDecisions": ["archive/README.md", "dated-archive-source"]
+    "futurePlans": [
+      "planned-or-developing-version-readme"
+    ],
+    "historicalDecisions": [
+      "archive/README.md",
+      "dated-archive-source"
+    ]
   },
   "current": [
     {
       "path": "current/产品与功能基线.md",
       "documentKind": "productBaseline",
       "authority": "current",
-      "topics": ["capabilities", "priority", "entry-points", "completion"]
+      "topics": [
+        "capabilities",
+        "priority",
+        "entry-points",
+        "completion"
+      ]
     },
     {
       "path": "current/设计与交互基线.md",
@@ -91,7 +101,9 @@
       "canonicalEntry": "releases/v0.0.1/README.md",
       "manifest": "releases/v0.0.1/manifest.json",
       "releasedFact": true,
-      "topics": ["initial-release"]
+      "topics": [
+        "initial-release"
+      ]
     },
     {
       "version": "0.0.2",
@@ -101,7 +113,10 @@
       "canonicalEntry": "releases/v0.0.2/README.md",
       "manifest": "releases/v0.0.2/manifest.json",
       "releasedFact": true,
-      "topics": ["release", "migration"]
+      "topics": [
+        "release",
+        "migration"
+      ]
     },
     {
       "version": "0.0.3",
@@ -111,7 +126,10 @@
       "canonicalEntry": "releases/v0.0.3/README.md",
       "manifest": "releases/v0.0.3/manifest.json",
       "releasedFact": true,
-      "topics": ["commit-selection-rules", "release"]
+      "topics": [
+        "commit-selection-rules",
+        "release"
+      ]
     },
     {
       "version": "0.0.4",
@@ -121,7 +139,11 @@
       "canonicalEntry": "releases/v0.0.4/README.md",
       "manifest": "releases/v0.0.4/manifest.json",
       "releasedFact": true,
-      "topics": ["diff", "webview-window", "vscode-diff"]
+      "topics": [
+        "diff",
+        "webview-window",
+        "vscode-diff"
+      ]
     },
     {
       "version": "0.0.5",
@@ -131,7 +153,11 @@
       "canonicalEntry": "releases/v0.0.5/README.md",
       "manifest": "releases/v0.0.5/manifest.json",
       "releasedFact": true,
-      "topics": ["module-windows", "routing", "rail-removal"]
+      "topics": [
+        "module-windows",
+        "routing",
+        "rail-removal"
+      ]
     },
     {
       "version": "0.0.6",
@@ -141,7 +167,12 @@
       "canonicalEntry": "releases/v0.0.6/README.md",
       "manifest": "releases/v0.0.6/manifest.json",
       "releasedFact": true,
-      "topics": ["diff-editing", "edit-token", "draft-recovery", "atomic-write"]
+      "topics": [
+        "diff-editing",
+        "edit-token",
+        "draft-recovery",
+        "atomic-write"
+      ]
     },
     {
       "version": "0.0.7",
@@ -301,7 +332,11 @@
       "canonicalEntry": "releases/v0.0.16/README.md",
       "manifest": "releases/v0.0.16/manifest.json",
       "releasedFact": true,
-      "topics": ["operation-timeline", "snapshot-freshness", "limited-recovery"]
+      "topics": [
+        "operation-timeline",
+        "snapshot-freshness",
+        "limited-recovery"
+      ]
     },
     {
       "version": "0.0.17",
@@ -344,7 +379,11 @@
       "canonicalEntry": "releases/v0.1.0/README.md",
       "manifest": "releases/v0.1.0/manifest.json",
       "releasedFact": true,
-      "topics": ["diff-foundation", "pierre-diffs", "performance-baseline"]
+      "topics": [
+        "diff-foundation",
+        "pierre-diffs",
+        "performance-baseline"
+      ]
     },
     {
       "version": "0.1.1",
@@ -354,7 +393,11 @@
       "canonicalEntry": "releases/v0.1.1/README.md",
       "manifest": "releases/v0.1.1/manifest.json",
       "releasedFact": true,
-      "topics": ["conflict-diff", "unresolved-file", "svn-role-mapping"]
+      "topics": [
+        "conflict-diff",
+        "unresolved-file",
+        "svn-role-mapping"
+      ]
     },
     {
       "version": "0.1.2",
@@ -364,7 +407,11 @@
       "canonicalEntry": "releases/v0.1.2/README.md",
       "manifest": "releases/v0.1.2/manifest.json",
       "releasedFact": true,
-      "topics": ["conflict-editing", "undo-redo", "draft-recovery"]
+      "topics": [
+        "conflict-editing",
+        "undo-redo",
+        "draft-recovery"
+      ]
     },
     {
       "version": "0.1.3",
@@ -374,17 +421,25 @@
       "canonicalEntry": "releases/v0.1.3/README.md",
       "manifest": "releases/v0.1.3/manifest.json",
       "releasedFact": true,
-      "topics": ["conflict-save", "conflict-verification", "resolve-workflow"]
+      "topics": [
+        "conflict-save",
+        "conflict-verification",
+        "resolve-workflow"
+      ]
     },
     {
       "version": "0.1.4",
-      "status": "draft",
-      "phase": "planned",
+      "status": "released",
+      "phase": "released",
       "baseVersion": "0.1.3",
       "canonicalEntry": "releases/v0.1.4/README.md",
       "manifest": "releases/v0.1.4/manifest.json",
-      "releasedFact": false,
-      "topics": ["changes-diff-commit", "continuous-context", "primary-action"]
+      "releasedFact": true,
+      "topics": [
+        "changes-diff-commit",
+        "continuous-context",
+        "primary-action"
+      ]
     },
     {
       "version": "0.1.5",
@@ -394,7 +449,11 @@
       "canonicalEntry": "releases/v0.1.5/README.md",
       "manifest": "releases/v0.1.5/manifest.json",
       "releasedFact": false,
-      "topics": ["task-summary", "operation-intent", "result-recovery"]
+      "topics": [
+        "task-summary",
+        "operation-intent",
+        "result-recovery"
+      ]
     },
     {
       "version": "0.1.6",
@@ -418,7 +477,12 @@
       "canonicalEntry": "releases/v0.1.7/README.md",
       "manifest": "releases/v0.1.7/manifest.json",
       "releasedFact": false,
-      "topics": ["keyboard", "ime", "accessibility", "responsive-layout"]
+      "topics": [
+        "keyboard",
+        "ime",
+        "accessibility",
+        "responsive-layout"
+      ]
     },
     {
       "version": "0.1.8",
@@ -442,31 +506,45 @@
       "path": "archive/milestones/2026-07/README.md",
       "documentKind": "milestoneIndex",
       "lifecycle": "historical",
-      "topics": ["timeline", "architecture-migration"]
+      "topics": [
+        "timeline",
+        "architecture-migration"
+      ]
     },
     {
       "path": "archive/releases/v0.0.1-rc.1/README.md",
       "documentKind": "candidateRecord",
       "lifecycle": "historical",
-      "topics": ["release-candidate", "evidence"]
+      "topics": [
+        "release-candidate",
+        "evidence"
+      ]
     },
     {
       "path": "archive/prototypes/v1/项目说明.md",
       "documentKind": "prototypeIndex",
       "lifecycle": "historical",
-      "topics": ["prototype", "initial-design"]
+      "topics": [
+        "prototype",
+        "initial-design"
+      ]
     },
     {
       "path": "archive/prototypes/2026-07-25/优化说明.md",
       "documentKind": "prototypeIteration",
       "lifecycle": "historical",
-      "topics": ["prototype", "design-iteration"]
+      "topics": [
+        "prototype",
+        "design-iteration"
+      ]
     },
     {
       "path": "archive/legacy-specs/product-spec.md",
       "documentKind": "legacySpecification",
       "lifecycle": "historical",
-      "topics": ["early-product-spec"]
+      "topics": [
+        "early-product-spec"
+      ]
     }
   ]
 }

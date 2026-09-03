@@ -5,6 +5,7 @@ import type { buildCommitPlanPreview } from "../../commit/commitPlanBuilder";
 import type {
   ChangesSnapshot,
   ChangelistsSnapshot,
+  CommitHandoffView,
   CommitMessageSuggestion,
   CommitPlanView,
   CommitSnapshot,
@@ -20,6 +21,7 @@ import type {
   WorkbenchTaskId,
 } from "../../protocol/workbenchProtocol";
 import type { OperationScope } from "../../scope/operationScope";
+import type { TaskContinuityContext } from "./taskContinuity";
 import type {
   SvnAuthenticationContext,
   SvnCertificateTrustContext,
@@ -262,6 +264,12 @@ export interface WorkbenchSession extends OpenWorkbenchRequest {
     moduleId: WorkbenchModuleId;
     controller: AbortController;
   };
+  /**
+   * v0.1.4 V014-A：连续任务上下文（Changes → Diff → Commit 纯模型）。
+   * 仅类型挂载：本版本只记录与推导，不接入任何 controller/Webview 流程；
+   * 接线属于后续 V014-C/E。缺省表示尚未建立连续上下文。
+   */
+  taskContinuity?: TaskContinuityContext;
 }
 
 export interface CommitSessionState {
@@ -323,4 +331,11 @@ export interface CommitSessionState {
    * 下次构建提交快照时消费并清除。
    */
   feedback?: { tone: "success" | "warning" | "error"; message: string };
+  /**
+   * v0.1.4 V014-E：Changes → Commit 交接记录（随快照下发，E2 展示）。
+   * 仅在交接进入（open/open-module 目标为 commit 且带选择）时由 Host
+   * 整批复验后写入；用户随后手动改选、应用规则/AI、冲突切换或版本过期
+   * 时清除。message 草稿不受交接影响，独立保留。
+   */
+  handoff?: CommitHandoffView;
 }

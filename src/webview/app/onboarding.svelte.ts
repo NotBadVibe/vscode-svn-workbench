@@ -44,7 +44,7 @@ export const ONBOARDING_STEPS: OnboardingStep[] = [
     id: "preview-commit",
     title: "查看提交预览与来源说明",
     description:
-      "点击“检查并提交所选”进入提交页，生成提交预览。预览会显示将执行的命令、每个文件的推荐来源（本地规则）与检查结果。",
+      "点击“检查并提交所选”进入提交页，预览提交。预览会显示将执行的命令、每个文件的推荐来源（本地规则）与检查结果。",
   },
   {
     id: "before-confirm",

@@ -7,6 +7,7 @@ import {
   type CommitSelectionPreviewItem,
   type CommitSelectionSettingsLayerView,
   type CommitSelectionSettingsSection,
+  type ContinuityRestoreView,
   type FilterPresetView,
   type HostToWebviewMessage,
   type WorkbenchModuleId,
@@ -2113,6 +2114,77 @@ export function startMockWorkbench(): void {
   });
 }
 
+/**
+ * v0.1.4 V014-C1：Changes ↔ Diff 往返恢复演示载荷（`?continuity=restore`）。
+ * 与 Host 下发形状一致，供 C2 消费联调；默认不携带（保持现状）。
+ */
+function mockContinuityRestore(): ContinuityRestoreView {
+  return {
+    contextVersion: 1,
+    originModule: "changes",
+    changesView: {
+      query: "",
+      sort: "status:asc",
+      density: "comfortable",
+      onlySelected: false,
+    },
+    selectedKeys: [
+      mockSelectionKey("src/extension.ts"),
+      mockSelectionKey("src/webview/App.svelte"),
+    ],
+    activeFileKey: mockSelectionKey("src/extension.ts"),
+    scrollAnchorKey: mockSelectionKey("src/extension.ts"),
+    commitDraft: "feat(workbench): 完善统一 Svelte 工作台",
+    removedEntries: [
+      {
+        key: mockSelectionKey("src/removed.ts"),
+        path: "/mock/vscode-svn/src/removed.ts",
+        reason: "disappeared",
+        message:
+          "文件已不在最新快照中，可能已被删除、移走或状态变化，已从选择中移除。",
+      },
+    ],
+    notices: ["已按最新快照保留 2 个选择，移除 1 个失效项。"],
+    restoredAt: new Date().toISOString(),
+  };
+}
+
+/**
+ * v0.1.4 V014-F2：5000 文件恢复演示载荷（`?continuity=restore-large`）。
+ * key 全部指向 large 数据集文件（`src/generated/deep/path/file-NNNN.ts`，
+ * 2500/2501 均为 modified 可选项）；默认 `?continuity=restore` 语义不变。
+ */
+function mockContinuityRestoreLarge(): ContinuityRestoreView {
+  return {
+    contextVersion: 1,
+    originModule: "changes",
+    changesView: {
+      query: "",
+      sort: "path:asc",
+      density: "comfortable",
+      onlySelected: false,
+    },
+    selectedKeys: [
+      mockSelectionKey("src/generated/deep/path/file-2500.ts"),
+      mockSelectionKey("src/generated/deep/path/file-2501.ts"),
+    ],
+    activeFileKey: mockSelectionKey("src/generated/deep/path/file-2500.ts"),
+    scrollAnchorKey: mockSelectionKey("src/generated/deep/path/file-2500.ts"),
+    commitDraft: "feat(workbench): 完善统一 Svelte 工作台",
+    removedEntries: [
+      {
+        key: mockSelectionKey("src/generated/deep/path/file-9999.ts"),
+        path: "/mock/vscode-svn/src/generated/deep/path/file-9999.ts",
+        reason: "disappeared",
+        message:
+          "文件已不在最新快照中，可能已被删除、移走或状态变化，已从选择中移除。",
+      },
+    ],
+    notices: ["已按最新快照保留 2 个选择，移除 1 个失效项。"],
+    restoredAt: new Date().toISOString(),
+  };
+}
+
 function changesSnapshot(
   overrides: Record<string, unknown> = {},
 ): WorkbenchModuleSnapshot {
@@ -2120,6 +2192,15 @@ function changesSnapshot(
     typeof window !== "undefined"
       ? new URLSearchParams(window.location.search).get("dataset")
       : undefined;
+  // v0.1.4 V014-C1：`?continuity=restore` 演示往返恢复载荷（C2 联调用）。
+  // v0.1.4 V014-F2：`?continuity=restore-large` 指向 large 数据集的恢复载荷。
+  const withContinuityRestore =
+    typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).get("continuity") === "restore";
+  const withContinuityRestoreLarge =
+    typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).get("continuity") ===
+      "restore-large";
   const snapshotFiles =
     dataset === "large" || dataset === "scroll"
       ? Array.from(
@@ -2166,6 +2247,12 @@ function changesSnapshot(
               : {}),
           },
     refreshedAt: new Date().toISOString(),
+    ...(withContinuityRestore
+      ? { continuityRestore: mockContinuityRestore() }
+      : {}),
+    ...(withContinuityRestoreLarge
+      ? { continuityRestore: mockContinuityRestoreLarge() }
+      : {}),
     ...overrides,
   } as WorkbenchModuleSnapshot;
 }
@@ -2269,8 +2356,81 @@ function commitSnapshot(
     // v0.0.9 §4：跨 action 保持建议草稿——生成后预览等后续快照仍展示建议区，
     // 与真实 Host（快照构建始终携带 messageSuggestion）一致。
     messageSuggestion: mockCommitSuggestion,
+    // v0.1.4 V014-E2：`?commitHandoff=basic|shrunk|conflict` 演示交接载荷
+    // （与真实 Host 的 applyCommitHandoffSelection 下发口径一致；默认不携带）。
+    ...mockCommitHandoffPayload(),
     ...overrides,
   } as WorkbenchModuleSnapshot;
+}
+
+/**
+ * v0.1.4 V014-E2 交接演示载荷：e2e 经 `?commitHandoff=` 构造。
+ * - basic：全合法交接（请求 3 个、带入 3 个，无移除项）；
+ * - shrunk：部分收缩（请求 3 个、带入 2 个，逐条中文移除原因）；
+ * - conflict：冲突收缩（带入 1 个 + 冲突移除项，feedback 含处理冲突指引，
+ *   preview 置空，与 Host“旧 preview 已置空”一致，禁止渲染旧预览主操作）。
+ * 缺省返回空对象（非交接进入，保持现状）。
+ */
+function mockCommitHandoffPayload(): Record<string, unknown> {
+  const scenario =
+    typeof window !== "undefined"
+      ? new URLSearchParams(window.location.search).get("commitHandoff")
+      : undefined;
+  if (scenario === "basic") {
+    return {
+      handoff: {
+        source: "changes",
+        selectionVersion: 1,
+        requestedCount: 3,
+        keptCount: 3,
+        removedEntries: [],
+        receivedAt: "2026-09-03T10:00:00.000Z",
+      },
+    };
+  }
+  if (scenario === "shrunk") {
+    return {
+      handoff: {
+        source: "changes",
+        selectionVersion: 1,
+        requestedCount: 3,
+        keptCount: 2,
+        removedEntries: [
+          {
+            path: "dist/out.js",
+            reason: "excluded",
+            message: "“dist/out.js”已变为排除项",
+          },
+        ],
+        receivedAt: "2026-09-03T10:00:00.000Z",
+      },
+    };
+  }
+  if (scenario === "conflict") {
+    return {
+      handoff: {
+        source: "changes",
+        selectionVersion: 1,
+        requestedCount: 2,
+        keptCount: 1,
+        removedEntries: [
+          {
+            path: "src/conflicted.ts",
+            reason: "blocked",
+            message: "“src/conflicted.ts”为阻止项，暂不能提交",
+          },
+        ],
+        receivedAt: "2026-09-03T10:00:00.000Z",
+      },
+      feedback: {
+        tone: "warning",
+        message:
+          "选择已变化，旧提交预览已失效（“src/conflicted.ts”为阻止项，暂不能提交）。请先到冲突模块处理冲突，再重新预检；提交说明草稿已保留，请确认当前选择后重新预览。",
+      },
+      preview: undefined,
+    };
+  }
+  return {};
 }
 
 /** 提交页 Mock 候选的本地规则决策解释（与内置默认策略一致的最小集合）。 */

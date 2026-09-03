@@ -5,6 +5,7 @@
     WebviewAction,
     WorkbenchFileView,
   } from "@protocol/workbenchProtocol";
+  import { isCommitHandoffView } from "@protocol/workbenchProtocol";
   import ScrollArea from "../../components/ui/ScrollArea.svelte";
   import FilePathDetail from "../../components/svn/FilePathDetail.svelte";
   import PathCell from "../../components/list/PathCell.svelte";
@@ -121,6 +122,15 @@
   let replaceConfirmOpen = $state(false);
   /** 替换确认对应的目标字符数（打开时计算）。 */
   let replaceTargetLength = $state(0);
+  /*
+   * v0.1.4 V014-D Commit 紧凑模式：首屏只保留摘要条、提交说明、
+   * 本地检查摘要与唯一主操作；完整文件选择、AI 回执/建议、团队规则
+   * 与完整命令/证据分别收进按需展开区（默认收起）。
+   */
+  let filesExpanded = $state(false);
+  let aiExpanded = $state(false);
+  let teamRulesExpanded = $state(false);
+  let evidenceExpanded = $state(false);
 
   const savedPreferences = loadListPreferences("commit");
   sortField = savedPreferences.sortField;
@@ -620,376 +630,537 @@
       stale,
     };
   });
+
+  /* V014-D 首屏摘要条：计数来自 Host 权威 selectedPaths 与 snapshot，
+   * 不来自过滤后可见行；项目/仓库分组按 projectName（回退 repositoryName）。 */
+  const authoritativeCount = $derived(snapshot.selectedPaths.length);
+  const blockedCount = $derived(snapshot.summary.blocked);
+  const selectedProjectGroups = $derived.by(() => {
+    const counts: Record<string, number> = {};
+    const order: string[] = [];
+    for (const selectedPath of snapshot.selectedPaths) {
+      const file = snapshot.files.find(
+        (candidate) => candidate.relativePath === selectedPath,
+      );
+      const name = file?.projectName ?? file?.repositoryName ?? "";
+      if (!(name in counts)) {
+        counts[name] = 0;
+        order.push(name);
+      }
+      counts[name] += 1;
+    }
+    return order.map((name) => [name, counts[name]] as [string, number]);
+  });
+  /** 本地确定性规则结果摘要（写“本地检查”字样；无自动结果时首屏仍展示
+   * 既有 messageIssues 与提交前检查状态，手动入口折叠进团队规则详情）。 */
+  const localRuleSummary = $derived.by(() => {
+    const ai = snapshot.ai;
+    // 失败态（failed）是通知不是规则结果：只在 AI 折叠区展示，不冒充本地检查。
+    if (
+      ai &&
+      (ai.source === "local-rule" || ai.source === "local-rule-fallback") &&
+      !ai.failed
+    ) {
+      return ai.summary;
+    }
+    return undefined;
+  });
+
+  /*
+   * v0.1.4 V014-E2 Changes → Commit 交接显示：handoff 渲染前经
+   * isCommitHandoffView 过滤，非法载荷按无交接处理（不扩大范围，不抛错）。
+   * 手动改选/规则/AI 接管后 Host 即清除 handoff，快照无该字段时回到常态。
+   */
+  const handoff = $derived(
+    snapshot.handoff && isCommitHandoffView(snapshot.handoff)
+      ? snapshot.handoff
+      : undefined,
+  );
+  /** 交接移除原因：文字标签 + 图标分组展示，不只靠颜色区分。 */
+  const handoffReasonLabels: Record<string, string> = {
+    disappeared: "已消失",
+    excluded: "已排除",
+    blocked: "阻止项",
+    "cross-repository": "跨仓库",
+  };
+  const handoffReasonIcons: Record<string, string> = {
+    disappeared: "codicon-trash",
+    excluded: "codicon-eye-closed",
+    blocked: "codicon-error",
+    "cross-repository": "codicon-repo",
+  };
+  /*
+   * v0.1.4 V014-E2 冲突指引：Host 在交接/刷新收缩出冲突项时置空旧 preview
+   * 并在 feedback 中写入“请先到冲突模块处理冲突”；摘要区据此给出次级入口
+   * （open-module conflicts/resolve）。旧 preview 区保持空态：usablePreview
+   * 已在选择偏离或 Host 置空时失效，此处不渲染旧预览主操作。
+   */
+  const hasConflictGuidance = $derived(
+    snapshot.feedback?.message.includes("请先到冲突模块处理冲突") ?? false,
+  );
+
+  /* 按需展开区的按需打开：回执/建议到达、选择 AI 结果到达时自动展开
+   * AI 折叠区，保证“生成后可见”；用户可手动收起。 */
+  $effect(() => {
+    if (commitReceipt) aiExpanded = true;
+  });
+  $effect(() => {
+    if (suggestion) aiExpanded = true;
+  });
+  $effect(() => {
+    if (snapshot.ai) aiExpanded = true;
+  });
 </script>
 
-<section class="commit-layout">
-  <div class="commit-files">
-    <div class="feature-toolbar feature-toolbar--compact">
-      <div>
-        <h2>提交文件</h2>
-        <p>
-          已选 {selected.size} / 候选 {snapshot.files.length} 个文件{hiddenCount >
-          0
-            ? `，另有 ${hiddenCount} 个隐藏选择`
-            : ""}
-        </p>
-      </div>
-      <SearchInput
-        bind:value={query}
-        ariaLabel="筛选提交文件"
-        placeholder="筛选文件…"
-        compact
-      />
-      <ResultCount count={filteredFiles.length} />
-      <div class="toolbar-actions">
-        <select
-          class="sort-menu"
-          aria-label="排序方式"
-          value={sortField ?? ""}
-          onchange={(event) => {
-            const value = (event.currentTarget as HTMLSelectElement).value;
-            if (value === "") {
-              resetSort();
-            } else {
-              toggleSort(value as SortField);
-            }
-          }}
-        >
-          <option value="">默认顺序</option>
-          <option value="path">按路径</option>
-          <option value="fileName">按文件名</option>
-          <option value="status">按状态</option>
-          <option value="recommendation">按最终决策</option>
-          <option value="ruleSource">按规则来源</option>
-          <option value="ownership">按项目或仓库归属</option>
-        </select>
-        <button
-          class="button button--secondary"
-          onclick={toggleDensity}
-          aria-pressed={density === "compact"}
-          >{density === "compact" ? "紧凑" : "宽松"}</button
-        >
-        {#if sortField}
-          <button class="button button--secondary" onclick={resetSort}
-            >恢复默认顺序</button
+<section class="commit-layout commit-layout--compact">
+  <ScrollArea class="commit-compact" label="提交紧凑视图">
+    <!-- V014-D 首屏要素 1：待提交摘要条（权威计数 + 分组 + 阻止项 + 调整入口）。 -->
+    <div
+      class="commit-compact-summary"
+      role="region"
+      aria-label="待提交文件摘要"
+    >
+      <div class="commit-compact-summary__head">
+        <strong>待提交 {authoritativeCount} 个文件</strong>
+        {#if blockedCount > 0}
+          <span class="commit-compact-summary__blocked" role="status"
+            ><span class="codicon codicon-error" aria-hidden="true"
+            ></span>阻止项 {blockedCount} 个</span
           >
-        {/if}
-      </div>
-    </div>
-    <div class="status-filters" aria-label="提交文件筛选">
-      {#each Object.entries(filterLabels) as [value, label] (value)}
-        <button
-          class:active={filter === value}
-          onclick={() => (filter = value as CommitFilter)}>{label}</button
-        >
-      {/each}
-    </div>
-    <!-- v0.0.17 批次 E（C-13）：文件类型筛选与命名筛选预设（只影响视图）。 -->
-    <div class="filter-preset-row" aria-label="文件类型与筛选预设">
-      <select
-        class="sort-menu"
-        aria-label="文件类型筛选"
-        disabled={Boolean(activePreset)}
-        value={activePreset ? "preset" : activeFileType}
-        onchange={(event) => {
-          activeFileType = (event.currentTarget as HTMLSelectElement).value;
-          presetFeedback = "";
-        }}
-      >
-        {#if activePreset}
-          <option value="preset">预设：{activePreset.name}</option>
         {:else}
-          <option value="all">全部类型</option>
-          {#each fileTypeOptions as option (option.value)}
-            <option value={option.value}
-              >{option.label}（{option.count}）</option
-            >
-          {/each}
+          <span>阻止项 0 个</span>
         {/if}
-      </select>
-      {#if filterPresets.length > 0}
-        <select
-          class="sort-menu"
-          aria-label="筛选预设"
-          value={activePresetId ?? ""}
-          onchange={(event) => {
-            const value = (event.currentTarget as HTMLSelectElement).value;
-            activePresetId = value || undefined;
-            presetFeedback = "";
-          }}
-        >
-          <option value="">不使用预设</option>
-          {#each filterPresets as preset (preset.id)}
-            <option value={preset.id}
-              >{preset.name}（{preset.patterns.join("、")}）</option
-            >
+      </div>
+      {#if selectedProjectGroups.length > 0}
+        <p class="commit-compact-summary__groups">
+          {#each selectedProjectGroups as [project, count] (project)}
+            <span>{project || "未归属项目"} {count} 个文件</span>
           {/each}
-        </select>
-        {#if activePreset}
-          <button
-            class="button button--secondary"
-            aria-label={`删除筛选预设 ${activePreset.name}`}
-            onclick={() => deletePreset(activePreset.id)}>删除预设</button
+        </p>
+      {/if}
+      <!-- v0.1.4 V014-E2：交接来源行（secondary 信息，不抢主操作）。 -->
+      {#if handoff}
+        <p class="commit-compact-summary__handoff">
+          <span class="codicon codicon-arrow-right" aria-hidden="true"></span>
+          <span>来自本地修改，范围未扩大</span>
+          <!-- prettier-ignore -->
+          <span role="status">已带入 {handoff.keptCount} 个文件{#if handoff.requestedCount !== handoff.keptCount}（共请求 {handoff.requestedCount} 个）{/if}</span>
+        </p>
+        {#if handoff.removedEntries.length > 0}
+          <ul
+            class="commit-compact-summary__removed"
+            role="status"
+            aria-label="交接时移除的文件"
           >
+            {#each handoff.removedEntries as entry (entry.path)}
+              <li>
+                <span
+                  class={`codicon ${handoffReasonIcons[entry.reason] ?? "codicon-warning"}`}
+                  aria-hidden="true"
+                ></span>
+                <span>{handoffReasonLabels[entry.reason] ?? "已移除"}</span>
+                <span>{entry.message}</span>
+              </li>
+            {/each}
+          </ul>
         {/if}
       {/if}
-      <input
-        class="filter-preset-name"
-        aria-label="筛选预设名称"
-        placeholder="预设名称…"
-        bind:value={presetNameInput}
-        oncompositionstart={() => (presetNameComposing = true)}
-        oncompositionend={() => (presetNameComposing = false)}
-        onkeydown={(event) => {
-          // IME 候选阶段的 Enter 不触发保存。
-          if (event.key === "Enter" && !presetNameComposing) {
-            event.preventDefault();
-            saveCurrentPreset();
-          }
-        }}
-      />
-      <button
-        class="button button--secondary"
-        disabled={activeFileType === "all" && !activePreset}
-        title={activeFileType === "all" && !activePreset
-          ? "先选择文件类型或预设，再保存"
-          : undefined}
-        onclick={saveCurrentPreset}>保存为预设</button
-      >
-      {#if presetFeedback}<span role="status">{presetFeedback}</span>{/if}
-    </div>
-    <div class="commit-summary">
-      <span>推荐 {snapshot.summary.selected}</span>
-      <span>待确认 {snapshot.summary.needsReview}</span>
-      <span>排除 {snapshot.summary.excluded}</span>
-      <span class:danger={snapshot.summary.blocked > 0}
-        >阻止 {snapshot.summary.blocked}</span
-      >
-    </div>
-    {#if snapshot.feedback}
-      <div
-        class={`commit-feedback commit-feedback--${snapshot.feedback.tone}`}
-        role="status"
-      >
-        {snapshot.feedback.message}
-      </div>
-    {/if}
-    <div class="commit-action-row">
-      <button class="button button--secondary" onclick={selectRecommended}
-        ><span class="codicon codicon-checklist" aria-hidden="true"
-        ></span>选择推荐项</button
-      >
-      <button
-        class="button button--secondary"
-        onclick={() => onAction("commit/apply-local-rules")}
-        ><span class="codicon codicon-checklist" aria-hidden="true"
-        ></span>应用本地规则</button
-      >
-      {#if snapshot.selectionAi.configured}
+      <!-- v0.1.4 V014-E2：冲突指引次级入口（button--secondary，唯一主操作不变）。 -->
+      {#if hasConflictGuidance}
         <button
-          class="button button--secondary"
-          onclick={() => onAction("commit/ai-select")}
-          ><span class="codicon codicon-sparkle" aria-hidden="true"></span>获取
-          AI 建议</button
-        >
-      {:else}
-        <button
+          type="button"
           class="button button--secondary"
           onclick={() =>
             onAction("open-module", {
-              moduleId: "settings",
-              taskId: "settings/ai",
+              moduleId: "conflicts",
+              taskId: "conflicts/resolve",
             })}
-          ><span class="codicon codicon-settings-gear" aria-hidden="true"
-          ></span>配置 AI</button
+          ><span class="codicon codicon-warning" aria-hidden="true"
+          ></span>处理冲突</button
         >
       {/if}
+      <button
+        type="button"
+        class="button button--secondary"
+        aria-expanded={filesExpanded}
+        onclick={() => (filesExpanded = !filesExpanded)}
+        >{filesExpanded ? "收起文件选择" : "调整文件"}</button
+      >
     </div>
-    {#if selectionPrivacy}<div class="privacy-note">
-        <strong>外发预览</strong><span
-          >{selectionPrivacy.data}；最多 {selectionPrivacy.fileLimit} 个文件；模型
-          {selectionPrivacy.model}；不含历史。</span
-        >
-      </div>{/if}
-    <SelectionSummary
-      selectedCount={selected.size}
-      {actionableCount}
-      {hiddenCount}
-      {onlySelected}
-      {announcement}
-      onToggleOnlySelected={() => (onlySelected = !onlySelected)}
-      onClearHidden={clearHidden}
-      onClearAll={() => setSelected(emptySelection())}
-      onSelectRecommended={selectRecommended}
-    />
-    <div role="table" aria-label="提交候选文件列表" class="table-head-wrap">
-      <div role="rowgroup">
-        <div class="table-header table-header--grid" role="row">
-          <span class="table-header__select" role="columnheader">
-            <input
-              type="checkbox"
-              aria-label={`选择当前筛选可提交项（${actionableCount}）`}
-              checked={triState === "all"}
-              indeterminate={triState === "partial"}
-              disabled={actionableCount === 0}
-              onchange={() =>
-                setSelected(toggleActionable(filteredSelectable, selected))}
-            />
-          </span>
-          <SortHeader
-            label="文件"
-            field="path"
-            activeField={sortField}
-            direction={sortDirection}
-            onToggle={toggleSort}
-          />
-          <SortHeader
-            label="状态"
-            field="status"
-            activeField={sortField}
-            direction={sortDirection}
-            onToggle={toggleSort}
-          />
-          <SortHeader
-            label="最终决策"
-            field="recommendation"
-            activeField={sortField}
-            direction={sortDirection}
-            onToggle={toggleSort}
-          />
-          <SortHeader
-            label="规则来源"
-            field="ruleSource"
-            activeField={sortField}
-            direction={sortDirection}
-            onToggle={toggleSort}
-          />
-          <SortHeader
-            label="归属"
-            field="ownership"
-            activeField={sortField}
-            direction={sortDirection}
-            onToggle={toggleSort}
-          />
-          <span class="table-header__actions" aria-hidden="true"></span>
-        </div>
-      </div>
-    </div>
-    <ScrollArea
-      class="commit-file-list"
-      role="list"
-      label="提交候选文件"
-      bind:element={list.element}
-      onScroll={list.handleScroll}
-      onKeydown={list.handleKeydown}
+    <!-- V014-D 按需展开：完整文件选择与策略（左栏控制台原样移入，展开后功能一致）。 -->
+    <details
+      class="commit-compact-details commit-compact-details--files"
+      bind:open={filesExpanded}
     >
-      {#if list.visibleWindow.start > 0}<div
-          style:height={`${list.visibleWindow.start * rowHeight}px`}
-          aria-hidden="true"
-        ></div>{/if}
-      {#if pathDetail && list.detailOpen}
-        <div class="path-detail-host">
-          <div class="path-detail-host__bar">
-            <span class="path-detail-host__target"
-              >{pathDetail.relativePath}</span
-            >
-            <button
-              class="icon-button icon-button--small"
-              aria-label="关闭路径详情"
-              onclick={list.closePathDetail}
-              ><span class="codicon codicon-close" aria-hidden="true"
-              ></span></button
-            >
+      <summary>完整文件选择与策略</summary>
+      <div class="commit-files">
+        <div class="feature-toolbar feature-toolbar--compact">
+          <div>
+            <h2>提交文件</h2>
+            <p>
+              已选 {selected.size} / 候选 {snapshot.files.length} 个文件{hiddenCount >
+              0
+                ? `，另有 ${hiddenCount} 个隐藏选择`
+                : ""}
+            </p>
           </div>
-          <FilePathDetail
-            detail={pathDetail}
-            onCopyLocalPath={() =>
-              onAction("file/copy-path", {
-                relativePath: pathDetail.relativePath,
-              })}
+          <SearchInput
+            bind:value={query}
+            ariaLabel="筛选提交文件"
+            placeholder="筛选文件…"
+            compact
           />
-        </div>
-      {/if}
-      {#each list.visibleRows as { row: file, index: rowIndex } (file.selectionKey)}
-        <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -- 行点击只设置活动行；键盘操作由列表容器统一处理。 -->
-        <div
-          class="commit-file-row"
-          class:commit-file-row--blocked={file.selection === "blocked"}
-          class:commit-file-row--selected={selected.has(file.selectionKey)}
-          class:commit-file-row--active={list.activeIndex === rowIndex}
-          role="listitem"
-          tabindex="-1"
-          data-row-index={rowIndex}
-          onclick={() => list.markActive(rowIndex)}
-        >
-          <input
-            type="checkbox"
-            aria-label={`选择 ${displayPathOf(file)}`}
-            checked={selected.has(file.selectionKey)}
-            disabled={!canSelectIndividually(file, MODE)}
-            onclick={(event) => {
-              event.stopPropagation();
-              if (event.shiftKey && list.anchorIndex >= 0) {
-                const range = rangeItems(
-                  sortedFiles,
-                  list.anchorIndex,
-                  rowIndex,
-                );
-                const next = cloneSelection(selected);
-                for (const item of range) {
-                  if (isActionableForMode(item, MODE)) {
-                    next.add(item.selectionKey);
-                  }
+          <ResultCount count={filteredFiles.length} />
+          <div class="toolbar-actions">
+            <select
+              class="sort-menu"
+              aria-label="排序方式"
+              value={sortField ?? ""}
+              onchange={(event) => {
+                const value = (event.currentTarget as HTMLSelectElement).value;
+                if (value === "") {
+                  resetSort();
+                } else {
+                  toggleSort(value as SortField);
                 }
-                setSelected(next);
-              } else {
-                toggleKey(file.selectionKey);
-              }
-              list.markActive(rowIndex);
+              }}
+            >
+              <option value="">默认顺序</option>
+              <option value="path">按路径</option>
+              <option value="fileName">按文件名</option>
+              <option value="status">按状态</option>
+              <option value="recommendation">按最终决策</option>
+              <option value="ruleSource">按规则来源</option>
+              <option value="ownership">按项目或仓库归属</option>
+            </select>
+            <button
+              class="button button--secondary"
+              onclick={toggleDensity}
+              aria-pressed={density === "compact"}
+              >{density === "compact" ? "紧凑" : "宽松"}</button
+            >
+            {#if sortField}
+              <button class="button button--secondary" onclick={resetSort}
+                >恢复默认顺序</button
+              >
+            {/if}
+          </div>
+        </div>
+        <div class="status-filters" aria-label="提交文件筛选">
+          {#each Object.entries(filterLabels) as [value, label] (value)}
+            <button
+              class:active={filter === value}
+              onclick={() => (filter = value as CommitFilter)}>{label}</button
+            >
+          {/each}
+        </div>
+        <!-- v0.0.17 批次 E（C-13）：文件类型筛选与命名筛选预设（只影响视图）。 -->
+        <div class="filter-preset-row" aria-label="文件类型与筛选预设">
+          <select
+            class="sort-menu"
+            aria-label="文件类型筛选"
+            disabled={Boolean(activePreset)}
+            value={activePreset ? "preset" : activeFileType}
+            onchange={(event) => {
+              activeFileType = (event.currentTarget as HTMLSelectElement).value;
+              presetFeedback = "";
             }}
-          />
-          <PathCell
-            {file}
-            selected={selected.has(file.selectionKey)}
-            onOpenDiff={() =>
-              onAction("open-diff", { relativePath: file.relativePath })}
-            onOpenDetail={(trigger) =>
-              list.requestPathDetail(file.relativePath, trigger)}
-          />
-          {#if file.evaluation}<span
-              class="commit-file-decision"
-              title={describeCommitSelectionEvaluation(file.evaluation)}
-              >{describeCommitSelectionEvaluation(file.evaluation)}</span
-            >{/if}
-          <span class={`status-badge status-badge--${file.status}`}
-            >{fileStatusLabels[file.status]}</span
           >
-          <!-- v0.0.18 批次 B（C-05）：状态词键盘可达的就地解释。 -->
-          <StatusExplanation
-            term={fileStatusLabels[file.status]}
-            explanation={statusExplanations[file.status]}
+            {#if activePreset}
+              <option value="preset">预设：{activePreset.name}</option>
+            {:else}
+              <option value="all">全部类型</option>
+              {#each fileTypeOptions as option (option.value)}
+                <option value={option.value}
+                  >{option.label}（{option.count}）</option
+                >
+              {/each}
+            {/if}
+          </select>
+          {#if filterPresets.length > 0}
+            <select
+              class="sort-menu"
+              aria-label="筛选预设"
+              value={activePresetId ?? ""}
+              onchange={(event) => {
+                const value = (event.currentTarget as HTMLSelectElement).value;
+                activePresetId = value || undefined;
+                presetFeedback = "";
+              }}
+            >
+              <option value="">不使用预设</option>
+              {#each filterPresets as preset (preset.id)}
+                <option value={preset.id}
+                  >{preset.name}（{preset.patterns.join("、")}）</option
+                >
+              {/each}
+            </select>
+            {#if activePreset}
+              <button
+                class="button button--secondary"
+                aria-label={`删除筛选预设 ${activePreset.name}`}
+                onclick={() => deletePreset(activePreset.id)}>删除预设</button
+              >
+            {/if}
+          {/if}
+          <input
+            class="filter-preset-name"
+            aria-label="筛选预设名称"
+            placeholder="预设名称…"
+            bind:value={presetNameInput}
+            oncompositionstart={() => (presetNameComposing = true)}
+            oncompositionend={() => (presetNameComposing = false)}
+            onkeydown={(event) => {
+              // IME 候选阶段的 Enter 不触发保存。
+              if (event.key === "Enter" && !presetNameComposing) {
+                event.preventDefault();
+                saveCurrentPreset();
+              }
+            }}
           />
           <button
-            type="button"
-            class="icon-button icon-button--small"
-            aria-label={`查看 ${file.relativePath} 差异`}
-            onclick={(event) => {
-              event.preventDefault();
-              onAction("open-diff", { relativePath: file.relativePath });
-            }}
+            class="button button--secondary"
+            disabled={activeFileType === "all" && !activePreset}
+            title={activeFileType === "all" && !activePreset
+              ? "先选择文件类型或预设，再保存"
+              : undefined}
+            onclick={saveCurrentPreset}>保存为预设</button
           >
-            <span class="codicon codicon-diff" aria-hidden="true"></span>
-          </button>
+          {#if presetFeedback}<span role="status">{presetFeedback}</span>{/if}
         </div>
-      {/each}
-      {#if list.visibleWindow.end < sortedFiles.length}<div
-          style:height={`${(sortedFiles.length - list.visibleWindow.end) * rowHeight}px`}
-          aria-hidden="true"
-        ></div>{/if}
-    </ScrollArea>
-  </div>
+        <div class="commit-summary">
+          <span>推荐 {snapshot.summary.selected}</span>
+          <span>待确认 {snapshot.summary.needsReview}</span>
+          <span>排除 {snapshot.summary.excluded}</span>
+          <span class:danger={snapshot.summary.blocked > 0}
+            >阻止 {snapshot.summary.blocked}</span
+          >
+        </div>
+        {#if snapshot.feedback}
+          <div
+            class={`commit-feedback commit-feedback--${snapshot.feedback.tone}`}
+            role="status"
+          >
+            {snapshot.feedback.message}
+          </div>
+        {/if}
+        <div class="commit-action-row">
+          <button class="button button--secondary" onclick={selectRecommended}
+            ><span class="codicon codicon-checklist" aria-hidden="true"
+            ></span>选择推荐项</button
+          >
+          <button
+            class="button button--secondary"
+            onclick={() => onAction("commit/apply-local-rules")}
+            ><span class="codicon codicon-checklist" aria-hidden="true"
+            ></span>应用本地规则</button
+          >
+          {#if snapshot.selectionAi.configured}
+            <button
+              class="button button--secondary"
+              onclick={() => onAction("commit/ai-select")}
+              ><span class="codicon codicon-sparkle" aria-hidden="true"
+              ></span>获取 AI 建议</button
+            >
+          {:else}
+            <button
+              class="button button--secondary"
+              onclick={() =>
+                onAction("open-module", {
+                  moduleId: "settings",
+                  taskId: "settings/ai",
+                })}
+              ><span class="codicon codicon-settings-gear" aria-hidden="true"
+              ></span>配置 AI</button
+            >
+          {/if}
+        </div>
+        {#if selectionPrivacy}<div class="privacy-note">
+            <strong>外发预览</strong><span
+              >{selectionPrivacy.data}；最多 {selectionPrivacy.fileLimit} 个文件；模型
+              {selectionPrivacy.model}；不含历史。</span
+            >
+          </div>{/if}
+        <SelectionSummary
+          selectedCount={selected.size}
+          {actionableCount}
+          {hiddenCount}
+          {onlySelected}
+          {announcement}
+          onToggleOnlySelected={() => (onlySelected = !onlySelected)}
+          onClearHidden={clearHidden}
+          onClearAll={() => setSelected(emptySelection())}
+          onSelectRecommended={selectRecommended}
+        />
+        <div role="table" aria-label="提交候选文件列表" class="table-head-wrap">
+          <div role="rowgroup">
+            <div class="table-header table-header--grid" role="row">
+              <span class="table-header__select" role="columnheader">
+                <input
+                  type="checkbox"
+                  aria-label={`选择当前筛选可提交项（${actionableCount}）`}
+                  checked={triState === "all"}
+                  indeterminate={triState === "partial"}
+                  disabled={actionableCount === 0}
+                  onchange={() =>
+                    setSelected(toggleActionable(filteredSelectable, selected))}
+                />
+              </span>
+              <SortHeader
+                label="文件"
+                field="path"
+                activeField={sortField}
+                direction={sortDirection}
+                onToggle={toggleSort}
+              />
+              <SortHeader
+                label="状态"
+                field="status"
+                activeField={sortField}
+                direction={sortDirection}
+                onToggle={toggleSort}
+              />
+              <SortHeader
+                label="最终决策"
+                field="recommendation"
+                activeField={sortField}
+                direction={sortDirection}
+                onToggle={toggleSort}
+              />
+              <SortHeader
+                label="规则来源"
+                field="ruleSource"
+                activeField={sortField}
+                direction={sortDirection}
+                onToggle={toggleSort}
+              />
+              <SortHeader
+                label="归属"
+                field="ownership"
+                activeField={sortField}
+                direction={sortDirection}
+                onToggle={toggleSort}
+              />
+              <span class="table-header__actions" aria-hidden="true"></span>
+            </div>
+          </div>
+        </div>
+        <ScrollArea
+          class="commit-file-list"
+          role="list"
+          label="提交候选文件"
+          bind:element={list.element}
+          onScroll={list.handleScroll}
+          onKeydown={list.handleKeydown}
+        >
+          {#if list.visibleWindow.start > 0}<div
+              style:height={`${list.visibleWindow.start * rowHeight}px`}
+              aria-hidden="true"
+            ></div>{/if}
+          {#if pathDetail && list.detailOpen}
+            <div class="path-detail-host">
+              <div class="path-detail-host__bar">
+                <span class="path-detail-host__target"
+                  >{pathDetail.relativePath}</span
+                >
+                <button
+                  class="icon-button icon-button--small"
+                  aria-label="关闭路径详情"
+                  onclick={list.closePathDetail}
+                  ><span class="codicon codicon-close" aria-hidden="true"
+                  ></span></button
+                >
+              </div>
+              <FilePathDetail
+                detail={pathDetail}
+                onCopyLocalPath={() =>
+                  onAction("file/copy-path", {
+                    relativePath: pathDetail.relativePath,
+                  })}
+              />
+            </div>
+          {/if}
+          {#each list.visibleRows as { row: file, index: rowIndex } (file.selectionKey)}
+            <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -- 行点击只设置活动行；键盘操作由列表容器统一处理。 -->
+            <div
+              class="commit-file-row"
+              class:commit-file-row--blocked={file.selection === "blocked"}
+              class:commit-file-row--selected={selected.has(file.selectionKey)}
+              class:commit-file-row--active={list.activeIndex === rowIndex}
+              role="listitem"
+              tabindex="-1"
+              data-row-index={rowIndex}
+              onclick={() => list.markActive(rowIndex)}
+            >
+              <input
+                type="checkbox"
+                aria-label={`选择 ${displayPathOf(file)}`}
+                checked={selected.has(file.selectionKey)}
+                disabled={!canSelectIndividually(file, MODE)}
+                onclick={(event) => {
+                  event.stopPropagation();
+                  if (event.shiftKey && list.anchorIndex >= 0) {
+                    const range = rangeItems(
+                      sortedFiles,
+                      list.anchorIndex,
+                      rowIndex,
+                    );
+                    const next = cloneSelection(selected);
+                    for (const item of range) {
+                      if (isActionableForMode(item, MODE)) {
+                        next.add(item.selectionKey);
+                      }
+                    }
+                    setSelected(next);
+                  } else {
+                    toggleKey(file.selectionKey);
+                  }
+                  list.markActive(rowIndex);
+                }}
+              />
+              <PathCell
+                {file}
+                selected={selected.has(file.selectionKey)}
+                onOpenDiff={() =>
+                  onAction("open-diff", { relativePath: file.relativePath })}
+                onOpenDetail={(trigger) =>
+                  list.requestPathDetail(file.relativePath, trigger)}
+              />
+              {#if file.evaluation}<span
+                  class="commit-file-decision"
+                  title={describeCommitSelectionEvaluation(file.evaluation)}
+                  >{describeCommitSelectionEvaluation(file.evaluation)}</span
+                >{/if}
+              <span class={`status-badge status-badge--${file.status}`}
+                >{fileStatusLabels[file.status]}</span
+              >
+              <!-- v0.0.18 批次 B（C-05）：状态词键盘可达的就地解释。 -->
+              <StatusExplanation
+                term={fileStatusLabels[file.status]}
+                explanation={statusExplanations[file.status]}
+              />
+              <button
+                type="button"
+                class="icon-button icon-button--small"
+                aria-label={`查看 ${file.relativePath} 差异`}
+                onclick={(event) => {
+                  event.preventDefault();
+                  onAction("open-diff", { relativePath: file.relativePath });
+                }}
+              >
+                <span class="codicon codicon-diff" aria-hidden="true"></span>
+              </button>
+            </div>
+          {/each}
+          {#if list.visibleWindow.end < sortedFiles.length}<div
+              style:height={`${(sortedFiles.length - list.visibleWindow.end) * rowHeight}px`}
+              aria-hidden="true"
+            ></div>{/if}
+        </ScrollArea>
+      </div>
+    </details>
 
-  <ScrollArea class="commit-compose" label="提交说明与提交前检查">
+    <!-- V014-D 首屏要素 2：提交说明（模板行 + 输入框 + 字数与规范保持原位语义）。 -->
     <div class="compose-section">
       <div class="section-heading">
         <div>
@@ -1029,6 +1200,50 @@
           排除项），确认后才发送脱敏差异正文；不会发送本地绝对路径、范围外
           内容或凭据。
         </p>{/if}
+      <div class="template-row" aria-label="提交说明模板">
+        {#each snapshot.templates as template (template.id)}
+          <button
+            title={template.body}
+            onclick={() =>
+              onAction("commit/apply-template", { templateId: template.id })}
+            >{template.label}</button
+          >
+        {/each}
+      </div>
+      <textarea
+        bind:value={message}
+        onblur={updateDraft}
+        oninput={() => onAction("commit/update-draft", { message })}
+        onkeydown={handleMessageKeydown}
+        aria-label="提交说明"
+        aria-describedby="commit-message-shortcut"
+        placeholder="说明改动意图、范围与影响…"
+        maxlength="2000"></textarea>
+      <div class="compose-meta">
+        <span>{message.length}/2000 个字符</span>
+        <span id="commit-message-shortcut">按 Ctrl/⌘ + Enter 生成提交预览</span>
+        {#if snapshot.conventionHint}<span title={snapshot.conventionHint}
+            >团队规范已加载</span
+          >{/if}
+      </div>
+      {#if snapshot.messageIssues.length > 0}
+        <div class="issue-list" role="alert">
+          {#each snapshot.messageIssues as issue, issueIndex (issueIndex)}
+            <div>
+              <span class="codicon codicon-warning" aria-hidden="true"
+              ></span>{issue}
+            </div>
+          {/each}
+        </div>
+      {/if}
+    </div>
+
+    <!-- V014-D 按需展开：AI 建议与外发回执（回执卡的“开始模型生成”是按需展开区内的主操作，未展开时不出现）。 -->
+    <details
+      class="commit-compact-details commit-compact-details--ai"
+      bind:open={aiExpanded}
+    >
+      <summary>AI 建议与外发回执</summary>
       {#if commitReceipt}
         <div class="commit-receipt" role="region" aria-label="受限差异外发回执">
           <div class="commit-receipt__head">
@@ -1125,42 +1340,6 @@
               onclick={dismissReceipt}>放弃</button
             >
           </div>
-        </div>
-      {/if}
-      <div class="template-row" aria-label="提交说明模板">
-        {#each snapshot.templates as template (template.id)}
-          <button
-            title={template.body}
-            onclick={() =>
-              onAction("commit/apply-template", { templateId: template.id })}
-            >{template.label}</button
-          >
-        {/each}
-      </div>
-      <textarea
-        bind:value={message}
-        onblur={updateDraft}
-        oninput={() => onAction("commit/update-draft", { message })}
-        onkeydown={handleMessageKeydown}
-        aria-label="提交说明"
-        aria-describedby="commit-message-shortcut"
-        placeholder="说明改动意图、范围与影响…"
-        maxlength="2000"></textarea>
-      <div class="compose-meta">
-        <span>{message.length}/2000 个字符</span>
-        <span id="commit-message-shortcut">按 Ctrl/⌘ + Enter 生成提交预览</span>
-        {#if snapshot.conventionHint}<span title={snapshot.conventionHint}
-            >团队规范已加载</span
-          >{/if}
-      </div>
-      {#if snapshot.messageIssues.length > 0}
-        <div class="issue-list" role="alert">
-          {#each snapshot.messageIssues as issue, issueIndex (issueIndex)}
-            <div>
-              <span class="codicon codicon-warning" aria-hidden="true"
-              ></span>{issue}
-            </div>
-          {/each}
         </div>
       {/if}
       {#if suggestion}
@@ -1479,13 +1658,41 @@
           </div>
         </div>
       {/if}
-    </div>
+    </details>
 
-    <div class="compose-section compose-section--preview">
+    <!-- V014-D 按需展开：团队规则详情（规范原文 + 本地规则应用入口；首屏不再放该按钮）。 -->
+    <details
+      class="commit-compact-details commit-compact-details--team"
+      bind:open={teamRulesExpanded}
+    >
+      <summary>团队规则详情</summary>
+      {#if snapshot.conventionHint}
+        <p class="commit-compact-details__hint">{snapshot.conventionHint}</p>
+      {:else}
+        <p class="commit-compact-details__hint">
+          暂无团队提交规范提示；可直接手写提交说明并预览提交。
+        </p>
+      {/if}
+      <button
+        type="button"
+        class="button button--secondary"
+        onclick={() => onAction("commit/apply-local-rules")}
+        ><span class="codicon codicon-checklist" aria-hidden="true"
+        ></span>应用本地规则</button
+      >
+    </details>
+
+    <!-- V014-D 首屏要素 3：本地检查摘要（自动运行的本地确定性规则结果写“本地检查”；
+      无自动结果时展示既有 messageIssues 与检查状态摘要，手动规则入口已折叠）。 -->
+    <div
+      class="compose-section compose-section--preview"
+      role="region"
+      aria-label="本地检查摘要"
+    >
       <div class="section-heading">
         <div>
           <span class="eyebrow">执行前确认</span>
-          <h2>提交前检查</h2>
+          <h2>本地检查</h2>
         </div>
         <button
           class="button button--secondary"
@@ -1496,6 +1703,11 @@
             })}>重新检查</button
         >
       </div>
+      {#if localRuleSummary}
+        <p class="commit-local-check__auto" role="status">
+          本地检查：{localRuleSummary}
+        </p>
+      {/if}
       {#if selectionOutOfSync && snapshot.preview}
         <div class="notice notice--warning" role="status">
           选择已变化，旧预览已失效；请重新生成提交预览。
@@ -1523,24 +1735,31 @@
             ></span>范围、状态和远端检查已通过
           </div>
         {/if}
-        {#if previewGroups}
-          <details class="command-preview" open>
-            <summary>按项目分组的提交文件</summary>
-            {#each previewGroups as group (group.project)}
-              <div class="preview-project-group">
-                <strong>{group.project || "未归属项目"}</strong>
-                {#each group.paths as selectedPath (selectedPath)}<code
-                    >{previewDisplayPath(selectedPath)}</code
-                  >{/each}
-              </div>
-            {/each}
+        <!-- V014-D 按需展开：完整命令/证据（多仓库拆分语义保持不变）。 -->
+        <details
+          class="commit-compact-details commit-compact-details--evidence"
+          bind:open={evidenceExpanded}
+        >
+          <summary>完整命令与证据</summary>
+          {#if previewGroups}
+            <details class="command-preview" open>
+              <summary>按项目分组的提交文件</summary>
+              {#each previewGroups as group (group.project)}
+                <div class="preview-project-group">
+                  <strong>{group.project || "未归属项目"}</strong>
+                  {#each group.paths as selectedPath (selectedPath)}<code
+                      >{previewDisplayPath(selectedPath)}</code
+                    >{/each}
+                </div>
+              {/each}
+            </details>
+          {/if}
+          <details class="command-preview">
+            <summary>查看命令预览</summary>
+            {#each usablePreview.commands as command, commandIndex (commandIndex)}<code
+                >{command}</code
+              >{/each}
           </details>
-        {/if}
-        <details class="command-preview">
-          <summary>查看命令预览</summary>
-          {#each usablePreview.commands as command, commandIndex (commandIndex)}<code
-              >{command}</code
-            >{/each}
         </details>
         <button
           class="button button--primary commit-button"
@@ -1572,7 +1791,7 @@
               onAction("commit/preview", {
                 selectedPaths: selectedPaths(),
                 message,
-              })}>生成提交预览（{selected.size}）</button
+              })}>预览提交 {selected.size} 个文件</button
           >
         </div>
       {/if}
@@ -1593,3 +1812,115 @@
     onCancel={() => (intentOpen = false)}
   />
 </section>
+
+<style>
+  /*
+   * v0.1.4 V014-D Commit 紧凑模式：两栏改单栏 + 按需展开区。
+   * 滚动归属沿用现有 ScrollArea/scroll-region 模式，不使用全局 overflow 覆盖。
+   */
+  .commit-layout--compact {
+    grid-template-columns: 1fr;
+  }
+  /* ScrollArea 将 class 透传到自身模板渲染的滚动区，需用 :global 穿透作用域；
+     紧凑区本身是单栏页面的唯一纵向滚动容器（文件列表是第二层）。 */
+  .commit-layout--compact > :global(.commit-compact) {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    height: 100%;
+    min-height: 0;
+    padding: 16px;
+  }
+  .commit-compact-summary {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface-2);
+    font-size: 12px;
+  }
+  .commit-compact-summary__head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 10px;
+    font-size: 13px;
+  }
+  .commit-compact-summary__blocked {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-weight: 600;
+  }
+  .commit-compact-summary__groups {
+    margin: 0;
+    color: var(--muted);
+    font-size: 11px;
+  }
+  .commit-compact-summary__groups {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 10px;
+  }
+  /* v0.1.4 V014-E2：交接来源行与移除清单（secondary 信息，文字 + 图标，不只靠颜色）。 */
+  .commit-compact-summary__handoff {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 8px;
+    margin: 0;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .commit-compact-summary__removed {
+    margin: 0;
+    padding-left: 18px;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .commit-compact-summary__removed li {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 6px;
+    margin: 2px 0;
+  }
+  .commit-compact-details {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface-1);
+  }
+  .commit-compact-details > summary {
+    cursor: pointer;
+    padding: 10px 12px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .commit-compact-details > summary:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  .commit-compact-details__hint {
+    margin: 0 12px 8px;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .commit-compact-details--team .button {
+    margin: 0 12px 12px;
+  }
+  .commit-compact-details--files .commit-files {
+    overflow: visible;
+    border-right: 0;
+    padding: 4px 12px 12px;
+  }
+  .commit-compact-details--files :global(.commit-file-list) {
+    flex: none;
+    max-height: 360px;
+  }
+  .commit-local-check__auto {
+    margin: 0 0 8px;
+    font-size: 12px;
+  }
+</style>

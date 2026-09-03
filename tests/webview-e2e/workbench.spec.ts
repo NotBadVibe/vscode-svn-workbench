@@ -97,8 +97,8 @@ test("previews a commit before enabling execution", async ({ page }) => {
   await expect(
     page.getByRole("heading", { name: "提交当前范围" }),
   ).toBeVisible();
-  await expect(page.getByText("外发预览").first()).toBeVisible();
-  await expect(page.getByText(/不发送文件正文/).first()).toBeVisible();
+  // V014-D：提交说明旁的外发预览保留在首屏（选择场景的说明收进折叠区）。
+  await expect(page.getByText(/最多 80 个文件/)).toBeVisible();
   await page.getByRole("button", { name: "生成建议草稿" }).click();
   // v0.0.9 §4：建议只进入建议区，不覆盖用户已填提交说明。
   await expect(
@@ -106,7 +106,8 @@ test("previews a commit before enabling execution", async ({ page }) => {
   ).toBeVisible();
   await expect(page.getByText("建议草稿（不覆盖当前提交说明）")).toBeVisible();
   await expect(page.getByRole("textbox", { name: "提交说明" })).toHaveValue("");
-  await page.getByRole("button", { name: /生成提交预览/ }).click();
+  // V014-D：无预览时唯一主操作改名“预览提交 N 个文件”。
+  await page.getByRole("button", { name: /预览提交/ }).click();
   await expect(page.getByText("范围、状态和远端检查已通过")).toBeVisible();
   await expect(page.getByRole("button", { name: /确认提交/ })).toBeEnabled();
 });
@@ -287,6 +288,8 @@ test("partial completion retries only failed items (v0.0.11 §6)", async ({
 test("keeps AI file selection advisory and user-editable", async ({ page }) => {
   await page.goto("/");
   await openModule(page, "提交");
+  // V014-D：选择控制台收进按需展开区，先展开再操作。
+  await page.getByText("完整文件选择与策略").click();
   await page.getByRole("button", { name: "获取 AI 建议" }).click();
   await expect(
     page.getByText("建议选择 1 个文件；1 个需要人工确认，1 个建议排除。"),
@@ -308,6 +311,8 @@ test("offers 配置 AI entry instead of an AI-labelled action when unconfigured"
   await expect(
     page.getByRole("heading", { name: "提交当前范围" }),
   ).toBeVisible();
+  // V014-D：选择控制台与规则入口收进按需展开区，先展开再断言。
+  await page.getByText("完整文件选择与策略").click();
   // 未配置 AI 时不再把本地规则称为 AI 建议。
   await expect(
     page.getByRole("button", { name: /AI 建议选择/ }),
@@ -329,7 +334,11 @@ test("offers 配置 AI entry instead of an AI-labelled action when unconfigured"
 test("applies local rules with Chinese feedback", async ({ page }) => {
   await page.goto("/");
   await openModule(page, "提交");
+  // V014-D：手动规则入口位于“团队规则详情”按需展开区；
+  // 一次性反馈随选择控制台收进“完整文件选择与策略”，断言前展开。
+  await page.getByText("团队规则详情").click();
   await page.getByRole("button", { name: "应用本地规则" }).click();
+  await page.getByText("完整文件选择与策略").click();
   await expect(
     page.getByText(
       "已按本地规则应用推荐选择 2 个文件；1 个文件待确认，可手动勾选。",
@@ -342,15 +351,19 @@ test("keeps the current selection and offers local-rule recovery when AI fails",
 }) => {
   await page.goto("/?commitAi=fail");
   await openModule(page, "提交");
+  // V014-D：选择控制台（含 AI 建议入口与文件复选框）位于按需展开区；
+  // 失败结果到达后 AI 折叠区自动展开。
+  await page.getByText("完整文件选择与策略").click();
   await page.getByRole("button", { name: "获取 AI 建议" }).click();
   await expect(
     page.getByText("AI 建议获取失败，已保留当前选择。"),
   ).toBeVisible();
   await expect(page.getByText(/失败原因：/)).toBeVisible();
-  // 当前选择保留，未被失败结果替换。
+  // 当前选择保留，未被失败结果替换（文件选择展开区此前已展开）。
   await expect(page.getByLabel("选择 src/extension.ts")).toBeChecked();
 
-  await page.getByRole("button", { name: "应用本地规则" }).last().click();
+  // 恢复动作为 AI 折叠区失败卡片上的“应用本地规则”（ai-recover-button）。
+  await page.locator(".ai-recover-button").click();
   await expect(
     page.getByText(
       "已按本地规则应用推荐选择 2 个文件；1 个文件待确认，可手动勾选。",
@@ -361,6 +374,8 @@ test("keeps the current selection and offers local-rule recovery when AI fails",
 test("marks stale AI results as view-only", async ({ page }) => {
   await page.goto("/?commitAi=stale");
   await openModule(page, "提交");
+  // V014-D：AI 入口位于文件选择按需展开区。
+  await page.getByText("完整文件选择与策略").click();
   await page.getByRole("button", { name: "获取 AI 建议" }).click();
   await expect(page.getByText(/结果已过期/)).toBeVisible();
   await expect(
@@ -373,6 +388,8 @@ test("shows the rules-updated notice after selection rules change", async ({
 }) => {
   await page.goto("/?commitRules=updated");
   await openModule(page, "提交");
+  // V014-D：规则更新一次性反馈随选择控制台收进按需展开区。
+  await page.getByText("完整文件选择与策略").click();
   await expect(
     page.getByText(
       "提交选择规则已更新，候选分类已按新规则刷新；可点击“应用本地规则”重新计算推荐选择。",
@@ -527,9 +544,10 @@ test("onboarding guide walks the safe loop and stops before commit (v0.0.18)", a
   await expect(
     strip.getByText(/引导步骤 4\/5：查看提交预览与来源说明/),
   ).toBeVisible();
-  // 第 4 步：进入提交页生成预览。
+  // 第 4 步：进入提交页生成预览（V014-D：选择推荐项与预览入口分别位于首屏摘要展开区与唯一主操作）。
   await page.getByRole("button", { name: /检查并提交所选/ }).click();
-  await page.getByRole("button", { name: /生成提交预览/ }).click();
+  await page.getByText("完整文件选择与策略").click();
+  await page.getByRole("button", { name: /预览提交/ }).click();
   await expect(strip.getByText(/引导步骤 5\/5：最终确认前结束/)).toBeVisible();
   // 最后一步只有完成按钮，不出现任何执行提交的动作。
   const finish = strip.getByRole("button", {

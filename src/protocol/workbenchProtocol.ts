@@ -248,6 +248,14 @@ export interface ChangesSnapshot {
   summary: Record<string, number>;
   refreshedAt: string;
   /**
+   * v0.1.4 V014-C1：Changes ↔ Diff 往返恢复视图（可选，向后兼容）。
+   * 仅当 Host 侧存在未失效的连续任务上下文，且本次快照按最新候选
+   * 计算出合法交集后下发；缺省表示无可恢复的上下文（首次进入、已消费、
+   * 已失效或快照过期）。Webview 只做界面恢复（选择/活动行/滚动/草稿
+   * 回填），绝不据此扩大操作范围；C2 负责消费，本字段缺省时保持现状。
+   */
+  continuityRestore?: ContinuityRestoreView;
+  /**
    * v0.0.17 批次 E：会话共享的命名筛选预设（Host WorkbenchSession 存取，
    * Changes/Commit 共读）。预设只影响视图筛选，不改变真实操作范围。
    */
@@ -265,6 +273,62 @@ export interface ChangesSnapshot {
     issues: string[];
   };
   feedback?: string;
+}
+
+/**
+ * v0.1.4 V014-C1：Changes ↔ Diff 往返恢复视图（随 Changes 快照下发）。
+ *
+ * 语义（与 v0.1.4 规划 §3 对齐）：
+ * - 全部字段只描述“回到 Changes 时看到什么”，不携带可写操作身份；
+ * - selectedKeys 是“过去已选 ∩ 最新合法候选”的交集，新出现文件永不自动加入；
+ * - removedEntries 逐项说明被剔除的原因（消失/blocked/跨仓库/external）；
+ * - commitDraft 仅在目标会话无更新草稿时由 Host 下发，不覆盖用户新编辑；
+ * - scrollAnchorKey 是身份锚（优先），scrollAssistPixels 仅为辅助钳制；
+ * - 所有字段可选/缺省友好：未知视图偏好一律缺省，Webview 按现状展示。
+ */
+export interface ContinuityRestoreView {
+  /** 上下文版本（createContinuityContext 签发 1，迁移/失效后递增）。 */
+  contextVersion: number;
+  /** 来源模块（C1 固定为 changes，由 Host 写入）。 */
+  originModule: WorkbenchModuleId;
+  /** Changes 列表视图偏好恢复（仅界面偏好，不改变操作范围）。 */
+  changesView: {
+    /** 状态筛选（如 modified/conflicted；Host 无通道时缺省）。 */
+    activeStatus?: string;
+    /** 文件类型筛选（Host 无通道时缺省）。 */
+    activeFileType?: string;
+    /** 命名筛选预设 id（Host 无通道时缺省）。 */
+    activePresetId?: string;
+    /** 搜索文本（Host 无通道时缺省）。 */
+    query?: string;
+    /** 排序描述（如 "name:asc"；Host 无通道时缺省）。 */
+    sort?: string;
+    /** 列表密度（Host 无通道时缺省）。 */
+    density?: "comfortable" | "compact";
+    /** 是否只看已选项（Host 无通道时缺省）。 */
+    onlySelected?: boolean;
+  };
+  /** 合法交集后的选择身份键（Host 生成的 SelectionKey，只缩小不扩大）。 */
+  selectedKeys: SelectionKey[];
+  /** 回退后的活动文件（焦点行对应的身份键；无合法项时缺省）。 */
+  activeFileKey?: SelectionKey;
+  /** 滚动锚点身份键（优先定位该文件所在行）。 */
+  scrollAnchorKey?: SelectionKey;
+  /** 像素辅助值（仅锚点失效时就近钳制，不得单独决定位置）。 */
+  scrollAssistPixels?: number;
+  /** 提交草稿原文（目标会话已有更新草稿时 Host 不下发）。 */
+  commitDraft?: string;
+  /** 逐项移除清单（含中文原因，直接可播报）。 */
+  removedEntries: Array<{
+    key: SelectionKey;
+    path: string;
+    reason: "disappeared" | "blocked" | "cross-repository" | "external";
+    message: string;
+  }>;
+  /** 恢复播报（如“原文件状态已变化，已定位到最近的合法文件。”）。 */
+  notices: string[];
+  /** 恢复载荷生成时间（ISO）。 */
+  restoredAt: string;
 }
 
 export interface DiffSnapshot {
@@ -574,6 +638,47 @@ export interface CommitSnapshot {
     historyIncluded: boolean;
     historyCount?: number;
   }>;
+  /**
+   * v0.1.4 V014-E：Changes → Commit 交接记录（可选，向后兼容）。
+   * Host 在目标打开 Commit 时用权威候选整批复验交接选择后写入：
+   * 全部合法时如实记录来源，部分非法时收缩为合法交集并逐项说明移除原因。
+   * 缺省表示本次快照非交接进入（直接打开 Commit、旧快照或已失效）；
+   * Webview 仅做展示（“来自本地修改，范围未扩大”与移除清单），
+   * 绝不据此扩大操作范围。UI 消费属 E2，本字段缺省时保持现状。
+   */
+  handoff?: CommitHandoffView;
+}
+
+/**
+ * v0.1.4 V014-E：Changes → Commit 交接记录视图（随 Commit 快照下发）。
+ *
+ * 语义：
+ * - source 固定为 changes：当前唯一跨模块携带选择进入 Commit 的发送方
+ *   为 Changes 主操作；若未来新增发送方，需经 OpenWorkbenchRequest 显式
+ *   传递来源，不得复用本字段虚构来源。
+ * - selectionVersion 为交接选择版本号（COMMIT_HANDOFF_SELECTION_VERSION），
+ *   版本不匹配的载荷由 Host 忽略（fail-closed，不下发）。
+ * - removedEntries 逐项说明复验剔除的原因（消失/排除项/阻止项/跨仓库），
+ *   message 为可直接展示的中文原因；新文件绝不因交接自动加入。
+ * - 只携带项目内相对路径，不暴露本地绝对路径，不进入日志与 URI。
+ */
+export interface CommitHandoffView {
+  /** 交接来源模块（V014-E 固定为 changes，由 Host 写入）。 */
+  source: "changes";
+  /** 交接选择版本号（与 COMMIT_HANDOFF_SELECTION_VERSION 同源）。 */
+  selectionVersion: number;
+  /** 交接请求的选择数量（去重后）。 */
+  requestedCount: number;
+  /** 复验保留的合法交集数量。 */
+  keptCount: number;
+  /** 复验剔除清单（含中文原因，直接可播报）。 */
+  removedEntries: Array<{
+    path: string;
+    reason: "disappeared" | "excluded" | "blocked" | "cross-repository";
+    message: string;
+  }>;
+  /** 交接复验时间（ISO）。 */
+  receivedAt: string;
 }
 
 export interface HistoryRevisionView {
@@ -1654,6 +1759,183 @@ export function isWorkbenchModuleId(
   value: unknown,
 ): value is WorkbenchModuleId {
   return typeof value === "string" && moduleIds.has(value as WorkbenchModuleId);
+}
+
+/**
+ * v0.1.4 V014-C1：ContinuityRestoreView 类型守卫（Host/Webview/Mock 共用）。
+ * 可选字段缺省即合法；类型不符、selectedKeys 非字符串数组、移除项原因非法
+ * 一律拒绝（fail-closed，调用方按“无可恢复上下文”处理，保持现状）。
+ */
+export function isContinuityRestoreView(
+  value: unknown,
+): value is ContinuityRestoreView {
+  if (!isRecord(value)) {
+    return false;
+  }
+  if (
+    typeof value.contextVersion !== "number" ||
+    !Number.isFinite(value.contextVersion) ||
+    !isWorkbenchModuleId(value.originModule) ||
+    !isRecord(value.changesView) ||
+    !Array.isArray(value.selectedKeys) ||
+    !value.selectedKeys.every((key) => typeof key === "string") ||
+    !Array.isArray(value.removedEntries) ||
+    !Array.isArray(value.notices) ||
+    !value.notices.every((notice) => typeof notice === "string") ||
+    typeof value.restoredAt !== "string"
+  ) {
+    return false;
+  }
+  const changesView = value.changesView as Record<string, unknown>;
+  if (
+    (changesView.activeStatus !== undefined &&
+      typeof changesView.activeStatus !== "string") ||
+    (changesView.activeFileType !== undefined &&
+      typeof changesView.activeFileType !== "string") ||
+    (changesView.activePresetId !== undefined &&
+      typeof changesView.activePresetId !== "string") ||
+    (changesView.query !== undefined &&
+      typeof changesView.query !== "string") ||
+    (changesView.sort !== undefined && typeof changesView.sort !== "string") ||
+    (changesView.density !== undefined &&
+      changesView.density !== "comfortable" &&
+      changesView.density !== "compact") ||
+    (changesView.onlySelected !== undefined &&
+      typeof changesView.onlySelected !== "boolean")
+  ) {
+    return false;
+  }
+  if (
+    (value.activeFileKey !== undefined &&
+      typeof value.activeFileKey !== "string") ||
+    (value.scrollAnchorKey !== undefined &&
+      typeof value.scrollAnchorKey !== "string") ||
+    (value.scrollAssistPixels !== undefined &&
+      (typeof value.scrollAssistPixels !== "number" ||
+        !Number.isFinite(value.scrollAssistPixels))) ||
+    (value.commitDraft !== undefined && typeof value.commitDraft !== "string")
+  ) {
+    return false;
+  }
+  const reasons = new Set([
+    "disappeared",
+    "blocked",
+    "cross-repository",
+    "external",
+  ]);
+  for (const entry of value.removedEntries as unknown[]) {
+    if (!isRecord(entry)) {
+      return false;
+    }
+    if (
+      typeof entry.key !== "string" ||
+      typeof entry.path !== "string" ||
+      typeof entry.reason !== "string" ||
+      !reasons.has(entry.reason) ||
+      typeof entry.message !== "string"
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * v0.1.4 V014-C1：ChangesSnapshot 类型守卫（新增 continuityRestore 可选字段）。
+ * 无 continuityRestore 的旧快照继续接受（向后兼容）；携带时必须通过
+ * isContinuityRestoreView，否则整快照拒绝。
+ */
+export function isChangesSnapshot(value: unknown): value is ChangesSnapshot {
+  if (!isRecord(value)) {
+    return false;
+  }
+  if (
+    value.kind !== "changes" ||
+    typeof value.commitDraft !== "string" ||
+    !Array.isArray(value.files) ||
+    !isRecord(value.summary) ||
+    typeof value.refreshedAt !== "string"
+  ) {
+    return false;
+  }
+  if (
+    value.continuityRestore !== undefined &&
+    !isContinuityRestoreView(value.continuityRestore)
+  ) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * v0.1.4 V014-E：CommitHandoffView 类型守卫（Host/Webview/Mock 共用）。
+ * 可选字段无（全必填）；来源非 changes、版本号非有限数值、数量非数值、
+ * 移除项原因非法或中文说明缺失一律拒绝（fail-closed，调用方按“无交接”
+ * 处理，保持现状，不扩大范围）。
+ */
+export function isCommitHandoffView(
+  value: unknown,
+): value is CommitHandoffView {
+  if (!isRecord(value)) {
+    return false;
+  }
+  if (
+    value.source !== "changes" ||
+    typeof value.selectionVersion !== "number" ||
+    !Number.isFinite(value.selectionVersion) ||
+    typeof value.requestedCount !== "number" ||
+    !Number.isFinite(value.requestedCount) ||
+    typeof value.keptCount !== "number" ||
+    !Number.isFinite(value.keptCount) ||
+    !Array.isArray(value.removedEntries) ||
+    typeof value.receivedAt !== "string"
+  ) {
+    return false;
+  }
+  const reasons = new Set([
+    "disappeared",
+    "excluded",
+    "blocked",
+    "cross-repository",
+  ]);
+  for (const entry of value.removedEntries as unknown[]) {
+    if (!isRecord(entry)) {
+      return false;
+    }
+    if (
+      typeof entry.path !== "string" ||
+      typeof entry.reason !== "string" ||
+      !reasons.has(entry.reason) ||
+      typeof entry.message !== "string"
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * v0.1.4 V014-E：CommitSnapshot 交接字段校验（新增 handoff 可选字段）。
+ * 无 handoff 的旧快照继续接受（向后兼容）；携带时必须通过
+ * isCommitHandoffView，否则整快照拒绝。
+ */
+export function isCommitSnapshot(value: unknown): value is CommitSnapshot {
+  if (!isRecord(value)) {
+    return false;
+  }
+  if (
+    value.kind !== "commit" ||
+    !Array.isArray(value.files) ||
+    !isRecord(value.summary) ||
+    !Array.isArray(value.selectedPaths) ||
+    typeof value.message !== "string"
+  ) {
+    return false;
+  }
+  if (value.handoff !== undefined && !isCommitHandoffView(value.handoff)) {
+    return false;
+  }
+  return true;
 }
 
 export function isWebviewToHostMessage(
