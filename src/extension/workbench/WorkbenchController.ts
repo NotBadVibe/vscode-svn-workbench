@@ -162,6 +162,13 @@ import { toDisplayPath } from "../../scope/pathBrands";
 import { nativePathSemantics } from "../../scope/nativePathSemantics";
 import { createScopedFileKey } from "../../scope/projectIdentity";
 import type { PathIdentityKey } from "../../scope/pathIdentity";
+import { createContinuityContext } from "./taskContinuity";
+import {
+  buildContinuityRestore,
+  continuityResolveKey,
+  migrateContinuityForReopen,
+  noteContinuityEvent,
+} from "./taskContinuityWiring";
 import { validatePathsInScope } from "../../scope/pathBoundaryGuard";
 import { isPathInScope } from "../../scope/pathBoundaryGuard";
 import { projectRelativePath } from "../../scope/projectIdentity";
@@ -717,6 +724,8 @@ export class WorkbenchController implements vscode.Disposable {
       this.context.secrets,
       repositoryUuid,
     );
+    // v0.1.4 V014-C1：重建前保留旧会话引用，用于连续上下文迁移判定。
+    const previousSession = this.session;
     this.session = {
       ...request,
       sessionId: randomUUID(),
@@ -733,6 +742,14 @@ export class WorkbenchController implements vscode.Disposable {
         hasStoredAuthentication: Boolean(storedAuthentication),
       },
     };
+    // v0.1.4 V014-C1：request.moduleId 为 changes 且旧会话有未失效的连续
+    // 上下文时迁移到新会话（scope 只缩不扩、项目切换/跨仓库/扩大即丢弃）。
+    // 非 changes 目标不携带连续上下文。
+    this.session.taskContinuity = migrateContinuityForReopen(
+      previousSession,
+      this.session,
+      nativePathSemantics,
+    );
     // 项目切换后恢复该项目保留的草稿（仅提交说明与手动选择；旧预览、
     // 确认令牌与 AI 结果永不恢复）。
     await this.restoreProjectDraft(this.session);
@@ -810,6 +827,8 @@ export class WorkbenchController implements vscode.Disposable {
     const referenceRoot = this.securityReferenceRoot;
     // 先摘除会话与引用跟踪，再释放安全引用，避免 panel.dispose() 触发的
     // onDidDispose 对同一仓库重复释放（引用计数下溢或重复广播）。
+    // v0.1.4 V014-C1 window-close 强失效：会话随控制器释放丢弃，
+    // 连续上下文不复用（旧选择/锚点/草稿定位一律不再下发）。
     this.session = undefined;
     this.diffTargetKey = undefined;
     this.clearPendingDiffOpen();
@@ -964,6 +983,8 @@ export class WorkbenchController implements vscode.Disposable {
         const referenceRoot = this.securityReferenceRoot;
         // 先摘除会话与引用跟踪，再释放安全引用：release 在最后引用时会同步
         // 广播失效事件，此时本控制器已无活动会话，不会把刚清除的上下文写回。
+        // v0.1.4 V014-C1 window-close 强失效：会话随面板关闭丢弃，
+        // 连续上下文不复用（旧选择/锚点/草稿定位一律不再下发）。
         this.session = undefined;
         this.diffTargetKey = undefined;
         this.clearPendingDiffOpen();
@@ -1141,6 +1162,8 @@ export class WorkbenchController implements vscode.Disposable {
         session.taskId = taskId;
         session.selectedPaths = asStringArray(data.selectedPaths);
         session.targetFile = undefined;
+        // v0.1.4 V014-C1：同窗内选择变化使旧连续交集失效（弱失效，保留待复核）。
+        noteContinuityEvent(session, "selection-change");
         this.panel!.title = getModuleTitle(moduleId, taskId);
         await this.loadModule(moduleId, undefined, message.requestId);
         return;
@@ -1177,6 +1200,12 @@ export class WorkbenchController implements vscode.Disposable {
           return;
         }
         // 非 Diff 窗口统一路由到独立 Diff 窗口；Diff 窗口内保持当前会话（目标变化）。
+        // v0.1.4 V014-C1：源模块为 changes 时先快照连续任务上下文
+        // （Host 权威选择 + 本次目标文件 + 可得的视图偏好/草稿引用），
+        // 写入源 Changes 会话，再按现状转发 Diff 窗口。
+        if (session.moduleId === "changes") {
+          this.captureContinuityForDiff(session, absolutePath);
+        }
         if (this.servedModule !== "diff") {
           if (this.onOpenInOtherWindow) {
             await this.onOpenInOtherWindow(
@@ -1451,6 +1480,8 @@ export class WorkbenchController implements vscode.Disposable {
         session.selectedPaths = [...recommended];
         state.manualSelectedPaths = undefined;
         state.preview = undefined;
+        // v0.1.4 V014-C1：规则应用覆盖选择，旧连续交集失效。
+        noteContinuityEvent(session, "selection-change");
         state.feedback = {
           tone: "success",
           message: `已按本地规则应用推荐选择 ${recommended.length} 个文件（${describeSelectionChange(previousManual, recommended)}）；${needsReview} 个文件待确认，可手动勾选。`,
@@ -1513,6 +1544,8 @@ export class WorkbenchController implements vscode.Disposable {
         session.selectedPaths = [...state.selectedPaths];
         state.manualSelectedPaths = undefined;
         state.preview = undefined;
+        // v0.1.4 V014-C1：AI 建议覆盖选择，旧连续交集失效。
+        noteContinuityEvent(session, "selection-change");
         state.ai = {
           source,
           summary: `建议选择 ${state.selectedPaths.length} 个文件（${describeSelectionChange(previousManual, state.selectedPaths)}）；${effective.needsReview.length} 个需要人工确认，${effective.excluded.length} 个建议排除。`,
@@ -5270,6 +5303,8 @@ export class WorkbenchController implements vscode.Disposable {
       presets.push(preset);
     }
     session.filterPresets = presets;
+    // v0.1.4 V014-C1：筛选变化使旧连续交集失效（弱失效，保留待复核）。
+    noteContinuityEvent(session, "filter-change");
   }
 
   /** v0.0.17 批次 E：删除命名筛选预设；未知 id 静默忽略。 */
@@ -5284,6 +5319,8 @@ export class WorkbenchController implements vscode.Disposable {
     session.filterPresets = session.filterPresets.filter(
       (preset) => preset.id !== id,
     );
+    // v0.1.4 V014-C1：筛选变化使旧连续交集失效（弱失效，保留待复核）。
+    noteContinuityEvent(session, "filter-change");
   }
 
   private async buildSnapshot(
@@ -5300,6 +5337,12 @@ export class WorkbenchController implements vscode.Disposable {
         session.scopeView.repositoryName,
         session.scope,
       );
+      // v0.1.4 V014-C1：用同一批权威候选装配往返恢复载荷（一次性消费）。
+      const continuityRestore = this.consumeContinuityRestoreForChanges(
+        session,
+        candidates,
+        files,
+      );
       return {
         kind: "changes",
         commitDraft: this.ensureCommitState(session).message,
@@ -5307,6 +5350,7 @@ export class WorkbenchController implements vscode.Disposable {
         summary: summary.statuses,
         refreshedAt: new Date().toISOString(),
         filterPresets: session.filterPresets,
+        ...(continuityRestore ? { continuityRestore } : {}),
         operationPreview: preview
           ? {
               token: preview.token,
@@ -8163,6 +8207,81 @@ export class WorkbenchController implements vscode.Disposable {
     });
   }
 
+  /**
+   * v0.1.4 V014-C1：open-diff 前快照源 Changes 会话的连续任务上下文。
+   * - 选择来自 Host 权威（session.selectedPaths / commitState）；
+   * - 活动文件与滚动锚 = 本次 Diff 目标文件对应的身份键；
+   * - changesView 只存 Webview 已上报通道可得的偏好（C1 暂无实时通道，记空对象）；
+   * - commitDraft 引用当前 Host 草稿（message + 版本号 0：C1 暂无 draftRevision
+   *   追踪，恢复侧保守处理）；
+   * - diffTarget 指向本次目标并标记返回动作；originScopeHash 实时重算。
+   * 身份键经 continuityResolveKey 生成（与文件视图 selectionKey 同源）；
+   * 快照内容不进日志/URI。
+   */
+  private captureContinuityForDiff(
+    session: WorkbenchSession,
+    targetAbsolutePath: string,
+  ): void {
+    if (session.moduleId !== "changes") {
+      return;
+    }
+    const resolveKey = continuityResolveKey(
+      session.scope.repositoryRoot,
+      nativePathSemantics,
+    );
+    const context = createContinuityContext(session, {
+      resolveKey,
+      diffReturnAction: "back-to-changes",
+    });
+    const activeKey = resolveKey(targetAbsolutePath);
+    context.originScopeHash = hashOperationScope(session.scope);
+    context.activeFileKey = activeKey;
+    context.scrollAnchorKey = activeKey;
+    context.pathByKey[activeKey as string] ??= targetAbsolutePath;
+    context.diffTarget = {
+      targetKey: activeKey as string,
+      returnAction: "back-to-changes",
+    };
+    session.taskContinuity = context;
+  }
+
+  /**
+   * v0.1.4 V014-C1：为 Changes 快照装配 continuityRestore（一次性消费）。
+   * 用本次快照同一批权威候选计算合法交集，不另行重采；无论成功、stale
+   * 还是失效，计算后都消费（清空）session.taskContinuity，避免后续刷新
+   * 重复下发旧恢复载荷覆盖用户新选择。stale（延迟旧快照）直接丢弃。
+   */
+  private consumeContinuityRestoreForChanges(
+    session: WorkbenchSession,
+    candidates: Awaited<ReturnType<typeof collectCommitCandidates>>,
+    files: import("../../protocol/workbenchProtocol").WorkbenchFileView[],
+  ):
+    | import("../../protocol/workbenchProtocol").ContinuityRestoreView
+    | undefined {
+    const context = session.taskContinuity;
+    if (!context || session.moduleId !== "changes") {
+      return undefined;
+    }
+    const { view, stale } = buildContinuityRestore(
+      {
+        context,
+        candidates,
+        files,
+        sessionId: session.sessionId,
+        repositoryUuid: session.repositoryUuid,
+        includeExternals: session.scope.includeExternals === true,
+        currentDraftMessage: session.commitState?.message ?? "",
+      },
+      nativePathSemantics,
+    );
+    // 一次性消费：成功、stale、失效一律清空，不再下发旧载荷。
+    session.taskContinuity = undefined;
+    if (stale) {
+      return undefined;
+    }
+    return view;
+  }
+
   private async sendChangesSnapshot(
     session: WorkbenchSession,
     requestId?: string,
@@ -8208,6 +8327,15 @@ export class WorkbenchController implements vscode.Disposable {
           : undefined,
         feedback: session.changesState?.feedback,
       };
+    // v0.1.4 V014-C1：用同一批权威候选装配往返恢复载荷（一次性消费）。
+    const continuityRestore = this.consumeContinuityRestoreForChanges(
+      session,
+      candidates,
+      snapshot.files,
+    );
+    if (continuityRestore) {
+      snapshot.continuityRestore = continuityRestore;
+    }
     await this.post({
       protocolVersion: WORKBENCH_PROTOCOL_VERSION,
       type: "module/snapshot",
@@ -9287,6 +9415,8 @@ export class WorkbenchController implements vscode.Disposable {
     // AI → 直接预览/AI 说明”会把推荐集合重新虚构成手动选择）。
     if (options.trackManualSelection) {
       state.manualSelectedPaths = validation.selectedPaths;
+      // v0.1.4 V014-C1：用户逐项勾选使旧连续交集失效（弱失效）。
+      noteContinuityEvent(session, "selection-change");
     }
     state.preview = undefined;
     return undefined;

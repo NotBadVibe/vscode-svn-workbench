@@ -7,6 +7,7 @@ import {
   type CommitSelectionPreviewItem,
   type CommitSelectionSettingsLayerView,
   type CommitSelectionSettingsSection,
+  type ContinuityRestoreView,
   type FilterPresetView,
   type HostToWebviewMessage,
   type WorkbenchModuleId,
@@ -2113,6 +2114,41 @@ export function startMockWorkbench(): void {
   });
 }
 
+/**
+ * v0.1.4 V014-C1：Changes ↔ Diff 往返恢复演示载荷（`?continuity=restore`）。
+ * 与 Host 下发形状一致，供 C2 消费联调；默认不携带（保持现状）。
+ */
+function mockContinuityRestore(): ContinuityRestoreView {
+  return {
+    contextVersion: 1,
+    originModule: "changes",
+    changesView: {
+      query: "",
+      sort: "status:asc",
+      density: "comfortable",
+      onlySelected: false,
+    },
+    selectedKeys: [
+      mockSelectionKey("src/extension.ts"),
+      mockSelectionKey("src/webview/App.svelte"),
+    ],
+    activeFileKey: mockSelectionKey("src/extension.ts"),
+    scrollAnchorKey: mockSelectionKey("src/extension.ts"),
+    commitDraft: "feat(workbench): 完善统一 Svelte 工作台",
+    removedEntries: [
+      {
+        key: mockSelectionKey("src/removed.ts"),
+        path: "/mock/vscode-svn/src/removed.ts",
+        reason: "disappeared",
+        message:
+          "文件已不在最新快照中，可能已被删除、移走或状态变化，已从选择中移除。",
+      },
+    ],
+    notices: ["已按最新快照保留 2 个选择，移除 1 个失效项。"],
+    restoredAt: new Date().toISOString(),
+  };
+}
+
 function changesSnapshot(
   overrides: Record<string, unknown> = {},
 ): WorkbenchModuleSnapshot {
@@ -2120,6 +2156,10 @@ function changesSnapshot(
     typeof window !== "undefined"
       ? new URLSearchParams(window.location.search).get("dataset")
       : undefined;
+  // v0.1.4 V014-C1：`?continuity=restore` 演示往返恢复载荷（C2 联调用）。
+  const withContinuityRestore =
+    typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).get("continuity") === "restore";
   const snapshotFiles =
     dataset === "large" || dataset === "scroll"
       ? Array.from(
@@ -2166,6 +2206,9 @@ function changesSnapshot(
               : {}),
           },
     refreshedAt: new Date().toISOString(),
+    ...(withContinuityRestore
+      ? { continuityRestore: mockContinuityRestore() }
+      : {}),
     ...overrides,
   } as WorkbenchModuleSnapshot;
 }
