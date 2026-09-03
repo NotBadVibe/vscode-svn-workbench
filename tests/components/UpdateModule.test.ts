@@ -315,6 +315,77 @@ describe("UpdateModule", () => {
     expect(screen.getByText(/不复用半完成结果/)).toBeInTheDocument();
   });
 
+  it("V015-D1 三状态互斥表达：未检查/已检查/已完成各有唯一主标识", () => {
+    // 未检查：仅空态三句话 + 生成入口，无预览动作、无结果区。
+    const unchecked = render(UpdateModule, {
+      snapshot: updateSnapshot(),
+      onAction: vi.fn(),
+    });
+    expect(screen.getByText("尚未生成更新预览")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "生成更新预览" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /确认更新/ }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("status", { name: "任务结果与下一步" }),
+    ).not.toBeInTheDocument();
+    unchecked.unmount();
+
+    // 已检查：预览事实 + 唯一确认主动作，无空态、无结果区。
+    const checked = render(UpdateModule, {
+      snapshot: updateSnapshot({
+        preview: {
+          token: "update-three-states",
+          canExecute: true,
+          localCount: 1,
+          remoteCount: 2,
+          risk: "low",
+          overlapPaths: [],
+          messages: [],
+          commands: ['svn update --accept postpone "."'],
+        },
+      }),
+      onAction: vi.fn(),
+    });
+    expect(
+      screen.getByRole("button", { name: "确认更新（2）" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("尚未生成更新预览")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("status", { name: "任务结果与下一步" }),
+    ).not.toBeInTheDocument();
+    checked.unmount();
+
+    // 已完成（无冲突）：结果区主动作是查看本地修改/返回编辑，无空态、无确认更新。
+    render(UpdateModule, {
+      snapshot: updateSnapshot({
+        result: {
+          ok: true,
+          revision: "43",
+          hasConflicts: false,
+          message: "已更新到 r43",
+        },
+      }),
+      onAction: vi.fn(),
+    });
+    const resultRegion = screen.getByRole("status", {
+      name: "任务结果与下一步",
+    });
+    expect(resultRegion).toHaveTextContent("已更新到 r43");
+    expect(
+      within(resultRegion).getByRole("button", { name: "查看本地修改" }),
+    ).toBeInTheDocument();
+    expect(
+      within(resultRegion).getByRole("button", { name: "返回编辑" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("尚未生成更新预览")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /确认更新/ }),
+    ).not.toBeInTheDocument();
+  });
+
   it("recovery 状态提供进入清理与恢复的入口", async () => {
     const onAction = vi.fn();
     render(UpdateModule, {

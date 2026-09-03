@@ -322,6 +322,23 @@ export function updateConfirmLabel(remoteCount?: number): string {
     : "确认更新当前范围";
 }
 
+/**
+ * v0.1.5 V015-D1：ScopeBar 数量口径——写操作页面（Commit/Update 预览态）
+ * 显示「最终候选数」，普通浏览页显示「范围数」，两者文案不混用。
+ */
+export function scopeFinalCandidateLabel(count: number): string {
+  return `最终候选数 ${count} 个`;
+}
+
+export function scopeRangeCountLabel(count: number): string {
+  return `范围数 ${count} 个`;
+}
+
+/** 写操作任务（ScopeBar 显示最终候选数，其余任务显示范围数）。 */
+export function isScopeFinalCandidateTask(taskId: WorkbenchTaskId): boolean {
+  return taskId === "commit/compose" || taskId === "update/preview";
+}
+
 export function historyLoadedStatus(count: number, hasMore?: boolean): string {
   return `已加载最近 ${count} 条修订${hasMore ? "（可能还有更早修订）" : "（已是全部历史）"}`;
 }

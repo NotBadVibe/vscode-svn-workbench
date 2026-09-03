@@ -475,6 +475,9 @@ test("requires an update preview before running svn update", async ({
   await expect(
     page.getByRole("heading", { name: "更新当前范围" }).first(),
   ).toBeVisible();
+  // v0.1.5 V015-D1 三状态：未检查（空态三句话）+ 写操作范围栏显示最终候选数。
+  await expect(page.getByText("尚未生成更新预览")).toBeVisible();
+  await expect(page.getByText("最终候选数 4 个")).toBeVisible();
   await page.getByRole("button", { name: "生成更新预览" }).click();
   await expect(page.getByText("中风险")).toBeVisible();
   // v0.1.5 V015-B2：预览工具栏已迁入 PrimaryActionBar，主动作含远端数量。
