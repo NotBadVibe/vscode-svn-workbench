@@ -314,4 +314,16 @@ describe("history/execute-restore 真实 Host 三分支（token + issues + conte
     expect(error.message).toContain("当前文件与预览时不同");
     expect(session.historyState?.restorePreview).toBeUndefined();
   });
+
+  it("V015-C3b 应修 7：预览目标路径与当前文件不一致拒绝并作废预览", async () => {
+    setupTargetFile();
+    const { session, posted, send } = createRestoreHarness(
+      validPreview({ relativePath: "other.ts" }),
+    );
+    await send("tok-restore");
+    const error = latestError(posted);
+    expect(error.title).toBe("恢复目标已变化");
+    expect(error.message).toContain("恢复目标不一致");
+    expect(session.historyState?.restorePreview).toBeUndefined();
+  });
 });

@@ -183,17 +183,45 @@ describe("validateOperationIntentForExecute", () => {
 });
 
 describe("V015-C2 Relocate 白名单目标复述", () => {
-  it("归一化去空白/尾斜杠/大小写", () => {
+  it("归一化去空白/尾斜杠，仅 scheme+host 小写", () => {
+    // v0.1.5 V015-C3b 应修 6：path 保持原样（SVN 路径大小写敏感）。
     expect(
       normalizeConfirmationTarget("  HTTPS://svn.example.test/Repo/ "),
-    ).toBe("https://svn.example.test/repo");
+    ).toBe("https://svn.example.test/Repo");
     expect(normalizeConfirmationTarget("https://h/r///")).toBe("https://h/r");
+    expect(normalizeConfirmationTarget("HTTPS://H")).toBe("https://h");
+  });
+  it("V015-C3b 应修 6：path 大小写不一致拒绝，host 大小写不一致放行", () => {
+    const expected = "https://svn.example.test/repos/wb";
+    // 主机大小写不同：放行。
+    expect(
+      isConfirmationChallengeSatisfied(
+        expected,
+        "HTTPS://SVN.EXAMPLE.TEST/repos/wb/",
+      ),
+    ).toBe(true);
+    // 路径大小写不同：拒绝。
+    expect(
+      isConfirmationChallengeSatisfied(
+        expected,
+        "https://svn.example.test/Repos/wb",
+      ),
+    ).toBe(false);
+    expect(
+      isConfirmationChallengeSatisfied(
+        expected,
+        "https://svn.example.test/repos/WB",
+      ),
+    ).toBe(false);
   });
   it("正确/错误/空值判定", () => {
     const expected = "https://svn.example.test/repos/wb";
     expect(isConfirmationChallengeSatisfied(expected, expected)).toBe(true);
     expect(
-      isConfirmationChallengeSatisfied(expected, `${expected.toUpperCase()}/`),
+      isConfirmationChallengeSatisfied(
+        expected,
+        "HTTPS://SVN.EXAMPLE.TEST/repos/wb/",
+      ),
     ).toBe(true);
     expect(isConfirmationChallengeSatisfied(expected, "https://other/x")).toBe(
       false,

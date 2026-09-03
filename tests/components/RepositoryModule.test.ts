@@ -306,15 +306,73 @@ describe("RepositoryModule", () => {
     expect(
       within(dialog).getByText(/复述目标与预览的新根地址不一致/),
     ).toBeInTheDocument();
-    // 尾斜杠 + 大小写归一化后放行。
+    // v0.1.5 V015-C3b 应修 5：复述框 placeholder 用缺省文案，不透传答案。
+    expect(challenge).toHaveAttribute(
+      "placeholder",
+      "与预览目标完全一致，含协议与路径",
+    );
+    // 尾斜杠 + 主机大小写归一化后放行（路径保持小写一致）。
     await fireEvent.input(challenge, {
-      target: { value: `${target.toUpperCase()}/` },
+      target: { value: "HTTPS://SVN.EXAMPLE.TEST/repos/workbench/" },
+    });
+    expect(confirm!).toBeEnabled();
+    // v0.1.5 V015-C3b 应修 6：路径大小写不一致拒绝。
+    await fireEvent.input(challenge, {
+      target: { value: "https://svn.example.test/Repos/workbench" },
+    });
+    expect(confirm!).toBeDisabled();
+    await fireEvent.input(challenge, {
+      target: { value: target },
     });
     expect(confirm!).toBeEnabled();
     await fireEvent.click(confirm!);
     expect(onAction).toHaveBeenCalledWith("repository/execute-advanced", {
       previewToken: "relocate-1",
     });
+  });
+
+  it("V015-C3b 应修 4：Relocate 无新根期望目标显式禁执行", async () => {
+    const missingSnapshot: RepositorySnapshot = {
+      kind: "repository",
+      info: { name: "repo", revision: "5" },
+      properties: { available: true, target: ".", items: [] },
+      cleanup: { available: true, target: "." },
+      advanced: {
+        preview: {
+          token: "relocate-missing",
+          operation: "relocate",
+          title: "重定位仓库根地址",
+          commands: ["svn switch --relocate …"],
+          details: ["旧根：https://old.example.test/repo"],
+          issues: [],
+          canExecute: true,
+          destructive: true,
+        },
+      },
+    };
+    const onAction = vi.fn();
+    render(RepositoryModule, {
+      snapshot: missingSnapshot,
+      taskId: "repository/relocate",
+      onAction,
+    });
+    await fireEvent.click(
+      screen.getByRole("button", { name: "确认执行重定位仓库地址" }),
+    );
+    const dialog = screen.getByRole("dialog", {
+      name: "重定位仓库根地址",
+    });
+    // 无复述挑战（解析不到目标），且意向单显式禁执行并提示重新预览。
+    expect(within(dialog).queryByLabelText("复述新的仓库根 URL")).toBeNull();
+    expect(
+      within(dialog).getByText(/未解析到新根地址，请重新预览/),
+    ).toBeInTheDocument();
+    const confirm = within(dialog)
+      .getAllByRole("button")
+      .find((b) => b.textContent?.includes("确认执行重定位仓库地址")) as
+      HTMLElement | undefined;
+    expect(confirm).toBeDefined();
+    expect(confirm!).toBeDisabled();
   });
 
   it("V015-C3a 高级操作意向单提供重新检查：关闭后用既有输入重发预览", async () => {

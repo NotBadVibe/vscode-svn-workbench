@@ -231,14 +231,27 @@ export function validateOperationIntentForExecute(
 }
 
 /**
- * v0.1.5 V015-C2：确认挑战目标归一化（去首尾空白 + 去尾斜杠 + 小写）。
+ * v0.1.5 V015-C3b 应修 6：确认挑战目标归一化（去首尾空白 + 去尾斜杠，
+ * 仅 scheme + host 小写，path 保持原样）。
  * - 去尾斜杠：`https://host/repo/` 与 `https://host/repo` 视为同一目标；
- * - 小写：避免因协议/主机大小写拼写差异误拒（路径大小写同样归一，
- *   宁可放行一次可执行的确认，也不因大小写卡住白名单内的高风险操作；
- *   最终目标仍以 Host 预览的原始值为准执行）。
+ * - scheme/host 小写：避免因协议/主机大小写拼写差异误拒；
+ * - path 保持原样：SVN 路径大小写敏感，大小写不一致必须拒绝；
+ *   最终目标仍以 Host 预览的原始值为准执行。
  */
 export function normalizeConfirmationTarget(value: string): string {
-  return value.trim().replace(/\/+$/, "").toLowerCase();
+  const trimmed = value.trim().replace(/\/+$/, "");
+  const schemeEnd = trimmed.indexOf("://");
+  // 无 scheme 时不折叠大小写（fail-closed，宁可误拒一次复述）。
+  if (schemeEnd < 0) return trimmed;
+  const scheme = trimmed.slice(0, schemeEnd).toLowerCase();
+  const rest = trimmed.slice(schemeEnd + 3);
+  const slash = rest.indexOf("/");
+  // 只有主机没有路径：主机整体小写。
+  if (slash < 0) return `${scheme}://${rest.toLowerCase()}`;
+  const host = rest.slice(0, slash).toLowerCase();
+  // 路径保持原样（含查询串，不做大小写折叠）。
+  const pathPart = rest.slice(slash);
+  return `${scheme}://${host}${pathPart}`;
 }
 
 /** 确认挑战是否通过（归一化后精确比对，不一致禁止确认）。 */

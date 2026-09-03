@@ -229,27 +229,37 @@
         : undefined,
       recoverability,
       createdAt: new Date().toISOString(),
-      // v0.1.5 V015-C2：一次确认——前置复选框已移除；
-      // 白名单：仅 relocate 附加目标复述挑战（不可逆 + 无恢复出口）。
-      canExecute: preview.canExecute,
-      issues: preview.issues,
+      // v0.1.5 V015-C3b 应修 4：relocate 无期望目标显式 fail-closed——
+      // 解析不到“新根”时不再静默降级为单确认，直接禁执行并提示重新预览。
+      // 应修 5：复述框不用 expected 做 placeholder，沿用意向单缺省文案。
+      ...(() => {
+        const relocateExpected =
+          preview.operation === "relocate"
+            ? extractRelocateTarget(preview.details)
+            : undefined;
+        const relocateTargetMissing =
+          preview.operation === "relocate" && !relocateExpected;
+        return {
+          // v0.1.5 V015-C2：一次确认——前置复选框已移除；
+          // 白名单：仅 relocate 附加目标复述挑战（不可逆 + 无恢复出口）。
+          canExecute: relocateTargetMissing ? false : preview.canExecute,
+          issues: relocateTargetMissing
+            ? [...preview.issues, "未解析到新根地址，请重新预览"]
+            : preview.issues,
+          confirmationChallenge:
+            preview.operation === "relocate" && relocateExpected
+              ? {
+                  prompt:
+                    "重定位会改写工作副本的仓库绑定，填错后难以恢复。请在下方准确复述预览中的“新根”地址（去尾斜杠、协议与主机忽略大小写后比对一致方可确认）。",
+                  expected: relocateExpected,
+                  mismatchMessage:
+                    "复述目标与预览的新根地址不一致，无法确认。请对照预览复制准确地址后重试。",
+                }
+              : undefined,
+        };
+      })(),
       commands: preview.commands,
       stale: false,
-      confirmationChallenge:
-        preview.operation === "relocate"
-          ? (() => {
-              const expected = extractRelocateTarget(preview.details);
-              if (!expected) return undefined;
-              return {
-                prompt:
-                  "重定位会改写工作副本的仓库绑定，填错后难以恢复。请在下方准确复述预览中的“新根”地址（去尾斜杠、忽略大小写后比对一致方可确认）。",
-                expected,
-                mismatchMessage:
-                  "复述目标与预览的新根地址不一致，无法确认。请对照预览复制准确地址后重试。",
-                placeholder: expected,
-              };
-            })()
-          : undefined,
     };
   });
   const advancedConfirmLabel = $derived.by(() => {
