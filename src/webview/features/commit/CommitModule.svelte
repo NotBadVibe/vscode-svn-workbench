@@ -5,6 +5,7 @@
     WebviewAction,
     WorkbenchFileView,
   } from "@protocol/workbenchProtocol";
+  import { isCommitHandoffView } from "@protocol/workbenchProtocol";
   import ScrollArea from "../../components/ui/ScrollArea.svelte";
   import FilePathDetail from "../../components/svn/FilePathDetail.svelte";
   import PathCell from "../../components/list/PathCell.svelte";
@@ -665,6 +666,39 @@
     return undefined;
   });
 
+  /*
+   * v0.1.4 V014-E2 Changes → Commit 交接显示：handoff 渲染前经
+   * isCommitHandoffView 过滤，非法载荷按无交接处理（不扩大范围，不抛错）。
+   * 手动改选/规则/AI 接管后 Host 即清除 handoff，快照无该字段时回到常态。
+   */
+  const handoff = $derived(
+    snapshot.handoff && isCommitHandoffView(snapshot.handoff)
+      ? snapshot.handoff
+      : undefined,
+  );
+  /** 交接移除原因：文字标签 + 图标分组展示，不只靠颜色区分。 */
+  const handoffReasonLabels: Record<string, string> = {
+    disappeared: "已消失",
+    excluded: "已排除",
+    blocked: "阻止项",
+    "cross-repository": "跨仓库",
+  };
+  const handoffReasonIcons: Record<string, string> = {
+    disappeared: "codicon-trash",
+    excluded: "codicon-eye-closed",
+    blocked: "codicon-error",
+    "cross-repository": "codicon-repo",
+  };
+  /*
+   * v0.1.4 V014-E2 冲突指引：Host 在交接/刷新收缩出冲突项时置空旧 preview
+   * 并在 feedback 中写入“请先到冲突模块处理冲突”；摘要区据此给出次级入口
+   * （open-module conflicts/resolve）。旧 preview 区保持空态：usablePreview
+   * 已在选择偏离或 Host 置空时失效，此处不渲染旧预览主操作。
+   */
+  const hasConflictGuidance = $derived(
+    snapshot.feedback?.message.includes("请先到冲突模块处理冲突") ?? false,
+  );
+
   /* 按需展开区的按需打开：回执/建议到达、选择 AI 结果到达时自动展开
    * AI 折叠区，保证“生成后可见”；用户可手动收起。 */
   $effect(() => {
@@ -703,6 +737,47 @@
             <span>{project || "未归属项目"} {count} 个文件</span>
           {/each}
         </p>
+      {/if}
+      <!-- v0.1.4 V014-E2：交接来源行（secondary 信息，不抢主操作）。 -->
+      {#if handoff}
+        <p class="commit-compact-summary__handoff">
+          <span class="codicon codicon-arrow-right" aria-hidden="true"></span>
+          <span>来自本地修改，范围未扩大</span>
+          <!-- prettier-ignore -->
+          <span role="status">已带入 {handoff.keptCount} 个文件{#if handoff.requestedCount !== handoff.keptCount}（共请求 {handoff.requestedCount} 个）{/if}</span>
+        </p>
+        {#if handoff.removedEntries.length > 0}
+          <ul
+            class="commit-compact-summary__removed"
+            role="status"
+            aria-label="交接时移除的文件"
+          >
+            {#each handoff.removedEntries as entry (entry.path)}
+              <li>
+                <span
+                  class={`codicon ${handoffReasonIcons[entry.reason] ?? "codicon-warning"}`}
+                  aria-hidden="true"
+                ></span>
+                <span>{handoffReasonLabels[entry.reason] ?? "已移除"}</span>
+                <span>{entry.message}</span>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+      {/if}
+      <!-- v0.1.4 V014-E2：冲突指引次级入口（button--secondary，唯一主操作不变）。 -->
+      {#if hasConflictGuidance}
+        <button
+          type="button"
+          class="button button--secondary"
+          onclick={() =>
+            onAction("open-module", {
+              moduleId: "conflicts",
+              taskId: "conflicts/resolve",
+            })}
+          ><span class="codicon codicon-warning" aria-hidden="true"
+          ></span>处理冲突</button
+        >
       {/if}
       <button
         type="button"
@@ -1788,6 +1863,29 @@
     display: flex;
     flex-wrap: wrap;
     gap: 4px 10px;
+  }
+  /* v0.1.4 V014-E2：交接来源行与移除清单（secondary 信息，文字 + 图标，不只靠颜色）。 */
+  .commit-compact-summary__handoff {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 8px;
+    margin: 0;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .commit-compact-summary__removed {
+    margin: 0;
+    padding-left: 18px;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .commit-compact-summary__removed li {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 6px;
+    margin: 2px 0;
   }
   .commit-compact-details {
     border: 1px solid var(--border);
