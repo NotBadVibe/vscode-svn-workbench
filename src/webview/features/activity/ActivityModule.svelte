@@ -5,6 +5,8 @@
   } from "@protocol/workbenchProtocol";
   import ScrollArea from "../../components/ui/ScrollArea.svelte";
   import ResultCount from "../../components/list/ResultCount.svelte";
+  import TaskEmptyState from "../../components/task/TaskEmptyState.svelte";
+  import { taskStateCopy } from "../../i18n/terminology";
   import { formatZhDateTime } from "../../i18n/formatters";
 
   let {
@@ -90,11 +92,26 @@
   </div>
 
   {#if filtered.length === 0}
-    <div class="mini-empty">
-      {snapshot.records.length === 0
-        ? "本次会话暂无操作记录。执行提交、解决冲突或保存草稿后会在此显示。"
-        : "没有匹配的记录；调整搜索词后重试。"}
-    </div>
+    <!-- v0.1.5 V015-E：mini-empty→TaskEmptyState（三句复用 taskStateCopy，空会话给出来路下一步）。 -->
+    {#if snapshot.records.length === 0}
+      <TaskEmptyState
+        icon="codicon-history"
+        what="本次会话暂无操作记录"
+        whyNormal="尚未执行提交、解决冲突或保存草稿，这是正常状态。"
+        whatNow="下一步可先查看本地修改，执行操作后记录会在此显示。"
+        actions={[]}
+        onAction={() => {}}
+      />
+    {:else}
+      <TaskEmptyState
+        icon="codicon-search"
+        what={taskStateCopy.filterNoMatch.what}
+        whyNormal={taskStateCopy.filterNoMatch.whyNormal}
+        whatNow={taskStateCopy.filterNoMatch.whatNow}
+        actions={[]}
+        onAction={() => {}}
+      />
+    {/if}
   {:else}
     <ScrollArea class="activity-list" label="操作时间线">
       {#each filtered as record (record.id)}

@@ -347,6 +347,85 @@ export function historyCompareCount(selected: number, total = 2): string {
   return `已选择 ${selected}/${total} 条修订`;
 }
 
+/**
+ * v0.1.5 V015-E：十状态三句话统一文案（只负责状态表达层）。
+ * - 每个状态回答“发生了什么 / 是否正常或原因 / 现在能做什么”，结果先行。
+ * - 错误态必须配可执行恢复或诊断出口；成功态下一步与当前来路相关，不用通用“完成”。
+ * - 页面优先复用以下通用三句；领域差异（如更新回退、历史恢复）由页面在 props 中覆盖。
+ */
+export const taskStateCopy = {
+  initialLoading: {
+    what: "正在加载当前任务状态…",
+    whyNormal: "首次打开需要读取工作副本，这是正常等待。",
+    whatNow: "请稍候，加载完成后可继续操作；长时间无响应可重新打开任务。",
+  },
+  backgroundRefresh: {
+    what: "正在刷新当前范围…",
+    whyNormal: "已有内容保持可读，后台刷新不会打断输入。",
+    whatNow: "可继续浏览；如需最新结果可等待刷新完成或手动重新检查。",
+  },
+  emptyClean: {
+    what: "工作副本很干净",
+    whyNormal: "当前范围没有本地修改，这是正常状态。",
+    whatNow: "下一步可检查远端更新，或查看历史确认最新进展。",
+  },
+  emptyNoCandidate: {
+    what: "当前范围没有可提交的候选文件",
+    whyNormal: "工作副本很干净时没有可提交项，这是正常状态。",
+    whatNow: "可回到“本地修改”确认范围，或检查远端更新。",
+  },
+  emptyUnselected: {
+    what: "尚未选择可提交文件",
+    whyNormal: "未选择时无法生成预览，这是预期状态。",
+    whatNow: "请先选择至少 1 个可提交文件，或使用“选择推荐项”补全选择。",
+  },
+  filterNoMatch: {
+    what: "没有匹配的文件",
+    whyNormal: "当前筛选没有匹配文件，原始数据不受影响。",
+    whatNow: "可调整搜索词、状态或类型筛选即可，或清除筛选后重试。",
+  },
+  filterSelectedHidden: {
+    what: "已选文件不在当前筛选中",
+    whyNormal: "已选文件被当前筛选隐藏，选择本身仍保留。",
+    whatNow: "可关闭“只看已选”或调整筛选即可看到。",
+  },
+  loadFailed: {
+    what: "任务状态加载失败",
+    cause: "可能是工作副本被占用、路径变化或 SVN 服务暂不可用。",
+    recovery: "可重新打开此任务重试；问题持续时请运行环境诊断并复制诊断信息。",
+  },
+  cancelled: {
+    what: "操作已取消",
+    whyNormal: "取消不会修改工作副本，半完成结果不会被复用。",
+    whatNow: "确认无残留修改后，可重新生成预览再试。",
+  },
+  stale: {
+    what: "结果已过期",
+    whyNormal: "范围、候选或修订版本已变化，旧结果只能查看。",
+    whatNow: "请重新检查生成最新结果后再决定下一步。",
+  },
+  partial: {
+    what: "部分完成：部分文件已处理，另有失败项",
+    whyNormal: "成功部分已生效，失败项未被应用。",
+    whatNow: "可只重试失败项；全部成功后再继续下一步。",
+  },
+  recoverOk: {
+    what: "恢复成功",
+    whyNormal: "工作副本已回到可用状态。",
+    whatNow: "下一步可重新生成预览，确认状态后再继续原任务。",
+  },
+  recoverFailed: {
+    what: "恢复失败",
+    cause: "可能是锁定残留、工作副本被占用或权限不足。",
+    recovery: "可重试恢复，或复制诊断信息后运行环境诊断排查。",
+  },
+  aiUnconfigured: {
+    what: "未配置外部模型，当前为本地检查",
+    whyNormal: "本地规则与人工流程不受影响，这是可选增强缺失。",
+    whatNow: "可继续使用本地检查，或前往设置配置模型后再试。",
+  },
+} as const;
+
 /** v0.1.5 V015-B：共享任务骨架组件的默认文案（组件内不生造领域文案）。 */
 export const taskSkeletonLabels = {
   summary: "任务状态摘要",

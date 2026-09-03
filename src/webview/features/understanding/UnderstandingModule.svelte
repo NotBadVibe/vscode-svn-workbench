@@ -8,6 +8,7 @@
   } from "@protocol/workbenchProtocol";
   import ScrollArea from "../../components/ui/ScrollArea.svelte";
   import FilePathDetail from "../../components/svn/FilePathDetail.svelte";
+  import TaskEmptyState from "../../components/task/TaskEmptyState.svelte";
   import { understandingLabels } from "../../i18n/terminology";
 
   let {
@@ -318,10 +319,15 @@
   {/if}
 
   {#if !hasResult && snapshot.state === "idle"}
-    <div class="understanding-empty">
-      <span class="codicon codicon-search" aria-hidden="true"></span>
-      <p>还没有分析结果。选择“只运行本地检查”或“查看并开始分析 N 个文件”。</p>
-    </div>
+    <!-- v0.1.5 V015-E：idle 空态→TaskEmptyState（补齐第三句：两个入口均可达）。 -->
+    <TaskEmptyState
+      icon="codicon-search"
+      what="还没有分析结果"
+      whyNormal="尚未开始分析，这是正常状态；本地检查与模型分析都不会修改文件。"
+      whatNow="下一步可选择“只运行本地检查”，或“查看并开始分析 N 个文件”。"
+      actions={[]}
+      onAction={() => {}}
+    />
   {:else}
     <section
       class="understanding-section"

@@ -41,7 +41,12 @@
   } from "../../app/listPreferences";
   import { SvelteMap, SvelteSet } from "svelte/reactivity";
   import OperationIntentDialog from "../../components/operation/OperationIntentDialog.svelte";
-  import { fileStatusLabels, sourceLabels } from "../../i18n/terminology";
+  import TaskEmptyState from "../../components/task/TaskEmptyState.svelte";
+  import {
+    fileStatusLabels,
+    sourceLabels,
+    taskStateCopy,
+  } from "../../i18n/terminology";
 
   /*
    * v0.0.10 跨模块列表迁移：变更集与未分组文件复用 v0.0.8 共享底座
@@ -688,13 +693,35 @@
         onkeydown={list.handleKeydown}
       >
         {#if sections.every((section) => section.matchedCount === 0)}
-          <div class="mini-empty">
-            {allEntries().length === 0
-              ? "当前范围没有可分组的本地修改。"
-              : onlySelected
-                ? "已选文件不在当前筛选中；关闭“只看已选”或调整筛选条件。"
-                : "没有匹配的文件；调整搜索词或清除筛选后重试。"}
-          </div>
+          <!-- v0.1.5 V015-E：手写 mini-empty→TaskEmptyState（三句复用 taskStateCopy）。 -->
+          {#if allEntries().length === 0}
+            <TaskEmptyState
+              icon="codicon-folder"
+              what="当前范围没有可分组的本地修改"
+              whyNormal={taskStateCopy.emptyClean.whyNormal}
+              whatNow={taskStateCopy.emptyClean.whatNow}
+              actions={[]}
+              onAction={() => {}}
+            />
+          {:else if onlySelected}
+            <TaskEmptyState
+              icon="codicon-filter"
+              what={taskStateCopy.filterSelectedHidden.what}
+              whyNormal={taskStateCopy.filterSelectedHidden.whyNormal}
+              whatNow={taskStateCopy.filterSelectedHidden.whatNow}
+              actions={[]}
+              onAction={() => {}}
+            />
+          {:else}
+            <TaskEmptyState
+              icon="codicon-search"
+              what={taskStateCopy.filterNoMatch.what}
+              whyNormal={taskStateCopy.filterNoMatch.whyNormal}
+              whatNow={taskStateCopy.filterNoMatch.whatNow}
+              actions={[]}
+              onAction={() => {}}
+            />
+          {/if}
         {:else}
           {#each sections as section (section.key)}
             <div class="changelist-section-head">

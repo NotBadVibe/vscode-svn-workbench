@@ -9,6 +9,8 @@
   } from "@protocol/workbenchProtocol";
   import ScrollArea from "../../components/ui/ScrollArea.svelte";
   import PreviewPathList from "../../components/list/PreviewPathList.svelte";
+  import TaskErrorState from "../../components/task/TaskErrorState.svelte";
+  import { taskStateCopy } from "../../i18n/terminology";
   import OperationIntentDialog from "../../components/operation/OperationIntentDialog.svelte";
   import {
     extractRelocateTarget,
@@ -341,6 +343,24 @@
   function openTask(next: RepositoryTaskId): void {
     onAction("open-module", { moduleId: "repository", taskId: next });
   }
+
+  /* v0.1.5 V015-E：仓库任务加载失败→TaskErrorState（三段 + 可执行恢复出口）。 */
+  function handleLoadErrorAction(action: string): void {
+    if (action === "repository-retry-task") {
+      onAction("open-module", {
+        moduleId: "repository",
+        taskId: currentTask,
+      });
+      return;
+    }
+    if (action === "repository-open-diagnostics") {
+      onAction("open-module", {
+        moduleId: "diagnostics",
+        taskId: "diagnostics/environment",
+      });
+      return;
+    }
+  }
 </script>
 
 <section class="repository-page" data-repository-task={currentTask}>
@@ -432,9 +452,25 @@
     {@const Task = taskModule.default}
     <Task {snapshot} {taskId} {onAction} {pathDetail} />
   {:catch}
-    <div class="notice notice--error" role="alert">
-      仓库任务加载失败。请重新打开此任务；如果问题持续存在，请运行环境诊断。
-    </div>
+    <!-- v0.1.5 V015-E：手写 notice→TaskErrorState（三段 + 重试/诊断双出口）。 -->
+    <TaskErrorState
+      what={taskStateCopy.loadFailed.what}
+      cause={taskStateCopy.loadFailed.cause}
+      recovery={taskStateCopy.loadFailed.recovery}
+      actions={[
+        {
+          label: "重新打开此任务",
+          action: "repository-retry-task",
+          kind: "primary",
+        },
+        {
+          label: "运行环境诊断",
+          action: "repository-open-diagnostics",
+          kind: "secondary",
+        },
+      ]}
+      onAction={handleLoadErrorAction}
+    />
   {/await}
 
   {#if snapshot.advanced.feedback}<div

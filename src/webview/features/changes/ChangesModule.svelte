@@ -25,6 +25,8 @@
   import ResultCount from "../../components/list/ResultCount.svelte";
   import PreviewPathList from "../../components/list/PreviewPathList.svelte";
   import OperationIntentDialog from "../../components/operation/OperationIntentDialog.svelte";
+  import TaskEmptyState from "../../components/task/TaskEmptyState.svelte";
+  import { taskStateCopy } from "../../i18n/terminology";
   import { useFileList } from "../../components/list/useFileList.svelte";
   import {
     computeTriState,
@@ -642,6 +644,27 @@
   };
 
   /*
+   * v0.1.5 V015-E：空态动作纯透传（只映射页面已知标识，不拼接协议名）。
+   * 文案三句复用 taskStateCopy，动作保持原“检查远端更新 / 查看历史”。
+   */
+  function handleEmptyAction(action: string): void {
+    if (action === "changes-check-update") {
+      onAction("open-module", {
+        moduleId: "update",
+        taskId: "update/preview",
+      });
+      return;
+    }
+    if (action === "changes-view-history") {
+      onAction("open-module", {
+        moduleId: "history",
+        taskId: "history/revisions",
+      });
+      return;
+    }
+  }
+
+  /*
    * v0.0.17 批次 E：预设保存/应用/删除。预设经会话状态总线存取
    * （list/save-filter-preset、list/delete-filter-preset），Changes 与
    * 提交页共读；保存输入带 IME composition 保护。
@@ -941,46 +964,47 @@
       </div>
     </div>
     {#if filteredFiles.length === 0}
-      <div class="empty-state">
-        <span class="codicon codicon-check-all" aria-hidden="true"></span>
-        <strong
-          >{snapshot.files.length === 0
-            ? "工作副本很干净"
-            : onlySelected
-              ? "已选文件不在当前筛选中"
-              : "没有匹配的文件"}</strong
-        >
-        <p>
-          {snapshot.files.length === 0
-            ? "当前范围没有本地修改，这是正常状态。"
-            : onlySelected
-              ? "已选文件被当前筛选隐藏；关闭“只看已选”或调整筛选即可看到。"
-              : "当前筛选没有匹配文件；调整搜索词、状态或类型筛选即可。"}
-        </p>
-        {#if snapshot.files.length === 0}
-          <!-- V014-B：干净态“检查远端更新”升为唯一 primary，查看历史保持次级。 -->
-          <div class="toolbar-actions">
-            <button
-              class="button button--primary"
-              onclick={() =>
-                onAction("open-module", {
-                  moduleId: "update",
-                  taskId: "update/preview",
-                })}
-              ><span class="codicon codicon-sync" aria-hidden="true"
-              ></span>检查远端更新</button
-            >
-            <button
-              class="button button--secondary"
-              onclick={() =>
-                onAction("open-module", {
-                  moduleId: "history",
-                  taskId: "history/revisions",
-                })}>查看历史</button
-            >
-          </div>
-        {/if}
-      </div>
+      <!-- v0.1.5 V015-E：手写空态→TaskEmptyState（三句复用 taskStateCopy，动作与语义不变）。 -->
+      {#if snapshot.files.length === 0}
+        <TaskEmptyState
+          icon="codicon-check-all"
+          what={taskStateCopy.emptyClean.what}
+          whyNormal={taskStateCopy.emptyClean.whyNormal}
+          whatNow={taskStateCopy.emptyClean.whatNow}
+          actions={[
+            {
+              label: "检查远端更新",
+              action: "changes-check-update",
+              kind: "primary",
+              icon: "codicon-sync",
+            },
+            {
+              label: "查看历史",
+              action: "changes-view-history",
+              kind: "secondary",
+            },
+          ]}
+          onAction={handleEmptyAction}
+        />
+      {:else if onlySelected}
+        <TaskEmptyState
+          icon="codicon-filter"
+          what={taskStateCopy.filterSelectedHidden.what}
+          whyNormal={taskStateCopy.filterSelectedHidden.whyNormal}
+          whatNow={taskStateCopy.filterSelectedHidden.whatNow}
+          actions={[]}
+          onAction={handleEmptyAction}
+        />
+      {:else}
+        <TaskEmptyState
+          icon="codicon-search"
+          what={taskStateCopy.filterNoMatch.what}
+          whyNormal={taskStateCopy.filterNoMatch.whyNormal}
+          whatNow={taskStateCopy.filterNoMatch.whatNow}
+          actions={[]}
+          onAction={handleEmptyAction}
+        />
+      {/if}
     {:else}
       <ContextMenu.Root
         open={rowMenuOpen}
