@@ -316,4 +316,74 @@ describe("RepositoryModule", () => {
       previewToken: "relocate-1",
     });
   });
+
+  it("V015-C3a 高级操作意向单提供重新检查：关闭后用既有输入重发预览", async () => {
+    const onAction = vi.fn();
+    const sourceUrl = "https://svn.example.test/repos/workbench/trunk";
+    const targetUrl = "https://svn.example.test/repos/workbench/branches/next";
+    type AdvancedPreview = NonNullable<
+      RepositorySnapshot["advanced"]["preview"]
+    >;
+    const branchPreview = (
+      overrides: Partial<AdvancedPreview> = {},
+    ): AdvancedPreview => ({
+      token: "branch-1",
+      operation: "branch",
+      title: "创建分支",
+      commands: ["svn copy …"],
+      details: [
+        `源：${sourceUrl}`,
+        `目标：${targetUrl}`,
+        "直接在仓库端创建，不包含未提交的本地修改。",
+      ],
+      issues: [],
+      canExecute: true,
+      destructive: false,
+      ...overrides,
+    });
+    const baseSnapshot: RepositorySnapshot = {
+      kind: "repository",
+      info: { name: "repo", revision: "5" },
+      properties: { available: true, target: ".", items: [] },
+      cleanup: { available: true, target: "." },
+      advanced: { preview: branchPreview() },
+    };
+    const { rerender } = render(RepositoryModule, {
+      snapshot: baseSnapshot,
+      taskId: "repository/branch",
+      onAction,
+    });
+    await fireEvent.click(
+      screen.getByRole("button", { name: "确认执行创建分支" }),
+    );
+    expect(
+      screen.getByRole("dialog", { name: "创建分支" }),
+    ).toBeInTheDocument();
+    // 可执行时不提供重新检查；快照变脏（不可执行）后出现（§3.3 过期只读）。
+    expect(screen.queryByRole("button", { name: "重新检查" })).toBeNull();
+    await rerender({
+      snapshot: {
+        ...baseSnapshot,
+        advanced: {
+          preview: branchPreview({
+            canExecute: false,
+            issues: ["目标 URL 已被占用，请更换后重新检查。"],
+          }),
+        },
+      },
+      taskId: "repository/branch",
+      onAction,
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "重新检查" }));
+    // 用既有输入（operation + 源/目标）重发预览，不直接执行。
+    expect(onAction).toHaveBeenCalledWith("repository/preview-advanced", {
+      operation: "branch",
+      sourceUrl,
+      targetUrl,
+    });
+    expect(onAction).not.toHaveBeenCalledWith(
+      "repository/execute-advanced",
+      expect.anything(),
+    );
+  });
 });

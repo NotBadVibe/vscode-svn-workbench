@@ -45,9 +45,11 @@
     const title = hasRemoteCount
       ? `更新 ${remoteCount} 个远端变更`
       : "更新当前范围";
+    // v0.1.5 V015-C3a：诚实文案——executeUpdate 只重算本地候选（token/scope/candidate），
+    // 不重查远端；摘要不得承诺“执行前重新校验远端”，如实说明实际数量可能多于预览。
     const summary = hasRemoteCount
-      ? `更新 ${remoteCount} 个远端变更 · 重叠风险 ${preview.overlapPaths.length} 个路径，执行前将重新校验范围与远端状态`
-      : "更新当前范围 · 远端数量待检测，执行前将重新校验范围与远端状态";
+      ? `更新 ${remoteCount} 个远端变更 · 重叠风险 ${preview.overlapPaths.length} 个路径，执行时将更新到最新远端，实际数量可能多于预览`
+      : "更新当前范围 · 远端数量待检测，执行时将更新到最新远端，实际数量可能多于预览";
     // v0.1.5 V015-C1 九要素补齐：scope 摘要取 Host 下发的仓库名；revision 取检查修订
     // 回退工作副本修订；可恢复性复用结果页 recoveryHint 同一文案。
     const checkedRevision = preview.checkedRevision ?? snapshot.info.revision;

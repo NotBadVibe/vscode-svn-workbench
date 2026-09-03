@@ -53,6 +53,32 @@ describe("UpdateModule", () => {
     });
   });
 
+  it("V015-C3a 意向单摘要如实说明远端数量可能多于预览", async () => {
+    const onAction = vi.fn();
+    render(UpdateModule, {
+      snapshot: updateSnapshot({
+        preview: {
+          token: "update-honest",
+          canExecute: true,
+          localCount: 1,
+          remoteCount: 2,
+          risk: "low",
+          overlapPaths: ["src/overlap.ts"],
+          messages: ["没有明显风险。"],
+          commands: ['svn update --accept postpone "."'],
+        },
+      }),
+      onAction,
+    });
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "确认更新（2）" }),
+    );
+    const dialog = screen.getByRole("dialog", { name: "更新 2 个远端变更" });
+    // 诚实文案：执行时更新到最新远端，数量可能多于预览；不承诺执行前重查远端。
+    expect(dialog).toHaveTextContent("实际数量可能多于预览");
+    expect(dialog).not.toHaveTextContent("重新校验");
+  });
+
   it("常驻冲突 CTA：显示数量、可展开清单并直达冲突模块", async () => {
     const onAction = vi.fn();
     render(UpdateModule, {

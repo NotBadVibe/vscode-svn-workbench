@@ -258,6 +258,70 @@
     return `确认执行${previewOperationLabels[preview.operation]}`;
   });
 
+  /*
+   * v0.1.5 V015-C3a：高级操作意向单“重新检查”出口——关闭对话框后用既有输入
+   * 重发 repository/preview-advanced。RepositoryModule 不持有表单，输入只能取自
+   * Host 下发的 preview：details 的“源/目标/新根”行、switch/merge 命令首参、
+   * shelf 命令中的搁置名；解析不到的字段留空，由 Host 重新提示补填，不虚构。
+   */
+  function advancedRecheckPayload(): Record<string, unknown> | undefined {
+    const preview = snapshot.advanced.preview;
+    if (!preview) return undefined;
+    const payload: Record<string, unknown> = {
+      operation: preview.operation,
+    };
+    for (const line of preview.details ?? []) {
+      const text = line.trim();
+      if (text.startsWith("源：")) {
+        const value = text.slice(2).trim();
+        if (value && value !== "未填写" && payload.sourceUrl === undefined)
+          payload.sourceUrl = value;
+      }
+      if (text.startsWith("目标：") || text.startsWith("新根：")) {
+        const value = text.slice(3).trim();
+        if (value && value !== "未填写" && payload.targetUrl === undefined)
+          payload.targetUrl = value;
+      }
+    }
+    // switch/merge 的 details 不带 URL，退回解析预览命令的首个参数。
+    if (preview.operation === "switch" || preview.operation === "merge") {
+      const verb = preview.operation;
+      const command = preview.commands[0] ?? "";
+      const rest = command.startsWith(`svn ${verb} `)
+        ? command.slice(`svn ${verb} `.length)
+        : undefined;
+      const first = rest?.match(/^"([^"]+)"|^(\S+)/);
+      const value = (first?.[1] ?? first?.[2])?.trim();
+      if (value) {
+        if (verb === "switch" && payload.targetUrl === undefined)
+          payload.targetUrl = value;
+        if (verb === "merge" && payload.sourceUrl === undefined)
+          payload.sourceUrl = value;
+      }
+    }
+    // shelf 名称只出现在搁置命令 `> <name>.patch` 中；解析失败则仅重发
+    // operation，由 Host 提示补填。
+    if (preview.operation === "shelf") {
+      const shelfName = (preview.commands[0] ?? "").match(
+        />\s*([A-Za-z0-9._-]{1,64})\.patch/,
+      )?.[1];
+      if (shelfName) payload.shelfName = shelfName;
+    }
+    return payload;
+  }
+
+  function recheckAdvancedPreview(): void {
+    const preview = snapshot.advanced.preview;
+    advancedIntentOpen = false;
+    // apply-patch 预览由“选择补丁文件 + dry-run”生成，重新检查走同一入口。
+    if (preview?.operation === "apply-patch") {
+      onAction("repository/select-patch");
+      return;
+    }
+    const payload = advancedRecheckPayload();
+    if (payload) onAction("repository/preview-advanced", payload);
+  }
+
   $effect(() => {
     const token = snapshot.advanced.preview?.token;
     if (token !== previewToken) {
@@ -440,6 +504,7 @@
         open={advancedIntentOpen && Boolean(advancedIntent)}
         confirmLabel={advancedConfirmLabel}
         cancelLabel="取消"
+        recheckLabel="重新检查"
         triggerElement={advancedTriggerEl}
         {onAction}
         {pathDetail}
@@ -448,6 +513,7 @@
           onAction("repository/execute-advanced", { previewToken: token });
         }}
         onCancel={() => (advancedIntentOpen = false)}
+        onRecheck={recheckAdvancedPreview}
       />
     </section>
   {/if}
