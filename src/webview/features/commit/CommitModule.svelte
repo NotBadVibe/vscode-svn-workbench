@@ -451,8 +451,14 @@
    * v0.1.6 V016-C：AssistancePanel 接线（只表达状态与事件）。
    * 回执 token 生成/绑定/消费、scope 校验、stale 判定与模型调用留在页面
    * 闭包与 Host；组件只展示来源、回执与结果状态，不持有业务状态机。
+   * V016-C3a：生成建议草稿走 commitMessage 场景（aiPrivacy[message]），
+   * 不得取选择场景 selectionAi（commitSelection）；判定同式 ConflictsModule
+   * conflictAdviceConfigured：看相应 privacy.model 是否含「未配置」。
    */
-  const assistanceConfigured = $derived(snapshot.selectionAi.configured);
+  const assistanceConfigured = $derived(
+    messagePrivacy?.model !== undefined &&
+      !messagePrivacy.model.includes("未配置"),
+  );
   const assistanceSourceState = $derived<
     "local-rule" | "configured-model" | "local-rule-fallback" | "unconfigured"
   >(
@@ -547,6 +553,8 @@
    * commit/generate-message 携带 receiptToken 实际生成。
    */
   function requestGenerate(): void {
+    // V016-C3a：消息场景未配置时入口已禁用；此处再守卫一次，误触不外发。
+    if (!assistanceConfigured) return;
     if (diffMode === "limited-diff") {
       onAction("commit/preview-receipt", {
         selectedPaths: selectedPaths(),
@@ -1213,7 +1221,16 @@
         </div>
         <div class="generate-actions">
           <!-- v0.1.6 V016-C：提交说明旁只保留一个“生成建议草稿”入口；模式选择收进下方帮助面板展开区。 -->
-          <button class="button button--secondary" onclick={requestGenerate}>
+          <!-- V016-C3a：消息场景（commitMessage）未配置时禁用，本地检查仍可用；配置后恢复。 -->
+          <button
+            class="button button--secondary"
+            disabled={!assistanceConfigured}
+            title={!assistanceConfigured
+              ? commitAssistanceLabels.unconfiguredDisabledReason
+              : undefined}
+            aria-disabled={!assistanceConfigured}
+            onclick={requestGenerate}
+          >
             <span class="codicon codicon-sparkle" aria-hidden="true"></span>
             生成建议草稿
           </button>

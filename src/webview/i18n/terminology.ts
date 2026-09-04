@@ -474,6 +474,7 @@ export const commitAssistanceLabels = {
     "受限差异模式：生成前会先展示外发回执（数据类型、文件数、预算与排除项），确认后才发送脱敏差异正文；不会发送本地绝对路径、范围外内容或凭据。",
   selectionDemotedHint:
     "选择建议默认使用本地规则，结果见下方本地检查摘要；模型选择已收起。",
+  unconfiguredDisabledReason: "未配置外部模型，本地检查仍可用",
 } as const;
 
 /**

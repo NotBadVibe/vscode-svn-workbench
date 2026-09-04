@@ -162,8 +162,25 @@ describe("CommitModule", () => {
   });
 
   it("V016-C：未配置时无选择模型入口，帮助面板如实提示本地可用", async () => {
+    // V016-C3a：面板配置态取消息场景（aiPrivacy[message]），此处双场景均未配置。
     renderCommit({
       selectionAi: { configured: false },
+      aiPrivacy: [
+        {
+          scenario: "selection",
+          model: "本地规则（未配置外部模型）",
+          fileLimit: 200,
+          data: "metadata",
+          historyIncluded: false,
+        },
+        {
+          scenario: "message",
+          model: "本地规则（未配置外部模型）",
+          fileLimit: 80,
+          data: "statistics",
+          historyIncluded: false,
+        },
+      ],
     });
 
     expect(
@@ -185,6 +202,113 @@ describe("CommitModule", () => {
     expect(
       screen.getByText(/未配置外部模型，本地检查仍可用/),
     ).toBeInTheDocument();
+  });
+
+  it("V016-C3a：仅配 commitMessage 时生成入口可用且面板为已配置", async () => {
+    renderCommit({
+      selectionAi: { configured: false },
+      aiPrivacy: [
+        {
+          scenario: "selection",
+          model: "本地规则（未配置外部模型）",
+          fileLimit: 200,
+          data: "metadata",
+          historyIncluded: false,
+        },
+        {
+          scenario: "message",
+          model: "deepseek-v4-flash",
+          fileLimit: 80,
+          data: "statistics",
+          historyIncluded: false,
+        },
+      ],
+    });
+
+    // 选择场景未配不影响消息场景入口：生成建议草稿仍可用。
+    expect(screen.getByRole("button", { name: "生成建议草稿" })).toBeEnabled();
+    await fireEvent.click(screen.getByRole("button", { name: "需要帮助" }));
+    expect(
+      screen.queryByText(/未配置外部模型，本地检查仍可用/),
+    ).not.toBeInTheDocument();
+  });
+
+  it("V016-C3a：仅配 commitSelection 时生成入口禁用且面板为未配置", async () => {
+    const onAction = renderCommit({
+      selectionAi: { configured: true, model: "deepseek-v4-flash" },
+      aiPrivacy: [
+        {
+          scenario: "selection",
+          model: "deepseek-v4-flash",
+          fileLimit: 200,
+          data: "metadata",
+          historyIncluded: false,
+        },
+        {
+          scenario: "message",
+          model: "本地规则（未配置外部模型）",
+          fileLimit: 80,
+          data: "statistics",
+          historyIncluded: false,
+        },
+      ],
+    });
+
+    // 选择场景已配也不得点亮消息场景入口：禁用 + 如实原因。
+    const generate = screen.getByRole("button", {
+      name: "生成建议草稿",
+    });
+    expect(generate).toBeDisabled();
+    expect(generate.getAttribute("title")).toMatch(
+      /未配置外部模型，本地检查仍可用/,
+    );
+    // 禁用态点击不直调生成（守卫 fail-closed）。
+    await fireEvent.click(generate);
+    expect(onAction).not.toHaveBeenCalledWith(
+      "commit/generate-message",
+      expect.anything(),
+    );
+    expect(onAction).not.toHaveBeenCalledWith(
+      "commit/preview-receipt",
+      expect.anything(),
+    );
+    // 面板同源回退到未配置：展开后如实提示本地可用。
+    await fireEvent.click(screen.getByRole("button", { name: "需要帮助" }));
+    expect(
+      screen.getByText(/未配置外部模型，本地检查仍可用/),
+    ).toBeInTheDocument();
+  });
+
+  it("V016-C3a：消息场景已配置时生成入口恢复可用并可直调生成", async () => {
+    const onAction = renderCommit({
+      selectionAi: { configured: false },
+      aiPrivacy: [
+        {
+          scenario: "selection",
+          model: "本地规则（未配置外部模型）",
+          fileLimit: 200,
+          data: "metadata",
+          historyIncluded: false,
+        },
+        {
+          scenario: "message",
+          model: "deepseek-v4-flash",
+          fileLimit: 80,
+          data: "statistics",
+          historyIncluded: false,
+        },
+      ],
+    });
+
+    const generate = screen.getByRole("button", {
+      name: "生成建议草稿",
+    });
+    expect(generate).toBeEnabled();
+    await fireEvent.click(generate);
+    expect(onAction).toHaveBeenCalledWith(
+      "commit/generate-message",
+      expect.objectContaining({ diffMode: "metadata-only" }),
+    );
   });
 
   it("V016-C：选择场景不再展示外发预览（已配置也不例外），提交说明外发预览保留", () => {
