@@ -112,13 +112,17 @@ function findOnPath(
   basename: string,
   pathEnv: string | undefined,
   delimiter: string,
+  platform: NodeJS.Platform,
   isExecutable: (candidate: string) => boolean,
 ): string | undefined {
   if (!pathEnv) return undefined;
+  // 按注入平台语义拼接（Windows 宿主上评估 linux 路径不能用宿主 path.join，
+  // 否则 /usr/bin 会被转成盘符路径导致测试与跨平台探测失真）。
+  const join = platform === "win32" ? path.win32.join : path.posix.join;
   for (const dir of pathEnv.split(delimiter)) {
     const trimmed = dir.trim();
     if (!trimmed) continue;
-    const candidate = path.join(trimmed, basename);
+    const candidate = join(trimmed, basename);
     try {
       if (isExecutable(candidate)) return candidate;
     } catch {
@@ -189,7 +193,13 @@ export function resolveExternalMergeExecutable(
         ? [trimmed, `${trimmed}.exe`]
         : [trimmed];
     for (const name of probeNames) {
-      const onPath = findOnPath(name, pathEnv, delimiter, isExecutable);
+      const onPath = findOnPath(
+        name,
+        pathEnv,
+        delimiter,
+        platform,
+        isExecutable,
+      );
       if (onPath) {
         return { found: true, command: onPath, label: trimmed };
       }
