@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 import { fireEvent, render, screen } from "@testing-library/svelte";
+import { tick } from "svelte";
 import { describe, expect, it, vi } from "vitest";
 import ConflictsModule from "../../src/webview/features/conflicts/ConflictsModule.svelte";
 import type { ConflictSnapshot } from "../../src/protocol/workbenchProtocol";
@@ -123,7 +124,7 @@ describe("ConflictsModule", () => {
     });
   });
 
-  it("未配置外部模型时按钮与隐私文案如实指向本地建议（v0.0.9）", async () => {
+  it("未配置外部模型时帮助面板内本地建议可用且模型动作禁用（v0.1.6 V016-C2）", async () => {
     const onAction = vi.fn();
     const unconfigured: ConflictSnapshot = {
       ...snapshot,
@@ -136,17 +137,27 @@ describe("ConflictsModule", () => {
       },
     };
     render(ConflictsModule, { snapshot: unconfigured, onAction });
-    // 不标“AI”，如实指向本地建议（AI09-TRUTH-01）。
+    // 单一「需要帮助」入口默认折叠：本地建议不可见直到展开。
     expect(
-      screen.getByRole("button", { name: "本地建议" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "AI 分析" }),
+      screen.queryByRole("button", { name: "本地建议" }),
     ).not.toBeInTheDocument();
-    expect(screen.getByText(/不会外发/)).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "需要帮助" }));
+    await tick();
+    // 不标“AI”，如实指向本地建议（AI09-TRUTH-01）；模型动作禁用不断言消失。
+    const localButton = screen.getByRole("button", { name: "本地建议" });
+    expect(localButton).toBeInTheDocument();
+    expect(localButton).toBeEnabled();
+    expect(screen.getByRole("button", { name: "AI 分析" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "解释冲突意图" })).toBeDisabled();
+    expect(screen.getAllByText(/不会外发/).length).toBeGreaterThanOrEqual(1);
+    // 本地动作直接透传 conflict/advise，不弹外发回执。
+    await fireEvent.click(localButton);
+    expect(onAction).toHaveBeenCalledWith("conflict/advise", {
+      relativePath: "src/a.ts",
+    });
   });
 
-  it("配置外部模型时按钮保留“AI 分析”（AI09-TRUTH-01）", async () => {
+  it("配置外部模型时帮助面板内保留“AI 分析”（v0.1.6 V016-C2）", async () => {
     const onAction = vi.fn();
     const configured: ConflictSnapshot = {
       ...snapshot,
@@ -159,10 +170,50 @@ describe("ConflictsModule", () => {
       },
     };
     render(ConflictsModule, { snapshot: configured, onAction });
-    expect(screen.getByRole("button", { name: "AI 分析" })).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "需要帮助" }));
+    await tick();
+    const aiButton = screen.getByRole("button", { name: "AI 分析" });
+    expect(aiButton).toBeInTheDocument();
+    expect(aiButton).toBeEnabled();
+    expect(screen.getByRole("button", { name: "解释冲突意图" })).toBeEnabled();
     expect(
       screen.queryByRole("button", { name: "本地建议" }),
     ).not.toBeInTheDocument();
+    await fireEvent.click(aiButton);
+    expect(onAction).toHaveBeenCalledWith("conflict/advise", {
+      relativePath: "src/a.ts",
+    });
+  });
+
+  it("帮助面板折叠不丢弃建议结果（v0.1.6 V016-C2）", async () => {
+    const onAction = vi.fn();
+    const configured: ConflictSnapshot = {
+      ...snapshot,
+      advice: {
+        recommendation: "manualMerge",
+        confidence: "medium",
+        summary: "两侧都修改了同一处行为",
+        risks: [],
+        steps: [],
+        source: "local-rule",
+      },
+      aiPrivacy: {
+        model: "deepseek-v4-flash",
+        characters: 86,
+        maxCharacters: 32000,
+        data: "基础版本、我的版本、对方版本、工作副本的截断文本与修订元数据",
+        historyIncluded: false,
+      },
+    };
+    render(ConflictsModule, { snapshot: configured, onAction });
+    await fireEvent.click(screen.getByRole("button", { name: "需要帮助" }));
+    await tick();
+    expect(screen.getByText("两侧都修改了同一处行为")).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "收起帮助" }));
+    await tick();
+    await fireEvent.click(screen.getByRole("button", { name: "需要帮助" }));
+    await tick();
+    expect(screen.getByText("两侧都修改了同一处行为")).toBeInTheDocument();
   });
 });
 
@@ -339,11 +390,14 @@ describe("ConflictsModule 冲突意图解释（v0.0.12 批次 C）", () => {
       "数据保留策略由模型服务商策略决定，本插件无法证明其保留期限。",
   };
 
-  it("展示六段解释（意图/共同点/冲突点/证据/未知/验证命令仅展示）", () => {
+  it("展示六段解释（意图/共同点/冲突点/证据/未知/验证命令仅展示）", async () => {
     const { container } = render(ConflictsModule, {
       snapshot: { ...snapshot, interpretation },
       onAction: vi.fn(),
     });
+    // v0.1.6 V016-C2：解释结果收进帮助面板，需先展开「需要帮助」。
+    await fireEvent.click(screen.getByRole("button", { name: "需要帮助" }));
+    await tick();
     expect(
       container.querySelector('[aria-label="冲突意图解释"]'),
     ).toBeInTheDocument();

@@ -476,6 +476,22 @@ export const commitAssistanceLabels = {
     "选择建议默认使用本地规则，结果见下方本地检查摘要；模型选择已收起。",
 } as const;
 
+/**
+ * v0.1.6 V016-C2：Conflicts 冲突帮助面板领域文案。
+ * - 「本地建议 / AI 分析 / 解释冲突意图」统一收进 AssistancePanel 单一入口。
+ * - 未配置模型时只启用本地建议，不标 AI；模型动作禁用并如实说明原因。
+ */
+export const conflictAssistanceLabels = {
+  panelTitle: "冲突帮助",
+  panelSummary:
+    "合并建议与解释：本地建议默认可用；模型辅助需确认后外发，不会自动标记解决。",
+  localHint: "不会外发",
+  modelAdviseHint: "需确认后外发",
+  interpretHint: "含差异，需确认后外发",
+  unconfiguredDisabledReason:
+    "未配置外部模型，本地检查仍可用；请先配置模型后再试。",
+} as const;
+
 export function describeCommitSelectionEvaluation(
   evaluation: CommitSelectionExplanation,
 ): string {

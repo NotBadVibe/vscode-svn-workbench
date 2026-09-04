@@ -440,10 +440,12 @@ test("keeps conflict advice separate from explicit resolve", async ({
   await page.goto("/");
   await openModule(page, "冲突");
   await expect(page.getByRole("heading", { name: "待处理冲突" })).toBeVisible();
-  await page.getByText("需要帮助（合并建议与解释）").click();
+  // v0.1.6 V016-C2：建议入口收进帮助面板，先展开「需要帮助」；解决预览仍在下方折叠区。
+  await page.getByRole("button", { name: "需要帮助" }).click();
   await expect(page.getByText(/点击“AI 分析”后才会发送/)).toBeVisible();
   await page.getByRole("button", { name: "AI 分析" }).click();
   await expect(page.getByText("两侧都修改了同一处行为")).toBeVisible();
+  await page.locator('[data-testid="conflict-help-details"] summary').click();
   await page.getByRole("button", { name: "生成解决预览" }).click();
   await expect(
     page.getByRole("button", { name: "确认使用当前工作副本内容并标记解决" }),
@@ -1120,7 +1122,9 @@ test("conflict intent interpretation: receipt-confirmed six-section output (v0.0
     .getByRole("button", { name: /选择一个冲突文件|app\/conflicted/ })
     .isVisible()
     .catch(() => undefined);
-  await page.getByRole("button", { name: "解释冲突意图" }).first().click();
+  // v0.1.6 V016-C2：解释入口收进帮助面板，先展开「需要帮助」。
+  await page.getByRole("button", { name: "需要帮助" }).click();
+  await page.getByRole("button", { name: "解释冲突意图" }).click();
   const receiptRegion = page.getByRole("region", {
     name: "冲突意图解释回执",
   });
@@ -1129,7 +1133,8 @@ test("conflict intent interpretation: receipt-confirmed six-section output (v0.0
     receiptRegion.getByText("冲突意图解释（conflict-interpret）"),
   ).toBeVisible();
   await receiptRegion.getByRole("button", { name: "开始解释" }).click();
-  await page.getByText("需要帮助（合并建议与解释）").click();
+  // v0.1.6 V016-C2：意图解释结果收进帮助面板（保持展开，直接断言）。
+  await expect(page.getByRole("button", { name: "收起帮助" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "意图解释" })).toBeVisible();
   await expect(page.getByText("我的修改意图")).toBeVisible();
   await expect(page.getByText("对方修改意图")).toBeVisible();

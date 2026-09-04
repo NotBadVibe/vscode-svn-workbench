@@ -50,9 +50,15 @@
   import ResultCount from "../../components/list/ResultCount.svelte";
   import OperationIntentDialog from "../../components/operation/OperationIntentDialog.svelte";
   import FilePathDetail from "../../components/svn/FilePathDetail.svelte";
+  import AssistancePanel from "../../components/assistance/AssistancePanel.svelte";
+  import type {
+    AssistanceActionItem,
+    AssistanceSourceState,
+  } from "../../components/assistance/assistanceTypes";
   import { useFileList } from "../../components/list/useFileList.svelte";
   import { naturalCompare } from "../../../selection/selectionSort";
   import { confidenceLabels, sourceLabels } from "../../i18n/terminology";
+  import { conflictAssistanceLabels } from "../../i18n/terminology";
 
   /*
    * v0.0.10 跨模块列表迁移：冲突列表复用共享搜索、排序、键盘导航与
@@ -298,6 +304,113 @@
   const conflictAdviceConfigured = $derived(
     snapshot.aiPrivacy?.model !== undefined &&
       !snapshot.aiPrivacy.model.includes("未配置"),
+  );
+  /**
+   * v0.1.6 V016-C2：冲突帮助统一收进 AssistancePanel（单一「需要帮助」入口）。
+   * - 展开态由页面持有，组件不自建第二状态机；折叠不丢建议/解释结果。
+   * - 建议动作按配置归属分组：未配置时「本地建议」在本地组（不外发），
+   *   「AI 分析 / 解释冲突意图」在模型组禁用并如实说明；配置后建议动作
+   *   进入模型组为「AI 分析」，本地组留空（回执卡仍保留「继续仅本地建议」）。
+   * - 协议与 Host 零改动：仍走 conflict/advise、conflict/preview-receipt、
+   *   conflict/interpret、conflict/receipt-dismiss；回执 token 仍由页面持有，
+   *   不进入组件；回执卡位置与三动作保持原样。
+   */
+  let assistanceExpanded = $state(false);
+  function requestAdvice(): void {
+    onAction("conflict/advise", {
+      relativePath: snapshot.selected?.relativePath,
+    });
+  }
+  const assistanceLocalActions = $derived.by((): AssistanceActionItem[] => {
+    if (conflictAdviceConfigured) return [];
+    return [
+      {
+        label: "本地建议",
+        kind: "local",
+        hint: conflictAssistanceLabels.localHint,
+        onSelect: requestAdvice,
+      },
+    ];
+  });
+  const assistanceModelActions = $derived.by((): AssistanceActionItem[] => [
+    {
+      label: "AI 分析",
+      kind: "model",
+      hint: conflictAdviceConfigured
+        ? conflictAssistanceLabels.modelAdviseHint
+        : undefined,
+      disabled: !conflictAdviceConfigured,
+      disabledReason: conflictAdviceConfigured
+        ? undefined
+        : conflictAssistanceLabels.unconfiguredDisabledReason,
+      onSelect: requestAdvice,
+    },
+    {
+      label: "解释冲突意图",
+      kind: "model",
+      hint: conflictAssistanceLabels.interpretHint,
+      disabled: !conflictAdviceConfigured,
+      disabledReason: conflictAdviceConfigured
+        ? undefined
+        : conflictAssistanceLabels.unconfiguredDisabledReason,
+      onSelect: requestInterpret,
+    },
+  ]);
+  /** 结果来源如实标注：本地结果不标 AI，过期只读由组件禁用采用类动作。 */
+  const assistanceSource = $derived.by((): AssistanceSourceState => {
+    const raw = snapshot.advice?.source ?? snapshot.interpretation?.source;
+    if (
+      raw === "configured-model" ||
+      raw === "local-rule" ||
+      raw === "local-rule-fallback"
+    )
+      return raw;
+    return "unconfigured";
+  });
+  const assistanceModel = $derived(
+    conflictAdviceConfigured ? snapshot.aiPrivacy?.model : undefined,
+  );
+  const assistanceStale = $derived(Boolean(snapshot.interpretation?.stale));
+  /**
+   * v0.1.6 V016-C2：空态返回收敛为单一 primary（分支互斥，页面级唯一）。
+   * testid 保持原约定（return-to-update / return-to-changes / return-close /
+   * return-to-changes-generic / return-to-update-generic），行为不变。
+   */
+  const emptyReturnPrimary = $derived.by(
+    (): {
+      testid: string;
+      label: string;
+      moduleId: "update" | "changes";
+      taskId: "update/preview" | "changes/overview";
+    } => {
+      if (effectiveEntryOrigin === "update")
+        return {
+          testid: "return-to-update",
+          label: "返回更新结果",
+          moduleId: "update",
+          taskId: "update/preview",
+        };
+      if (effectiveEntryOrigin === "changes")
+        return {
+          testid: "return-to-changes",
+          label: "查看本地修改",
+          moduleId: "changes",
+          taskId: "changes/overview",
+        };
+      if (effectiveEntryOrigin === "generic")
+        return {
+          testid: "return-to-changes-generic",
+          label: "查看本地修改",
+          moduleId: "changes",
+          taskId: "changes/overview",
+        };
+      return {
+        testid: "return-close",
+        label: "关闭",
+        moduleId: "changes",
+        taskId: "changes/overview",
+      };
+    },
   );
   let editorHost = $state<HTMLDivElement>();
   let editorView = $state<EditorView>();
@@ -1224,47 +1337,18 @@
             工作副本当前状态：可以继续提交。当前范围已无冲突标记。
           </p>
           <div class="toolbar-actions" role="group" aria-label="返回来路">
-            {#if effectiveEntryOrigin === "update"}
-              <button
-                class="button button--primary"
-                data-testid="return-to-update"
-                onclick={() =>
-                  onAction("open-module", {
-                    moduleId: "update",
-                    taskId: "update/preview",
-                  })}>返回更新结果</button
-              >
-            {:else if effectiveEntryOrigin === "changes"}
-              <button
-                class="button button--primary"
-                data-testid="return-to-changes"
-                onclick={() =>
-                  onAction("open-module", {
-                    moduleId: "changes",
-                    taskId: "changes/overview",
-                  })}>查看本地修改</button
-              >
-            {:else if effectiveEntryOrigin === "command" || effectiveEntryOrigin === "conflicts"}
-              <button
-                class="button button--primary"
-                data-testid="return-close"
-                onclick={() =>
-                  onAction("open-module", {
-                    moduleId: "changes",
-                    taskId: "changes/overview",
-                  })}>关闭</button
-              >
-            {:else}
-              <!-- 通用出口：不扩大原 scope，提供全部可选返回 -->
-              <button
-                class="button button--primary"
-                data-testid="return-to-changes-generic"
-                onclick={() =>
-                  onAction("open-module", {
-                    moduleId: "changes",
-                    taskId: "changes/overview",
-                  })}>查看本地修改</button
-              >
+            <!-- v0.1.6 V016-C2：空态页面级唯一 primary（分支互斥，动态 testid/文案/动作保持原约定） -->
+            <button
+              class="button button--primary"
+              data-testid={emptyReturnPrimary.testid}
+              onclick={() =>
+                onAction("open-module", {
+                  moduleId: emptyReturnPrimary.moduleId,
+                  taskId: emptyReturnPrimary.taskId,
+                })}>{emptyReturnPrimary.label}</button
+            >
+            {#if effectiveEntryOrigin === "generic"}
+              <!-- 通用出口：不扩大原 scope，提供次级返回 -->
               <button
                 class="button button--secondary"
                 data-testid="return-to-update-generic"
@@ -1273,15 +1357,6 @@
                     moduleId: "update",
                     taskId: "update/preview",
                   })}>返回更新结果</button
-              >
-              <button
-                class="button button--secondary"
-                data-testid="return-close-generic"
-                onclick={() =>
-                  onAction("open-module", {
-                    moduleId: "changes",
-                    taskId: "changes/overview",
-                  })}>关闭</button
               >
             {/if}
           </div>
@@ -1425,18 +1500,7 @@
           </div>
         </div>
         <div class="toolbar-actions">
-          <button
-            class="button button--secondary"
-            onclick={() =>
-              onAction("conflict/advise", {
-                relativePath: snapshot.selected?.relativePath,
-              })}
-            ><span class="codicon codicon-sparkle"
-            ></span>{conflictAdviceConfigured ? "AI 分析" : "本地建议"}</button
-          >
-          <button class="button button--secondary" onclick={requestInterpret}
-            ><span class="codicon codicon-sparkle"></span>解释冲突意图</button
-          >
+          <!-- v0.1.6 V016-C2：建议/解释入口已收进下方 AssistancePanel，此处只保留主任务操作 -->
           <button
             class="button button--secondary"
             onclick={() =>
@@ -1446,6 +1510,141 @@
           >
         </div>
       </div>
+      <!-- v0.1.6 V016-C2：冲突帮助单一「需要帮助」入口（默认折叠，不挤压比较/编辑/保存/Resolve 主路径） -->
+      <AssistancePanel
+        title={conflictAssistanceLabels.panelTitle}
+        summary={conflictAssistanceLabels.panelSummary}
+        sourceState={assistanceSource}
+        model={assistanceModel}
+        configured={conflictAdviceConfigured}
+        expanded={assistanceExpanded}
+        localActions={assistanceLocalActions}
+        modelActions={assistanceModelActions}
+        stale={assistanceStale}
+        onExpand={() => (assistanceExpanded = true)}
+        onCollapse={() => (assistanceExpanded = false)}
+      >
+        <section class="conflict-advice">
+          <div class="section-heading">
+            <div>
+              <span class="eyebrow">冲突建议来源</span>
+              <h2>合并建议</h2>
+            </div>
+            {#if snapshot.advice}<span
+                class={`confidence confidence--${snapshot.advice.confidence}`}
+                >{confidenceLabels[snapshot.advice.confidence]}</span
+              >{/if}
+          </div>
+          {#if snapshot.aiPrivacy}<div class="privacy-note">
+              <strong>外发预览</strong><span
+                >{snapshot.aiPrivacy.data}；{snapshot.aiPrivacy
+                  .characters}/{snapshot.aiPrivacy.maxCharacters} 个字符；模型 {snapshot
+                  .aiPrivacy.model}；不含历史。{conflictAdviceConfigured
+                  ? "点击“AI 分析”后才会发送。"
+                  : "未配置外部模型，将运行本地规则，不会外发。"}</span
+              >
+            </div>{/if}
+          {#if snapshot.advice}
+            <strong
+              >{recommendationLabels[snapshot.advice.recommendation]}</strong
+            >
+            <small class="ai-source"
+              >{sourceLabels[snapshot.advice.source]}</small
+            >
+            <p>{snapshot.advice.summary}</p>
+            {#if snapshot.advice.fallbackReason}<div
+                class="notice notice--warning"
+              >
+                降级原因：{snapshot.advice.fallbackReason}
+              </div>{/if}
+            {#if snapshot.advice.risks.length}<h3>风险</h3>
+              <ul>
+                {#each snapshot.advice.risks as risk, riskIndex (riskIndex)}<li>
+                    {risk}
+                  </li>{/each}
+              </ul>{/if}
+            {#if snapshot.advice.steps.length}<h3>验证步骤</h3>
+              <ol>
+                {#each snapshot.advice.steps as step, stepIndex (stepIndex)}<li>
+                    {step}
+                  </li>{/each}
+              </ol>{/if}
+          {:else}
+            <div class="preview-empty">
+              <span class="codicon codicon-sparkle"></span>
+              <p>
+                {conflictAdviceConfigured
+                  ? "AI 只提供解释和候选，不会自动标记解决。"
+                  : "本地建议只提供解释和候选，不会自动标记解决。"}请使用本面板上方操作获取合并建议。
+              </p>
+            </div>
+          {/if}
+        </section>
+        {#if snapshot.interpretation}
+          <section class="conflict-advice" aria-label="冲突意图解释">
+            <div class="section-heading">
+              <div>
+                <span class="eyebrow">冲突意图解释（§7 六段）</span>
+                <h2>意图解释</h2>
+              </div>
+              <span class="conflict-advice__source"
+                >来源：{sourceLabels[
+                  snapshot.interpretation.source
+                ]}{#if snapshot.interpretation.stale}
+                  · 已过期（冲突或修订已变化，只读）{/if}</span
+              >
+            </div>
+            {#if snapshot.interpretation.fallbackReason}<div
+                class="notice notice--warning"
+              >
+                降级原因：{snapshot.interpretation.fallbackReason}
+              </div>{/if}
+            <h3>我的修改意图</h3>
+            <p>{snapshot.interpretation.myIntent}</p>
+            <h3>对方修改意图</h3>
+            <p>{snapshot.interpretation.theirIntent}</p>
+            <h3>共同点</h3>
+            <ul>
+              {#each snapshot.interpretation.commonPoints as point, pointIndex (pointIndex)}<li
+                >
+                  {point}
+                </li>{/each}
+            </ul>
+            <h3>冲突点</h3>
+            <ul>
+              {#each snapshot.interpretation.conflictPoints as point, pointIndex (pointIndex)}<li
+                >
+                  {point}
+                </li>{/each}
+            </ul>
+            <h3>推荐处理方式及证据</h3>
+            <p>{snapshot.interpretation.recommendedHandling.summary}</p>
+            {#if snapshot.interpretation.recommendedHandling.evidence.length}<ul
+              >
+                {#each snapshot.interpretation.recommendedHandling.evidence as evidence, evidenceIndex (evidenceIndex)}<li
+                  >
+                    {evidence}
+                  </li>{/each}
+              </ul>{/if}
+            <h3>无法判断的业务选择</h3>
+            <ul>
+              {#each snapshot.interpretation.businessUnknowns as unknown, unknownIndex (unknownIndex)}<li
+                >
+                  {unknown}
+                </li>{/each}
+            </ul>
+            <h3>保存后应运行的验证</h3>
+            <ol>
+              {#each snapshot.interpretation.postSaveVerification as item, itemIndex (itemIndex)}<li
+                >
+                  {item.title}{#if item.command}<code class="conflict-command"
+                      >{item.command}</code
+                    >{/if}
+                </li>{/each}
+            </ol>
+          </section>
+        {/if}
+      </AssistancePanel>
       {#if conflictReceipt}
         <div class="commit-receipt" role="region" aria-label="冲突意图解释回执">
           <div class="commit-receipt__head">
@@ -1869,11 +2068,12 @@
             />
           {/if}
           {#if diffActionFeedback}<div
-              class="notice notice--success"
+              class="conflict-inline-feedback"
               role="status"
               data-testid="diff-action-feedback"
             >
-              {diffActionFeedback}
+              <span class="codicon codicon-check" aria-hidden="true"
+              ></span>{diffActionFeedback}
             </div>{/if}
           {#if isFallbackContent}
             <div
@@ -1996,15 +2196,17 @@
             {/if}
           </div>
           {#if snapshot.selected.mergeEditor.feedback}<div
-              class="notice notice--success"
+              class="conflict-inline-feedback"
               role="status"
             >
-              {snapshot.selected.mergeEditor.feedback}
+              <span class="codicon codicon-check" aria-hidden="true"
+              ></span>{snapshot.selected.mergeEditor.feedback}
             </div>{/if}
           {#each snapshot.selected.mergeEditor.issues as issue, issueIndex (issueIndex)}<div
-              class="notice notice--warning"
+              class="conflict-inline-feedback conflict-inline-feedback--warning"
             >
-              {issue}
+              <span class="codicon codicon-warning" aria-hidden="true"
+              ></span>{issue}
             </div>{/each}
           {#if !useSimplified}
             <div
@@ -2053,20 +2255,22 @@
             </div>
           {/if}
           {#if snapshot.selected.draft?.hasDraft}<div
-              class="notice notice--info"
+              class="conflict-inline-feedback"
               role="status"
             >
-              <span class="codicon codicon-save" aria-hidden="true"></span>Host
-              内存草稿已同步（修订 {snapshot.selected.draft.revision}，{snapshot
-                .selected.draft.dirty
-                ? "有未保存变更"
-                : "干净"}），关闭任务前可复制/导出逃生。
+              <span class="codicon codicon-save" aria-hidden="true"></span><span
+                >Host 内存草稿已同步（修订 {snapshot.selected.draft
+                  .revision}，{snapshot.selected.draft.dirty
+                  ? "有未保存变更"
+                  : "干净"}），关闭任务前可复制/导出逃生。</span
+              >
             </div>{/if}
           {#if conflictDraftFeedback}<div
-              class="notice notice--success"
+              class="conflict-inline-feedback"
               role="status"
             >
-              {conflictDraftFeedback}
+              <span class="codicon codicon-check" aria-hidden="true"
+              ></span>{conflictDraftFeedback}
             </div>{/if}
           <!-- V012-D：检查点状态持续显示（未保存 / 检查点已保存 / 保存失败），自动 debounce + 显式保存均不写盘 -->
           <div
@@ -2126,9 +2330,14 @@
                 ? "有尚未保存的合并修改（Host 草稿已同步）"
                 : "工作副本与已保存内容一致"}</span
             ><button
-              class="button button--primary"
+              class={snapshot.resolvePreview
+                ? "button button--secondary"
+                : "button button--primary"}
               disabled={!snapshot.selected.mergeEditor.editable ||
                 !workingDirty}
+              title={snapshot.resolvePreview
+                ? "已生成解决预览，当前步骤为标记解决"
+                : undefined}
               onclick={() =>
                 onAction("conflict/save-working", {
                   editToken: snapshot.selected?.mergeEditor.token,
@@ -2210,11 +2419,11 @@
               {:else}
                 <pre><code>{sourceContent?.content ?? "（没有可用内容）"}</code
                   ></pre>
-                {#if sourceContent?.truncated}<div
-                    class="notice notice--warning"
+                {#if sourceContent?.truncated}<small
+                    class="conflict-inline-feedback conflict-inline-feedback--warning"
                   >
                     内容已截断，仅用于辅助判断。
-                  </div>{/if}
+                  </small>{/if}
               {/if}
             </div>
           </details>
@@ -2238,9 +2447,11 @@
             </div>
           {:else}
             <pre><code>{content?.content ?? "（没有可用内容）"}</code></pre>
-            {#if content?.truncated}<div class="notice notice--warning">
+            {#if content?.truncated}<small
+                class="conflict-inline-feedback conflict-inline-feedback--warning"
+              >
                 内容已截断，仅用于辅助判断。
-              </div>{/if}
+              </small>{/if}
           {/if}
         </div>
       {/if}
@@ -2251,132 +2462,8 @@
           bind:open={helpDetailsOpen}
           data-testid="conflict-help-details"
         >
-          <summary>需要帮助（合并建议与解释）</summary>
-          <section class="conflict-advice">
-            <div class="section-heading">
-              <div>
-                <span class="eyebrow">冲突建议来源</span>
-                <h2>合并建议</h2>
-              </div>
-              {#if snapshot.advice}<span
-                  class={`confidence confidence--${snapshot.advice.confidence}`}
-                  >{confidenceLabels[snapshot.advice.confidence]}</span
-                >{/if}
-            </div>
-            {#if snapshot.aiPrivacy}<div class="privacy-note">
-                <strong>外发预览</strong><span
-                  >{snapshot.aiPrivacy.data}；{snapshot.aiPrivacy
-                    .characters}/{snapshot.aiPrivacy.maxCharacters} 个字符；模型 {snapshot
-                    .aiPrivacy.model}；不含历史。{conflictAdviceConfigured
-                    ? "点击“AI 分析”后才会发送。"
-                    : "未配置外部模型，将运行本地规则，不会外发。"}</span
-                >
-              </div>{/if}
-            {#if snapshot.advice}
-              <strong
-                >{recommendationLabels[snapshot.advice.recommendation]}</strong
-              >
-              <small class="ai-source"
-                >{sourceLabels[snapshot.advice.source]}</small
-              >
-              <p>{snapshot.advice.summary}</p>
-              {#if snapshot.advice.fallbackReason}<div
-                  class="notice notice--warning"
-                >
-                  降级原因：{snapshot.advice.fallbackReason}
-                </div>{/if}
-              {#if snapshot.advice.risks.length}<h3>风险</h3>
-                <ul>
-                  {#each snapshot.advice.risks as risk, riskIndex (riskIndex)}<li
-                    >
-                      {risk}
-                    </li>{/each}
-                </ul>{/if}
-              {#if snapshot.advice.steps.length}<h3>验证步骤</h3>
-                <ol>
-                  {#each snapshot.advice.steps as step, stepIndex (stepIndex)}<li
-                    >
-                      {step}
-                    </li>{/each}
-                </ol>{/if}
-            {:else}
-              <div class="preview-empty">
-                <span class="codicon codicon-sparkle"></span>
-                <p>AI 只提供解释和候选，不会自动标记解决。</p>
-                <button
-                  class="button button--secondary"
-                  onclick={() =>
-                    onAction("conflict/advise", {
-                      relativePath: snapshot.selected?.relativePath,
-                    })}>分析两侧意图</button
-                >
-              </div>
-            {/if}
-          </section>
-          {#if snapshot.interpretation}
-            <section class="conflict-advice" aria-label="冲突意图解释">
-              <div class="section-heading">
-                <div>
-                  <span class="eyebrow">冲突意图解释（§7 六段）</span>
-                  <h2>意图解释</h2>
-                </div>
-                <span class="conflict-advice__source"
-                  >来源：{sourceLabels[
-                    snapshot.interpretation.source
-                  ]}{#if snapshot.interpretation.stale}
-                    · 已过期（冲突或修订已变化，只读）{/if}</span
-                >
-              </div>
-              {#if snapshot.interpretation.fallbackReason}<div
-                  class="notice notice--warning"
-                >
-                  降级原因：{snapshot.interpretation.fallbackReason}
-                </div>{/if}
-              <h3>我的修改意图</h3>
-              <p>{snapshot.interpretation.myIntent}</p>
-              <h3>对方修改意图</h3>
-              <p>{snapshot.interpretation.theirIntent}</p>
-              <h3>共同点</h3>
-              <ul>
-                {#each snapshot.interpretation.commonPoints as point, pointIndex (pointIndex)}<li
-                  >
-                    {point}
-                  </li>{/each}
-              </ul>
-              <h3>冲突点</h3>
-              <ul>
-                {#each snapshot.interpretation.conflictPoints as point, pointIndex (pointIndex)}<li
-                  >
-                    {point}
-                  </li>{/each}
-              </ul>
-              <h3>推荐处理方式及证据</h3>
-              <p>{snapshot.interpretation.recommendedHandling.summary}</p>
-              {#if snapshot.interpretation.recommendedHandling.evidence.length}<ul
-                >
-                  {#each snapshot.interpretation.recommendedHandling.evidence as evidence, evidenceIndex (evidenceIndex)}<li
-                    >
-                      {evidence}
-                    </li>{/each}
-                </ul>{/if}
-              <h3>无法判断的业务选择</h3>
-              <ul>
-                {#each snapshot.interpretation.businessUnknowns as unknown, unknownIndex (unknownIndex)}<li
-                  >
-                    {unknown}
-                  </li>{/each}
-              </ul>
-              <h3>保存后应运行的验证</h3>
-              <ol>
-                {#each snapshot.interpretation.postSaveVerification as item, itemIndex (itemIndex)}<li
-                  >
-                    {item.title}{#if item.command}<code class="conflict-command"
-                        >{item.command}</code
-                      >{/if}
-                  </li>{/each}
-              </ol>
-            </section>
-          {/if}
+          <!-- v0.1.6 V016-C2：合并建议与意图解释已收进上方 AssistancePanel；此处只保留解决确认与快捷键 -->
+          <summary>解决确认与快捷键</summary>
           <section class="resolve-panel">
             <div class="section-heading">
               <div>

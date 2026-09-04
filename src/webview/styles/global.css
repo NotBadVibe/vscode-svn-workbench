@@ -2546,6 +2546,26 @@ button.path-detail__value:hover {
   border-top: 1px solid var(--border);
   background: var(--surface-2);
 }
+/*
+ * v0.1.6 V016-C2：冲突行内紧凑反馈（成功/普通警告收敛于此，全宽 notice
+ * 只保留 stale / fallback / 恢复阻断等强状态）。状态不只靠颜色：文字 +
+ * 图标；只用主题变量；不声明滚动，不触碰全局 overflow。
+ */
+.conflict-inline-feedback {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 4px 0;
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground, var(--muted));
+  overflow-wrap: break-word;
+}
+.conflict-inline-feedback .codicon {
+  align-self: center;
+}
+.conflict-inline-feedback--warning {
+  color: var(--vscode-editor-foreground, inherit);
+}
 .conflict-editor {
   min-height: 260px;
   max-height: 42vh;

@@ -32,6 +32,7 @@
     receipt,
     progress,
     result,
+    model,
     stale = false,
     error,
     onExpand,
@@ -60,6 +61,8 @@
     progress?: string;
     /** 结果文本：折叠不丢，由页面持有。 */
     result?: string;
+    /** 结果来源模型名：仅 `configured-model` 时展示，缺省不虚构。 */
+    model?: string;
     /** 已过期：采用类动作禁用，只能查看。 */
     stale?: boolean;
     /** 错误文本：`role=alert` + 重试/放弃出口。 */
@@ -171,7 +174,7 @@
       {#if summary}
         <p class="assistance-panel__purpose">{summary}</p>
       {/if}
-      <SuggestionSourceBadge source={sourceState} {stale} />
+      <SuggestionSourceBadge source={sourceState} {model} {stale} />
       {#if !configured}
         <p class="notice" role="note">
           <span class="codicon codicon-info" aria-hidden="true"></span>
