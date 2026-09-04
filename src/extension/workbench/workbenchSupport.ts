@@ -194,7 +194,7 @@ export function buildRelativeCommitCommands(
   plan: ReturnType<typeof buildCommitPlanPreview>,
 ): string[] {
   const quote = (filePath: string) =>
-    `"${normalizeRelative(path.relative(repositoryRoot, filePath)).replace(/"/g, '\\"')}"`;
+    `"${normalizeRelative(path.relative(repositoryRoot, filePath)).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
   return [
     ...plan.addPaths.map((item) => `svn add ${quote(item)}`),
     ...plan.removePaths.map((item) => `svn remove ${quote(item)}`),

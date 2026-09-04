@@ -71,8 +71,19 @@ diffs-container {
   --diffs-light-deletion-color: var(
     --vscode-gitDecoration-deletedResourceForeground
   );
-  --diffs-dark-deletion-color: var(
-    --vscode-gitDecoration-deletedResourceForeground
+  /*
+   * V018-D 回归修复（v016-visual-matrix 3c axe dark）：删除计数徽章用
+   * --diffs-deletion-base（dark 档取本变量）落在编辑器底上，原始映射
+   * #c74e39 on #1e1e1e 仅 3.63:1（< 4.5:1）。D 改动使该徽章稳定可见后
+   * axe 必报；底层 token 缺陷在主线同样存在。dark 档提亮 35%（#db8c7e
+   * 级，on #1e1e1e 约 6.4:1、on #000 约 8:1），仍为红色系，增删语义另有
+   * 行背景/gutter 符号/文字三通道，不只靠颜色。light 档 #ad0707 on #fff
+   * 本就达标，保持原样。
+   */
+  --diffs-dark-deletion-color: color-mix(
+    in srgb,
+    var(--vscode-gitDecoration-deletedResourceForeground) 65%,
+    #ffffff
   );
   /* 折叠分隔行：High Contrast 下 contrastBorder 全不透明会让行内文本
    * （"N unmodified lines"）对比度不达标；25% 混合保持可见区分同时

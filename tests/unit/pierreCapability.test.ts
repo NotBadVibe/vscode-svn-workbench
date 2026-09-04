@@ -70,10 +70,32 @@ describe("PierreCapabilityDecision（v0.1.0 V010-B）", () => {
     expect(unresolvedDts).toContain("resolveConflict(conflictIndex: number");
   });
 
-  it("受限：VirtualizedFileDiff/ScrollSyncManager/CodeViewCoordinator 已导出但生产未实测", () => {
+  it("受限：VirtualizedFileDiff/ScrollSyncManager/CodeViewCoordinator 已导出，V018-B 只读 spike 实测后 no-go", () => {
     expect(rootExportNames.has("VirtualizedFileDiff")).toBe(true);
     expect(rootExportNames.has("ScrollSyncManager")).toBe(true);
     expect(rootExportNames.has("CodeViewCoordinator")).toBe(true);
+    // V018-B 结论（diffPerformancePolicy.ts）：虚拟化自动切换 no-go
+    // （同条件首屏 5000 行 +59%、10000 行 +64%），默认保持 FileDiff。
+    expect(rootExportNames.has("Virtualizer")).toBe(true);
+  });
+
+  it("V018-B：编辑态虚拟化风险有代码证据（专属布局失效 API 存在）", () => {
+    const virtualizedDts = readFileSync(
+      join(packageRoot, "dist/components/VirtualizedFileDiff.d.ts"),
+      "utf8",
+    );
+    // 官方承认编辑态虚拟化有布局失效面：有不兼容证据即不启用编辑态虚拟化。
+    expect(virtualizedDts).toContain("invalidateEditSessionLayout");
+    // 构造器需自供 virtualizer（+可选 metrics/workerManager），非零成本接入。
+    expect(virtualizedDts).toMatch(/constructor\([^)]*virtualizer/);
+  });
+
+  it("V018-B：Worker 需自供 workerFactory（包内无默认，启用即改 CSP）", () => {
+    const workerTypesDts = readFileSync(
+      join(packageRoot, "dist/worker/types.d.ts"),
+      "utf8",
+    );
+    expect(workerTypesDts).toContain("workerFactory");
   });
 
   it("不可用：VirtualizedUnresolvedFile 不存在，WorkerPoolManager 未从包根导出", () => {

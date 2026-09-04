@@ -40,6 +40,12 @@
   import type { ConflictCompletionState } from "../../../conflict/conflictCompletionModel";
 
   import ConflictDiffView from "./ConflictDiffView.svelte";
+  import DiffOverview from "../diff/DiffOverview.svelte";
+  import {
+    buildConflictOverviewBlocks,
+    countWhitespaceOnlyConflictBlocks,
+  } from "../diff/diffOverviewModel";
+  import { whitespaceLabels } from "../../i18n/terminology";
   import ConflictResultEditor from "./ConflictResultEditor.svelte";
   import MergeActionToolbar from "./MergeActionToolbar.svelte";
   import ShortcutHelp from "../../components/help/ShortcutHelp.svelte";
@@ -61,6 +67,11 @@
   import { naturalCompare } from "../../../selection/selectionSort";
   import { confidenceLabels, sourceLabels } from "../../i18n/terminology";
   import { conflictAssistanceLabels } from "../../i18n/terminology";
+  import TaskSummary from "../../components/task/TaskSummary.svelte";
+  import {
+    decideConflictPerformanceMode,
+    V018C_MODE_LABELS,
+  } from "../diff/diffPerformancePolicy";
 
   /*
    * v0.0.10 跨模块列表迁移：冲突列表复用共享搜索、排序、键盘导航与
@@ -302,6 +313,45 @@
       stale,
     };
   });
+  // V018-F：外部合并工具出口——打开前确认经 OperationIntentDialog（一次确认）。
+  // 未配置时快照走 needsConfig 三出口；确认展示文件角色、将传递的路径与
+  // “外部工具可能修改工作副本”警告；退出后 Host 重采状态并作废旧确认。
+  let externalMergeIntentOpen = $state(false);
+  let externalMergeTriggerEl = $state<HTMLElement | null>(null);
+  let externalMergeFallbackDismissed = $state(false);
+  // 选择文件变化时关闭旧确认并恢复未配置提示（旧 token 已由 Host 作废）。
+  $effect(() => {
+    void snapshot.selected?.relativePath;
+    externalMergeIntentOpen = false;
+    externalMergeFallbackDismissed = false;
+  });
+  const externalMergeIntent = $derived.by(() => {
+    const external = snapshot.externalMerge;
+    const preview = external?.preview;
+    if (!external || !preview || !snapshot.selected) return undefined;
+    const roles =
+      external.fileRoles.length > 0
+        ? external.fileRoles
+            .map((item) => `${item.label}：${item.relativePath}`)
+            .join("；")
+        : "合并结果路径";
+    return {
+      token: preview.token,
+      kind: "file-operation" as const,
+      title: `在外部合并工具中打开 1 个文件`,
+      summary: `在外部合并工具（${external.toolLabel}）中打开 ${snapshot.selected.relativePath}。将传递${roles}。外部工具可能修改工作副本，退出后请重新打开/比较，不会自动标记解决。`,
+      // 四角色可能指向同一相对路径展示名：去重后才进入影响清单（PreviewPathList 按路径设键）。
+      paths: [...new Set(external.fileRoles.map((item) => item.relativePath))],
+      scopeText: snapshot.selected.relativePath,
+      recoverability:
+        "外部工具可能修改工作副本；退出后状态将重新采集，未自动标记解决，旧确认将失效。",
+      createdAt: new Date().toISOString(),
+      canExecute: preview.canOpen && !preview.stale,
+      issues: preview.issues,
+      commands: [preview.commandPreview],
+      stale: preview.stale,
+    };
+  });
   /** v0.0.9：模型未配置时按钮不标“AI”，如实指向本地建议（AI09-TRUTH-01）。 */
   const conflictAdviceConfigured = $derived(
     snapshot.aiPrivacy?.model !== undefined &&
@@ -504,9 +554,80 @@
   const content = $derived(snapshot.selected?.contents[activePane]);
   const sourceContent = $derived(snapshot.selected?.contents[sourcePane]);
   const conflictBlocks = $derived(parseTextConflictBlocks(mergeDraft));
+  // V018-C 冲突大文件分级降级：actualLines + 块数 + 长行三维判定（纯派生，不改草稿）。
+  const perfActualLines = $derived(
+    mergeDraft ? mergeDraft.split("\n").length : 0,
+  );
+  const perfMaxLineLength = $derived.by(() => {
+    if (!mergeDraft) return 0;
+    let longest = 0;
+    for (const line of mergeDraft.split("\n")) {
+      if (line.length > longest) longest = line.length;
+    }
+    return longest;
+  });
+  const conflictPerf = $derived(
+    decideConflictPerformanceMode({
+      actualLines: perfActualLines,
+      conflictBlocks: conflictBlocks.length,
+      maxLineLength: perfMaxLineLength,
+    }),
+  );
+  // 用户可恢复动作：强制完整视图（仍保留草稿；undo 栈不跨编辑器实例）。
+  let perfForceFull = $state(false);
+  const effectivePerfMode = $derived(
+    perfForceFull ? "full" : conflictPerf.mode,
+  );
+  const perfShowSummary = $derived(
+    Boolean(snapshot.selected) && effectivePerfMode !== "full",
+  );
+  const perfHighlightLanguage = $derived(
+    effectivePerfMode === "full" ? "typescript" : "text",
+  );
+  const perfReasonText = $derived(
+    conflictPerf.reasons.join("；") || "接近性能阈值",
+  );
+  const perfModeLabel = $derived(V018C_MODE_LABELS[effectivePerfMode]);
+  // 精简档只读来源展示截断（展示降级，不改草稿/marker/region/hash）。
+  const perfSourcePreview = $derived.by(() => {
+    const full = sourceContent?.content ?? "（没有可用内容）";
+    if (effectivePerfMode === "full" || conflictPerf.maxContextLines === null)
+      return { text: full, truncated: false };
+    const lines = full.split("\n");
+    if (lines.length <= conflictPerf.maxContextLines)
+      return { text: full, truncated: false };
+    return {
+      text: lines.slice(0, conflictPerf.maxContextLines).join("\n"),
+      truncated: true,
+    };
+  });
   const workingDirty = $derived(mergeDraft !== savedWorking);
   // v0.1.1 V011-D：块级差异视图实例与进度（动作紧邻冲突块，进度与列表统一）。
   let diffView = $state<ConflictDiffView>();
+  /*
+   * V018-D 回归修复（v017g-keyboard-paths PATH-2）：保存成功后保存按钮由
+   * 可用变禁用，焦点掉到 body，后续正向 Tab 不再从保存栏续走（D 新增的
+   * 定位器停留点放大了该丢失，实测从页首重走并困在 pierre 宿主内，主线仅
+   * 需 3 步）。焦点确已丢失时收回到保存检查点按钮，还原主线键盘流；用户
+   * 已在别处聚焦时绝不抢焦点（后台刷新不抢焦点基线）。
+   */
+  let saveButtonEl = $state<HTMLButtonElement>();
+  let checkpointButtonEl = $state<HTMLButtonElement>();
+  const saveNowDisabled = $derived(
+    !snapshot.selected?.mergeEditor.editable || !workingDirty,
+  );
+  $effect(() => {
+    const disabled = saveNowDisabled;
+    const feedback = snapshot.selected?.mergeEditor.feedback ?? "";
+    if (!disabled) return;
+    if (!feedback.includes("工作副本合并结果已保存")) return;
+    if (typeof document === "undefined") return;
+    const active = document.activeElement as HTMLElement | null;
+    const lost = !active || active === document.body || active === saveButtonEl;
+    if (!lost) return;
+    const target = checkpointButtonEl;
+    if (target && !target.disabled) target.focus();
+  });
   let diffProgress = $state({ current: 1, total: 0 });
   let diffActionFeedback = $state("");
   let sourceDetailsOpen = $state(false);
@@ -525,6 +646,44 @@
       : "") as ConflictFileIdentity,
   );
   const diffWorkingText = $derived(mergeDraft);
+  /**
+   * V018-D 空白选项与定位器（v0.1.8 规划 §4.4）：纯呈现开关。
+   * 挂载文本恒为原始 mergeDraft（不归一、不重建结果编辑器），
+   * 因此 identity/hash/草稿/undo 不丢失，无需只读限制；横幅明确标注。
+   */
+  let conflictShowWhitespace = $state(false);
+  let conflictIgnoreWhitespace = $state(false);
+  const conflictOverviewBlocks = $derived(
+    snapshot.selected
+      ? buildConflictOverviewBlocks(mergeDraft, conflictIgnoreWhitespace)
+      : [],
+  );
+  const conflictIgnoredWhitespaceCount = $derived(
+    conflictIgnoreWhitespace
+      ? countWhitespaceOnlyConflictBlocks(mergeDraft)
+      : 0,
+  );
+  const conflictOverviewTotalLines = $derived(
+    Math.max(1, mergeDraft.split("\n").length),
+  );
+  const conflictOverviewCurrent = $derived(
+    conflictOverviewBlocks.length === 0
+      ? 0
+      : Math.min(
+          Math.max(0, diffProgress.current - 1),
+          conflictOverviewBlocks.length - 1,
+        ),
+  );
+  /** V018-D：定位器选择（点击/键盘）滚动到正确块；只改导航索引。 */
+  function selectConflictOverviewBlock(index: number): void {
+    diffView?.focusConflict(index);
+  }
+  // V018-C：进入精简/简化档自动折叠未激活只读来源（用户可手动再展开）。
+  $effect(() => {
+    if (conflictPerf.hideInactiveSourcePanes && effectivePerfMode !== "full") {
+      sourceDetailsOpen = false;
+    }
+  });
   // V012-B2：文件/容器变化时重置简化降级（同文件 Host 刷新保持实例）
   $effect(() => {
     const fid = conflictFileIdentity;
@@ -536,6 +695,11 @@
           // 仅在非首帧切换时重置，避免初始渲染抖动
           const currentFid = conflictFileIdentity;
           if (currentFid) useSimplified = false;
+        }
+        // V018-C：切换文件时清除强制完整视图（新文件重新按阈值判定）。
+        if (perfForceFull) {
+          const currentFid = conflictFileIdentity;
+          if (currentFid) perfForceFull = false;
         }
       });
     });
@@ -2098,7 +2262,7 @@
                 class="button button--secondary"
                 data-testid="non-text-open-external"
                 onclick={() =>
-                  onAction("open-file", {
+                  onAction("conflict/preview-external-merge", {
                     relativePath: snapshot.selected?.relativePath,
                   })}>在外部工具打开</button
               >
@@ -2214,17 +2378,144 @@
               ><span class="codicon codicon-merge" aria-hidden="true"></span> 合并结果</span
             >
           </div>
+          <!-- V018-C 分级降级摘要：原因 + 当前模式 + 可恢复出口（草稿保留，不静默改内容）。 -->
+          {#if perfForceFull && conflictPerf.mode !== "full"}
+            <div data-testid="conflict-perf-forced">
+              <TaskSummary
+                status={`已强制完整视图（阈值判定为${V018C_MODE_LABELS[conflictPerf.mode]}）`}
+                reason="大文件强制完整视图可能卡顿，草稿保留"
+                tone="info"
+                variant="compact"
+                icon="codicon-info"
+              />
+              <div class="toolbar-actions">
+                <button
+                  class="button button--secondary"
+                  data-testid="restore-perf-perf"
+                  onclick={() => (perfForceFull = false)}>回到降级视图</button
+                >
+              </div>
+            </div>
+          {/if}
+          {#if perfShowSummary}
+            <div data-testid="conflict-perf-summary">
+              <TaskSummary
+                status={`大文件降级：当前为${perfModeLabel}（${conflictBlocks.length} 块 / ${perfActualLines} 行）`}
+                reason={`降级原因：${perfReasonText}`}
+                nextStep={conflictPerf.mode === "simplified"
+                  ? "草稿已保留，可使用简化编辑器、在外部工具打开，或恢复完整视图"
+                  : "已关闭非必要高亮并隐藏未激活只读来源，可恢复完整视图"}
+                tone="warning"
+                variant="compact"
+                icon="codicon-warning"
+              />
+              <div
+                class="toolbar-actions"
+                role="group"
+                aria-label="降级恢复出口"
+              >
+                <span
+                  class="muted"
+                  role="status"
+                  data-testid="conflict-perf-mode"
+                  >当前模式：{perfModeLabel}</span
+                >
+                {#if !useSimplified}
+                  <button
+                    class="button button--secondary"
+                    data-testid="use-simplified-perf"
+                    onclick={() => (useSimplified = true)}
+                    >使用简化编辑器</button
+                  >
+                {/if}
+                <button
+                  class="button button--secondary"
+                  data-testid="open-external-perf"
+                  onclick={() =>
+                    onAction("open-file", {
+                      relativePath: snapshot.selected?.relativePath,
+                    })}>在外部工具打开</button
+                >
+                {#if !perfForceFull}
+                  <button
+                    class="button button--secondary"
+                    data-testid="restore-full-perf"
+                    title="强制显示完整视图可能卡顿，草稿保留"
+                    onclick={() => (perfForceFull = true)}>恢复完整视图</button
+                  >
+                {:else}
+                  <button
+                    class="button button--secondary"
+                    data-testid="restore-perf-perf"
+                    onclick={() => (perfForceFull = false)}>回到降级视图</button
+                  >
+                {/if}
+              </div>
+              <small class="muted" data-testid="conflict-perf-note"
+                >切换保留草稿与冲突标识；编辑器 undo
+                栈不跨实例，草稿文本始终保留。</small
+              >
+            </div>
+          {/if}
+          <!--
+            V018-D 空白选项（纯呈现，不重建结果编辑器，草稿/identity 不丢）：
+            显示空白字符走渲染层图例；忽略空白仅标注横幅 + 定位器状态。
+          -->
+          <div
+            class="conflict-whitespace-settings"
+            role="group"
+            aria-label="空白显示设置"
+          >
+            <label
+              class="conflict-whitespace-option"
+              title={whitespaceLabels.showWhitespaceHint}
+            >
+              <input
+                type="checkbox"
+                checked={conflictShowWhitespace}
+                onchange={() =>
+                  (conflictShowWhitespace = !conflictShowWhitespace)}
+              />
+              {whitespaceLabels.showWhitespace}
+            </label>
+            <label
+              class="conflict-whitespace-option"
+              title={whitespaceLabels.ignoreWhitespaceHint}
+            >
+              <input
+                type="checkbox"
+                checked={conflictIgnoreWhitespace}
+                onchange={() =>
+                  (conflictIgnoreWhitespace = !conflictIgnoreWhitespace)}
+              />
+              {whitespaceLabels.ignoreWhitespace}
+            </label>
+          </div>
           {#if !useSimplified}
-            <ConflictDiffView
-              bind:this={diffView}
-              workingText={diffWorkingText}
-              relativePath={snapshot.selected?.relativePath ?? ""}
-              fileIdentity={conflictFileIdentity}
-              onBlockProgress={notifyBlockProgress}
-              onMergeConflictAction={handleDiffAction}
-              onError={handleDiffError}
-              onReady={handleDiffReady}
-            />
+            <div class="conflict-diff-row">
+              <div class="conflict-diff-main">
+                <ConflictDiffView
+                  bind:this={diffView}
+                  workingText={diffWorkingText}
+                  relativePath={snapshot.selected?.relativePath ?? ""}
+                  language={perfHighlightLanguage}
+                  fileIdentity={conflictFileIdentity}
+                  showWhitespace={conflictShowWhitespace}
+                  ignoreWhitespace={conflictIgnoreWhitespace}
+                  ignoredWhitespaceCount={conflictIgnoredWhitespaceCount}
+                  onBlockProgress={notifyBlockProgress}
+                  onMergeConflictAction={handleDiffAction}
+                  onError={handleDiffError}
+                  onReady={handleDiffReady}
+                />
+              </div>
+              <DiffOverview
+                blocks={conflictOverviewBlocks}
+                currentIndex={conflictOverviewCurrent}
+                totalLines={conflictOverviewTotalLines}
+                onSelect={selectConflictOverviewBlock}
+              />
+            </div>
           {:else}
             <div
               class="notice notice--info"
@@ -2396,7 +2687,7 @@
                   bind:this={resultEditor}
                   fileIdentity={conflictFileIdentity}
                   relativePath={snapshot.selected.relativePath}
-                  language="typescript"
+                  language={perfHighlightLanguage}
                   initialText={snapshot.selected?.draft?.content ??
                     snapshot.selected?.contents.working?.content ??
                     diffWorkingText}
@@ -2504,6 +2795,7 @@
                 ? "有尚未保存的合并修改（Host 草稿已同步）"
                 : "工作副本与已保存内容一致"}</span
             ><button
+              bind:this={saveButtonEl}
               class={snapshot.resolvePreview
                 ? "button button--secondary"
                 : "button button--primary"}
@@ -2518,6 +2810,7 @@
                   content: mergeDraft,
                 })}>保存工作副本合并结果</button
             ><button
+              bind:this={checkpointButtonEl}
               class="button button--secondary"
               data-testid="save-checkpoint"
               disabled={isComposing || (resultEditor?.isComposing?.() ?? false)}
@@ -2591,8 +2884,13 @@
                   </div>
                 </div>
               {:else}
-                <pre><code>{sourceContent?.content ?? "（没有可用内容）"}</code
-                  ></pre>
+                <pre><code>{perfSourcePreview.text}</code></pre>
+                {#if perfSourcePreview.truncated}<small
+                    class="conflict-inline-feedback conflict-inline-feedback--warning"
+                    data-testid="conflict-perf-source-truncated"
+                  >
+                    大文件降级：只读来源仅展示前 {conflictPerf.maxContextLines} 行，草稿不受影响。
+                  </small>{/if}
                 {#if sourceContent?.truncated}<small
                     class="conflict-inline-feedback conflict-inline-feedback--warning"
                   >
@@ -2677,6 +2975,107 @@
               >
             {/if}
           </section>
+          <!-- V018-F：外部合并工具出口（通用配置，不承诺唯一产品） -->
+          <section class="resolve-panel" aria-label="外部合并工具">
+            <div class="section-heading">
+              <div>
+                <span class="eyebrow">外部处理</span>
+                <h2>在外部合并工具中打开</h2>
+              </div>
+            </div>
+            {#if snapshot.externalMerge?.feedback}
+              <div
+                class="notice"
+                role="status"
+                data-testid="external-merge-feedback"
+              >
+                <span class="codicon codicon-info" aria-hidden="true"></span>
+                <div>{snapshot.externalMerge.feedback}</div>
+              </div>
+            {/if}
+            {#if snapshot.externalMerge?.preview}
+              <div class="notice">
+                <span class="codicon codicon-terminal"></span><code
+                  >{snapshot.externalMerge.preview.commandPreview}</code
+                >
+              </div>
+              {#each snapshot.externalMerge.preview.issues as issue, issueIndex (issueIndex)}<div
+                  class="issue-list"
+                >
+                  <div>{issue}</div>
+                </div>{/each}
+              <div class="toolbar-actions">
+                <button
+                  class="button button--secondary"
+                  data-testid="external-merge-open-dialog"
+                  disabled={!snapshot.externalMerge.preview.canOpen}
+                  onclick={(event) => {
+                    externalMergeTriggerEl = event.currentTarget as HTMLElement;
+                    externalMergeIntentOpen = true;
+                  }}>检查并继续打开</button
+                >
+                <button
+                  class="button button--secondary"
+                  data-testid="external-merge-regenerate"
+                  onclick={() =>
+                    onAction("conflict/preview-external-merge", {
+                      relativePath: snapshot.selected?.relativePath,
+                    })}>重新生成确认</button
+                >
+              </div>
+            {:else if snapshot.externalMerge?.needsConfig && !externalMergeFallbackDismissed}
+              <div
+                class="notice notice--warning"
+                role="alert"
+                data-testid="external-merge-needs-config"
+              >
+                <span class="codicon codicon-warning" aria-hidden="true"></span>
+                <div>
+                  <strong>尚未配置外部合并工具</strong>
+                  <p>
+                    当前：{snapshot.externalMerge
+                      .toolLabel}。请选择可执行文件、在设置中配置，或继续使用内置编辑。
+                  </p>
+                </div>
+                <div class="toolbar-actions">
+                  <button
+                    class="button button--secondary"
+                    data-testid="external-merge-pick"
+                    onclick={() =>
+                      onAction("conflict/select-merge-tool", {
+                        relativePath: snapshot.selected?.relativePath,
+                      })}>选择可执行文件</button
+                  >
+                  <button
+                    class="button button--secondary"
+                    data-testid="external-merge-settings"
+                    onclick={() =>
+                      onAction("diagnostics/open-settings", {
+                        query: "svnWorkbench.mergeTool.path",
+                      })}>打开设置</button
+                  >
+                  <button
+                    class="button button--secondary"
+                    data-testid="external-merge-continue"
+                    onclick={() => (externalMergeFallbackDismissed = true)}
+                    >继续内置编辑</button
+                  >
+                </div>
+              </div>
+            {:else}
+              <p class="muted">
+                使用已配置的外部合并工具打开当前冲突，打开前会显示将传递的文件角色、路径与外部修改影响确认。
+              </p>
+              <button
+                class="button button--secondary"
+                data-testid="open-external-merge"
+                onclick={() =>
+                  onAction("conflict/preview-external-merge", {
+                    relativePath: snapshot.selected?.relativePath,
+                  })}>在外部合并工具中打开</button
+              >
+            {/if}
+          </section>
           <!-- V017-B：快捷键帮助单一实例（集中 keymap 生成；工具栏 `?` 与模块 `?` 共用） -->
           {#if shortcutHelpOpen}
             <ShortcutHelp
@@ -2702,6 +3101,28 @@
       </div>
     {/if}
   </ScrollArea>
+  <!-- V018-F：外部合并工具打开前确认（文件角色/路径/外部修改警告，一次确认） -->
+  <OperationIntentDialog
+    intent={externalMergeIntent}
+    open={externalMergeIntentOpen && Boolean(externalMergeIntent)}
+    confirmLabel="在外部工具中打开"
+    cancelLabel="取消"
+    recheckLabel="重新生成确认"
+    triggerElement={externalMergeTriggerEl}
+    {onAction}
+    {pathDetail}
+    onConfirm={(token) => {
+      externalMergeIntentOpen = false;
+      onAction("conflict/open-external-merge", { previewToken: token });
+    }}
+    onCancel={() => (externalMergeIntentOpen = false)}
+    onRecheck={() => {
+      externalMergeIntentOpen = false;
+      onAction("conflict/preview-external-merge", {
+        relativePath: snapshot.selected?.relativePath,
+      });
+    }}
+  />
   <!-- v0.0.14 通用操作意向单：Resolve 确认（复用列表底座、可搜索/复制、焦点锁定、IME 保护） -->
   <OperationIntentDialog
     intent={resolveIntent}
@@ -2793,3 +3214,49 @@
     </dialog>
   {/if}
 </section>
+
+<style>
+  /* V018-D：冲突差异区 + 定位器行，局部滚动归属，不用全局 overflow。 */
+  .conflict-diff-row {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    min-height: 0;
+  }
+  .conflict-diff-main {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+  }
+  .conflict-diff-row .diff-overview {
+    max-height: min(64vh, 640px);
+  }
+  .conflict-whitespace-settings {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    align-items: center;
+    margin: 6px 0;
+    font-size: 12px;
+  }
+  .conflict-whitespace-option {
+    display: inline-flex;
+    gap: 6px;
+    align-items: center;
+    cursor: pointer;
+  }
+  @media (max-width: 760px) {
+    .conflict-diff-row {
+      flex-direction: column;
+      /* 纵向堆叠时交叉轴为水平：必须拉伸，否则 Shadow DOM 内容
+         不参与固有宽度计算，主冲突区会塌成数像素宽。 */
+      align-items: stretch;
+    }
+    .conflict-diff-main {
+      width: 100%;
+    }
+    .conflict-diff-row .diff-overview {
+      max-height: 200px;
+    }
+  }
+</style>

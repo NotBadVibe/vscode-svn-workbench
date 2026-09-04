@@ -145,6 +145,31 @@ export interface WorkbenchSession extends OpenWorkbenchRequest {
       contentHash: string;
       relativePath: string;
     };
+    /**
+     * v0.1.8 V018-F：外部合并工具打开前确认（一次性 token，单次有效）。
+     * 退出/刷新/范围变化后失效，不恢复。
+     */
+    externalMergePreview?: {
+      token: string;
+      contentHash: string;
+      relativePath: string;
+      toolCommand: string;
+      toolArgs: string[];
+      /** 预览冻结的四角色绝对路径（open 复验唯一依据，不依赖 toolArgs 过滤）。 */
+      roleFiles: {
+        mine?: string;
+        theirs?: string;
+        base?: string;
+        result: string;
+      };
+      /** 工作区来源标记（意向单 issues/反馈明示核对）。 */
+      fromWorkspace?: boolean;
+      scopeHash: string;
+      repositoryUuid: string;
+      revision?: string;
+    };
+    /** V018-F：外部工具退出后的一次性反馈（随快照下发后清除）。 */
+    externalMergeFeedback?: string;
     editState?: {
       token: string;
       contentHash: string;

@@ -486,12 +486,12 @@
     },
     {
       "version": "0.1.8",
-      "status": "draft",
-      "phase": "planned",
+      "status": "released",
+      "phase": "released",
       "baseVersion": "0.1.7",
       "canonicalEntry": "releases/v0.1.8/README.md",
       "manifest": "releases/v0.1.8/manifest.json",
-      "releasedFact": false,
+      "releasedFact": true,
       "topics": [
         "large-diff-performance",
         "virtualization",

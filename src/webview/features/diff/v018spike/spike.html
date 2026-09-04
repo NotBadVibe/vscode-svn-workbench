@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>V018-B 虚拟化 spike 测量页（非生产入口）</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+      }
+      #spike-scroll {
+        height: 600px;
+        overflow-y: auto;
+        border: 1px solid #888;
+      }
+      #spike-status {
+        font: 12px/1.6 monospace;
+        white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="spike-status" role="status">正在初始化 spike 测量…</div>
+    <div id="spike-scroll" aria-label="spike 差异滚动容器"></div>
+    <script type="module" src="./spike.ts"></script>
+  </body>
+</html>

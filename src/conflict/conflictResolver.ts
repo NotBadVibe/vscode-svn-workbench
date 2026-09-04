@@ -65,5 +65,5 @@ export function isResolveSuccessful(output: string): boolean {
 }
 
 function quotePath(filePath: string): string {
-  return `"${filePath.replace(/"/g, '\\"')}"`;
+  return `"${filePath.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }

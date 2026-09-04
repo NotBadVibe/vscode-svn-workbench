@@ -12,12 +12,22 @@
     WebviewAction,
   } from "@protocol/workbenchProtocol";
   import DiffView from "./DiffView.svelte";
+  import DiffOverview from "./DiffOverview.svelte";
   import FilePathDetail from "../../components/svn/FilePathDetail.svelte";
   import {
     diffFallbackNotices,
     diffHunkPositionLabel,
     diffViewLabels,
+    whitespaceIgnoredLabel,
+    whitespaceLabels,
   } from "../../i18n/terminology";
+  import { buildDiffOverviewBlocks } from "./diffOverviewModel";
+  import {
+    canToggleIgnoreWhitespace,
+    normalizeTextForCompare,
+    segmentLineWhitespace,
+    splitHunksByWhitespace,
+  } from "./diffWhitespace";
   import { SHORTCUTS_BY_REGION } from "../../keyboard/shortcuts";
   import { computeDiffHunks, computePatchHunks } from "./diffHunks";
   import type { DiffErrorInfo } from "./diffErrorTaxonomy";
@@ -93,6 +103,17 @@
   /** v0.1.0：统一工具区的视图偏好（仅影响呈现，不改变内容与范围）。 */
   let diffStyle = $state<"unified" | "split">("split");
   let expandUnchanged = $state(false);
+  /**
+   * V018-D 空白选项（v0.1.8 规划 §4.4）：
+   * - showWhitespace：纯渲染层（CSS 类 + 图例 + 备用视图符号），永不改变
+   *   传入 FileDiff/Editor 的原始文本，可在编辑态保持开启；
+   * - ignoreWhitespace：只改变比较呈现（归一文本仅用于差异渲染与块导航），
+   *   最终文本（草稿/保存/导出）始终使用原始文本；进入编辑自动退出。
+   */
+  let showWhitespace = $state(false);
+  let ignoreWhitespace = $state(false);
+  /** 进入编辑时自动退出忽略空白的提示（一次性）。 */
+  let ignoreExitedNotice = $state(false);
   let viewSettingsOpen = $state(false);
   let viewSettingsTrigger = $state<HTMLButtonElement>();
   /**
@@ -157,6 +178,57 @@
         ? computePatchHunks(snapshot.modified)
         : computeDiffHunks(snapshot.original, snapshot.modified),
   );
+  /**
+   * V018-D：忽略空白的只读限制契约（identity/草稿/undo 保留或只读限制）。
+   * 只读差异视图可直接切换；页内编辑态禁用（重建会丢弃 Editor 未落盘输入
+   * 与 undo 栈）；修订比较/二进制不支持（patch 语法不可归一）。
+   */
+  const ignoreToggle = $derived(
+    canToggleIgnoreWhitespace({
+      editing,
+      dirty,
+      isPatch: snapshot.language === "diff",
+      binary: snapshot.binary,
+    }),
+  );
+  const ignoreBlockReasonText = $derived(
+    ignoreToggle.reason === "editing"
+      ? whitespaceLabels.editBlocksIgnore
+      : ignoreToggle.reason === "patch"
+        ? whitespaceLabels.patchBlocksIgnore
+        : ignoreToggle.reason === "binary"
+          ? whitespaceLabels.binaryBlocksIgnore
+          : undefined,
+  );
+  /** 展示态差异块：忽略空白时滤除纯空白块（单次 LCS，不过滤即原样）。 */
+  const whitespaceSplit = $derived(
+    ignoreWhitespace && ignoreToggle.allowed
+      ? splitHunksByWhitespace(hunks)
+      : { visible: hunks, ignoredWhitespaceCount: 0 },
+  );
+  const displayHunks = $derived(whitespaceSplit.visible);
+  const ignoredWhitespaceCount = $derived(
+    whitespaceSplit.ignoredWhitespaceCount,
+  );
+  /**
+   * V018-D：比较呈现用文本。忽略空白且允许时传入归一文本（行数不变，
+   * 行号可映射）；编辑态/草稿/保存/导出始终使用 snapshot 原始文本。
+   */
+  const displayOriginal = $derived(
+    ignoreWhitespace && ignoreToggle.allowed && !snapshot.binary
+      ? normalizeTextForCompare(snapshot.original)
+      : snapshot.original,
+  );
+  const displayModified = $derived(
+    ignoreWhitespace && ignoreToggle.allowed && !snapshot.binary
+      ? normalizeTextForCompare(snapshot.modified)
+      : snapshot.modified,
+  );
+  /** 定位器展示块与全文行数（行号基于原始行号，行数不变故映射稳定）。 */
+  const overviewBlocks = $derived(buildDiffOverviewBlocks(displayHunks));
+  const overviewTotalLines = $derived(
+    Math.max(1, displayModified.split("\n").length),
+  );
   /** v0.1.0：保存进行中与上次保存时间（状态不只靠颜色）。 */
   let saving = $state(false);
   let savedAtText = $state("");
@@ -193,6 +265,9 @@
       editing = false;
     }
   });
+
+  /** V018-D：备用 pre 视图行分隔（避免字面量 mustache，保持文本不变）。 */
+  const LINE_BREAK = "\n";
 
   /** 最近一次已消费的 save-result 对象（按对象身份只消费一次）。 */
   let lastProcessedSaveResult:
@@ -253,6 +328,12 @@
   function enterEdit(): void {
     if (!canEdit) return;
     saveError = undefined;
+    // V018-D：页内编辑始终作用于原始工作副本内容；忽略空白仅为比较呈现，
+    // 进入编辑自动退出并如实告知，不静默删除/重写最终文本。
+    if (ignoreWhitespace) {
+      ignoreWhitespace = false;
+      ignoreExitedNotice = true;
+    }
     // 统一视图下页内编辑不可用（pierre 1.3.4 受限能力）：临时切换分栏，
     // 退出编辑后由下方 effect 恢复用户偏好。
     if (diffStyle === "unified" && diffStyleBeforeEdit === undefined) {
@@ -275,6 +356,8 @@
       diffStyle = diffStyleBeforeEdit;
       diffStyleBeforeEdit = undefined;
     }
+    // V018-D：退出编辑后清除“已恢复原始文本”的一次性提示，避免残留。
+    if (wasEditing) ignoreExitedNotice = false;
     wasEditing = false;
   });
 
@@ -436,28 +519,55 @@
     navBoundary = undefined;
   });
 
+  // V018-D：空白开关改变展示块集合时回到首块（只改导航索引，不碰快照）。
+  function toggleIgnoreWhitespace(): void {
+    if (!ignoreToggle.allowed) return;
+    ignoreWhitespace = !ignoreWhitespace;
+    navIndex = 0;
+    navBoundary = undefined;
+  }
+
   /**
    * v0.1.0：导航到达首尾不环绕，给出非阻塞文字反馈；
    * 只读态经 FileDiff.revealLine、编辑态经 Editor.focus 滚入目标块。
    */
   function navigate(offset: number): void {
-    if (hunks.length === 0) return;
+    if (displayHunks.length === 0) return;
     const next = navIndex + offset;
     if (next < 0) {
       navBoundary = "first";
       return;
     }
-    if (next >= hunks.length) {
+    if (next >= displayHunks.length) {
       navBoundary = "last";
       return;
     }
     navBoundary = undefined;
     navIndex = next;
-    diffViewRef?.focusLine(hunks[navIndex].newStart);
+    diffViewRef?.focusLine(displayHunks[navIndex].newStart);
+  }
+
+  // V018-D：展示块集合收缩时钳制导航索引（只改导航索引，不碰快照）。
+  $effect(() => {
+    const total = displayHunks.length;
+    if (total === 0) {
+      navIndex = 0;
+      return;
+    }
+    if (navIndex > total - 1) navIndex = total - 1;
+  });
+
+  /** V018-D：定位器选择（点击/键盘）滚动到正确块；只改导航索引。 */
+  function selectOverviewBlock(index: number): void {
+    if (displayHunks.length === 0) return;
+    const clamped = Math.min(Math.max(0, index), displayHunks.length - 1);
+    navBoundary = undefined;
+    navIndex = clamped;
+    diffViewRef?.focusLine(displayHunks[clamped].newStart);
   }
 
   function adoptCurrentHunk(): void {
-    const hunk = hunks[navIndex];
+    const hunk = displayHunks[navIndex];
     if (!hunk) return;
     // 逐块采用：把该块工作副本侧还原为 BASE（丢弃该块的本地编辑）。
     const baseText = hunk.oldLines.join("\n");
@@ -580,6 +690,8 @@
   bind:this={sectionEl}
   use:focusOnMount
   class="feature-layout diff-feature"
+  class:show-whitespace={showWhitespace}
+  data-show-whitespace={showWhitespace ? "true" : "false"}
   tabindex="-1"
   aria-label={`差异：${snapshot.relativePath}`}
 >
@@ -634,8 +746,8 @@
           <button
             type="button"
             class="button button--secondary"
-            disabled={hunks.length === 0}
-            title={hunks.length === 0
+            disabled={displayHunks.length === 0}
+            title={displayHunks.length === 0
               ? diffViewLabels.noHunks
               : diffShortcutTitles.prevHunk}
             aria-label={diffViewLabels.prevHunk}
@@ -644,16 +756,16 @@
             <span class="codicon codicon-arrow-up" aria-hidden="true"
             ></span>上一处
           </button>
-          {#if hunks.length > 0}
+          {#if displayHunks.length > 0}
             <span class="diff-hunk-position" role="status"
-              >{diffHunkPositionLabel(navIndex + 1, hunks.length)}</span
+              >{diffHunkPositionLabel(navIndex + 1, displayHunks.length)}</span
             >
           {/if}
           <button
             type="button"
             class="button button--secondary"
-            disabled={hunks.length === 0}
-            title={hunks.length === 0
+            disabled={displayHunks.length === 0}
+            title={displayHunks.length === 0
               ? diffViewLabels.noHunks
               : diffShortcutTitles.nextHunk}
             aria-label={diffViewLabels.nextHunk}
@@ -727,6 +839,40 @@
                 />
                 {diffViewLabels.expandUnchangedLabel}
               </label>
+              <!-- V018-D：显示空白字符（纯渲染层，可在编辑态保持开启）。 -->
+              <label
+                class="diff-view-settings-option"
+                title={whitespaceLabels.showWhitespaceHint}
+              >
+                <input
+                  type="checkbox"
+                  checked={showWhitespace}
+                  onchange={() => (showWhitespace = !showWhitespace)}
+                />
+                {whitespaceLabels.showWhitespace}
+              </label>
+              <!--
+                V018-D：忽略空白差异（只改变比较呈现）。只读可直接切换；
+                编辑态/修订比较/二进制禁用并提示（identity/草稿/undo 保护）。
+              -->
+              <label
+                class="diff-view-settings-option"
+                title={ignoreBlockReasonText ??
+                  whitespaceLabels.ignoreWhitespaceHint}
+              >
+                <input
+                  type="checkbox"
+                  checked={ignoreWhitespace}
+                  disabled={!ignoreToggle.allowed}
+                  onchange={toggleIgnoreWhitespace}
+                />
+                {whitespaceLabels.ignoreWhitespace}
+                {#if ignoreBlockReasonText}
+                  <span class="diff-view-settings-hint"
+                    >{ignoreBlockReasonText}</span
+                  >
+                {/if}
+              </label>
             </div>
           {/if}
         </div>
@@ -758,7 +904,7 @@
           >
           <button
             class="button button--secondary"
-            disabled={hunks.length === 0}
+            disabled={displayHunks.length === 0}
             onclick={adoptCurrentHunk}
             title="把当前差异块还原为 BASE 内容"
             aria-label="还原当前差异块为 BASE">还原此块</button
@@ -857,6 +1003,32 @@
     <div class="notice" role="status">
       <span class="codicon codicon-info" aria-hidden="true"></span>
       <span>{diffViewLabels.editForcesSplit}</span>
+    </div>
+  {/if}
+
+  {#if ignoreWhitespace && ignoreToggle.allowed && !snapshot.binary}
+    <!-- V018-D：忽略空白比较呈现的明确标注（不静默改写最终文本）。 -->
+    <div class="notice" role="status" data-testid="ignore-whitespace-banner">
+      <span class="codicon codicon-info" aria-hidden="true"></span>
+      <span
+        >{whitespaceLabels.ignoreBanner}（{whitespaceIgnoredLabel(
+          ignoredWhitespaceCount,
+        )}，最终文本不受影响）</span
+      >
+    </div>
+  {/if}
+
+  {#if showWhitespace}
+    <div class="notice" role="status" data-testid="show-whitespace-legend">
+      <span class="codicon codicon-symbol-misc" aria-hidden="true"></span>
+      <span>{whitespaceLabels.showWhitespaceLegend}</span>
+    </div>
+  {/if}
+
+  {#if ignoreExitedNotice && editing}
+    <div class="notice" role="status">
+      <span class="codicon codicon-info" aria-hidden="true"></span>
+      <span>{whitespaceLabels.editForcesOriginal}</span>
     </div>
   {/if}
 
@@ -969,53 +1141,81 @@
     </div>
   {/if}
 
-  {#if snapshot.binary}
-    <div class="empty-state empty-state--large">
-      <span class="codicon codicon-file-binary" aria-hidden="true"></span>
-      <strong>二进制文件无法进行文本对比</strong>
-      <p>可以在编辑器中打开文件，或查看 SVN 属性与历史。</p>
+  <!-- V018-D：主内容行（差异区 + 可折叠定位器，不抢文件/范围状态）。 -->
+  <div class="diff-content-row">
+    <div class="diff-content-main">
+      {#if snapshot.binary}
+        <div class="empty-state empty-state--large">
+          <span class="codicon codicon-file-binary" aria-hidden="true"></span>
+          <strong>二进制文件无法进行文本对比</strong>
+          <p>可以在编辑器中打开文件，或查看 SVN 属性与历史。</p>
+        </div>
+      {:else if snapshot.language === "diff"}
+        {#if pierreFailed}
+          <pre
+            class="unified-diff"
+            aria-label={`${snapshot.relativePath} 统一差异`}>
+        {#if showWhitespace}
+              <!-- V018-D：备用视图空白符号（分段 span，无 {@html}，文本不变）。 -->
+          {#each snapshot.modified.split("\n") as line, lineIndex (lineIndex)}
+                <code class="ws-line" data-testid="whitespace-pre-line"
+                  >{#each segmentLineWhitespace(line) as seg, segIndex (segIndex)}<span
+                      class:ws-space={seg.kind === "space"}
+                      class:ws-tab={seg.kind === "tab"}>{seg.text}</span
+                    >{/each}{LINE_BREAK}</code
+                >
+              {/each}
+            {:else}
+              <code>{snapshot.modified}</code>
+            {/if}
+      </pre>
+        {:else}
+          <DiffView
+            relativePath={snapshot.relativePath}
+            patch={snapshot.modified}
+            {diffStyle}
+            {expandUnchanged}
+            retryToken={renderRetryToken}
+            onReady={handleDiffReady}
+            onFallback={handlePierreFallback}
+          />
+        {/if}
+      {:else if pierreFailed}
+        <div
+          class="merge-view-frame"
+          aria-label={`${snapshot.relativePath} 差异`}
+        >
+          <div class="merge-view-labels" aria-hidden="true">
+            <span>BASE</span><span>工作副本</span>
+          </div>
+          <div class="codemirror-merge-host" bind:this={mergeHost}></div>
+        </div>
+      {:else}
+        <DiffView
+          relativePath={snapshot.relativePath}
+          language={snapshot.language}
+          oldContents={displayOriginal}
+          newContents={displayModified}
+          editMode={editing}
+          {diffStyle}
+          {expandUnchanged}
+          retryToken={renderRetryToken}
+          onEditChange={handleEditChange}
+          onReady={handleDiffReady}
+          onFallback={handlePierreFallback}
+          onHighlightError={(info) => (highlightInfo = info)}
+        />
+      {/if}
     </div>
-  {:else if snapshot.language === "diff"}
-    {#if pierreFailed}
-      <pre
-        class="unified-diff"
-        aria-label={`${snapshot.relativePath} 统一差异`}><code
-          >{snapshot.modified}</code
-        ></pre>
-    {:else}
-      <DiffView
-        relativePath={snapshot.relativePath}
-        patch={snapshot.modified}
-        {diffStyle}
-        {expandUnchanged}
-        retryToken={renderRetryToken}
-        onReady={handleDiffReady}
-        onFallback={handlePierreFallback}
+    {#if !snapshot.binary}
+      <DiffOverview
+        blocks={overviewBlocks}
+        currentIndex={Math.min(navIndex, Math.max(0, displayHunks.length - 1))}
+        totalLines={overviewTotalLines}
+        onSelect={selectOverviewBlock}
       />
     {/if}
-  {:else if pierreFailed}
-    <div class="merge-view-frame" aria-label={`${snapshot.relativePath} 差异`}>
-      <div class="merge-view-labels" aria-hidden="true">
-        <span>BASE</span><span>工作副本</span>
-      </div>
-      <div class="codemirror-merge-host" bind:this={mergeHost}></div>
-    </div>
-  {:else}
-    <DiffView
-      relativePath={snapshot.relativePath}
-      language={snapshot.language}
-      oldContents={snapshot.original}
-      newContents={snapshot.modified}
-      editMode={editing}
-      {diffStyle}
-      {expandUnchanged}
-      retryToken={renderRetryToken}
-      onEditChange={handleEditChange}
-      onReady={handleDiffReady}
-      onFallback={handlePierreFallback}
-      onHighlightError={(info) => (highlightInfo = info)}
-    />
-  {/if}
+  </div>
 
   {#if showTargetSwitchDialog && targetSwitchRequest}
     <div class="diff-switch-backdrop">
@@ -1059,3 +1259,52 @@
     </div>
   {/if}
 </section>
+
+<style>
+  /* V018-D：主内容行（差异区 + 定位器），局部滚动归属，不用全局 overflow。 */
+  .diff-content-row {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    min-height: 0;
+  }
+  .diff-content-main {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+  }
+  .diff-content-row .diff-overview {
+    max-height: min(64vh, 640px);
+  }
+  /* V018-D：显示空白字符的渲染层符号（备用 pre 视图，文本本身不变）。 */
+  .show-whitespace .ws-space {
+    background: var(--vscode-editor-selectionBackground);
+    border-radius: 2px;
+  }
+  .show-whitespace .ws-space::after {
+    content: "·";
+    opacity: 0.8;
+  }
+  .show-whitespace .ws-tab {
+    background: var(--vscode-editor-selectionBackground);
+    border-radius: 2px;
+  }
+  .show-whitespace .ws-tab::after {
+    content: "→";
+    opacity: 0.8;
+  }
+  @media (max-width: 760px) {
+    .diff-content-row {
+      flex-direction: column;
+      /* 纵向堆叠时交叉轴为水平：必须拉伸，否则 Shadow DOM 内容
+         不参与固有宽度计算，主差异区会塌成数像素宽。 */
+      align-items: stretch;
+    }
+    .diff-content-main {
+      width: 100%;
+    }
+    .diff-content-row .diff-overview {
+      max-height: 200px;
+    }
+  }
+</style>

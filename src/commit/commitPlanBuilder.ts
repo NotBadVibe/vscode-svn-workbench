@@ -189,5 +189,5 @@ function dedupePaths(paths: string[]): string[] {
 }
 
 function quotePath(filePath: string): string {
-  return `"${filePath.replace(/"/g, '\\"')}"`;
+  return `"${filePath.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
