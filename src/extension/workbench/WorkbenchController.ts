@@ -139,7 +139,10 @@ import {
   type SvnHistoryPage,
   type SvnHistoryQuery,
 } from "../../history/svnHistory";
-import { collectConflictItems } from "../../conflict/conflictCollector";
+import {
+  collectConflictItems,
+  type SvnConflictItem,
+} from "../../conflict/conflictCollector";
 import {
   buildResolveConflictPreview,
   resolveConflictUsingWorking,
@@ -162,6 +165,7 @@ import {
   type WorkbenchTaskId,
   type WorkbenchModuleSnapshot,
   type ProjectsSnapshot,
+  type ExternalMergeView,
 } from "../../protocol/workbenchProtocol";
 import { toDisplayPath } from "../../scope/pathBrands";
 import { nativePathSemantics } from "../../scope/nativePathSemantics";
@@ -373,6 +377,21 @@ import { DiffEditingService } from "../../diffEdit/diffEditingService";
 import { buildDiffTargetId } from "../../diffEdit/diffEditingService";
 import { analyzeUtf8, MAX_EDITABLE_BYTES } from "../../diffEdit/diffPathGuard";
 import { ConflictSaveService } from "../../conflict/conflictSaveService";
+import {
+  areExternalMergePathsInScope,
+  buildExternalMergeArgs,
+  describeExternalMergeTool,
+  EXTERNAL_MERGE_ROLE_LABELS,
+  formatExternalMergeCommandPreview,
+  validateExternalMergeCommand,
+} from "../../conflict/externalMergeTool";
+import {
+  buildExternalMergeSearchCandidates,
+  handleSelectMergeToolExecutable,
+  readExternalMergeToolConfig,
+  resolveExternalMergeExecutable,
+  runExternalMergeTool,
+} from "./externalMergeToolHost";
 import { DiffEditTokenRegistry } from "../../diffEdit/diffEditTokenRegistry";
 import { DiffDraftService } from "../../diffEdit/diffDraftService";
 import { DiffAtomicWriterService } from "../../diffEdit/diffAtomicWriter";
@@ -3894,6 +3913,30 @@ export class WorkbenchController implements vscode.Disposable {
         );
         return;
       }
+      case "conflict/preview-external-merge": {
+        await this.previewExternalMerge(
+          session,
+          asString(data.relativePath) ?? session.conflictState?.selectedPath,
+          message.requestId,
+        );
+        return;
+      }
+      case "conflict/open-external-merge": {
+        await this.openExternalMerge(
+          session,
+          asString(data.previewToken),
+          message.requestId,
+        );
+        return;
+      }
+      case "conflict/select-merge-tool": {
+        const picked = await handleSelectMergeToolExecutable();
+        if (picked && session.conflictState) {
+          session.conflictState.externalMergeFeedback = `已将外部合并工具设置为：${picked}。`;
+        }
+        await this.sendConflictSnapshot(session, message.requestId);
+        return;
+      }
       case "settings/save-ai": {
         try {
           const input = toAiConfigurationInput(data);
@@ -6589,6 +6632,343 @@ export class WorkbenchController implements vscode.Disposable {
     });
   }
 
+  /**
+   * v0.1.8 V018-F：外部合并工具视图（随冲突快照下发）。
+   * 只传递四角色文件路径；凭据、token、AI 上下文绝不外传。
+   * 一次性反馈随快照下发后清除；绑定变化的预览标 stale 只读。
+   */
+  private async buildExternalMergeView(
+    session: WorkbenchSession,
+    selected: SvnConflictItem | undefined,
+  ): Promise<ExternalMergeView | undefined> {
+    if (!selected) return undefined;
+    const config = readExternalMergeToolConfig();
+    const resolution = resolveExternalMergeExecutable(
+      buildExternalMergeSearchCandidates(config.command),
+    );
+    const syntax = validateExternalMergeCommand(
+      resolution.command ?? config.command,
+    );
+    const toolLabel = describeExternalMergeTool(
+      resolution.command ?? config.command,
+    );
+    const roleSources: Array<{
+      role: "mine" | "theirs" | "base" | "result";
+      absolute?: string;
+    }> = [
+      { role: "mine", absolute: selected.mineFile },
+      { role: "theirs", absolute: selected.theirsFile },
+      { role: "base", absolute: selected.baseFile },
+      { role: "result", absolute: selected.workingFile },
+    ];
+    const fileRoles: ExternalMergeView["fileRoles"] = [];
+    for (const source of roleSources) {
+      if (!source.absolute) continue;
+      const stat = await fs.stat(source.absolute).catch(() => null);
+      if (!stat || !stat.isFile()) continue;
+      const relative =
+        path.relative(session.scope.repositoryRoot, source.absolute) ||
+        path.basename(source.absolute);
+      fileRoles.push({
+        role: source.role,
+        label: EXTERNAL_MERGE_ROLE_LABELS[source.role],
+        relativePath: relative.split(path.sep).join("/"),
+      });
+    }
+    const available =
+      resolution.found &&
+      syntax.ok &&
+      fileRoles.some((item) => item.role === "result");
+    const stored = session.conflictState?.externalMergePreview;
+    const feedback = session.conflictState?.externalMergeFeedback;
+    if (session.conflictState) {
+      session.conflictState.externalMergeFeedback = undefined;
+    }
+    const base: ExternalMergeView = {
+      available,
+      needsConfig: !available,
+      toolLabel,
+      fileRoles,
+      feedback,
+    };
+    if (!stored || stored.relativePath !== selected.relativePath) {
+      return base;
+    }
+    const bindingOk =
+      stored.scopeHash === session.scopeHash &&
+      stored.repositoryUuid === session.repositoryUuid &&
+      (stored.revision === undefined ||
+        session.workingCopyRevision === undefined ||
+        stored.revision === session.workingCopyRevision);
+    const commandPreview = formatExternalMergeCommandPreview(
+      stored.toolCommand,
+      stored.toolArgs,
+    );
+    if (!bindingOk) {
+      return {
+        ...base,
+        preview: {
+          token: stored.token,
+          commandPreview,
+          canOpen: false,
+          issues: [
+            "范围、工作副本或修订版本已变化，旧确认已只读失效，请重新生成确认。",
+          ],
+          stale: true,
+        },
+      };
+    }
+    return {
+      ...base,
+      preview: {
+        token: stored.token,
+        commandPreview,
+        canOpen: available,
+        issues: available ? [] : ["外部合并工具不可用，请先完成配置。"],
+      },
+    };
+  }
+
+  /**
+   * V018-F：生成外部合并工具打开前确认（预览 token 单次有效）。
+   * 未安装/配置无效时不签发 token，快照经 needsConfig 给出三出口。
+   */
+  private async previewExternalMerge(
+    session: WorkbenchSession,
+    relativePath: string | undefined,
+    requestId?: string,
+  ): Promise<void> {
+    const conflicts = await collectConflictItems(
+      session.svnPath,
+      session.scope,
+    ).catch(() => undefined);
+    const selected =
+      conflicts?.find((item) => item.relativePath === relativePath) ??
+      conflicts?.find(
+        (item) => item.relativePath === session.conflictState?.selectedPath,
+      );
+    if (!selected) {
+      await this.sendError(
+        "conflicts",
+        "冲突已变化",
+        "当前冲突不存在，请刷新状态后重试。",
+        true,
+        requestId,
+      );
+      await this.sendConflictSnapshot(session, requestId);
+      return;
+    }
+    session.conflictState = {
+      ...session.conflictState,
+      selectedPath: selected.relativePath,
+    };
+    const inScope =
+      validatePathsInScope(
+        session.scope,
+        [selected.workingFile],
+        nativePathSemantics,
+      ).outOfScopeItems.length === 0;
+    if (!inScope) {
+      await this.sendError(
+        "conflicts",
+        "文件超出操作范围",
+        "外部合并工具只能打开当前操作范围内的文件，已拒绝。",
+        true,
+        requestId,
+      );
+      await this.sendConflictSnapshot(session, requestId);
+      return;
+    }
+    const config = readExternalMergeToolConfig();
+    const resolution = resolveExternalMergeExecutable(
+      buildExternalMergeSearchCandidates(config.command),
+    );
+    const syntax = validateExternalMergeCommand(
+      resolution.command ?? config.command,
+    );
+    if (!resolution.found || !syntax.ok) {
+      session.conflictState.externalMergePreview = undefined;
+      session.conflictState.externalMergeFeedback = !resolution.found
+        ? "尚未找到可用的外部合并工具。请选择可执行文件、在设置中配置，或继续使用内置编辑。"
+        : syntax.ok
+          ? "外部合并工具配置无效。"
+          : (syntax.issues[0] ?? "外部合并工具配置无效。");
+      await this.sendConflictSnapshot(session, requestId);
+      return;
+    }
+    const pickExisting = async (
+      candidate?: string,
+    ): Promise<string | undefined> => {
+      if (!candidate) return undefined;
+      const stat = await fs.stat(candidate).catch(() => null);
+      return stat && stat.isFile() ? path.resolve(candidate) : undefined;
+    };
+    const roleFiles = {
+      mine: await pickExisting(selected.mineFile),
+      theirs: await pickExisting(selected.theirsFile),
+      base: await pickExisting(selected.baseFile),
+      result: path.resolve(selected.workingFile),
+    };
+    const absolutePaths = [
+      roleFiles.base,
+      roleFiles.mine,
+      roleFiles.theirs,
+      roleFiles.result,
+    ].filter((item): item is string => typeof item === "string");
+    if (
+      !areExternalMergePathsInScope(absolutePaths, session.scope.repositoryRoot)
+    ) {
+      await this.sendError(
+        "conflicts",
+        "文件超出操作范围",
+        "外部合并工具只能打开当前操作范围内的文件，已拒绝。",
+        true,
+        requestId,
+      );
+      await this.sendConflictSnapshot(session, requestId);
+      return;
+    }
+    const args = buildExternalMergeArgs(config.argsTemplate, roleFiles);
+    const contentHash = await hashFileContents(selected.workingFile).catch(
+      () => "",
+    );
+    session.conflictState.externalMergePreview = {
+      token: randomUUID(),
+      contentHash,
+      relativePath: selected.relativePath,
+      toolCommand: resolution.command as string,
+      toolArgs: args,
+      scopeHash: session.scopeHash,
+      repositoryUuid: session.repositoryUuid,
+      revision: session.workingCopyRevision,
+    };
+    session.conflictState.externalMergeFeedback = undefined;
+    await this.sendConflictSnapshot(session, requestId);
+  }
+
+  /**
+   * V018-F：凭确认 token 启动外部合并工具（spawn 数组、无 shell）。
+   * 退出后重新采集状态并作废旧 token；工作副本被修改只提示重开/重比，
+   * 不自动 Resolve。
+   */
+  private async openExternalMerge(
+    session: WorkbenchSession,
+    token: string | undefined,
+    requestId?: string,
+  ): Promise<void> {
+    const stored = session.conflictState?.externalMergePreview;
+    if (!token || !stored || token !== stored.token) {
+      if (session.conflictState) {
+        session.conflictState.externalMergePreview = undefined;
+      }
+      await this.sendError(
+        "conflicts",
+        "打开确认已失效",
+        "外部合并工具的打开确认已失效，请重新生成确认。",
+        true,
+        requestId,
+      );
+      await this.sendConflictSnapshot(session, requestId);
+      return;
+    }
+    // 单次有效：先消耗旧 token。
+    session.conflictState!.externalMergePreview = undefined;
+    const bindingOk =
+      stored.scopeHash === session.scopeHash &&
+      stored.repositoryUuid === session.repositoryUuid &&
+      (stored.revision === undefined ||
+        session.workingCopyRevision === undefined ||
+        stored.revision === session.workingCopyRevision);
+    if (!bindingOk) {
+      session.conflictState!.externalMergeFeedback =
+        "范围、工作副本或修订版本已变化，旧确认已失效，请重新生成确认。";
+      await this.sendConflictSnapshot(session, requestId);
+      return;
+    }
+    const conflicts = await collectConflictItems(
+      session.svnPath,
+      session.scope,
+    ).catch(() => undefined);
+    const selected = conflicts?.find(
+      (item) => item.relativePath === stored.relativePath,
+    );
+    if (!selected) {
+      session.conflictState!.externalMergeFeedback =
+        "当前冲突已不存在，状态已重新采集；旧确认已失效。";
+      await this.sendConflictSnapshot(session, requestId);
+      return;
+    }
+    const currentHash = await hashFileContents(selected.workingFile).catch(
+      () => "",
+    );
+    if (
+      stored.contentHash &&
+      currentHash &&
+      stored.contentHash !== currentHash
+    ) {
+      session.conflictState!.externalMergeFeedback =
+        "工作副本文件在确认后发生变化，旧确认已失效，请重新生成确认。";
+      await this.sendConflictSnapshot(session, requestId);
+      return;
+    }
+    const absoluteArgs = stored.toolArgs.filter((item) =>
+      path.isAbsolute(item),
+    );
+    if (
+      !areExternalMergePathsInScope(absoluteArgs, session.scope.repositoryRoot)
+    ) {
+      await this.sendError(
+        "conflicts",
+        "文件超出操作范围",
+        "外部合并工具只能打开当前操作范围内的文件，已拒绝。",
+        true,
+        requestId,
+      );
+      await this.sendConflictSnapshot(session, requestId);
+      return;
+    }
+    const runResult = await runExternalMergeTool(
+      stored.toolCommand,
+      stored.toolArgs,
+    );
+    if (!runResult.ok) {
+      session.conflictState!.externalMergeFeedback = runResult.timedOut
+        ? `外部工具超过时限未退出，已终止；状态已重新采集，旧确认已失效。${runResult.error ?? ""}`
+        : `外部合并工具未能正常完成：${runResult.error ?? "未知错误"}。请选择可执行文件、在设置中配置，或继续使用内置编辑。`;
+      await this.sendConflictSnapshot(session, requestId);
+      return;
+    }
+    // 退出后：重新采集 revision 与冲突状态；旧 token/草稿动作失效。
+    session.workingCopyRevision = await resolveWorkingCopyRevision(
+      session.svnPath,
+      session.scope,
+    ).catch(() => session.workingCopyRevision);
+    const freshConflicts = await collectConflictItems(
+      session.svnPath,
+      session.scope,
+    ).catch(() => undefined);
+    if (session.conflictState?.resolvePreview) {
+      this.resolvePreviewTokens.revoke(
+        session.conflictState.resolvePreview.token,
+      );
+      session.conflictState.resolvePreview = undefined;
+    }
+    await this.conflictSaveService.revokeForPath(selected.workingFile);
+    session.conflictState!.externalMergeFeedback =
+      "外部工具已退出，状态已重新采集。工作副本可能已被修改，请重新打开/比较；未自动标记解决，旧确认已失效。";
+    await this.sendConflictSnapshot(session, requestId, freshConflicts);
+    await this.post({
+      protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+      type: "operation/result",
+      requestId,
+      moduleId: "conflicts",
+      payload: {
+        title: "外部合并工具已退出",
+        message: "状态已重新采集，请重新打开/比较；未自动标记解决。",
+      },
+    });
+  }
+
   private async buildConflictSnapshot(
     session: WorkbenchSession,
     providedConflicts?: Awaited<ReturnType<typeof collectConflictItems>>,
@@ -6809,6 +7189,8 @@ export class WorkbenchController implements vscode.Disposable {
               issues: preview.issues,
             }
           : undefined,
+      // V018-F：外部合并工具出口（可选字段，旧快照缺省时 Webview 保持现状）。
+      externalMerge: await this.buildExternalMergeView(session, selected),
     };
   }
 

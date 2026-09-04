@@ -75,6 +75,22 @@
           "default": null,
           "description": "svn 可执行文件路径。留空时自动搜索 PATH 和各平台常见安装位置。"
         },
+        "svnWorkbench.mergeTool.path": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null,
+          "description": "外部合并工具可执行文件路径。留空时在 PATH 中探测已知合并工具（Windows 可识别 TortoiseMerge）。"
+        },
+        "svnWorkbench.mergeTool.args": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "description": "外部合并工具参数模板数组（spawn 直接传递，不经过 shell）。可用占位符 {mine} {theirs} {base} {result}；留空时按基线/我的/对方/结果顺序传递。"
+        },
         "svnWorkbench.diff.openMode": {
           "type": "string",
           "default": "sameGroup",

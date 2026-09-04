@@ -1599,6 +1599,97 @@ export function startMockWorkbench(): void {
         injectSnapshot("conflicts", conflictSnapshot());
       }
     }
+    // V018-F：外部合并工具出口模拟（?mergeTool=missing 演示未配置三出口）。
+    if (action === "conflict/preview-external-merge") {
+      const missing =
+        new URLSearchParams(window.location.search).get("mergeTool") ===
+        "missing";
+      const previewPath =
+        (typeof data.relativePath === "string" && data.relativePath) ||
+        "src/conflict/example.ts";
+      injectSnapshot(
+        "conflicts",
+        conflictSnapshot({
+          externalMerge: missing
+            ? {
+                available: false,
+                needsConfig: true,
+                toolLabel: "未配置（通用外部合并工具）",
+                fileRoles: [
+                  {
+                    role: "result",
+                    label: "合并结果（工作副本）",
+                    relativePath: previewPath,
+                  },
+                ],
+              }
+            : {
+                available: true,
+                toolLabel: "meld",
+                fileRoles: [
+                  {
+                    role: "mine",
+                    label: "我的修改（本地）",
+                    relativePath: previewPath,
+                  },
+                  {
+                    role: "theirs",
+                    label: "对方修改（仓库）",
+                    relativePath: previewPath,
+                  },
+                  {
+                    role: "base",
+                    label: "共同基线（BASE）",
+                    relativePath: previewPath,
+                  },
+                  {
+                    role: "result",
+                    label: "合并结果（工作副本）",
+                    relativePath: previewPath,
+                  },
+                ],
+                preview: {
+                  token: "mock-external-merge",
+                  commandPreview: `meld "${previewPath}"`,
+                  canOpen: true,
+                  issues: [],
+                },
+              },
+        }),
+      );
+    }
+    if (action === "conflict/open-external-merge") {
+      // 模拟外部工具退出后的重采：旧确认作废，提示重开/重比，不自动 Resolve。
+      injectSnapshot(
+        "conflicts",
+        conflictSnapshot({
+          externalMerge: {
+            available: true,
+            toolLabel: "meld",
+            fileRoles: [],
+            feedback:
+              "外部工具已退出，状态已重新采集。工作副本可能已被修改，请重新打开/比较；未自动标记解决，旧确认已失效。",
+          },
+        }),
+      );
+      injectHostMessage("operation/result", {
+        title: "外部合并工具已退出",
+        message: "状态已重新采集，请重新打开/比较；未自动标记解决。",
+      });
+    }
+    if (action === "conflict/select-merge-tool") {
+      injectSnapshot(
+        "conflicts",
+        conflictSnapshot({
+          externalMerge: {
+            available: true,
+            toolLabel: "meld",
+            fileRoles: [],
+            feedback: "已将外部合并工具设置为：/usr/bin/meld。",
+          },
+        }),
+      );
+    }
     if (action === "settings/test-ai") {
       injectSnapshot(
         "settings",

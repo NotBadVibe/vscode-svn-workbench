@@ -145,6 +145,22 @@ export interface WorkbenchSession extends OpenWorkbenchRequest {
       contentHash: string;
       relativePath: string;
     };
+    /**
+     * v0.1.8 V018-F：外部合并工具打开前确认（一次性 token，单次有效）。
+     * 退出/刷新/范围变化后失效，不恢复。
+     */
+    externalMergePreview?: {
+      token: string;
+      contentHash: string;
+      relativePath: string;
+      toolCommand: string;
+      toolArgs: string[];
+      scopeHash: string;
+      repositoryUuid: string;
+      revision?: string;
+    };
+    /** V018-F：外部工具退出后的一次性反馈（随快照下发后清除）。 */
+    externalMergeFeedback?: string;
     editState?: {
       token: string;
       contentHash: string;

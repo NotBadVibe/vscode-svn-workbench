@@ -313,6 +313,45 @@
       stale,
     };
   });
+  // V018-F：外部合并工具出口——打开前确认经 OperationIntentDialog（一次确认）。
+  // 未配置时快照走 needsConfig 三出口；确认展示文件角色、将传递的路径与
+  // “外部工具可能修改工作副本”警告；退出后 Host 重采状态并作废旧确认。
+  let externalMergeIntentOpen = $state(false);
+  let externalMergeTriggerEl = $state<HTMLElement | null>(null);
+  let externalMergeFallbackDismissed = $state(false);
+  // 选择文件变化时关闭旧确认并恢复未配置提示（旧 token 已由 Host 作废）。
+  $effect(() => {
+    void snapshot.selected?.relativePath;
+    externalMergeIntentOpen = false;
+    externalMergeFallbackDismissed = false;
+  });
+  const externalMergeIntent = $derived.by(() => {
+    const external = snapshot.externalMerge;
+    const preview = external?.preview;
+    if (!external || !preview || !snapshot.selected) return undefined;
+    const roles =
+      external.fileRoles.length > 0
+        ? external.fileRoles
+            .map((item) => `${item.label}：${item.relativePath}`)
+            .join("；")
+        : "合并结果路径";
+    return {
+      token: preview.token,
+      kind: "file-operation" as const,
+      title: `在外部合并工具中打开 1 个文件`,
+      summary: `在外部合并工具（${external.toolLabel}）中打开 ${snapshot.selected.relativePath}。将传递${roles}。外部工具可能修改工作副本，退出后请重新打开/比较，不会自动标记解决。`,
+      // 四角色可能指向同一相对路径展示名：去重后才进入影响清单（PreviewPathList 按路径设键）。
+      paths: [...new Set(external.fileRoles.map((item) => item.relativePath))],
+      scopeText: snapshot.selected.relativePath,
+      recoverability:
+        "外部工具可能修改工作副本；退出后状态将重新采集，未自动标记解决，旧确认将失效。",
+      createdAt: new Date().toISOString(),
+      canExecute: preview.canOpen && !preview.stale,
+      issues: preview.issues,
+      commands: [preview.commandPreview],
+      stale: preview.stale,
+    };
+  });
   /** v0.0.9：模型未配置时按钮不标“AI”，如实指向本地建议（AI09-TRUTH-01）。 */
   const conflictAdviceConfigured = $derived(
     snapshot.aiPrivacy?.model !== undefined &&
@@ -2223,7 +2262,7 @@
                 class="button button--secondary"
                 data-testid="non-text-open-external"
                 onclick={() =>
-                  onAction("open-file", {
+                  onAction("conflict/preview-external-merge", {
                     relativePath: snapshot.selected?.relativePath,
                   })}>在外部工具打开</button
               >
@@ -2936,6 +2975,107 @@
               >
             {/if}
           </section>
+          <!-- V018-F：外部合并工具出口（通用配置，不承诺唯一产品） -->
+          <section class="resolve-panel" aria-label="外部合并工具">
+            <div class="section-heading">
+              <div>
+                <span class="eyebrow">外部处理</span>
+                <h2>在外部合并工具中打开</h2>
+              </div>
+            </div>
+            {#if snapshot.externalMerge?.feedback}
+              <div
+                class="notice"
+                role="status"
+                data-testid="external-merge-feedback"
+              >
+                <span class="codicon codicon-info" aria-hidden="true"></span>
+                <div>{snapshot.externalMerge.feedback}</div>
+              </div>
+            {/if}
+            {#if snapshot.externalMerge?.preview}
+              <div class="notice">
+                <span class="codicon codicon-terminal"></span><code
+                  >{snapshot.externalMerge.preview.commandPreview}</code
+                >
+              </div>
+              {#each snapshot.externalMerge.preview.issues as issue, issueIndex (issueIndex)}<div
+                  class="issue-list"
+                >
+                  <div>{issue}</div>
+                </div>{/each}
+              <div class="toolbar-actions">
+                <button
+                  class="button button--secondary"
+                  data-testid="external-merge-open-dialog"
+                  disabled={!snapshot.externalMerge.preview.canOpen}
+                  onclick={(event) => {
+                    externalMergeTriggerEl = event.currentTarget as HTMLElement;
+                    externalMergeIntentOpen = true;
+                  }}>检查并继续打开</button
+                >
+                <button
+                  class="button button--secondary"
+                  data-testid="external-merge-regenerate"
+                  onclick={() =>
+                    onAction("conflict/preview-external-merge", {
+                      relativePath: snapshot.selected?.relativePath,
+                    })}>重新生成确认</button
+                >
+              </div>
+            {:else if snapshot.externalMerge?.needsConfig && !externalMergeFallbackDismissed}
+              <div
+                class="notice notice--warning"
+                role="alert"
+                data-testid="external-merge-needs-config"
+              >
+                <span class="codicon codicon-warning" aria-hidden="true"></span>
+                <div>
+                  <strong>尚未配置外部合并工具</strong>
+                  <p>
+                    当前：{snapshot.externalMerge
+                      .toolLabel}。请选择可执行文件、在设置中配置，或继续使用内置编辑。
+                  </p>
+                </div>
+                <div class="toolbar-actions">
+                  <button
+                    class="button button--secondary"
+                    data-testid="external-merge-pick"
+                    onclick={() =>
+                      onAction("conflict/select-merge-tool", {
+                        relativePath: snapshot.selected?.relativePath,
+                      })}>选择可执行文件</button
+                  >
+                  <button
+                    class="button button--secondary"
+                    data-testid="external-merge-settings"
+                    onclick={() =>
+                      onAction("diagnostics/open-settings", {
+                        query: "svnWorkbench.mergeTool.path",
+                      })}>打开设置</button
+                  >
+                  <button
+                    class="button button--secondary"
+                    data-testid="external-merge-continue"
+                    onclick={() => (externalMergeFallbackDismissed = true)}
+                    >继续内置编辑</button
+                  >
+                </div>
+              </div>
+            {:else}
+              <p class="muted">
+                使用已配置的外部合并工具打开当前冲突，打开前会显示将传递的文件角色、路径与外部修改影响确认。
+              </p>
+              <button
+                class="button button--secondary"
+                data-testid="open-external-merge"
+                onclick={() =>
+                  onAction("conflict/preview-external-merge", {
+                    relativePath: snapshot.selected?.relativePath,
+                  })}>在外部合并工具中打开</button
+              >
+            {/if}
+          </section>
           <!-- V017-B：快捷键帮助单一实例（集中 keymap 生成；工具栏 `?` 与模块 `?` 共用） -->
           {#if shortcutHelpOpen}
             <ShortcutHelp
@@ -2961,6 +3101,28 @@
       </div>
     {/if}
   </ScrollArea>
+  <!-- V018-F：外部合并工具打开前确认（文件角色/路径/外部修改警告，一次确认） -->
+  <OperationIntentDialog
+    intent={externalMergeIntent}
+    open={externalMergeIntentOpen && Boolean(externalMergeIntent)}
+    confirmLabel="在外部工具中打开"
+    cancelLabel="取消"
+    recheckLabel="重新生成确认"
+    triggerElement={externalMergeTriggerEl}
+    {onAction}
+    {pathDetail}
+    onConfirm={(token) => {
+      externalMergeIntentOpen = false;
+      onAction("conflict/open-external-merge", { previewToken: token });
+    }}
+    onCancel={() => (externalMergeIntentOpen = false)}
+    onRecheck={() => {
+      externalMergeIntentOpen = false;
+      onAction("conflict/preview-external-merge", {
+        relativePath: snapshot.selected?.relativePath,
+      });
+    }}
+  />
   <!-- v0.0.14 通用操作意向单：Resolve 确认（复用列表底座、可搜索/复制、焦点锁定、IME 保护） -->
   <OperationIntentDialog
     intent={resolveIntent}

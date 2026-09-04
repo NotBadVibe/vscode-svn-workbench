@@ -892,6 +892,12 @@ export interface ConflictSnapshot {
     canResolve: boolean;
     issues: string[];
   };
+  /**
+   * v0.1.8 V018-F：外部合并工具出口（可选，向后兼容）。
+   * 缺省表示 Host 尚未评估（旧快照）；携带时 Webview 据此渲染
+   * 确认对话框或未配置三出口，不自动 Resolve。
+   */
+  externalMerge?: ExternalMergeView;
   aiPrivacy?: {
     model: string;
     characters: number;
@@ -899,6 +905,44 @@ export interface ConflictSnapshot {
     data: string;
     historyIncluded: false;
   };
+}
+
+/** V018-F · 外部合并工具文件角色（中文标签由 Host 按四角色统一生成）。 */
+export type ExternalMergeRole = "mine" | "theirs" | "base" | "result";
+
+export interface ExternalMergeFileView {
+  role: ExternalMergeRole;
+  /** 中文角色标签，如“我的修改（本地）”。 */
+  label: string;
+  /** 工作副本内相对路径（展示用，不进入日志与 URI）。 */
+  relativePath: string;
+}
+
+/**
+ * V018-F · 外部合并工具视图（随 ConflictSnapshot 下发）。
+ * - 只传递冲突四角色文件路径；凭据、token、AI 上下文绝不外传；
+ * - preview 缺省表示未生成确认（未配置时 needsConfig=true，给出三出口）；
+ * - stale=true 的预览只读，不可确认。
+ */
+export interface ExternalMergeView {
+  /** 工具是否可用（已配置且 Host 复验存在）。 */
+  available: boolean;
+  /** 未配置/无效时为 true，Webview 展示三出口。 */
+  needsConfig?: boolean;
+  /** 工具展示名（基名或通用文案，不承诺唯一产品）。 */
+  toolLabel: string;
+  /** 四角色文件（展示用相对路径）。 */
+  fileRoles: ExternalMergeFileView[];
+  preview?: {
+    token: string;
+    /** 展示用命令预览（不执行，执行走 spawn 数组）。 */
+    commandPreview: string;
+    canOpen: boolean;
+    issues: string[];
+    stale?: boolean;
+  };
+  /** 一次性反馈（如退出后重采提示、失效说明）。 */
+  feedback?: string;
 }
 
 /** 提交选择规则设置的可编辑作用域；当前版本仅仓库级可编辑。 */
@@ -1566,6 +1610,9 @@ export type WebviewAction =
   | "conflict/draft-copy"
   | "conflict/draft-export"
   | "conflict/draft-switch-decision"
+  | "conflict/preview-external-merge"
+  | "conflict/open-external-merge"
+  | "conflict/select-merge-tool"
   | "settings/save-ai"
   | "settings/test-ai"
   | "settings/list-models"
@@ -1713,6 +1760,9 @@ export const webviewActions = [
   "conflict/draft-copy",
   "conflict/draft-export",
   "conflict/draft-switch-decision",
+  "conflict/preview-external-merge",
+  "conflict/open-external-merge",
+  "conflict/select-merge-tool",
   "settings/save-ai",
   "settings/test-ai",
   "settings/list-models",
@@ -1953,6 +2003,64 @@ export function isCommitSnapshot(value: unknown): value is CommitSnapshot {
     return false;
   }
   if (value.handoff !== undefined && !isCommitHandoffView(value.handoff)) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * v0.1.8 V018-F：ExternalMergeView 类型守卫（Host/Webview/Mock 共用）。
+ * 可选字段缺省即合法；available/toolLabel/fileRoles 缺失、角色非法、
+ * preview 结构非法一律拒绝（fail-closed，调用方按“无外部工具状态”处理）。
+ */
+export function isExternalMergeView(
+  value: unknown,
+): value is ExternalMergeView {
+  if (!isRecord(value)) {
+    return false;
+  }
+  if (
+    typeof value.available !== "boolean" ||
+    typeof value.toolLabel !== "string" ||
+    !Array.isArray(value.fileRoles)
+  ) {
+    return false;
+  }
+  const roles = new Set(["mine", "theirs", "base", "result"]);
+  for (const entry of value.fileRoles as unknown[]) {
+    if (!isRecord(entry)) {
+      return false;
+    }
+    if (
+      typeof entry.role !== "string" ||
+      !roles.has(entry.role) ||
+      typeof entry.label !== "string" ||
+      typeof entry.relativePath !== "string"
+    ) {
+      return false;
+    }
+  }
+  if (
+    value.needsConfig !== undefined &&
+    typeof value.needsConfig !== "boolean"
+  ) {
+    return false;
+  }
+  if (value.preview !== undefined) {
+    if (!isRecord(value.preview)) return false;
+    const preview = value.preview as Record<string, unknown>;
+    if (
+      typeof preview.token !== "string" ||
+      typeof preview.commandPreview !== "string" ||
+      typeof preview.canOpen !== "boolean" ||
+      !Array.isArray(preview.issues) ||
+      !(preview.issues as unknown[]).every((i) => typeof i === "string") ||
+      (preview.stale !== undefined && typeof preview.stale !== "boolean")
+    ) {
+      return false;
+    }
+  }
+  if (value.feedback !== undefined && typeof value.feedback !== "string") {
     return false;
   }
   return true;
