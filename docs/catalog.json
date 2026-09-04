@@ -471,12 +471,12 @@
     },
     {
       "version": "0.1.7",
-      "status": "draft",
-      "phase": "planned",
+      "status": "released",
+      "phase": "released",
       "baseVersion": "0.1.6",
       "canonicalEntry": "releases/v0.1.7/README.md",
       "manifest": "releases/v0.1.7/manifest.json",
-      "releasedFact": false,
+      "releasedFact": true,
       "topics": [
         "keyboard",
         "ime",
