@@ -1155,6 +1155,9 @@
     resolution: "mine" | "theirs" | "both",
   ): void {
     if (isComposing || (resultEditor?.isComposing?.() ?? false)) return;
+    // V017-G：记录触发控件；块解决后对应按钮随块卸载，若焦点因此掉到 body
+    // 则恢复到块列表区，键盘用户可连续处理下一块（焦点丢失即键盘缺陷）。
+    const trigger = document.activeElement as HTMLElement | null;
     const next = applyTextConflictResolution(mergeDraft, index, resolution);
     mergeDraft = next;
     if (editorView)
@@ -1169,6 +1172,16 @@
       });
       scheduleAutoCheckpoint(next);
     }
+    // V017-G：DOM 刷新后若触发控件已卸载且焦点无处可去，收回到块列表区。
+    queueMicrotask(() => {
+      if (
+        trigger !== null &&
+        !trigger.isConnected &&
+        document.activeElement === document.body
+      ) {
+        document.querySelector<HTMLElement>(".merge-block-list")?.focus();
+      }
+    });
   }
 
   /**
