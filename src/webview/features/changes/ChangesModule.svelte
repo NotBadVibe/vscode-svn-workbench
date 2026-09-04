@@ -1488,12 +1488,17 @@
       </details>
       {#each snapshot.operationPreview.issues as issue, issueIndex (issueIndex)}<div
           class="notice notice--error"
+          role="alert"
         >
-          {issue}
+          <span class="codicon codicon-error" aria-hidden="true"></span><span
+            >{issue}</span
+          >
         </div>{/each}
       {#if previewSelectionOutOfSync}
         <div class="notice notice--warning" role="status">
-          选择已变化，旧预览已失效；请重新预览后再执行。
+          <span class="codicon codicon-warning" aria-hidden="true"></span><span
+            >选择已变化，旧预览已失效；请重新预览后再执行。</span
+          >
         </div>
       {/if}
       {#if snapshot.operationPreview.destructive}

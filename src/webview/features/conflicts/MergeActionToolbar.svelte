@@ -770,7 +770,9 @@
       role="alert"
       data-testid="merge-action-error"
     >
-      {errorTip}
+      <span class="codicon codicon-warning" aria-hidden="true"></span><span
+        >{errorTip}</span
+      >
     </div>
   {/if}
   <div

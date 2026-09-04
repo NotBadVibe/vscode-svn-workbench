@@ -801,6 +801,8 @@ button.path-detail__value:hover {
 }
 .file-row--blocked {
   background: color-mix(in srgb, var(--danger) 5%, transparent);
+  /* V017-E：阻止行不只靠背景色——左侧 danger 边框 + 选择说明文字（.selection-note）双通道。 */
+  border-left: 2px solid var(--danger);
 }
 .file-path {
   min-width: 0;
@@ -1237,6 +1239,14 @@ button.path-detail__value:hover {
 }
 .diff-line--added {
   background: color-mix(in srgb, var(--success) 9%, transparent);
+}
+/* V017-E：遗留 diff 行（当前 Diff/冲突主链路使用 @pierre/diffs `diffIndicators: "classic"`
+ * gutter +/-；此处为备用样式同样补 +/- 符号，不只靠红绿）。 */
+.diff-line--added .line-number::before {
+  content: "+ ";
+}
+.diff-line--removed .line-number::before {
+  content: "- ";
 }
 .diff-line--removed {
   background: color-mix(in srgb, var(--danger) 9%, transparent);

@@ -222,8 +222,10 @@
           {/each}
         </div>
       {:else if !intent.canExecute}
-        <div class="notice notice--warning">
-          当前意向单暂不可执行，请检查影响清单。
+        <div class="notice notice--warning" role="note">
+          <span class="codicon codicon-info" aria-hidden="true"></span><span
+            >当前意向单暂不可执行，请检查影响清单。</span
+          >
         </div>
       {/if}
 
