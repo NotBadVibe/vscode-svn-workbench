@@ -758,7 +758,7 @@
     "@types/node": "^26.1.2",
     "@types/picomatch": "^4.0.3",
     "@types/vscode": "1.92.0",
-    "@vitest/coverage-istanbul": "^4.1.10",
+    "@vitest/coverage-istanbul": "^4.1.11",
     "@vscode/codicons": "^0.0.46-24",
     "@vscode/test-electron": "^3.1.0",
     "@vscode/vsce": "^3.9.2",
