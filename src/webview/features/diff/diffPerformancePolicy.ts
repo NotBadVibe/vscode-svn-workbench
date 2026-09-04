@@ -316,9 +316,10 @@ export function suggestDiffPerformanceMode(
 /*
  * V018-D 定位器（DiffOverview）阈值门控（v0.1.8 规划 §4.4 + §8 纪律修正）。
  *
- * 实测（scripts/measure-v018d-locator.js，生产构建 preview 真实 Chromium）：
- * - 小档（100 块）导航 P95 约 132ms，略超 100ms 导航候选预算；
- * - 大档（500 块）导航 P50 约 1340ms / P95 约 1428ms，超预算 14 倍，verdict no-go；
+ * 实测（scripts/measure-v018d-locator.js，生产构建 preview 真实 Chromium；
+ * 证据 `.validation/evidence/v0.1.8/v018d-locator-browser/v018d-locator.json`）：
+ * - 小档（100 块）导航 P50 108.2ms / P95 126.3ms，略超 100ms 导航候选预算；
+ * - 大档（500 块）导航 P50 1305.1ms / P95 1386.1ms，超预算约 14 倍，verdict no-go；
  * - 瓶颈在 UnresolvedFile.focusConflict 的 Pierre 侧布局成本，非定位器自身模型
  *   （模型构建约 0.2ms 通过）。
  * 规划 §4.4 要求「100/500 块下仍满足导航和滚动预算」，§8 禁止「扩大超时或删除
