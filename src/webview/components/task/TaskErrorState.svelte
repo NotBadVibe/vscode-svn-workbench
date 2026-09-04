@@ -118,8 +118,8 @@
   .task-error-state {
     display: flex;
     align-items: flex-start;
-    gap: 8px;
-    padding: 8px 12px;
+    gap: var(--space-xs);
+    padding: var(--space-xs) var(--space-sm);
     border: 1px solid var(--vscode-inputValidation-errorBorder);
     border-left-width: 4px;
     border-radius: 4px;
@@ -161,7 +161,7 @@
   .task-error-state__actions {
     display: flex;
     flex-wrap: wrap;
-    gap: 8px;
+    gap: var(--space-xs);
     margin-top: 4px;
   }
 </style>

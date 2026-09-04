@@ -341,8 +341,8 @@
   .assistance-panel {
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    padding: 12px;
+    gap: var(--space-xs);
+    padding: var(--space-sm);
     border: 1px solid var(--vscode-panel-border);
     border-radius: 4px;
     background: var(--vscode-editor-background);
@@ -353,7 +353,7 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    gap: 12px;
+    gap: var(--space-sm);
   }
   .assistance-panel__titles {
     display: flex;
@@ -373,14 +373,14 @@
   .assistance-panel__body {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: var(--space-xs);
     min-width: 0;
   }
   .assistance-panel__group {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-xs);
   }
   .assistance-panel__group-title {
     width: 100%;
@@ -398,7 +398,7 @@
     color: var(--vscode-descriptionForeground);
   }
   .assistance-panel__result {
-    padding: 8px;
+    padding: var(--space-xs);
     border: 1px solid var(--vscode-panel-border);
     border-radius: 4px;
     font-size: 12px;
@@ -407,8 +407,8 @@
   .assistance-panel__error {
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    padding: 8px 12px;
+    gap: var(--space-xs);
+    padding: var(--space-xs) var(--space-sm);
     border: 1px solid var(--vscode-inputValidation-errorBorder);
     border-radius: 4px;
     background: var(--vscode-inputValidation-errorBackground);
@@ -419,6 +419,6 @@
   }
   .assistance-panel__error-actions {
     display: flex;
-    gap: 8px;
+    gap: var(--space-xs);
   }
 </style>

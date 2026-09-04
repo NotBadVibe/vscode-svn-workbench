@@ -79,7 +79,7 @@
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    padding: 2px 8px;
+    padding: 2px var(--space-xs);
     border: 1px solid var(--vscode-panel-border);
     border-radius: 3px;
     background: var(--vscode-editor-background);

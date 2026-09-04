@@ -109,8 +109,8 @@
   .receipt-summary {
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    padding: 12px;
+    gap: var(--space-xs);
+    padding: var(--space-sm);
     border: 1px solid var(--vscode-panel-border);
     border-radius: 4px;
     background: var(--vscode-editor-background);
@@ -132,7 +132,7 @@
   }
   .receipt-summary__row {
     display: flex;
-    gap: 8px;
+    gap: var(--space-xs);
     font-size: 12px;
   }
   .receipt-summary__row dt {
@@ -155,7 +155,7 @@
   }
   .receipt-summary__files ul {
     margin: 4px 0 0;
-    padding-left: 16px;
+    padding-left: var(--space-md);
   }
   .receipt-summary__name {
     overflow-wrap: break-word;
@@ -167,7 +167,7 @@
   .receipt-summary__actions {
     display: flex;
     justify-content: flex-end;
-    gap: 8px;
+    gap: var(--space-xs);
     padding-top: 4px;
   }
 </style>

@@ -257,4 +257,18 @@ describe("ChangelistsModule", () => {
     );
     expect(defaultRows[0]).toHaveTextContent("readme.md");
   });
+
+  it("页面级 button--primary ≤1（对话框/展开区内除外，v0.1.6 V016-E）", () => {
+    const { container } = render(ChangelistsModule, {
+      snapshot: buildSnapshot(),
+      onAction: vi.fn(),
+    });
+    const pagePrimaries = Array.from(
+      container.querySelectorAll(".button--primary"),
+    ).filter(
+      (el) =>
+        !el.closest("dialog, [role='dialog'], [role='alertdialog'], details"),
+    );
+    expect(pagePrimaries.length).toBeLessThanOrEqual(1);
+  });
 });

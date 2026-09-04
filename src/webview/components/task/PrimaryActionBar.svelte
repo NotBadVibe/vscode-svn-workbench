@@ -154,8 +154,8 @@
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 8px;
-    padding: 8px 0;
+    gap: var(--space-xs);
+    padding: var(--space-xs) 0;
   }
   .primary-action-bar__count {
     font-size: 12px;
@@ -164,7 +164,7 @@
   .primary-action-bar__buttons {
     display: flex;
     flex-wrap: wrap;
-    gap: 8px;
+    gap: var(--space-xs);
   }
   .primary-action-bar__status {
     font-size: 12px;

@@ -85,8 +85,8 @@
   .task-summary {
     display: flex;
     align-items: flex-start;
-    gap: 8px;
-    padding: 8px 12px;
+    gap: var(--space-xs);
+    padding: var(--space-xs) var(--space-sm);
     border: 1px solid var(--vscode-panel-border);
     border-radius: 4px;
     background: var(--vscode-editor-background);

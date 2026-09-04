@@ -1,0 +1,12 @@
+/*
+ * v0.1.6 V016-E 视觉间距 token（克制范围：仅 task/assistance 两组件目录使用）。
+ * - 8/12/16/24 四档统一，服从 VS Code 密度；4px 以下微间距保持硬编码。
+ * - 颜色/圆角/阴影沿用既有 --surface/--border/--radius 变量，本文件只收敛间距。
+ * - 其他模块样式不改，避免视觉回归面。
+ */
+:root {
+  --space-xs: 8px;
+  --space-sm: 12px;
+  --space-md: 16px;
+  --space-lg: 24px;
+}

@@ -626,4 +626,18 @@ describe("ConflictsModule 采用链（v0.1.6 V016-C3b 低危 5）", () => {
     expect(adopt).toBeDisabled();
     expect(adopt).toHaveAttribute("title", "该建议需要人工合并，无法一键采用");
   });
+
+  it("页面级 button--primary ≤1（对话框/展开区内除外，v0.1.6 V016-E）", () => {
+    const { container } = render(ConflictsModule, {
+      snapshot,
+      onAction: vi.fn(),
+    });
+    const pagePrimaries = Array.from(
+      container.querySelectorAll(".button--primary"),
+    ).filter(
+      (el) =>
+        !el.closest("dialog, [role='dialog'], [role='alertdialog'], details"),
+    );
+    expect(pagePrimaries.length).toBeLessThanOrEqual(1);
+  });
 });

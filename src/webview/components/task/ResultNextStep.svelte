@@ -105,7 +105,7 @@
     display: flex;
     flex-direction: column;
     gap: 4px;
-    padding: 8px 12px;
+    padding: var(--space-xs) var(--space-sm);
     border: 1px solid var(--vscode-panel-border);
     border-radius: 4px;
     background: var(--vscode-editor-background);
@@ -138,7 +138,7 @@
   .result-next-step__actions {
     display: flex;
     flex-wrap: wrap;
-    gap: 8px;
+    gap: var(--space-xs);
     margin-top: 4px;
   }
   @media (prefers-reduced-motion: reduce) {

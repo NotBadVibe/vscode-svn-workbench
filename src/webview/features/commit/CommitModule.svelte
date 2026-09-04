@@ -14,7 +14,7 @@
   import SearchInput from "../../components/list/SearchInput.svelte";
   import ResultCount from "../../components/list/ResultCount.svelte";
   import { useFileList } from "../../components/list/useFileList.svelte";
-  import { isExplicitSubmitShortcut } from "../../i18n/keyboard";
+  import CommitMessageEditor from "./CommitMessageEditor.svelte";
   import { formatZhDateTime } from "../../i18n/formatters";
   import {
     commitSelectionAiSourceLabels,
@@ -426,10 +426,6 @@
     snapshot.aiPrivacy.find((item) => item.scenario === "message"),
   );
 
-  function updateDraft(): void {
-    onAction("commit/update-draft", { message });
-  }
-
   /*
    * v0.0.9 §4 建议草稿：快照中的建议只在本地计算差异对比；
    * message 本地状态不被建议覆盖（不覆盖回归保护在 Host 侧强制）。
@@ -628,15 +624,6 @@
     inferred: "推断",
     toConfirm: "待确认",
   };
-
-  function handleMessageKeydown(event: KeyboardEvent): void {
-    if (!isExplicitSubmitShortcut(event)) return;
-    event.preventDefault();
-    onAction("commit/preview", {
-      selectedPaths: selectedPaths(),
-      message,
-    });
-  }
 
   const filterLabels: Record<CommitFilter, string> = {
     all: "全部",
@@ -1243,42 +1230,22 @@
               : "不含历史"}。</span
           >
         </div>{/if}
-      <div class="template-row" aria-label="提交说明模板">
-        {#each snapshot.templates as template (template.id)}
-          <button
-            title={template.body}
-            onclick={() =>
-              onAction("commit/apply-template", { templateId: template.id })}
-            >{template.label}</button
-          >
-        {/each}
-      </div>
-      <textarea
-        bind:value={message}
-        onblur={updateDraft}
-        oninput={() => onAction("commit/update-draft", { message })}
-        onkeydown={handleMessageKeydown}
-        aria-label="提交说明"
-        aria-describedby="commit-message-shortcut"
-        placeholder="说明改动意图、范围与影响…"
-        maxlength="2000"></textarea>
-      <div class="compose-meta">
-        <span>{message.length}/2000 个字符</span>
-        <span id="commit-message-shortcut">按 Ctrl/⌘ + Enter 生成提交预览</span>
-        {#if snapshot.conventionHint}<span title={snapshot.conventionHint}
-            >团队规范已加载</span
-          >{/if}
-      </div>
-      {#if snapshot.messageIssues.length > 0}
-        <div class="issue-list" role="alert">
-          {#each snapshot.messageIssues as issue, issueIndex (issueIndex)}
-            <div>
-              <span class="codicon codicon-warning" aria-hidden="true"
-              ></span>{issue}
-            </div>
-          {/each}
-        </div>
-      {/if}
+      <!-- v0.1.6 V016-E：提交说明编辑区已抽取为 CommitMessageEditor（受控展示 + 事件透传，state 仍由本模块权威）。 -->
+      <CommitMessageEditor
+        bind:message
+        templates={snapshot.templates}
+        messageIssues={snapshot.messageIssues}
+        conventionHint={snapshot.conventionHint}
+        onApplyTemplate={(templateId) =>
+          onAction("commit/apply-template", { templateId })}
+        onDraftUpdate={(next) =>
+          onAction("commit/update-draft", { message: next })}
+        onPreviewRequest={() =>
+          onAction("commit/preview", {
+            selectedPaths: selectedPaths(),
+            message,
+          })}
+      />
     </div>
 
     <!-- v0.1.6 V016-C：AI 建议与外发回执迁移进 AssistancePanel（回执卡的“开始模型生成”是面板内的确认动作，未展开时不出现；回执 token 仍由页面闭包携带，绝不进入组件）。 -->

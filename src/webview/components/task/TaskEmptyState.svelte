@@ -85,8 +85,8 @@
   .task-empty-state {
     display: flex;
     align-items: flex-start;
-    gap: 8px;
-    padding: 12px;
+    gap: var(--space-xs);
+    padding: var(--space-sm);
     border: 1px dashed var(--vscode-panel-border);
     border-radius: 4px;
     background: var(--vscode-editor-background);
@@ -112,7 +112,7 @@
   .task-empty-state__actions {
     display: flex;
     flex-wrap: wrap;
-    gap: 8px;
+    gap: var(--space-xs);
     margin-top: 4px;
   }
 </style>
