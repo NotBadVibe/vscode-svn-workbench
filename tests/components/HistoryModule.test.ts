@@ -343,8 +343,8 @@ describe("HistoryModule", () => {
     });
   });
 
-  // v0.1.5 V015-C1：恢复预览不可执行时确认禁用 + “重新检查”透传重新预览
-  it("恢复预览有阻止项时确认禁用，重新检查透传 history/preview-restore", async () => {
+  // v0.1.6 V016-F1：恢复预览不可执行时不自动弹模态，走内联错误 + 重试入口。
+  it("恢复预览有阻止项时不弹模态，内联错误重试透传 history/preview-restore", async () => {
     const onAction = vi.fn();
     render(HistoryModule, {
       snapshot: {
@@ -360,14 +360,13 @@ describe("HistoryModule", () => {
       },
       onAction,
     });
-    await screen.findByRole("dialog", { name: "历史恢复 1 个文件" });
-    const confirm = screen.getByRole("button", {
-      name: "确认覆盖 1 个文件",
-    });
-    expect(confirm).toBeDisabled();
+    // blocked 预览不自动打开对话框。
     expect(
-      screen.getByText("工作副本文件已变化，请重新检查后恢复。"),
-    ).toBeInTheDocument();
+      screen.queryByRole("dialog", { name: "历史恢复 1 个文件" }),
+    ).toBeNull();
+    // 内联错误展示阻止项，并提供重试入口。
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("工作副本文件已变化，请重新检查后恢复。");
     await fireEvent.click(screen.getByRole("button", { name: "重新检查" }));
     expect(onAction).toHaveBeenCalledWith("history/preview-restore", {
       revision: "12",
@@ -377,6 +376,39 @@ describe("HistoryModule", () => {
       "history/execute-restore",
       expect.anything(),
     );
+  });
+
+  it("V016-F1：意向单携带预览绑定，范围变化后确认前只读失效", async () => {
+    const onAction = vi.fn();
+    const restorePreview = {
+      token: "tok-stale",
+      revision: "12",
+      relativePath: "src/extension.ts",
+      command: 'svn cat -r 12 "src/extension.ts" > <working-file>',
+      canExecute: true,
+      issues: [],
+      scopeHash: "scope-1",
+      repositoryUuid: "repo-1",
+    };
+    const { rerender } = render(HistoryModule, {
+      snapshot: { ...snapshot, restorePreview },
+      scopeHash: "scope-1",
+      repositoryUuid: "repo-1",
+      onAction,
+    });
+    // 可执行预览仍自动打开，且绑定一致时可确认。
+    const dialog = await screen.findByRole("dialog", {
+      name: "历史恢复 1 个文件",
+    });
+    expect(dialog).not.toHaveTextContent("已失效（只读）");
+    // 同 token 下范围变化：确认前即只读展示。
+    await rerender({
+      snapshot: { ...snapshot, restorePreview },
+      scopeHash: "scope-2",
+      repositoryUuid: "repo-1",
+      onAction,
+    });
+    expect(dialog).toHaveTextContent("已失效（只读）");
   });
 
   // v0.1.5 V015-D2：加载更多携带比较选择；快照增长后选中修订、比较选择与滚动容器不丢。

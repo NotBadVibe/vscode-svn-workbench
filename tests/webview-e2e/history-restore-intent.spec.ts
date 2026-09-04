@@ -5,7 +5,8 @@ import { expect, test } from "@playwright/test";
  * 全程确定性：只用 expect 轮询，不用 waitForTimeout 死等。
  * mock 语义：history/preview-restore 下发 restorePreview，
  * history/execute-restore 下发“已恢复为 r42 内容；尚未提交。”反馈；
- * ?historyRestore=blocked 下发不可执行的恢复预览（确认禁用 + 重新检查）。
+ * ?historyRestore=blocked 下发不可执行的恢复预览
+ * （v0.1.6 V016-F1：不再自动弹模态，走内联错误 + 重新检查）。
  */
 test("V015-C1：历史恢复走意向单全路径（预览→确认→执行反馈）", async ({
   page,
@@ -38,26 +39,25 @@ test("V015-C1：历史恢复走意向单全路径（预览→确认→执行反�
   await expect(page.getByText(/已恢复为 r42 内容；尚未提交/)).toBeVisible();
 });
 
-test("V015-C1：不可执行的恢复预览确认禁用，重新检查透传重新预览", async ({
+test("V016-F1：不可执行的恢复预览不弹模态，内联错误重试透传重新预览", async ({
   page,
 }) => {
   await page.goto("/?module=history&historyRestore=blocked");
   await expect(page.getByRole("heading", { name: "修订历史" })).toBeVisible();
 
   await page.getByRole("button", { name: "从此修订恢复" }).click();
-  const dialog = page.getByRole("dialog", { name: "历史恢复 1 个文件" });
-  await expect(dialog).toBeVisible();
-
-  // 阻止项展示，确认禁用。
+  // blocked 预览不自动打开对话框，走内联错误 + 重试入口。
+  const alert = page.getByRole("alert");
+  await expect(alert).toContainText("工作副本文件已变化，请重新检查后恢复。");
   await expect(
-    dialog.getByText("工作副本文件已变化，请重新检查后恢复。"),
-  ).toBeVisible();
-  await expect(
-    dialog.getByRole("button", { name: "确认覆盖 1 个文件" }),
-  ).toBeDisabled();
+    page.getByRole("dialog", { name: "历史恢复 1 个文件" }),
+  ).toHaveCount(0);
 
-  // 重新检查：关闭当前意向单并透传 history/preview-restore（mock 回同 token，
-  // 不自动重开，避免旧意向单复用）。
-  await dialog.getByRole("button", { name: "重新检查" }).click();
-  await expect(dialog).toBeHidden();
+  // 重新检查：透传 history/preview-restore（mock 回同 token，不开对话框，
+  // 内联错误保持可见等待新的可执行预览）。
+  await alert.getByRole("button", { name: "重新检查" }).click();
+  await expect(
+    page.getByRole("dialog", { name: "历史恢复 1 个文件" }),
+  ).toHaveCount(0);
+  await expect(alert).toContainText("工作副本文件已变化，请重新检查后恢复。");
 });

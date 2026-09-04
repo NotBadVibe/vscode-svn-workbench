@@ -4,6 +4,7 @@
     UpdateSnapshot,
     WebviewAction,
   } from "@protocol/workbenchProtocol";
+  import { isOperationIntentStale } from "../../../operation/operationIntent";
   import PreviewPathList from "../../components/list/PreviewPathList.svelte";
   import OperationIntentDialog from "../../components/operation/OperationIntentDialog.svelte";
   import PrimaryActionBar from "../../components/task/PrimaryActionBar.svelte";
@@ -24,6 +25,8 @@
     snapshot,
     onAction,
     pathDetail,
+    scopeHash,
+    repositoryUuid,
   }: {
     snapshot: UpdateSnapshot;
     onAction: (action: WebviewAction, data?: Record<string, unknown>) => void;
@@ -32,11 +35,64 @@
       HostToWebviewMessage,
       { type: "file/path-detail-result" }
     >["payload"];
+    /**
+     * v0.1.6 V016-F1：信封当前绑定（意向单自检 stale 的“当前值”侧）。
+     * 缺省时回退预览自带绑定，不误判。
+     */
+    scopeHash?: string;
+    repositoryUuid?: string;
   } = $props();
 
   // v0.0.14 批次 D：更新确认意向单（远端为操作对象，重叠为风险提示）
   let updateIntentOpen = $state(false);
   let updateTriggerEl = $state<HTMLElement | null>(null);
+  /*
+   * v0.1.6 V016-F1：预览生成时绑定（token 首见时快照，Host 随预览下发）。
+   * 与当前信封绑定比对自检 stale：范围/仓库变化或本地修订变化后，对话框
+   * 在确认前即只读展示（Host 执行前复验不动，候选变化仍由 Host 拒绝并作废预览）。
+   * 注意 revision 取快照时的本地修订（checkedRevision 是远端检查基线，首帧
+   * 即与本地不一致，不能直接比对）。
+   */
+  let updateBinding = $state<
+    | {
+        token: string;
+        scopeHash?: string;
+        candidateHash?: string;
+        repositoryUuid?: string;
+        revision?: string;
+      }
+    | undefined
+  >(undefined);
+  $effect(() => {
+    const preview = snapshot.preview;
+    if (preview && updateBinding?.token !== preview.token) {
+      updateBinding = {
+        token: preview.token,
+        scopeHash: preview.scopeHash,
+        candidateHash: preview.candidateHash,
+        repositoryUuid: preview.repositoryUuid,
+        revision: snapshot.info.revision,
+      };
+    }
+    if (!preview) updateBinding = undefined;
+  });
+  const updateStale = $derived.by(() => {
+    if (!updateBinding) return false;
+    return isOperationIntentStale(
+      {
+        scopeHash: updateBinding.scopeHash,
+        candidateHash: updateBinding.candidateHash,
+        repositoryUuid: updateBinding.repositoryUuid,
+        revision: updateBinding.revision,
+      },
+      {
+        repositoryUuid: repositoryUuid ?? updateBinding.repositoryUuid ?? "",
+        scopeHash: scopeHash ?? updateBinding.scopeHash ?? "",
+        candidateHash: undefined,
+        revision: snapshot.info.revision,
+      },
+    );
+  });
   const updateIntent = $derived.by(() => {
     const preview = snapshot.preview;
     if (!preview) return undefined;
@@ -66,7 +122,10 @@
       canExecute: preview.canExecute,
       issues: [],
       commands: preview.commands,
-      stale: false,
+      scopeHash: preview.scopeHash,
+      candidateHash: preview.candidateHash,
+      repositoryUuid: preview.repositoryUuid,
+      stale: updateStale,
     };
   });
   // v0.1.5 V015-B2：确认标签集中进 terminology（远端数量未知时回退，不虚构数字）。

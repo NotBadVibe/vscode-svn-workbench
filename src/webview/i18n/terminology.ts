@@ -440,6 +440,18 @@ export const taskSkeletonLabels = {
 } as const;
 
 /**
+ * v0.1.6 V016-F1：骨架动作溢出提示（次级 >2 / 主要 >1 时渲染文字说明，
+ * 不再仅 DEV 日志静默截断；渲染侧仍只缩小不扩大）。
+ */
+export function taskSecondaryOverflowLabel(hiddenCount: number): string {
+  return `另有 ${hiddenCount} 个次要操作未显示`;
+}
+
+export function taskExtraPrimaryLabel(extraCount: number): string {
+  return `另有 ${extraCount} 个主要操作未显示，仅展示首个`;
+}
+
+/**
  * v0.1.6 V016-B：共享帮助容器统一文案（AssistancePanel 专用）。
  * - 组件内不生造领域文案：入口、分组、外发说明、过期、错误出口全部收口此处。
  * - 本地结果禁止显示 AI 字样：本地分组与未配置提示均不含“AI/智能”。

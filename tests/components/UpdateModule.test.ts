@@ -187,6 +187,45 @@ describe("UpdateModule", () => {
     expect(summary).toHaveTextContent("中风险");
   });
 
+  it("V016-F1：意向单携带预览绑定，范围变化后确认前只读失效", async () => {
+    const onAction = vi.fn();
+    const preview = {
+      token: "update-stale",
+      canExecute: true,
+      localCount: 1,
+      remoteCount: 0,
+      risk: "low" as const,
+      overlapPaths: [],
+      messages: ["没有明显风险。"],
+      commands: ['svn update --accept postpone "."'],
+      scopeHash: "scope-1",
+      candidateHash: "cand-1",
+      repositoryUuid: "repo-1",
+    };
+    const { rerender } = render(UpdateModule, {
+      snapshot: updateSnapshot({ preview }),
+      scopeHash: "scope-1",
+      repositoryUuid: "repo-1",
+      onAction,
+    });
+    await fireEvent.click(
+      await screen.findByRole("button", { name: "确认更新（0）" }),
+    );
+    const dialog = screen.getByRole("dialog", {
+      name: "更新 0 个远端变更",
+    });
+    // 绑定一致时可确认。
+    expect(dialog).not.toHaveTextContent("已失效（只读）");
+    // 同 token 下范围变化：确认前即只读展示，不等 Host 拒绝。
+    await rerender({
+      snapshot: updateSnapshot({ preview }),
+      scopeHash: "scope-2",
+      repositoryUuid: "repo-1",
+      onAction,
+    });
+    expect(dialog).toHaveTextContent("已失效（只读）");
+  });
+
   it("V015-B2 骨架：每个操作栏有且仅有 1 个 primary", () => {
     render(UpdateModule, {
       snapshot: updateSnapshot({

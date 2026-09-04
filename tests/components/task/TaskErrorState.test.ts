@@ -58,6 +58,9 @@ describe("TaskErrorState", () => {
     ["apiKey 赋值", "请求失败，apiKey=sk-abc123，请检查配置"],
     ["password 赋值", "认证失败，password: s3cr3t"],
     ["passwd", "passwd 文件读取失败"],
+    ["pwd 赋值", "连接失败，pwd=s3cr3t，请检查配置"],
+    ["URL 嵌 token", "请求失败：https://svn.example.test/repos?token=abc123"],
+    ["URL 片段嵌 token", "请求失败：https://svn.example.test/r#token=abc123"],
     ["私钥块", "-----BEGIN RSA PRIVATE KEY-----\nfakekey"],
   ])("diagnosticText 命中密钥模式时拒绝渲染原文：%s", (_name, text) => {
     render(TaskErrorState, {
@@ -75,6 +78,14 @@ describe("TaskErrorState", () => {
 
   it("确认令牌不计入密钥模式（正常诊断不受影响）", () => {
     const tokenText = "确认令牌 tok-123 已过期，范围变化后请重新生成预览。";
+    render(TaskErrorState, {
+      props: { ...baseProps, diagnosticText: tokenText, onAction: vi.fn() },
+    });
+    expect(screen.getByText(tokenText)).toBeInTheDocument();
+  });
+
+  it("V016-F1：非 URL 的 token 冒号写法不拦截（确认令牌诊断可读）", () => {
+    const tokenText = "网关返回 token: 已过期，请重新生成预览。";
     render(TaskErrorState, {
       props: { ...baseProps, diagnosticText: tokenText, onAction: vi.fn() },
     });

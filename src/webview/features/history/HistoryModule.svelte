@@ -17,6 +17,7 @@
   import TaskSummary from "../../components/task/TaskSummary.svelte";
   import OperationIntentDialog from "../../components/operation/OperationIntentDialog.svelte";
   import type { OperationIntentView } from "../../../operation/operationIntent";
+  import { isOperationIntentStale } from "../../../operation/operationIntent";
   import { naturalCompare } from "../../../selection/selectionSort";
   import { formatZhDateTime } from "../../i18n/formatters";
   import {
@@ -35,6 +36,8 @@
     snapshot,
     onAction,
     pathDetail,
+    scopeHash,
+    repositoryUuid,
   }: {
     snapshot: HistorySnapshot;
     onAction: (action: WebviewAction, data?: Record<string, unknown>) => void;
@@ -43,6 +46,12 @@
       HostToWebviewMessage,
       { type: "file/path-detail-result" }
     >["payload"];
+    /**
+     * v0.1.6 V016-F1：信封当前绑定（意向单自检 stale 的“当前值”侧）。
+     * 缺省时回退快照内绑定，不误判。
+     */
+    scopeHash?: string;
+    repositoryUuid?: string;
   } = $props();
 
   let query = $state("");
@@ -253,6 +262,20 @@
   let restoreIntentOpen = $state(false);
   let restoreTriggerEl = $state<HTMLElement | null>(null);
   let seenRestoreToken = $state<string | undefined>(undefined);
+  /*
+   * v0.1.6 V016-F1：恢复预览生成时绑定（token 首见时快照，Host 随预览下发）。
+   * 与当前绑定比对自检 stale：范围/仓库变化后，对话框在确认前即只读展示
+   * （文件内容变化仍由 Host 的 contentHash 复验拒绝并作废预览）。
+   */
+  let restoreBinding = $state<
+    | {
+        token: string;
+        scopeHash?: string;
+        repositoryUuid?: string;
+        revision?: string;
+      }
+    | undefined
+  >(undefined);
   const restoreIntent = $derived.by((): OperationIntentView | undefined => {
     const preview = snapshot.restorePreview;
     if (!preview) return undefined;
@@ -271,20 +294,64 @@
       canExecute: preview.canExecute,
       issues: preview.issues,
       commands: [preview.command],
-      stale: false,
+      scopeHash: preview.scopeHash,
+      repositoryUuid: preview.repositoryUuid,
+      stale: restoreBinding
+        ? isOperationIntentStale(
+            {
+              scopeHash: restoreBinding.scopeHash,
+              repositoryUuid: restoreBinding.repositoryUuid,
+              revision: restoreBinding.revision,
+            },
+            {
+              repositoryUuid:
+                repositoryUuid ?? restoreBinding.repositoryUuid ?? "",
+              scopeHash:
+                scopeHash ??
+                restoreBinding.scopeHash ??
+                snapshot.freshness?.scopeHash ??
+                "",
+              candidateHash: undefined,
+              revision: snapshot.freshness?.revision,
+            },
+          )
+        : false,
     };
   });
   $effect(() => {
-    const token = snapshot.restorePreview?.token;
+    const preview = snapshot.restorePreview;
+    if (preview && restoreBinding?.token !== preview.token) {
+      restoreBinding = {
+        token: preview.token,
+        scopeHash: preview.scopeHash,
+        repositoryUuid: preview.repositoryUuid,
+        revision: snapshot.freshness?.revision,
+      };
+    }
+    if (!preview) restoreBinding = undefined;
+  });
+  $effect(() => {
+    const preview = snapshot.restorePreview;
+    const token = preview?.token;
     if (token && token !== seenRestoreToken) {
       seenRestoreToken = token;
-      restoreIntentOpen = true;
+      // v0.1.6 V016-F1：blocked 预览（canExecute:false）不自动弹模态，
+      // 走内联错误 + 重试入口；仅可执行预览自动打开确认对话框。
+      if (preview?.canExecute) restoreIntentOpen = true;
     }
     if (!token) {
       seenRestoreToken = undefined;
       restoreIntentOpen = false;
     }
   });
+
+  /** blocked 预览的内联重试入口（与意向单“重新检查”同一动作）。 */
+  function recheckRestore(): void {
+    restoreIntentOpen = false;
+    onAction("history/preview-restore", {
+      revision: snapshot.restorePreview?.revision,
+    });
+  }
 
   /** ResultNextStep / TaskEmptyState 动作纯透传：只映射页面已知标识。 */
   function handleHistoryResultAction(action: string): void {
@@ -661,6 +728,21 @@
             </div>{/each}
         </ScrollArea>
       {/if}
+      <!-- v0.1.6 V016-F1：blocked 预览走内联错误 + 重试入口，不自动弹模态。 -->
+      {#if snapshot.restorePreview && !snapshot.restorePreview.canExecute}
+        <div class="notice notice--warning" role="alert">
+          <span class="codicon codicon-warning" aria-hidden="true"></span>
+          <span
+            >恢复预览暂不可执行：{snapshot.restorePreview.issues.join("；") ||
+              "请重新检查后恢复。"}</span
+          >
+          <button
+            type="button"
+            class="button button--secondary"
+            onclick={recheckRestore}>重新检查</button
+          >
+        </div>
+      {/if}
       <!-- v0.1.5 V015-C1：恢复预览改走通用意向单（自建 dialog 已删除；issues/命令并入意向单）。
            Host 侧 history/execute-restore 的 token + contentHash 复验链不动。 -->
       <OperationIntentDialog
@@ -677,12 +759,7 @@
           onAction("history/execute-restore", { previewToken: token });
         }}
         onCancel={() => (restoreIntentOpen = false)}
-        onRecheck={() => {
-          restoreIntentOpen = false;
-          onAction("history/preview-restore", {
-            revision: snapshot.restorePreview?.revision,
-          });
-        }}
+        onRecheck={recheckRestore}
       />
     {:else}
       <!-- v0.1.5 V015-B2：空态两句→TaskEmptyState，补齐第三句（调整条件 / 加载更早）。 -->

@@ -231,10 +231,12 @@ export function validateOperationIntentForExecute(
 }
 
 /**
- * v0.1.5 V015-C3b 应修 6：确认挑战目标归一化（去首尾空白 + 去尾斜杠，
- * 仅 scheme + host 小写，path 保持原样）。
+ * v0.1.5 V015-C3b 应修 6（v0.1.6 V016-F1 补 userinfo 段）：确认挑战目标归一化
+ * （去首尾空白 + 去尾斜杠，仅 scheme + 主机部分小写，userinfo 与 path 保持原样）。
  * - 去尾斜杠：`https://host/repo/` 与 `https://host/repo` 视为同一目标；
- * - scheme/host 小写：避免因协议/主机大小写拼写差异误拒；
+ * - scheme/主机小写：避免因协议/主机大小写拼写差异误拒；
+ * - userinfo（`user@` / `user:pass@`）保持原样：该段大小写敏感，
+ *   `https://User@host` 与 `https://user@host` 不得误判一致；
  * - path 保持原样：SVN 路径大小写敏感，大小写不一致必须拒绝；
  *   最终目标仍以 Host 预览的原始值为准执行。
  */
@@ -246,12 +248,15 @@ export function normalizeConfirmationTarget(value: string): string {
   const scheme = trimmed.slice(0, schemeEnd).toLowerCase();
   const rest = trimmed.slice(schemeEnd + 3);
   const slash = rest.indexOf("/");
-  // 只有主机没有路径：主机整体小写。
-  if (slash < 0) return `${scheme}://${rest.toLowerCase()}`;
-  const host = rest.slice(0, slash).toLowerCase();
-  // 路径保持原样（含查询串，不做大小写折叠）。
-  const pathPart = rest.slice(slash);
-  return `${scheme}://${host}${pathPart}`;
+  const authority = slash < 0 ? rest : rest.slice(0, slash);
+  const pathPart = slash < 0 ? "" : rest.slice(slash);
+  // userinfo 段不折叠：取最后一个 `@` 之后的主机（含端口）才小写。
+  const at = authority.lastIndexOf("@");
+  const userinfo = at >= 0 ? authority.slice(0, at + 1) : "";
+  const hostPort = (
+    at >= 0 ? authority.slice(at + 1) : authority
+  ).toLowerCase();
+  return `${scheme}://${userinfo}${hostPort}${pathPart}`;
 }
 
 /** 确认挑战是否通过（归一化后精确比对，不一致禁止确认）。 */

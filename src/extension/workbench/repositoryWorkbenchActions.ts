@@ -165,6 +165,11 @@ export class RepositoryWorkbenchActions {
               canExecute:
                 session.repositoryState.advanced.preview.issues.length === 0,
               destructive: session.repositoryState.advanced.preview.destructive,
+              scopeHash: session.repositoryState.advanced.preview.scopeHash,
+              candidateHash:
+                session.repositoryState.advanced.preview.candidateHash,
+              repositoryUuid:
+                session.repositoryState.advanced.preview.repositoryUuid,
             }
           : undefined,
       },
@@ -367,6 +372,9 @@ export class RepositoryWorkbenchActions {
     state.preview = {
       token: randomUUID(),
       candidateHash: hashCandidateState(candidates, "", []),
+      // v0.1.6 V016-F1：预览携带生成时绑定，Webview 意向单据此自检 stale。
+      scopeHash: session.scopeHash,
+      repositoryUuid: session.repositoryUuid,
       operation,
       title,
       commands,
@@ -421,6 +429,9 @@ export class RepositoryWorkbenchActions {
     state.preview = {
       token: randomUUID(),
       candidateHash: hashCandidateState(candidates, "", []),
+      // v0.1.6 V016-F1：预览携带生成时绑定，Webview 意向单据此自检 stale。
+      scopeHash: session.scopeHash,
+      repositoryUuid: session.repositoryUuid,
       operation: "apply-patch",
       title: "应用补丁",
       commands: [
@@ -513,6 +524,14 @@ export class RepositoryWorkbenchActions {
         true,
         requestId,
       );
+      // v0.1.6 V016-F1：作废预览后主动推送快照，Webview 对话框随之关闭。
+      // 拒绝错误已下发，快照构建含真实 SVN 查询，异常环境下失败不得掩盖
+      // 原拒绝或二次抛错，仅尽力而为。
+      try {
+        await this.host.sendRepositorySnapshot(session, requestId);
+      } catch {
+        // 忽略：原拒绝已送达，旧预览已作废。
+      }
       return;
     }
     if (candidateHash !== preview.candidateHash) {
@@ -524,6 +543,14 @@ export class RepositoryWorkbenchActions {
         true,
         requestId,
       );
+      // v0.1.6 V016-F1：作废预览后主动推送快照，Webview 对话框随之关闭。
+      // 拒绝错误已下发，快照构建含真实 SVN 查询，异常环境下失败不得掩盖
+      // 原拒绝或二次抛错，仅尽力而为。
+      try {
+        await this.host.sendRepositorySnapshot(session, requestId);
+      } catch {
+        // 忽略：原拒绝已送达，旧预览已作废。
+      }
       return;
     }
 
