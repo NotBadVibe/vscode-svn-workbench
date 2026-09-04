@@ -457,12 +457,12 @@
     },
     {
       "version": "0.1.6",
-      "status": "draft",
-      "phase": "planned",
+      "status": "released",
+      "phase": "released",
       "baseVersion": "0.1.5",
       "canonicalEntry": "releases/v0.1.6/README.md",
       "manifest": "releases/v0.1.6/manifest.json",
-      "releasedFact": false,
+      "releasedFact": true,
       "topics": [
         "ai-progressive-disclosure",
         "visual-hierarchy",
