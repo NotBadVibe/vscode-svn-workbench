@@ -229,6 +229,24 @@ describe("UnderstandingModule 变更解读", () => {
     });
   });
 
+  it("确认事实仅 keyCode 229（无 isComposing）Enter 也不触发确认", async () => {
+    const onAction = renderUnderstanding({ state: "ready" });
+    const input = screen.getByLabelText("输入要确认的事实");
+    await fireEvent.input(input, { target: { value: "事实 B。" } });
+    // 仅上报 keyCode 229 的输入法实现同样视为候选阶段。
+    const composing229 = new KeyboardEvent("keydown", {
+      key: "Enter",
+      bubbles: true,
+      cancelable: true,
+    });
+    Object.defineProperty(composing229, "keyCode", { value: 229 });
+    input.dispatchEvent(composing229);
+    expect(onAction).not.toHaveBeenCalledWith(
+      "understanding/confirm-fact",
+      expect.anything(),
+    );
+  });
+
   it("待复核确认展示标记", () => {
     renderUnderstanding({
       state: "stale",

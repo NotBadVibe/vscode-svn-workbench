@@ -8,6 +8,7 @@
     element = $bindable(),
     onScroll,
     onKeydown,
+    autofocusOnMount = false,
     children,
   }: {
     label: string;
@@ -17,6 +18,12 @@
     onScroll?: (event: Event) => void;
     /** v0.0.8：列表键盘导航（方向键/Space/Ctrl+A），由使用方实现。 */
     onKeydown?: (event: KeyboardEvent) => void;
+    /**
+     * 中文注释：V017-C T6——模块主区落点。仅根滚动区是模块根时使用：
+     * 挂载聚焦一次，快照刷新不重挂载、不抢焦点。默认为 false，不影响
+     * 其他内嵌滚动区。
+     */
+    autofocusOnMount?: boolean;
     children: Snippet;
   } = $props();
 
@@ -42,6 +49,11 @@
 
   onMount(() => {
     if (!element) return;
+    // 中文注释：V017-C T6——模块根滚动区挂载聚焦一次（已 tabindex=0）。
+    if (autofocusOnMount) {
+      const landing = element;
+      queueMicrotask(() => landing.focus());
+    }
     const resizeObserver =
       typeof ResizeObserver === "undefined"
         ? undefined

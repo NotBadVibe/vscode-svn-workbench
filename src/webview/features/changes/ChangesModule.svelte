@@ -1,5 +1,7 @@
 <script lang="ts">
   import { ContextMenu } from "bits-ui";
+  // 中文注释：V017-C T6——模块主区落点（挂载聚焦一次，刷新不抢焦点）。
+  import { focusOnMount } from "../../components/ui/focusOnMount";
   import { tick } from "svelte";
   import type {
     ChangesSnapshot,
@@ -23,6 +25,7 @@
   import BulkActionBar from "../../components/list/BulkActionBar.svelte";
   import SearchInput from "../../components/list/SearchInput.svelte";
   import ResultCount from "../../components/list/ResultCount.svelte";
+  import ListShortcutHint from "../../components/help/ListShortcutHint.svelte";
   import PreviewPathList from "../../components/list/PreviewPathList.svelte";
   import OperationIntentDialog from "../../components/operation/OperationIntentDialog.svelte";
   import TaskEmptyState from "../../components/task/TaskEmptyState.svelte";
@@ -88,6 +91,8 @@
   const MODE = "changes" as const;
 
   let query = $state("");
+  /** V017-B `/` 聚焦搜索目标（集中 keymap `list/searchFocus`）。 */
+  let searchInputRef = $state<{ focusInput: () => void } | undefined>();
   let activeStatus = $state<WorkbenchFileStatus | "all">("all");
   // v0.0.17 批次 E（C-13）：文件类型筛选（选项从当前候选推导）与命名预设。
   let activeFileType = $state("all");
@@ -292,6 +297,9 @@
   let moreTriggerEl = $state<HTMLElement | null>(null);
   let blockedReasonsOpen = $state(false);
   let blockedReasonsEl = $state<HTMLElement | null>(null);
+  // 中文注释：V017-C T5——绑定的触发按钮引用；Esc 返回焦点用此引用，
+  // 避免全局 querySelector 在状态切换时选中错误按钮。
+  let blockedReasonsTrigger = $state<HTMLElement | null>(null);
 
   // 刷新合法交集：只保留新快照中仍存在且未变 blocked 的选择；新文件不自动加入。
   let lastRefreshedFiles: WorkbenchFileView[] | undefined;
@@ -347,6 +355,8 @@
       rowMenuOpen = true;
       return true;
     },
+    // V017-B `/` 聚焦搜索（集中 keymap `list/searchFocus`，仅有搜索框的列表）。
+    onFocusSearch: () => searchInputRef?.focusInput(),
   });
 
   $effect(() => {
@@ -698,9 +708,10 @@
   }
 </script>
 
-<section class="feature-layout">
+<section class="feature-layout" use:focusOnMount tabindex="-1">
   <div class="feature-toolbar">
     <SearchInput
+      bind:this={searchInputRef}
       bind:value={query}
       ariaLabel="筛选变更文件"
       placeholder="筛选文件…"
@@ -895,6 +906,8 @@
   />
 
   <div class="table-card">
+    <!-- V017-B 列表紧凑提示条（按区域实际绑定生成，可忽略、可关闭）。 -->
+    <ListShortcutHint region="list" hintKey="changes-list" searchAvailable />
     {#if pathDetail && list.detailOpen}
       <div class="path-detail-host">
         <div class="path-detail-host__bar">
@@ -1012,6 +1025,7 @@
       >
         <ContextMenu.Trigger>
           {#snippet child({ props })}
+            <!-- V017-D P2-5 豁免：file-list 需 ContextMenu.Trigger props 透传 + 虚拟化行定位，暂保持原生 scroll-region div（已带 scroll-region/data-scroll-region/无障碍属性），不接入 ScrollArea；缺滚动阴影 data 状态为已知取舍。 -->
             <!-- svelte-ignore a11y_no_noninteractive_tabindex -- 文件列表需要键盘焦点，以支持 PageUp/PageDown 和 End 滚动。 -->
             <div
               {...props}
@@ -1344,6 +1358,7 @@
       {:else if primaryAction.kind === "blocked"}
         <button
           class="button button--primary"
+          bind:this={blockedReasonsTrigger}
           onclick={(event) =>
             toggleBlockedReasons(event.currentTarget as HTMLElement)}
           aria-expanded={blockedReasonsOpen}
@@ -1397,11 +1412,7 @@
           if (event.key === "Escape") {
             event.stopPropagation();
             blockedReasonsOpen = false;
-            document
-              .querySelector<HTMLButtonElement>(
-                ".bulk-action-bar .button--primary",
-              )
-              ?.focus();
+            blockedReasonsTrigger?.focus();
           }
         }}
       >
@@ -1477,12 +1488,17 @@
       </details>
       {#each snapshot.operationPreview.issues as issue, issueIndex (issueIndex)}<div
           class="notice notice--error"
+          role="alert"
         >
-          {issue}
+          <span class="codicon codicon-error" aria-hidden="true"></span><span
+            >{issue}</span
+          >
         </div>{/each}
       {#if previewSelectionOutOfSync}
         <div class="notice notice--warning" role="status">
-          选择已变化，旧预览已失效；请重新预览后再执行。
+          <span class="codicon codicon-warning" aria-hidden="true"></span><span
+            >选择已变化，旧预览已失效；请重新预览后再执行。</span
+          >
         </div>
       {/if}
       {#if snapshot.operationPreview.destructive}

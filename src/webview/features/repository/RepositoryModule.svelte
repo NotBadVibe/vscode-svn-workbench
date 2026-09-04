@@ -1,5 +1,7 @@
 <script lang="ts">
   import type { Component } from "svelte";
+  // 中文注释：V017-C T6——模块主区落点（挂载聚焦一次，刷新不抢焦点）。
+  import { focusOnMount } from "../../components/ui/focusOnMount";
   import { SvelteSet } from "svelte/reactivity";
   import type {
     HostToWebviewMessage,
@@ -421,7 +423,12 @@
   }
 </script>
 
-<section class="repository-page" data-repository-task={currentTask}>
+<section
+  class="repository-page"
+  data-repository-task={currentTask}
+  use:focusOnMount
+  tabindex="-1"
+>
   <!-- v0.1.5 V015-D2：任务标题由 ScopeBar H1 表达，页内不再重复；此处仅保留操作说明。 -->
   <p class="repository-intro">
     当前页面只显示这项任务；任何写操作都先生成精确预览，再由你确认。

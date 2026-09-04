@@ -10,6 +10,7 @@
    *   本文件不声明全局 overflow。
    */
   import { isExplicitSubmitShortcut } from "../../i18n/keyboard";
+  import { commitMessageShortcutHint } from "../../i18n/shortcutHelp";
 
   /** 提交说明模板（Host 下发，id/label/body）。 */
   export interface CommitMessageTemplate {
@@ -73,7 +74,7 @@
     {maxlength}></textarea>
   <div class="compose-meta">
     <span>{message.length}/{maxlength} 个字符</span>
-    <span id="commit-message-shortcut">按 Ctrl/⌘ + Enter 生成提交预览</span>
+    <span id="commit-message-shortcut">{commitMessageShortcutHint}</span>
     {#if conventionHint}<span title={conventionHint}>团队规范已加载</span>{/if}
   </div>
   {#if messageIssues.length > 0}

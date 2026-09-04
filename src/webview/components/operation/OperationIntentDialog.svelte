@@ -81,7 +81,9 @@
         } catch {
           dialogEl.setAttribute("open", "");
         }
-        // 焦点锁定起点：白名单挑战优先复述输入框，否则优先确认按钮
+        // 中文注释：V017-C T3——焦点锁定起点：白名单挑战优先复述输入框，
+        // 否则优先可用的确认按钮；stale/不可执行导致确认按钮 disabled 时
+        // （focus() 会静默失败）回退到首个可聚焦控件（取消/重新检查）。
         queueMicrotask(() => {
           const challengeField = dialogEl?.querySelector<HTMLElement>(
             "[data-challenge-input]",
@@ -90,10 +92,26 @@
             challengeField.focus();
             return;
           }
-          const first = dialogEl?.querySelector<HTMLButtonElement>(
-            "button[data-primary]",
+          const primary = dialogEl?.querySelector<HTMLButtonElement>(
+            "button[data-primary]:not([disabled])",
           );
-          (first ?? dialogEl)?.focus();
+          if (primary) {
+            primary.focus();
+            return;
+          }
+          // 中文注释：优先操作栏内的可用按钮（取消/重新检查），再退化为
+          // 全对话框首个可聚焦控件，最后以对话框自身为保底落点。
+          const actionFallback = dialogEl?.querySelector<HTMLElement>(
+            ".operation-intent-dialog__actions button:not([disabled])",
+          );
+          if (actionFallback) {
+            actionFallback.focus();
+            return;
+          }
+          const fallback = dialogEl?.querySelector<HTMLElement>(
+            'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+          );
+          (fallback ?? dialogEl)?.focus();
         });
       });
     } else {
@@ -152,10 +170,6 @@
         }
       }
     }
-    // IME 候选阶段 Enter 不触发确认
-    if (event.key === "Enter" && isComposing) {
-      event.preventDefault();
-    }
   }
 
   // 点击 backdrop 关闭（dialog 原生：点击 ::backdrop 会触发 cancel 事件，此处用 mousedown 兜底）
@@ -171,6 +185,7 @@
     bind:this={dialogEl}
     class="operation-intent-dialog"
     aria-modal="true"
+    tabindex="-1"
     aria-label={intent.title}
     onkeydown={handleKeydown}
     oncompositionstart={() => (isComposing = true)}
@@ -203,8 +218,10 @@
           {/each}
         </div>
       {:else if !intent.canExecute}
-        <div class="notice notice--warning">
-          当前意向单暂不可执行，请检查影响清单。
+        <div class="notice notice--warning" role="note">
+          <span class="codicon codicon-info" aria-hidden="true"></span><span
+            >当前意向单暂不可执行，请检查影响清单。</span
+          >
         </div>
       {/if}
 

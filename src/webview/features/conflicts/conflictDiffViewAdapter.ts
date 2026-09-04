@@ -158,11 +158,20 @@ export function mountConflictDiffView(
         rev.revealLine(conflictIndex + 1);
         return;
       }
-      // 兜底：滚动容器内的冲突动作槽
+      // 兜底：滚动容器内的冲突动作槽（reduced motion 下用 auto，避免平滑滚动）。
       const slot = container.querySelector(
         `[data-conflict-actions="${conflictIndex}"]`,
       );
-      if (slot) slot.scrollIntoView({ behavior: "smooth", block: "center" });
+      if (slot) {
+        const reduceMotion =
+          typeof window !== "undefined" &&
+          typeof window.matchMedia === "function" &&
+          window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+        slot.scrollIntoView({
+          behavior: reduceMotion ? "auto" : "smooth",
+          block: "center",
+        });
+      }
     },
     getBlockProgress: () => ({ current: 0, total: blockTotal }), // 块进度由组件侧 currentBlock 维护，adapter 仅提供总数，避免谎报 current=1
     getControlledResult: () => {

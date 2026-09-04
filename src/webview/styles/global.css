@@ -208,8 +208,21 @@ button.path-detail__value {
 button.path-detail__value:hover {
   text-decoration: underline;
 }
+/* V017-D P2-7：Projects 页最小布局——补 module-card 容器 padding 与纵向流，窄视口不贴边、无横向溢出。 */
+.module-card {
+  min-width: 0;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px;
+}
+.projects-module {
+  min-width: 0;
+}
 .projects-list {
   min-height: 0;
+  flex: 1;
 }
 .project-row {
   display: flex;
@@ -380,10 +393,8 @@ button.path-detail__value:hover {
   flex-basis: 100%;
   color: var(--warning);
 }
+/* V017-D P1-3：BulkActionBar 改文档流尾置，不做 sticky——祖先 .table-card{overflow:hidden}会截断吸附链导致 sticky 失效；file-list/changelist-list 各自内滚，底栏随文档流位于列表之后，视觉与可达一致。 */
 .bulk-action-bar {
-  position: sticky;
-  bottom: 0;
-  z-index: 3;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -546,6 +557,8 @@ button.path-detail__value:hover {
   overflow: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
+  /* V017-D P0-2：sticky 底栏（advanced-preview）吸住时不遮挡末项/焦点，scrollIntoView 预留底部空间；对齐 ScrollArea scroll-padding-block 模式。 */
+  scroll-padding-bottom: 72px;
 }
 .feature-layout {
   min-height: 100%;
@@ -755,6 +768,7 @@ button.path-detail__value:hover {
   background: var(--surface-2);
   border-bottom: 1px solid var(--border);
 }
+/* V017-D P2-6 现状：vh 估算在推荐条/进度条出现时偏大，页面级 workbench-content 滚动兜底保证无永久裁切；改 flex 链需重排模块骨架，留后续版本。 */
 .file-list {
   max-height: calc(100vh - 230px);
   overflow: auto;
@@ -787,6 +801,8 @@ button.path-detail__value:hover {
 }
 .file-row--blocked {
   background: color-mix(in srgb, var(--danger) 5%, transparent);
+  /* V017-E：阻止行不只靠背景色——左侧 danger 边框 + 选择说明文字（.selection-note）双通道。 */
+  border-left: 2px solid var(--danger);
 }
 .file-path {
   min-width: 0;
@@ -1223,6 +1239,14 @@ button.path-detail__value:hover {
 }
 .diff-line--added {
   background: color-mix(in srgb, var(--success) 9%, transparent);
+}
+/* V017-E：遗留 diff 行（当前 Diff/冲突主链路使用 @pierre/diffs `diffIndicators: "classic"`
+ * gutter +/-；此处为备用样式同样补 +/- 符号，不只靠红绿）。 */
+.diff-line--added .line-number::before {
+  content: "+ ";
+}
+.diff-line--removed .line-number::before {
+  content: "- ";
 }
 .diff-line--removed {
   background: color-mix(in srgb, var(--danger) 9%, transparent);
@@ -2073,7 +2097,8 @@ button.path-detail__value:hover {
   min-height: 0;
   height: 100%;
   display: grid;
-  grid-template-columns: minmax(360px, 0.9fr) minmax(380px, 1.1fr);
+  /* V017-D P1-4：下调 minmax 下限（360/380→300/320），721～754px 窄带不横向溢出；≤720px 仍按既有断点转单列。 */
+  grid-template-columns: minmax(300px, 0.9fr) minmax(320px, 1.1fr);
   overflow: hidden;
 }
 .history-list-pane {
@@ -2672,7 +2697,8 @@ button.path-detail__value:hover {
 .settings-grid,
 .diagnostics-layout {
   display: grid;
-  grid-template-columns: minmax(420px, 1.1fr) minmax(320px, 0.9fr);
+  /* V017-D P1-4：下调 minmax 下限（420/320→320/280，和+gap=614<721），窄带不横向溢出；≤720px 仍按既有断点转单列。 */
+  grid-template-columns: minmax(320px, 1.1fr) minmax(280px, 0.9fr);
   gap: 14px;
   align-items: start;
 }
@@ -2860,6 +2886,7 @@ button.path-detail__value:hover {
 .diagnostic-summary--fail > .codicon {
   color: var(--danger);
 }
+/* V017-D P2-6 现状：同 file-list，vh 估算偏大时由 workbench-content 兜底；保持现状。 */
 .diagnostic-list {
   max-height: calc(100vh - 320px);
   border: 1px solid var(--border);
@@ -3355,7 +3382,8 @@ button.path-detail__value:hover {
 }
 .repository-grid {
   display: grid;
-  grid-template-columns: minmax(420px, 1.15fr) minmax(300px, 0.85fr);
+  /* V017-D P1-4：下调 minmax 下限（420/300→320/260，和+gap=594<721），窄带不横向溢出；≤720px 仍按既有断点转单列。 */
+  grid-template-columns: minmax(320px, 1.15fr) minmax(260px, 0.85fr);
   gap: 14px;
 }
 .operation-card {

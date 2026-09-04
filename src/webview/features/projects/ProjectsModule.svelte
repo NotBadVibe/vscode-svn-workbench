@@ -6,6 +6,8 @@
   } from "@protocol/workbenchProtocol";
   import ScrollArea from "../../components/ui/ScrollArea.svelte";
   import { formatZhTime } from "../../i18n/formatters";
+  // 中文注释：V017-C T6——模块主区落点（挂载聚焦一次，刷新不抢焦点）。
+  import { focusOnMount } from "../../components/ui/focusOnMount";
 
   /*
    * v0.0.7 项目总览（§6.1）：只读优先。数量只是聚合统计；行内动作始终
@@ -32,7 +34,12 @@
   }
 </script>
 
-<section class="module-card projects-module" aria-label="项目总览">
+<section
+  class="module-card projects-module"
+  aria-label="项目总览"
+  use:focusOnMount
+  tabindex="-1"
+>
   <div class="module-card-header">
     <div>
       <h2>工作区项目</h2>

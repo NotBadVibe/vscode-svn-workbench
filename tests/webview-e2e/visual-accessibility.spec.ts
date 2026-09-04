@@ -185,3 +185,74 @@ test("selection rules tab keeps source, warning and decision text visible in all
     });
   }
 });
+
+test("V017-E 计算样式：三主题 blocked 边框/增删符号 + reduced-motion", async ({
+  page,
+}) => {
+  // 中文注释：源码契约见 tests/unit/v017-theme-a11y.test.ts；此处以计算样式为准。
+  for (const [theme, variables] of Object.entries(themes)) {
+    await test.step(theme, async () => {
+      await page.setViewportSize({ width: 1024, height: 700 });
+      await page.goto("/");
+      await page.evaluate(
+        ({ values, bodyClass }) => {
+          for (const [name, value] of Object.entries(values))
+            document.documentElement.style.setProperty(name, value);
+          document.body.classList.add(bodyClass);
+        },
+        {
+          values: variables,
+          bodyClass: themeBodyClasses[theme as keyof typeof themeBodyClasses],
+        },
+      );
+      await expect(
+        page.getByRole("heading", { name: "工作副本修改" }),
+      ).toBeVisible();
+      // blocked 行除背景色外有边框通道：左边框宽度>0。
+      const blocked = page.locator(".file-row--blocked").first();
+      await expect(blocked).toBeAttached();
+      const borderWidth = await blocked.evaluate(
+        (element) => getComputedStyle(element).borderLeftWidth,
+      );
+      expect(
+        parseFloat(borderWidth),
+        `${theme} blocked 行左边框宽度`,
+      ).toBeGreaterThan(0);
+      // 增删行符号不只靠颜色：::before content 非空（探针元素，不依赖业务 fixtures）。
+      const markers = await page.evaluate(() => {
+        const probe = document.createElement("div");
+        probe.setAttribute("aria-hidden", "true");
+        probe.style.position = "absolute";
+        probe.style.visibility = "hidden";
+        probe.innerHTML =
+          '<div class="diff-line--added"><span class="line-number">1</span></div>' +
+          '<div class="diff-line--removed"><span class="line-number">2</span></div>';
+        document.body.appendChild(probe);
+        const added = getComputedStyle(
+          probe.querySelector(".diff-line--added .line-number") as Element,
+          "::before",
+        ).content;
+        const removed = getComputedStyle(
+          probe.querySelector(".diff-line--removed .line-number") as Element,
+          "::before",
+        ).content;
+        probe.remove();
+        return { added, removed };
+      });
+      expect(markers.added, `${theme} 增行符号`).not.toBe("none");
+      expect(markers.added, `${theme} 增行符号`).toContain("+");
+      expect(markers.removed, `${theme} 删行符号`).not.toBe("none");
+      expect(markers.removed, `${theme} 删行符号`).toContain("-");
+    });
+  }
+  // reduced-motion 下滚动不依赖平滑动效：计算样式 scroll-behavior 为 auto。
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto("/");
+  await expect(
+    page.getByRole("heading", { name: "工作副本修改" }),
+  ).toBeVisible();
+  const scrollBehavior = await page.evaluate(
+    () => getComputedStyle(document.body).scrollBehavior,
+  );
+  expect(scrollBehavior).toBe("auto");
+});
