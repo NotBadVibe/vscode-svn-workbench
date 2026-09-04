@@ -155,6 +155,15 @@ export interface WorkbenchSession extends OpenWorkbenchRequest {
       relativePath: string;
       toolCommand: string;
       toolArgs: string[];
+      /** 预览冻结的四角色绝对路径（open 复验唯一依据，不依赖 toolArgs 过滤）。 */
+      roleFiles: {
+        mine?: string;
+        theirs?: string;
+        base?: string;
+        result: string;
+      };
+      /** 工作区来源标记（意向单 issues/反馈明示核对）。 */
+      fromWorkspace?: boolean;
       scopeHash: string;
       repositoryUuid: string;
       revision?: string;

@@ -117,7 +117,14 @@ function getVersionRevision(xml: string, side: string): string | undefined {
 
 function getConflictFile(xml: string, tagName: string): string | undefined {
   const match = new RegExp(`<${tagName}>([\\s\\S]*?)<\\/${tagName}>`).exec(xml);
-  return match ? path.resolve(decodeXml(match[1])) : undefined;
+  if (!match) return undefined;
+  const decoded = decodeXml(match[1]).trim();
+  // fail-closed：最终范围门由 preview/open 经 realpath + PathSemantics 复验；
+  // 此处仅做初步规范化并拒绝 NUL/换行，避免非法值进入候选。
+  if (!decoded || decoded.includes("\0") || /[\r\n]/.test(decoded)) {
+    return undefined;
+  }
+  return path.resolve(decoded);
 }
 
 function getAttribute(source: string, name: string): string | undefined {

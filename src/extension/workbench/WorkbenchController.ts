@@ -380,14 +380,17 @@ import { ConflictSaveService } from "../../conflict/conflictSaveService";
 import {
   areExternalMergePathsInScope,
   buildExternalMergeArgs,
+  collectExternalMergeRolePaths,
   describeExternalMergeTool,
   EXTERNAL_MERGE_ROLE_LABELS,
   formatExternalMergeCommandPreview,
   validateExternalMergeCommand,
+  WORKSPACE_MERGE_TOOL_WARNING,
 } from "../../conflict/externalMergeTool";
 import {
   buildExternalMergeSearchCandidates,
   handleSelectMergeToolExecutable,
+  isExternalMergeCommandStillValid,
   readExternalMergeToolConfig,
   resolveExternalMergeExecutable,
   runExternalMergeTool,
@@ -6648,6 +6651,7 @@ export class WorkbenchController implements vscode.Disposable {
     );
     const syntax = validateExternalMergeCommand(
       resolution.command ?? config.command,
+      config.argsTemplate,
     );
     const toolLabel = describeExternalMergeTool(
       resolution.command ?? config.command,
@@ -6704,6 +6708,9 @@ export class WorkbenchController implements vscode.Disposable {
       stored.toolCommand,
       stored.toolArgs,
     );
+    const workspaceIssue = stored.fromWorkspace
+      ? [WORKSPACE_MERGE_TOOL_WARNING]
+      : [];
     if (!bindingOk) {
       return {
         ...base,
@@ -6724,7 +6731,9 @@ export class WorkbenchController implements vscode.Disposable {
         token: stored.token,
         commandPreview,
         canOpen: available,
-        issues: available ? [] : ["外部合并工具不可用，请先完成配置。"],
+        issues: available
+          ? [...workspaceIssue]
+          : ["外部合并工具不可用，请先完成配置。", ...workspaceIssue],
       },
     };
   }
@@ -6785,6 +6794,7 @@ export class WorkbenchController implements vscode.Disposable {
     );
     const syntax = validateExternalMergeCommand(
       resolution.command ?? config.command,
+      config.argsTemplate,
     );
     if (!resolution.found || !syntax.ok) {
       session.conflictState.externalMergePreview = undefined;
@@ -6800,14 +6810,25 @@ export class WorkbenchController implements vscode.Disposable {
       candidate?: string,
     ): Promise<string | undefined> => {
       if (!candidate) return undefined;
+      if (candidate.includes("\0") || /[\r\n]/.test(candidate))
+        return undefined;
       const stat = await fs.stat(candidate).catch(() => null);
-      return stat && stat.isFile() ? path.resolve(candidate) : undefined;
+      if (!stat || !stat.isFile()) return undefined;
+      const real = await fs.realpath(candidate).catch(() => candidate);
+      return path.resolve(real);
     };
+    const realRepositoryRoot = await fs
+      .realpath(session.scope.repositoryRoot)
+      .catch(() => session.scope.repositoryRoot);
     const roleFiles = {
       mine: await pickExisting(selected.mineFile),
       theirs: await pickExisting(selected.theirsFile),
       base: await pickExisting(selected.baseFile),
-      result: path.resolve(selected.workingFile),
+      result: path.resolve(
+        await fs
+          .realpath(selected.workingFile)
+          .catch(() => selected.workingFile),
+      ),
     };
     const absolutePaths = [
       roleFiles.base,
@@ -6816,7 +6837,11 @@ export class WorkbenchController implements vscode.Disposable {
       roleFiles.result,
     ].filter((item): item is string => typeof item === "string");
     if (
-      !areExternalMergePathsInScope(absolutePaths, session.scope.repositoryRoot)
+      !areExternalMergePathsInScope(
+        absolutePaths,
+        realRepositoryRoot,
+        nativePathSemantics,
+      )
     ) {
       await this.sendError(
         "conflicts",
@@ -6829,6 +6854,19 @@ export class WorkbenchController implements vscode.Disposable {
       return;
     }
     const args = buildExternalMergeArgs(config.argsTemplate, roleFiles);
+    for (const arg of args) {
+      if (arg.includes("\0") || /[\r\n]/.test(arg)) {
+        await this.sendError(
+          "conflicts",
+          "参数包含非法字符",
+          "外部合并工具参数包含非法字符，已拒绝。",
+          true,
+          requestId,
+        );
+        await this.sendConflictSnapshot(session, requestId);
+        return;
+      }
+    }
     const contentHash = await hashFileContents(selected.workingFile).catch(
       () => "",
     );
@@ -6838,11 +6876,15 @@ export class WorkbenchController implements vscode.Disposable {
       relativePath: selected.relativePath,
       toolCommand: resolution.command as string,
       toolArgs: args,
+      roleFiles,
+      fromWorkspace: config.fromWorkspace,
       scopeHash: session.scopeHash,
       repositoryUuid: session.repositoryUuid,
       revision: session.workingCopyRevision,
     };
-    session.conflictState.externalMergeFeedback = undefined;
+    session.conflictState.externalMergeFeedback = config.fromWorkspace
+      ? `${WORKSPACE_MERGE_TOOL_WARNING}已生成打开确认，请在意向单中核对完整命令。`
+      : undefined;
     await this.sendConflictSnapshot(session, requestId);
   }
 
@@ -6911,11 +6953,55 @@ export class WorkbenchController implements vscode.Disposable {
       await this.sendConflictSnapshot(session, requestId);
       return;
     }
-    const absoluteArgs = stored.toolArgs.filter((item) =>
-      path.isAbsolute(item),
-    );
+    for (const arg of stored.toolArgs) {
+      if (arg.includes("\0") || /[\r\n]/.test(arg)) {
+        session.conflictState!.externalMergeFeedback =
+          "外部合并工具参数包含非法字符，旧确认已失效，请重新生成确认。";
+        await this.sendConflictSnapshot(session, requestId);
+        return;
+      }
+    }
+    if (!isExternalMergeCommandStillValid(stored.toolCommand)) {
+      session.conflictState!.externalMergeFeedback =
+        "外部合并工具在确认后不再可用（可能被移动或删除），旧确认已失效，请重新生成确认。";
+      await this.sendConflictSnapshot(session, requestId);
+      return;
+    }
+    // 必修 3：全量复验预览冻结的四角色绝对路径，不依赖 toolArgs 的 isAbsolute 过滤
+    //（带前缀模板 --output={result} 经替换后 isAbsolute=false 会被跳过造成绕过）。
+    const frozenRolePaths = collectExternalMergeRolePaths(stored.roleFiles);
+    if (!frozenRolePaths) {
+      session.conflictState!.externalMergeFeedback =
+        "打开确认缺少冻结的文件路径，旧确认已失效，请重新生成确认。";
+      await this.sendConflictSnapshot(session, requestId);
+      return;
+    }
+    const realFrozenPaths: string[] = [];
+    for (const candidate of frozenRolePaths) {
+      if (candidate.includes("\0") || /[\r\n]/.test(candidate)) {
+        await this.sendError(
+          "conflicts",
+          "文件超出操作范围",
+          "外部合并工具只能打开当前操作范围内的文件，已拒绝。",
+          true,
+          requestId,
+        );
+        await this.sendConflictSnapshot(session, requestId);
+        return;
+      }
+      realFrozenPaths.push(
+        path.resolve(await fs.realpath(candidate).catch(() => candidate)),
+      );
+    }
+    const realRepositoryRoot = await fs
+      .realpath(session.scope.repositoryRoot)
+      .catch(() => session.scope.repositoryRoot);
     if (
-      !areExternalMergePathsInScope(absoluteArgs, session.scope.repositoryRoot)
+      !areExternalMergePathsInScope(
+        realFrozenPaths,
+        realRepositoryRoot,
+        nativePathSemantics,
+      )
     ) {
       await this.sendError(
         "conflicts",

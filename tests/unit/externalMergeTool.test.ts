@@ -11,14 +11,19 @@ import {
   buildExternalMergeArgs,
   buildExternalMergeCandidates,
   buildExternalMergeConfirmSummary,
+  collectExternalMergeRolePaths,
   describeExternalMergeTool,
   EXTERNAL_MERGE_TOOL_TIMEOUT_MS,
   formatExternalMergeCommandPreview,
   knownExternalMergeToolBasenames,
   validateExternalMergeCommand,
   WINDOWS_TORTOISE_MERGE_ABSOLUTE,
+  WORKSPACE_MERGE_TOOL_WARNING,
 } from "../../src/conflict/externalMergeTool";
-import { resolveExternalMergeExecutable } from "../../src/extension/workbench/externalMergeToolHost";
+import {
+  isWorkspaceMergeToolConfig,
+  resolveExternalMergeExecutable,
+} from "../../src/extension/workbench/externalMergeToolHost";
 import {
   isExternalMergeView,
   webviewActions,
@@ -169,16 +174,21 @@ describe("外部合并工具路径范围校验（fail-closed）", () => {
   });
 });
 
-describe("外部合并工具探测解析（PATH 白名单）", () => {
-  const pathExists = (candidate: string) =>
+describe("外部合并工具探测解析（PATH 白名单，isFile + POSIX X_OK）", () => {
+  const executable = (candidate: string) =>
     candidate === "/usr/bin/meld" ||
     candidate === "C:\\Program Files\\TortoiseSVN\\bin\\TortoiseMerge.exe";
+  const executableStat = () => ({
+    isFile: () => true,
+    mode: 0o755,
+  });
   it("命中 PATH 即采用绝对路径", () => {
     const found = resolveExternalMergeExecutable(["meld", "kdiff3"], {
       platform: "linux",
       pathEnv: "/usr/bin:/bin",
       delimiter: ":",
-      pathExists,
+      pathExists: executable,
+      statSync: executableStat,
     });
     expect(found.found).toBe(true);
     expect(found.command).toBe("/usr/bin/meld");
@@ -189,20 +199,22 @@ describe("外部合并工具探测解析（PATH 白名单）", () => {
       pathEnv: "/bin",
       delimiter: ":",
       pathExists: () => false,
+      statSync: executableStat,
     });
     expect(missing.found).toBe(false);
   });
   it("配置的绝对路径存在才采用", () => {
     const ok = resolveExternalMergeExecutable(
       ["C:\\Program Files\\TortoiseSVN\\bin\\TortoiseMerge.exe"],
-      { platform: "win32", pathExists },
+      { platform: "win32", pathExists: executable, statSync: executableStat },
     );
     expect(ok.found).toBe(true);
     const bad = resolveExternalMergeExecutable(["C:\\tools\\merge.exe"], {
       platform: "win32",
       pathEnv: "C:\\Windows",
       delimiter: ";",
-      pathExists,
+      pathExists: executable,
+      statSync: executableStat,
     });
     expect(bad.found).toBe(false);
   });
@@ -286,5 +298,123 @@ describe("外部合并工具协议（Host/Webview/Mock/守卫全链）", () => {
     expect(webviewActions).toContain("conflict/preview-external-merge");
     expect(webviewActions).toContain("conflict/open-external-merge");
     expect(webviewActions).toContain("conflict/select-merge-tool");
+  });
+});
+
+describe("必修 2：symlink 越界按 PathSemantics 比对（平台无关注入）", () => {
+  const posix = { platform: "linux" as const, cwd: "/" };
+  const win32 = { platform: "win32" as const, cwd: "C:\\" };
+  it("realpath 解析后越界拒绝：链接内路径真身在外", () => {
+    // Host 先 realpath：/wc/project/link/a.ts 真身为 /outside/a.ts。
+    expect(
+      areExternalMergePathsInScope(["/outside/a.ts"], "/wc/project", posix),
+    ).toBe(false);
+    expect(
+      areExternalMergePathsInScope(
+        ["/wc/project/link/a.ts"],
+        "/wc/project",
+        posix,
+      ),
+    ).toBe(true);
+  });
+  it(".. 越界经 resolve 归一后拒绝", () => {
+    expect(
+      areExternalMergePathsInScope(
+        ["/wc/project/../escape.ts"],
+        "/wc/project",
+        posix,
+      ),
+    ).toBe(false);
+    expect(
+      areExternalMergePathsInScope(
+        ["/wc/project/sub/../a.ts"],
+        "/wc/project",
+        posix,
+      ),
+    ).toBe(true);
+  });
+  it("大小写按平台：win32 折叠、POSIX 敏感", () => {
+    expect(
+      areExternalMergePathsInScope(
+        ["C:\\WC\\PROJECT\\a.ts"],
+        "c:\\wc\\project",
+        win32,
+      ),
+    ).toBe(true);
+    expect(
+      areExternalMergePathsInScope(["/WC/project/a.ts"], "/wc/project", posix),
+    ).toBe(false);
+  });
+  it("同前缀兄弟目录不误判为子孙", () => {
+    expect(
+      areExternalMergePathsInScope(
+        ["/wc/project-evil/a.ts"],
+        "/wc/project",
+        posix,
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("必修 3：前缀模板绕过必须被冻结 roleFiles 全量复验拦截", () => {
+  const posix = { platform: "linux" as const, cwd: "/" };
+  const root = "/wc/project";
+  it("--output={result} 隐藏的范围外 result 经 roleFiles 复验拒绝", () => {
+    const roleFiles = {
+      mine: `${root}/mine.ts`,
+      result: "/outside/secret.ts",
+    };
+    const frozen = collectExternalMergeRolePaths(roleFiles);
+    expect(frozen).toContain("/outside/secret.ts");
+    expect(areExternalMergePathsInScope(frozen as string[], root, posix)).toBe(
+      false,
+    );
+    // 旧逻辑：toolArgs 经 isAbsolute 过滤后只剩 mine，误放行。
+    const legacyArgs = ["--output=/outside/secret.ts", `${root}/mine.ts`];
+    const legacyFiltered = legacyArgs.filter((item) => item.startsWith("/"));
+    expect(legacyFiltered).toEqual([`${root}/mine.ts`]);
+    expect(areExternalMergePathsInScope(legacyFiltered, root, posix)).toBe(
+      true,
+    );
+  });
+  it("缺少 result 的冻结集合无效（fail-closed）", () => {
+    expect(collectExternalMergeRolePaths(undefined)).toBeUndefined();
+    expect(
+      collectExternalMergeRolePaths({ mine: `${root}/mine.ts` }),
+    ).toBeUndefined();
+  });
+});
+
+describe("必修 1 + 低危 7：工作区来源与模板非法字符", () => {
+  it("inspect 残留工作区值即判定 workspace 来源", () => {
+    expect(
+      isWorkspaceMergeToolConfig({ workspaceValue: "/evil/meld" }, undefined),
+    ).toBe(true);
+    expect(
+      isWorkspaceMergeToolConfig(undefined, {
+        workspaceFolderValue: ["--evil"],
+      }),
+    ).toBe(true);
+    expect(
+      isWorkspaceMergeToolConfig({ globalValue: "/usr/bin/meld" }, undefined),
+    ).toBe(false);
+    expect(isWorkspaceMergeToolConfig(undefined, undefined)).toBe(false);
+  });
+  it("工作区警告文明示核对完整命令", () => {
+    expect(WORKSPACE_MERGE_TOOL_WARNING).toMatch(/来自工作区.*核对完整命令/);
+  });
+  it("模板参数同样拒绝 NUL/换行/超长", () => {
+    expect(
+      validateExternalMergeCommand("/usr/bin/meld", ["--ok", "a\0b"]).ok,
+    ).toBe(false);
+    expect(validateExternalMergeCommand("/usr/bin/meld", ["a\nb"]).ok).toBe(
+      false,
+    );
+    expect(
+      validateExternalMergeCommand("/usr/bin/meld", [`x${"y".repeat(600)}`]).ok,
+    ).toBe(false);
+    expect(validateExternalMergeCommand("/usr/bin/meld", ["--ok"]).ok).toBe(
+      true,
+    );
   });
 });

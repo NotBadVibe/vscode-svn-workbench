@@ -6,6 +6,8 @@
  * - 路径校验 fail-closed：范围外、空值、含 NUL/换行一律拒绝；
  * - 不携带凭据、token、AI 上下文，只传递冲突四角色文件路径。
  */
+import type { PathSemantics } from "../scope/pathIdentity";
+import { isSameOrDescendantPath } from "../scope/pathIdentity";
 
 export type ExternalMergeRole = "mine" | "theirs" | "base" | "result";
 
@@ -111,12 +113,18 @@ export function buildExternalMergeCandidates(
   return candidates;
 }
 
+/** 工作区配置来源警告（意向单 issues/反馈明示，不阻断已校验的 machine 生效值）。 */
+export const WORKSPACE_MERGE_TOOL_WARNING =
+  "该配置来自工作区，请核对完整命令：仅使用你信任的本地可执行文件，确认命令预览中的完整路径与参数无误后再继续。";
+
 /**
  * 命令字符串法校验（fail-closed，不触及 fs）。
  * 存在性与可执行性由 Host 复验；此处只拒绝明显非法输入。
+ * argsTemplate 同样拒绝 NUL/换行（模板注入不能绕过命令校验）。
  */
 export function validateExternalMergeCommand(
   command: string | null | undefined,
+  argsTemplate?: readonly unknown[] | undefined,
 ): { ok: true } | { ok: false; issues: string[] } {
   const trimmed = (command ?? "").trim();
   if (!trimmed) {
@@ -131,6 +139,21 @@ export function validateExternalMergeCommand(
   }
   if (trimmed.includes("\0") || /[\r\n]/.test(trimmed)) {
     issues.push("外部合并工具路径包含非法字符，已拒绝执行。");
+  }
+  if (argsTemplate !== undefined) {
+    for (const entry of argsTemplate) {
+      if (typeof entry !== "string") continue;
+      if (entry.includes("\0") || /[\r\n]/.test(entry)) {
+        issues.push("外部合并工具参数模板包含非法字符，已拒绝执行。");
+        break;
+      }
+      if (entry.length > 500) {
+        issues.push(
+          "外部合并工具参数模板过长（超过 500 个字符），已拒绝执行。",
+        );
+        break;
+      }
+    }
   }
   return issues.length > 0 ? { ok: false, issues } : { ok: true };
 }
@@ -171,26 +194,50 @@ export function buildExternalMergeArgs(
 
 /**
  * 传递路径范围校验（fail-closed）。
+ * 调用方必须先经 fs.realpath 解析符号链接，再按注入的 PathSemantics 比对
+ *（大小写按平台：win32 折叠、POSIX 敏感），禁止字符串前缀比对。
  * 全部绝对路径必须落在 repositoryRoot 内；任一越界即拒绝整组。
  */
 export function areExternalMergePathsInScope(
   absolutePaths: readonly string[],
   repositoryRoot: string,
+  semantics?: PathSemantics,
 ): boolean {
   if (absolutePaths.length === 0) return false;
-  const root = repositoryRoot.replace(/\\/g, "/").replace(/\/+$/, "");
-  if (!root) return false;
+  if (!repositoryRoot || typeof repositoryRoot !== "string") return false;
+  const active: PathSemantics = semantics ?? {
+    platform: process.platform,
+    cwd: process.cwd(),
+  };
   for (const raw of absolutePaths) {
     if (typeof raw !== "string" || raw.length === 0) return false;
     if (raw.includes("\0") || /[\r\n]/.test(raw)) return false;
-    const normalized = raw.replace(/\\/g, "/");
-    if (normalized !== root && !normalized.startsWith(`${root}/`)) {
-      return false;
-    }
-    const rest = normalized.slice(root.length);
-    if (rest.split("/").includes("..")) return false;
+    if (!isSameOrDescendantPath(raw, repositoryRoot, active)) return false;
   }
   return true;
+}
+
+/**
+ * 预览冻结的四角色绝对路径集合（open 复验唯一依据，不依赖 toolArgs 过滤）。
+ * 带前缀模板（如 --output={result}）经 isAbsolute 过滤会被跳过，
+ * 因此必须全量复验 roleFiles，任一缺失 result 即视为无效。
+ */
+export function collectExternalMergeRolePaths(
+  roleFiles:
+    | { mine?: string; theirs?: string; base?: string; result?: string }
+    | undefined,
+): string[] | undefined {
+  if (!roleFiles || typeof roleFiles.result !== "string") return undefined;
+  const paths = [
+    roleFiles.base,
+    roleFiles.mine,
+    roleFiles.theirs,
+    roleFiles.result,
+  ].filter(
+    (item): item is string => typeof item === "string" && item.length > 0,
+  );
+  if (paths.length === 0) return undefined;
+  return paths;
 }
 
 /**

@@ -80,11 +80,13 @@
             "string",
             "null"
           ],
+          "scope": "machine",
           "default": null,
           "description": "外部合并工具可执行文件路径。留空时在 PATH 中探测已知合并工具（Windows 可识别 TortoiseMerge）。"
         },
         "svnWorkbench.mergeTool.args": {
           "type": "array",
+          "scope": "machine",
           "default": [],
           "items": {
             "type": "string"
