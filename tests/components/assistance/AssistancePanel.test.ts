@@ -128,6 +128,26 @@ describe("AssistancePanel", () => {
     expect(screen.getByRole("note")).toHaveTextContent("生成模型建议");
   });
 
+  it("模型组内 kind:local 动作不展示回执预告（v0.1.6 V016-C3b）", async () => {
+    const localKindSelect = vi.fn();
+    render(AssistancePanel, {
+      props: baseProps({
+        expanded: true,
+        configured: true,
+        sourceState: "configured-model" as const,
+        modelActions: [
+          { label: "AI 分析", kind: "local", onSelect: localKindSelect },
+        ],
+      }),
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "AI 分析" }));
+    expect(localKindSelect).toHaveBeenCalledTimes(1);
+    // kind:local 不承诺回执确认，即使位于模型组也不弹预告。
+    expect(
+      screen.queryByText(/将按外发回执确认后才外发/),
+    ).not.toBeInTheDocument();
+  });
+
   it("stale 时采用类动作禁用 + 中文提示；非采用动作仍可用", async () => {
     const adoptSelect = vi.fn();
     const viewSelect = vi.fn();

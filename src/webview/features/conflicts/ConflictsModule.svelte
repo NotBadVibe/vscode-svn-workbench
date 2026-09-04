@@ -308,43 +308,110 @@
   /**
    * v0.1.6 V016-C2：冲突帮助统一收进 AssistancePanel（单一「需要帮助」入口）。
    * - 展开态由页面持有，组件不自建第二状态机；折叠不丢建议/解释结果。
-   * - 建议动作按配置归属分组：未配置时「本地建议」在本地组（不外发），
-   *   「AI 分析 / 解释冲突意图」在模型组禁用并如实说明；配置后建议动作
-   *   进入模型组为「AI 分析」，本地组留空（回执卡仍保留「继续仅本地建议」）。
    * - 协议与 Host 零改动：仍走 conflict/advise、conflict/preview-receipt、
    *   conflict/interpret、conflict/receipt-dismiss；回执 token 仍由页面持有，
    *   不进入组件；回执卡位置与三动作保持原样。
+   * v0.1.6 V016-C3b（必修 3，选①）：「AI 分析」改 kind:local 语义——conflict/advise
+   * 是轻量建议动作（无独立回执设计），启用态只出现在本地组，点击不弹外发回执预告；
+   * 「解释冲突意图」保持 kind:model，走 conflict/preview-receipt 回执链。未配置时模型组
+   * 保留两项禁用占位（可发现性），其中「AI 分析」kind 仍为 local，面板按 kind 门控预告。
    */
   let assistanceExpanded = $state(false);
+  /**
+   * v0.1.6 V016-C3b（低危 4，选 b Webview 判定，Host 零改动）：advice 无 stale/binding，
+   * Host 切文件不清旧 advice；Webview 按选中文件 key 判定新鲜度——归属文件与当前选中
+   * 不一致时旧 advice 标过期隐藏，不再当新鲜展示。requestAdvice 发起时记录归属；
+   * 无请求记录时（首帧已带 advice）以当前选中为归属；advice 消失后归属清零。
+   */
+  let adviceOwnerPath = $state<string | null>(null);
   function requestAdvice(): void {
+    adviceOwnerPath = snapshot.selected?.relativePath ?? null;
     onAction("conflict/advise", {
       relativePath: snapshot.selected?.relativePath,
     });
   }
-  const assistanceLocalActions = $derived.by((): AssistanceActionItem[] => {
-    if (conflictAdviceConfigured) return [];
+  $effect(() => {
+    if (snapshot.advice) {
+      if (adviceOwnerPath === null) {
+        adviceOwnerPath = snapshot.selected?.relativePath ?? null;
+      }
+    } else if (adviceOwnerPath !== null) {
+      adviceOwnerPath = null;
+    }
+  });
+  const adviceExpired = $derived(
+    Boolean(
+      snapshot.advice &&
+      adviceOwnerPath !== null &&
+      adviceOwnerPath !== (snapshot.selected?.relativePath ?? null),
+    ),
+  );
+  /**
+   * v0.1.6 V016-C3b（低危 5）：采用类动作补 adopt:true，使 stale 禁采用链生效。
+   * 仅 acceptMine/acceptTheirs 且草稿含冲突标记块时可一键写入合并草稿（草稿内操作，
+   * 经既有 draft-update/检查点链路，可撤销；不保存、不标记解决）。过期 advice 不再展示
+   * 采用入口；stale 时由组件强制禁用（只能查看）。
+   */
+  const adviceAdoptActions = $derived.by((): AssistanceActionItem[] => {
+    const advice = snapshot.advice;
+    if (!advice || adviceExpired) return [];
+    const resolution =
+      advice.recommendation === "acceptMine"
+        ? ("mine" as const)
+        : advice.recommendation === "acceptTheirs"
+          ? ("theirs" as const)
+          : null;
+    const hasBlocks = conflictBlocks.length > 0;
+    const actionable = resolution !== null && hasBlocks;
     return [
       {
-        label: "本地建议",
+        label: conflictAssistanceLabels.adoptAdvice,
         kind: "local",
-        hint: conflictAssistanceLabels.localHint,
-        onSelect: requestAdvice,
+        adopt: true,
+        hint: conflictAssistanceLabels.adoptAdviceHint,
+        disabled: !actionable,
+        disabledReason: actionable
+          ? undefined
+          : resolution === null
+            ? conflictAssistanceLabels.adoptAdviceManualReason
+            : conflictAssistanceLabels.adoptAdviceNoBlocksReason,
+        onSelect: applyAdviceToDraft,
       },
     ];
   });
+  const assistanceLocalActions = $derived.by((): AssistanceActionItem[] => {
+    const base: AssistanceActionItem[] = conflictAdviceConfigured
+      ? [
+          {
+            label: "AI 分析",
+            kind: "local",
+            hint: conflictAssistanceLabels.modelAdviseHint,
+            onSelect: requestAdvice,
+          },
+        ]
+      : [
+          {
+            label: "本地建议",
+            kind: "local",
+            hint: conflictAssistanceLabels.localHint,
+            onSelect: requestAdvice,
+          },
+        ];
+    return [...base, ...adviceAdoptActions];
+  });
   const assistanceModelActions = $derived.by((): AssistanceActionItem[] => [
-    {
-      label: "AI 分析",
-      kind: "model",
-      hint: conflictAdviceConfigured
-        ? conflictAssistanceLabels.modelAdviseHint
-        : undefined,
-      disabled: !conflictAdviceConfigured,
-      disabledReason: conflictAdviceConfigured
-        ? undefined
-        : conflictAssistanceLabels.unconfiguredDisabledReason,
-      onSelect: requestAdvice,
-    },
+    // 未配置时保留禁用占位（可发现性）；「AI 分析」kind 仍为 local（advise 无回执设计）。
+    ...(conflictAdviceConfigured
+      ? []
+      : [
+          {
+            label: "AI 分析",
+            kind: "local" as const,
+            disabled: true,
+            disabledReason: conflictAssistanceLabels.unconfiguredDisabledReason,
+            onSelect: requestAdvice,
+          },
+        ]),
     {
       label: "解释冲突意图",
       kind: "model",
@@ -370,7 +437,9 @@
   const assistanceModel = $derived(
     conflictAdviceConfigured ? snapshot.aiPrivacy?.model : undefined,
   );
-  const assistanceStale = $derived(Boolean(snapshot.interpretation?.stale));
+  const assistanceStale = $derived(
+    Boolean(snapshot.interpretation?.stale) || adviceExpired,
+  );
   /**
    * v0.1.6 V016-C2：空态返回收敛为单一 primary（分支互斥，页面级唯一）。
    * testid 保持原约定（return-to-update / return-to-changes / return-close /
@@ -1090,6 +1159,41 @@
     }
   }
 
+  /**
+   * v0.1.6 V016-C3b（低危 5）：将合并建议一键写入合并草稿（仅 acceptMine/acceptTheirs）。
+   * 从后往前逐块应用（单步应用会改变后续块偏移）；仅改草稿并经 draft-update/检查点链路，
+   * 可撤销，不保存工作副本、不触发 Resolve。过期 advice 与中文 IME 候选阶段直接拒绝。
+   */
+  function applyAdviceToDraft(): void {
+    if (isComposing || (resultEditor?.isComposing?.() ?? false)) return;
+    if (adviceExpired) return;
+    const recommendation = snapshot.advice?.recommendation;
+    const resolution =
+      recommendation === "acceptMine"
+        ? ("mine" as const)
+        : recommendation === "acceptTheirs"
+          ? ("theirs" as const)
+          : null;
+    if (!resolution || !snapshot.selected) return;
+    const blocks = parseTextConflictBlocks(mergeDraft);
+    if (blocks.length === 0) return;
+    let next = mergeDraft;
+    for (let index = blocks.length - 1; index >= 0; index--) {
+      next = applyTextConflictResolution(next, index, resolution);
+    }
+    if (next === mergeDraft) return;
+    mergeDraft = next;
+    if (editorView)
+      editorView.dispatch({
+        changes: { from: 0, to: editorView.state.doc.length, insert: next },
+      });
+    onAction("conflict/draft-update", {
+      relativePath: snapshot.selected.relativePath,
+      content: next,
+    });
+    scheduleAutoCheckpoint(next);
+  }
+
   function handleDiffAction(
     payload: MergeConflictActionPayload & {
       fileIdentity: ConflictFileIdentity;
@@ -1544,7 +1648,7 @@
                   : "未配置外部模型，将运行本地规则，不会外发。"}</span
               >
             </div>{/if}
-          {#if snapshot.advice}
+          {#if snapshot.advice && !adviceExpired}
             <strong
               >{recommendationLabels[snapshot.advice.recommendation]}</strong
             >
@@ -1569,6 +1673,14 @@
                     {step}
                   </li>{/each}
               </ol>{/if}
+          {:else if adviceExpired}
+            <div
+              class="notice notice--warning"
+              role="alert"
+              data-testid="advice-expired-notice"
+            >
+              {conflictAssistanceLabels.adviceExpiredNotice}
+            </div>
           {:else}
             <div class="preview-empty">
               <span class="codicon codicon-sparkle"></span>

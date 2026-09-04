@@ -1618,6 +1618,9 @@
               {/if}
             </details>
           {/if}
+          <!-- v0.1.6 V016-C3b（低危 5）：建议区采用/查看动作保留内联 disabled={suggestion.stale}，
+            不迁移为 AssistancePanel 的 adopt:true——它们位于 children 插槽而非 localActions/
+            modelActions，组件级 stale 禁采用链仅作用于 action items；此处内联即等效禁采用。 -->
           <div class="commit-suggestion__actions">
             <button
               type="button"

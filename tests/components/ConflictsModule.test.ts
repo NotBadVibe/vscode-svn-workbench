@@ -150,14 +150,17 @@ describe("ConflictsModule", () => {
     expect(screen.getByRole("button", { name: "AI 分析" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "解释冲突意图" })).toBeDisabled();
     expect(screen.getAllByText(/不会外发/).length).toBeGreaterThanOrEqual(1);
-    // 本地动作直接透传 conflict/advise，不弹外发回执。
+    // 本地动作直接透传 conflict/advise，不弹外发回执（V016-C3b 必修 3 选①）。
     await fireEvent.click(localButton);
     expect(onAction).toHaveBeenCalledWith("conflict/advise", {
       relativePath: "src/a.ts",
     });
+    expect(
+      screen.queryByText(/将按外发回执确认后才外发/),
+    ).not.toBeInTheDocument();
   });
 
-  it("配置外部模型时帮助面板内保留“AI 分析”（v0.1.6 V016-C2）", async () => {
+  it("配置外部模型时帮助面板内保留“AI 分析”（v0.1.6 V016-C2；V016-C3b 改 kind:local）", async () => {
     const onAction = vi.fn();
     const configured: ConflictSnapshot = {
       ...snapshot,
@@ -179,8 +182,20 @@ describe("ConflictsModule", () => {
     expect(
       screen.queryByRole("button", { name: "本地建议" }),
     ).not.toBeInTheDocument();
+    // V016-C3b（必修 3 选①）：「AI 分析」为 kind:local，归属本地组，直接走 advise。
+    const localGroup = screen.getByRole("group", { name: "本地检查" });
+    expect(localGroup.textContent).toContain("AI 分析");
     await fireEvent.click(aiButton);
     expect(onAction).toHaveBeenCalledWith("conflict/advise", {
+      relativePath: "src/a.ts",
+    });
+    // 面板对该动作不显示外发回执预告。
+    expect(
+      screen.queryByText(/将按外发回执确认后才外发/),
+    ).not.toBeInTheDocument();
+    // 「解释冲突意图」保持 kind:model，走 preview-receipt 回执链。
+    await fireEvent.click(screen.getByRole("button", { name: "解释冲突意图" }));
+    expect(onAction).toHaveBeenCalledWith("conflict/preview-receipt", {
       relativePath: "src/a.ts",
     });
   });
@@ -430,5 +445,185 @@ describe("ConflictsModule 冲突意图解释（v0.0.12 批次 C）", () => {
     expect(onAction).toHaveBeenCalledWith("conflict/interpret", {
       receiptToken: "conflict-receipt-1",
     });
+  });
+});
+
+describe("ConflictsModule 建议新鲜度（v0.1.6 V016-C3b 低危 4b）", () => {
+  const marked = "<<<<<<< .mine\nlocal\n=======\nremote\n>>>>>>> .r5\n";
+  const advice = {
+    recommendation: "acceptTheirs" as const,
+    confidence: "high" as const,
+    summary: "对方版本更新了挂载逻辑",
+    risks: [] as string[],
+    steps: [] as string[],
+    source: "local-rule" as const,
+  };
+  const privacy = {
+    model: "deepseek-v4-flash",
+    characters: 86,
+    maxCharacters: 32000,
+    data: "基础版本、我的版本、对方版本、工作副本的截断文本与修订元数据",
+    historyIncluded: false as const,
+  };
+  function fileSnap(selectedPath: string): ConflictSnapshot {
+    return {
+      kind: "conflicts",
+      conflicts: [
+        { relativePath: "src/a.ts", type: "text" },
+        { relativePath: "src/b.ts", type: "text" },
+      ],
+      selected: {
+        relativePath: selectedPath,
+        contents: {
+          working: { content: marked, truncated: false },
+        },
+        mergeEditor: {
+          token: `edit-${selectedPath}`,
+          editable: true,
+          issues: [],
+        },
+      },
+      advice,
+      aiPrivacy: privacy,
+    } as ConflictSnapshot;
+  }
+
+  it("切换文件后旧 advice 标过期隐藏，切回后恢复新鲜展示", async () => {
+    const onAction = vi.fn();
+    const { rerender } = render(ConflictsModule, {
+      snapshot: fileSnap("src/a.ts"),
+      onAction,
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "需要帮助" }));
+    await tick();
+    expect(screen.getByText("对方版本更新了挂载逻辑")).toBeInTheDocument();
+    // 切到 b.ts：同 advice 对象仍在快照中，必须标过期不再当新鲜展示。
+    await rerender({ snapshot: fileSnap("src/b.ts"), onAction });
+    await tick();
+    expect(
+      screen.queryByText("对方版本更新了挂载逻辑"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("advice-expired-notice")).toBeInTheDocument();
+    // 切回 a.ts：归属一致，恢复新鲜展示。
+    await rerender({ snapshot: fileSnap("src/a.ts"), onAction });
+    await tick();
+    expect(screen.getByText("对方版本更新了挂载逻辑")).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("advice-expired-notice"),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe("ConflictsModule 采用链（v0.1.6 V016-C3b 低危 5）", () => {
+  const marked = "<<<<<<< .mine\nlocal\n=======\nremote\n>>>>>>> .r5\n";
+  const privacy = {
+    model: "deepseek-v4-flash",
+    characters: 86,
+    maxCharacters: 32000,
+    data: "基础版本、我的版本、对方版本、工作副本的截断文本与修订元数据",
+    historyIncluded: false as const,
+  };
+  function adoptSnap(
+    recommendation: "acceptTheirs" | "manualMerge",
+    interpretationStale = false,
+  ): ConflictSnapshot {
+    return {
+      kind: "conflicts",
+      conflicts: [{ relativePath: "src/a.ts", type: "text" }],
+      selected: {
+        relativePath: "src/a.ts",
+        contents: {
+          working: { content: marked, truncated: false },
+        },
+        mergeEditor: { token: "edit-adopt", editable: true, issues: [] },
+      },
+      advice: {
+        recommendation,
+        confidence: "high" as const,
+        summary: "对方版本更新了挂载逻辑",
+        risks: [] as string[],
+        steps: [] as string[],
+        source: "local-rule" as const,
+      },
+      interpretation: {
+        myIntent: "我的版本调整了初始化顺序。",
+        theirIntent: "对方版本修改了挂载逻辑。",
+        commonPoints: [],
+        conflictPoints: [],
+        recommendedHandling: {
+          summary: "建议人工合并。",
+          recommendation: "manualMerge" as const,
+          evidence: [],
+        },
+        businessUnknowns: [],
+        postSaveVerification: [],
+        warnings: [],
+        source: "local-rule" as const,
+        stale: interpretationStale,
+      },
+      aiPrivacy: privacy,
+    } as ConflictSnapshot;
+  }
+
+  it("新鲜可采用：写入合并草稿，不保存不标记解决", async () => {
+    const onAction = vi.fn();
+    render(ConflictsModule, {
+      snapshot: adoptSnap("acceptTheirs"),
+      onAction,
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "需要帮助" }));
+    await tick();
+    const adopt = screen.getByRole("button", {
+      name: "采用合并建议到草稿",
+    });
+    expect(adopt).toBeEnabled();
+    await fireEvent.click(adopt);
+    // 仅回写草稿（draft-update），不发 save-working/resolve。
+    expect(onAction).toHaveBeenCalledWith("conflict/draft-update", {
+      relativePath: "src/a.ts",
+      content: "remote\n",
+    });
+    expect(onAction).not.toHaveBeenCalledWith(
+      "conflict/save-working",
+      expect.anything(),
+    );
+    expect(onAction).not.toHaveBeenCalledWith(
+      "conflict/resolve",
+      expect.anything(),
+    );
+  });
+
+  it("stale 时采用类动作禁用，只能查看不能采用", async () => {
+    const onAction = vi.fn();
+    render(ConflictsModule, {
+      snapshot: adoptSnap("acceptTheirs", true),
+      onAction,
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "需要帮助" }));
+    await tick();
+    expect(screen.getByText(/只能查看，不能直接采用/)).toBeInTheDocument();
+    const adopt = screen.getByRole("button", {
+      name: "采用合并建议到草稿",
+    });
+    expect(adopt).toBeDisabled();
+    await fireEvent.click(adopt);
+    expect(onAction).not.toHaveBeenCalledWith(
+      "conflict/draft-update",
+      expect.anything(),
+    );
+  });
+
+  it("需人工合并的建议无法一键采用并说明原因", async () => {
+    render(ConflictsModule, {
+      snapshot: adoptSnap("manualMerge"),
+      onAction: vi.fn(),
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "需要帮助" }));
+    await tick();
+    const adopt = screen.getByRole("button", {
+      name: "采用合并建议到草稿",
+    });
+    expect(adopt).toBeDisabled();
+    expect(adopt).toHaveAttribute("title", "该建议需要人工合并，无法一键采用");
   });
 });

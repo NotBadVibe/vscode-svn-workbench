@@ -481,16 +481,25 @@ export const commitAssistanceLabels = {
  * v0.1.6 V016-C2：Conflicts 冲突帮助面板领域文案。
  * - 「本地建议 / AI 分析 / 解释冲突意图」统一收进 AssistancePanel 单一入口。
  * - 未配置模型时只启用本地建议，不标 AI；模型动作禁用并如实说明原因。
+ * v0.1.6 V016-C3b（必修 3，选①）：「AI 分析」走 conflict/advise（轻量建议动作，
+ * 无独立回执设计），kind 归为 local，提示文案不得承诺“回执确认后才外发”；
+ * 只有「解释冲突意图」走 conflict/preview-receipt 回执链（kind:model）。
  */
 export const conflictAssistanceLabels = {
   panelTitle: "冲突帮助",
   panelSummary:
     "合并建议与解释：本地建议默认可用；模型辅助需确认后外发，不会自动标记解决。",
   localHint: "不会外发",
-  modelAdviseHint: "需确认后外发",
+  modelAdviseHint: "直接生成建议，不单独确认",
   interpretHint: "含差异，需确认后外发",
   unconfiguredDisabledReason:
     "未配置外部模型，本地检查仍可用；请先配置模型后再试。",
+  adoptAdvice: "采用合并建议到草稿",
+  adoptAdviceHint: "仅写入合并草稿，不保存也不标记解决",
+  adoptAdviceManualReason: "该建议需要人工合并，无法一键采用",
+  adoptAdviceNoBlocksReason: "当前草稿无冲突标记块，无需一键采用",
+  adviceExpiredNotice:
+    "合并建议已过期（已切换冲突文件，只能查看）；请重新获取建议。",
 } as const;
 
 export function describeCommitSelectionEvaluation(

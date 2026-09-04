@@ -4,7 +4,7 @@
    * - 默认折叠：只露出一句用途 + 「需要帮助」入口，不挤压主任务。
    * - 组件只表达状态与事件：token 生成/绑定/消费、scope 校验、stale 判定、
    *   模型调用、采用复验全部留在领域模块/Host。
-   * - 本地动作直接透传；模型动作点击后才展示外发说明（按 `kind` 区分）。
+   * - 本地动作直接透传；仅 kind:"model" 的动作点击后展示外发说明（按 `kind` 区分）。
    * - `stale` 时采用类动作（`adopt`）禁用 + 中文提示，只能查看不能采用。
    * - 折叠不清理任何 props：结果/草稿由页面持有，组件不丢不改。
    * - 键盘展开、折叠后焦点返回触发按钮、IME 候选 Enter 不触发、error 含重试/放弃。
@@ -106,13 +106,19 @@
     item.onSelect();
   }
 
-  /** 模型动作：先展示外发说明，再透传页面走回执流程。 */
+  /**
+   * 模型动作：先展示外发说明，再透传页面走回执流程。
+   * v0.1.6 V016-C3b：仅 kind:"model" 展示回执预告；模型组内的 kind:"local"
+   * 占位（如 Conflicts 未配置时的“AI 分析”禁用项）绝不承诺回执确认。
+   */
   function handleModelSelect(item: AssistanceActionItem): void {
     if (isComposing) return;
     if (item.disabled) return;
     if (isAdoptDisabled(item)) return;
-    pendingModelLabel = item.label;
-    modelExplainVisible = true;
+    if (item.kind === "model") {
+      pendingModelLabel = item.label;
+      modelExplainVisible = true;
+    }
     item.onSelect();
   }
 
