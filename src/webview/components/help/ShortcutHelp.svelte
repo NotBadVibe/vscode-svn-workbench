@@ -138,6 +138,7 @@
       onkeydown={onPanelKeydown}
     >
       <strong>{panelTitle}（? 打开/关闭）</strong>
+      <small class="muted">{shortcutHelpLabels.halfWidthNote}</small>
       <ul>
         {#each shortcuts as sc (sc.id)}
           <li data-testid={`shortcut-item-${sc.id}`}>

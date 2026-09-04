@@ -31,6 +31,7 @@ const darkTheme = {
 } as const;
 
 const acceptanceCaptureCss = `
+    /* 中文注释：验收截图专用样式（fullPage 拼图），不参与 UX-06/09 局部滚动门禁。 */
     html[data-acceptance-capture="full"],
     html[data-acceptance-capture="full"] body,
     html[data-acceptance-capture="full"] #app {

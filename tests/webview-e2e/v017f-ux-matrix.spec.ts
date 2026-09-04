@@ -269,6 +269,29 @@ test("V017-F(CONF-01)：冲突块导航/编辑器单实例/查找可发现/保�
   const editorHost = page.getByTestId("conflict-result-editor-host");
   await expect(editorHost).toBeVisible();
   await expect(editorHost).toHaveCount(1);
+  // 块导航后焦点仍在编辑器宿主工作区内（不掉到 body；mock 下 pierre API 聚焦为块高亮，DOM 焦点保持原位）。
+  const firstBlockAction = page
+    .locator(".merge-block-list")
+    .getByRole("button", { name: "采用我的修改" })
+    .first();
+  await firstBlockAction.focus();
+  await page.keyboard.press("Alt+ArrowDown");
+  await expect(blockProgress).toContainText("块 2/10");
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          document.activeElement !== document.body &&
+          Boolean(
+            (document.activeElement as HTMLElement | null)?.closest?.(
+              '[role="region"][aria-label="冲突处理工作区"]',
+            ),
+          ),
+      ),
+    )
+    .toBe(true);
+  await page.keyboard.press("Alt+ArrowUp");
+  await expect(blockProgress).toContainText("块 1/10");
   const workspace = page.getByRole("region", { name: "冲突处理工作区" });
   await workspace.evaluate((element) => {
     element.scrollTop = element.scrollHeight;

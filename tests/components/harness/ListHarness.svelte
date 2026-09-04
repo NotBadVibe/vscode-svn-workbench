@@ -9,9 +9,12 @@
   let {
     items,
     virtualizeAfter = 300,
+    enableSelectAll = false,
   }: {
     items: string[];
     virtualizeAfter?: number;
+    /** V017-G2 P1-4：Ctrl+A 幂等回调计数开关（默认关闭，保持原非选择语义）。 */
+    enableSelectAll?: boolean;
   } = $props();
 
   let requestedDetail = $state<string | undefined>();
@@ -19,6 +22,8 @@
   let detailArrived = $state(false);
   /** V017-B `/` 聚焦搜索接线指示（默认接线，用于覆盖 keymap 绑定）。 */
   let searchFocused = $state(false);
+  /** V017-G2 P1-4：Ctrl+A 回调次数（幂等：连按累加，不反向清空）。 */
+  let selectAllCount = $state(0);
 
   const list = useFileList<string>({
     rows: () => items,
@@ -33,6 +38,13 @@
     onFocusSearch: () => {
       searchFocused = true;
     },
+    ...(enableSelectAll
+      ? {
+          onSelectAll: () => {
+            selectAllCount += 1;
+          },
+        }
+      : {}),
   });
 </script>
 
@@ -58,6 +70,9 @@
 {/if}
 {#if searchFocused}
   <span data-testid="search-focused">搜索已聚焦</span>
+{/if}
+{#if enableSelectAll}
+  <span data-testid="select-all-count">{selectAllCount}</span>
 {/if}
 <div
   class="harness-list"

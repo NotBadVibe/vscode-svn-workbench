@@ -7,6 +7,7 @@
  */
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { fireEvent, render, screen } from "@testing-library/svelte";
 import { describe, expect, it } from "vitest";
 import {
   ALL_SHORTCUTS,
@@ -14,6 +15,13 @@ import {
   getShortcutsForRegion,
   SHORTCUTS_BY_REGION,
 } from "../../src/webview/keyboard/shortcuts";
+import {
+  moveActiveIndex,
+  pageSizeOf,
+  shouldHandleListKeydown,
+} from "../../src/webview/components/list/listModel";
+import { isExplicitSubmitShortcut } from "../../src/webview/i18n/keyboard";
+import ListHarness from "../components/harness/ListHarness.svelte";
 import {
   CONFLICT_SHORTCUT_LIST,
   CONFLICT_SHORTCUTS,
@@ -147,32 +155,90 @@ describe("集中 keymap 单一来源", () => {
     }
   });
 
-  it("真实绑定在源码中有对应处理（useFileList / SearchInput / 输入区）", () => {
-    const useFileList = readSource(
-      "src/webview/components/list/useFileList.svelte.ts",
+  it("真实绑定行为：门控/分页/幂等/帮助隔离（V017-G2 P1-4）", async () => {
+    // 门控：IME 组合/输入框焦点放行原文（不触发列表快捷键）。
+    const composing = new KeyboardEvent("keydown", { key: "a" });
+    Object.defineProperty(composing, "isComposing", { value: true });
+    expect(shouldHandleListKeydown(composing)).toBe(false);
+    const candidate = new KeyboardEvent("keydown", { key: "a" });
+    Object.defineProperty(candidate, "keyCode", { value: 229 });
+    expect(shouldHandleListKeydown(candidate)).toBe(false);
+    const input = document.createElement("input");
+    const inInput = new KeyboardEvent("keydown", { key: "a" });
+    Object.defineProperty(inInput, "target", { value: input });
+    expect(shouldHandleListKeydown(inInput)).toBe(false);
+    const listBox = document.createElement("div");
+    const onList = new KeyboardEvent("keydown", { key: "a" });
+    Object.defineProperty(onList, "target", { value: listBox });
+    expect(shouldHandleListKeydown(onList)).toBe(true);
+    // 分页行数：按一页可见行数步进（pageSizeOf），边界夹紧。
+    expect(pageSizeOf(500, 25)).toBe(20);
+    expect(pageSizeOf(10, 25)).toBe(1);
+    expect(moveActiveIndex(0, pageSizeOf(500, 25), 100)).toBe(20);
+    expect(moveActiveIndex(95, pageSizeOf(500, 25), 100)).toBe(99);
+    // Ctrl+A 幂等：连按两次各触发一次回调，不反向清空（计数 2）。
+    render(ListHarness, {
+      items: ["a", "b", "c"],
+      enableSelectAll: true,
+    });
+    const container = screen.getByRole("list");
+    container.focus();
+    await fireEvent.keyDown(container, { key: "a", ctrlKey: true });
+    await fireEvent.keyDown(container, {
+      key: "A",
+      ctrlKey: true,
+      shiftKey: false,
+    });
+    expect(screen.getByTestId("select-all-count")).toHaveTextContent("2");
+    // 输入区显式提交：IME 候选中不触发，普通 Enter 仅换行。
+    expect(
+      isExplicitSubmitShortcut({
+        key: "Enter",
+        ctrlKey: true,
+        metaKey: false,
+        isComposing: false,
+        keyCode: 13,
+      }),
+    ).toBe(true);
+    expect(
+      isExplicitSubmitShortcut({
+        key: "Enter",
+        ctrlKey: true,
+        metaKey: false,
+        isComposing: true,
+        keyCode: 13,
+      }),
+    ).toBe(false);
+    expect(
+      isExplicitSubmitShortcut({
+        key: "Enter",
+        ctrlKey: false,
+        metaKey: false,
+        isComposing: false,
+        keyCode: 13,
+      }),
+    ).toBe(false);
+    // `?` 不泄露跨区绑定：仅帮助区（list/diff/conflicts）持有 `?`，且互不包含对方命令。
+    const regionsWithHelp = (
+      Object.keys(SHORTCUTS_BY_REGION) as Array<
+        keyof typeof SHORTCUTS_BY_REGION
+      >
+    ).filter((region) =>
+      getShortcutsForRegion(region).some((def) => def.keys.includes("?")),
     );
-    for (const key of [
-      "ArrowDown",
-      "PageDown",
-      "Home",
-      '"a"',
-      '" "',
-      "F10",
-      '"Enter"',
-      '"Escape"',
-      '"/"',
-      "onFocusSearch",
-    ]) {
-      expect(useFileList, key).toContain(key);
-    }
-    const searchInput = readSource(
-      "src/webview/components/list/SearchInput.svelte",
+    expect([...regionsWithHelp].sort()).toEqual(
+      ["conflicts", "diff", "list"].sort(),
     );
-    expect(searchInput).toContain('"Escape"');
-    expect(searchInput).toContain("focus()");
-    const commitEditor = readSource(
-      "src/webview/features/commit/CommitMessageEditor.svelte",
+    const conflictIds = new Set(
+      getShortcutsForRegion("conflicts").map((def) => def.id),
     );
-    expect(commitEditor).toContain("isExplicitSubmitShortcut");
+    expect(conflictIds.has("selectAll")).toBe(false);
+    expect(conflictIds.has("searchFocus")).toBe(false);
+    const listIds = new Set(
+      getShortcutsForRegion("list", { searchAvailable: true }).map(
+        (def) => def.id,
+      ),
+    );
+    expect(listIds.has("saveCheckpoint")).toBe(false);
   });
 });

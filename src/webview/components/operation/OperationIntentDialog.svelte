@@ -170,10 +170,6 @@
         }
       }
     }
-    // IME 候选阶段 Enter 不触发确认
-    if (event.key === "Enter" && isComposing) {
-      event.preventDefault();
-    }
   }
 
   // 点击 backdrop 关闭（dialog 原生：点击 ::backdrop 会触发 cancel 事件，此处用 mousedown 兜底）

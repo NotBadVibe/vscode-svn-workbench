@@ -25,6 +25,8 @@ export const shortcutHelpLabels = {
   trigger: "?",
   /** 触发按钮无障碍名称（含按键，hover 与 focus 双通道可感知）。 */
   triggerName: "快捷键帮助（?）",
+  /** 半角问号说明：仅响应半角 ?，全角？不触发。 */
+  halfWidthNote: "仅响应半角 ?（全角？不触发）",
   close: "关闭",
   /** 紧凑提示条忽略按钮（仅会话内记忆，不持久化到磁盘）。 */
   dismissHint: "不再提示",

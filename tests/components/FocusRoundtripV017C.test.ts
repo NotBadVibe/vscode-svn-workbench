@@ -107,6 +107,8 @@ function conflictSnapshot(token: string, selected: string): ConflictSnapshot {
 }
 
 describe("T1 首块聚焦事件驱动", () => {
+  // 中文注释：T1 局限——ConflictDiffView 为测试桩（固定 total=2 + 真实聚焦桩按钮），
+  // 仅覆盖“是否抢焦点/是否聚焦首块”的事件时序，不覆盖真实 pierre 编辑器内部焦点与块内容。
   it("后台 token 轮换不抢正在输入的焦点", async () => {
     const onAction = vi.fn();
     const { rerender } = render(ConflictsModule, {

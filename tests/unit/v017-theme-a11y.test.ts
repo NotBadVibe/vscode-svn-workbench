@@ -6,7 +6,9 @@ const root = path.resolve(__dirname, "..", "..");
 const read = (relative: string): string =>
   readFileSync(path.join(root, relative), "utf8");
 
-/* V017-E：主题、读屏语义与 reduced motion —— 平台无关的源码契约断言。 */
+/* V017-E：主题、读屏语义与 reduced motion —— 平台无关的源码契约断言。
+ * 中文注释：本文件为源码契约（静态包含/正则），计算样式以 e2e 为准
+ * （见 tests/webview-e2e/visual-accessibility.spec.ts 主题计算样式用例）。 */
 describe("V017-E 主题与辅助技术语义", () => {
   it("增删行不只靠颜色：pierre 用 classic +/-，遗留样式补符号", () => {
     const adapter = read("src/webview/features/diff/diffViewAdapter.ts");
