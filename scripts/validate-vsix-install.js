@@ -226,7 +226,7 @@ function quoteWindowsShellArg(value) {
   if (!/[ \t&()^%!,;="'<>|]/.test(text)) {
     return text;
   }
-  return `"${text.replace(/"/g, '\\"')}"`;
+  return `"${text.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
 function normalizeOutput(result) {

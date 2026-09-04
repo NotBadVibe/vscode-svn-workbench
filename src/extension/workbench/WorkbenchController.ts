@@ -8757,7 +8757,7 @@ export class WorkbenchController implements vscode.Disposable {
               ? `svn changelist --remove ${preview.paths.map(quoteRelative).join(" ")}`
               : // 展示用命令预览：先转义反斜杠再转义引号（CodeQL
                 // js/incomplete-sanitization；执行不走 shell，此为展示文本）。
-                `svn changelist "${(preview.name ?? "").replace(/\\/g, "\\\\").replace(/\\/g, "\\\\").replace(/"/g, '\\"')}" ${preview.paths.map(quoteRelative).join(" ")}`,
+                `svn changelist "${(preview.name ?? "").replace(/\\/g, "\\\\").replace(/"/g, '\\"')}" ${preview.paths.map(quoteRelative).join(" ")}`,
             canExecute: (previewIssues ?? preview.issues).length === 0,
             issues: previewIssues ?? preview.issues,
           }
