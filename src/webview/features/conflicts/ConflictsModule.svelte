@@ -61,6 +61,11 @@
   import { naturalCompare } from "../../../selection/selectionSort";
   import { confidenceLabels, sourceLabels } from "../../i18n/terminology";
   import { conflictAssistanceLabels } from "../../i18n/terminology";
+  import TaskSummary from "../../components/task/TaskSummary.svelte";
+  import {
+    decideConflictPerformanceMode,
+    V018C_MODE_LABELS,
+  } from "../diff/diffPerformancePolicy";
 
   /*
    * v0.0.10 跨模块列表迁移：冲突列表复用共享搜索、排序、键盘导航与
@@ -504,6 +509,53 @@
   const content = $derived(snapshot.selected?.contents[activePane]);
   const sourceContent = $derived(snapshot.selected?.contents[sourcePane]);
   const conflictBlocks = $derived(parseTextConflictBlocks(mergeDraft));
+  // V018-C 冲突大文件分级降级：actualLines + 块数 + 长行三维判定（纯派生，不改草稿）。
+  const perfActualLines = $derived(
+    mergeDraft ? mergeDraft.split("\n").length : 0,
+  );
+  const perfMaxLineLength = $derived.by(() => {
+    if (!mergeDraft) return 0;
+    let longest = 0;
+    for (const line of mergeDraft.split("\n")) {
+      if (line.length > longest) longest = line.length;
+    }
+    return longest;
+  });
+  const conflictPerf = $derived(
+    decideConflictPerformanceMode({
+      actualLines: perfActualLines,
+      conflictBlocks: conflictBlocks.length,
+      maxLineLength: perfMaxLineLength,
+    }),
+  );
+  // 用户可恢复动作：强制完整视图（仍保留草稿；undo 栈不跨编辑器实例）。
+  let perfForceFull = $state(false);
+  const effectivePerfMode = $derived(
+    perfForceFull ? "full" : conflictPerf.mode,
+  );
+  const perfShowSummary = $derived(
+    Boolean(snapshot.selected) && effectivePerfMode !== "full",
+  );
+  const perfHighlightLanguage = $derived(
+    effectivePerfMode === "full" ? "typescript" : "text",
+  );
+  const perfReasonText = $derived(
+    conflictPerf.reasons.join("；") || "接近性能阈值",
+  );
+  const perfModeLabel = $derived(V018C_MODE_LABELS[effectivePerfMode]);
+  // 精简档只读来源展示截断（展示降级，不改草稿/marker/region/hash）。
+  const perfSourcePreview = $derived.by(() => {
+    const full = sourceContent?.content ?? "（没有可用内容）";
+    if (effectivePerfMode === "full" || conflictPerf.maxContextLines === null)
+      return { text: full, truncated: false };
+    const lines = full.split("\n");
+    if (lines.length <= conflictPerf.maxContextLines)
+      return { text: full, truncated: false };
+    return {
+      text: lines.slice(0, conflictPerf.maxContextLines).join("\n"),
+      truncated: true,
+    };
+  });
   const workingDirty = $derived(mergeDraft !== savedWorking);
   // v0.1.1 V011-D：块级差异视图实例与进度（动作紧邻冲突块，进度与列表统一）。
   let diffView = $state<ConflictDiffView>();
@@ -525,6 +577,12 @@
       : "") as ConflictFileIdentity,
   );
   const diffWorkingText = $derived(mergeDraft);
+  // V018-C：进入精简/简化档自动折叠未激活只读来源（用户可手动再展开）。
+  $effect(() => {
+    if (conflictPerf.hideInactiveSourcePanes && effectivePerfMode !== "full") {
+      sourceDetailsOpen = false;
+    }
+  });
   // V012-B2：文件/容器变化时重置简化降级（同文件 Host 刷新保持实例）
   $effect(() => {
     const fid = conflictFileIdentity;
@@ -536,6 +594,11 @@
           // 仅在非首帧切换时重置，避免初始渲染抖动
           const currentFid = conflictFileIdentity;
           if (currentFid) useSimplified = false;
+        }
+        // V018-C：切换文件时清除强制完整视图（新文件重新按阈值判定）。
+        if (perfForceFull) {
+          const currentFid = conflictFileIdentity;
+          if (currentFid) perfForceFull = false;
         }
       });
     });
@@ -2214,11 +2277,91 @@
               ><span class="codicon codicon-merge" aria-hidden="true"></span> 合并结果</span
             >
           </div>
+          <!-- V018-C 分级降级摘要：原因 + 当前模式 + 可恢复出口（草稿保留，不静默改内容）。 -->
+          {#if perfForceFull && conflictPerf.mode !== "full"}
+            <div data-testid="conflict-perf-forced">
+              <TaskSummary
+                status={`已强制完整视图（阈值判定为${V018C_MODE_LABELS[conflictPerf.mode]}）`}
+                reason="大文件强制完整视图可能卡顿，草稿保留"
+                tone="info"
+                variant="compact"
+                icon="codicon-info"
+              />
+              <div class="toolbar-actions">
+                <button
+                  class="button button--secondary"
+                  data-testid="restore-perf-perf"
+                  onclick={() => (perfForceFull = false)}>回到降级视图</button
+                >
+              </div>
+            </div>
+          {/if}
+          {#if perfShowSummary}
+            <div data-testid="conflict-perf-summary">
+              <TaskSummary
+                status={`大文件降级：当前为${perfModeLabel}（${conflictBlocks.length} 块 / ${perfActualLines} 行）`}
+                reason={`降级原因：${perfReasonText}`}
+                nextStep={conflictPerf.mode === "simplified"
+                  ? "草稿已保留，可使用简化编辑器、在外部工具打开，或恢复完整视图"
+                  : "已关闭非必要高亮并隐藏未激活只读来源，可恢复完整视图"}
+                tone="warning"
+                variant="compact"
+                icon="codicon-warning"
+              />
+              <div
+                class="toolbar-actions"
+                role="group"
+                aria-label="降级恢复出口"
+              >
+                <span
+                  class="muted"
+                  role="status"
+                  data-testid="conflict-perf-mode"
+                  >当前模式：{perfModeLabel}</span
+                >
+                {#if !useSimplified}
+                  <button
+                    class="button button--secondary"
+                    data-testid="use-simplified-perf"
+                    onclick={() => (useSimplified = true)}
+                    >使用简化编辑器</button
+                  >
+                {/if}
+                <button
+                  class="button button--secondary"
+                  data-testid="open-external-perf"
+                  onclick={() =>
+                    onAction("open-file", {
+                      relativePath: snapshot.selected?.relativePath,
+                    })}>在外部工具打开</button
+                >
+                {#if !perfForceFull}
+                  <button
+                    class="button button--secondary"
+                    data-testid="restore-full-perf"
+                    title="强制显示完整视图可能卡顿，草稿保留"
+                    onclick={() => (perfForceFull = true)}>恢复完整视图</button
+                  >
+                {:else}
+                  <button
+                    class="button button--secondary"
+                    data-testid="restore-perf-perf"
+                    onclick={() => (perfForceFull = false)}>回到降级视图</button
+                  >
+                {/if}
+              </div>
+              <small class="muted" data-testid="conflict-perf-note"
+                >切换保留草稿与冲突标识；编辑器 undo
+                栈不跨实例，草稿文本始终保留。</small
+              >
+            </div>
+          {/if}
           {#if !useSimplified}
             <ConflictDiffView
               bind:this={diffView}
               workingText={diffWorkingText}
               relativePath={snapshot.selected?.relativePath ?? ""}
+              language={perfHighlightLanguage}
               fileIdentity={conflictFileIdentity}
               onBlockProgress={notifyBlockProgress}
               onMergeConflictAction={handleDiffAction}
@@ -2396,7 +2539,7 @@
                   bind:this={resultEditor}
                   fileIdentity={conflictFileIdentity}
                   relativePath={snapshot.selected.relativePath}
-                  language="typescript"
+                  language={perfHighlightLanguage}
                   initialText={snapshot.selected?.draft?.content ??
                     snapshot.selected?.contents.working?.content ??
                     diffWorkingText}
@@ -2591,8 +2734,13 @@
                   </div>
                 </div>
               {:else}
-                <pre><code>{sourceContent?.content ?? "（没有可用内容）"}</code
-                  ></pre>
+                <pre><code>{perfSourcePreview.text}</code></pre>
+                {#if perfSourcePreview.truncated}<small
+                    class="conflict-inline-feedback conflict-inline-feedback--warning"
+                    data-testid="conflict-perf-source-truncated"
+                  >
+                    大文件降级：只读来源仅展示前 {conflictPerf.maxContextLines} 行，草稿不受影响。
+                  </small>{/if}
                 {#if sourceContent?.truncated}<small
                     class="conflict-inline-feedback conflict-inline-feedback--warning"
                   >

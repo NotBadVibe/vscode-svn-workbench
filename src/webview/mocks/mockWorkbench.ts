@@ -2586,6 +2586,16 @@ function conflictSnapshot(
   const conflictBlocksCount = conflictBlocksParam
     ? Number.parseInt(conflictBlocksParam, 10)
     : 0;
+  // V018-C 大冲突实测：conflictBlocks 上限放宽到 600，conflictLines 追加填充行，
+  // conflictLongLine=1 注入超长行（确定性 seed，不破坏既有 10 块契约）。
+  const conflictLinesParam = new URLSearchParams(window.location.search).get(
+    "conflictLines",
+  );
+  const conflictLinesTarget = conflictLinesParam
+    ? Number.parseInt(conflictLinesParam, 10)
+    : 0;
+  const conflictLongLine =
+    new URLSearchParams(window.location.search).get("conflictLongLine") === "1";
   let workingContent: string | undefined = isScrollDataset()
     ? Array.from(
         { length: 80 },
@@ -2596,7 +2606,7 @@ function conflictSnapshot(
   if (
     Number.isFinite(conflictBlocksCount) &&
     conflictBlocksCount > 1 &&
-    conflictBlocksCount <= 120 &&
+    conflictBlocksCount <= 600 &&
     !isScrollDataset() &&
     !scenario
   ) {
@@ -2615,6 +2625,29 @@ function conflictSnapshot(
       if (i < separators.length) combined += separators[i];
     }
     combined += "// footer-end\n";
+    // V018-C：conflictLines 追加确定性填充行到目标总行数；conflictLongLine 注入超长行。
+    if (
+      Number.isFinite(conflictLinesTarget) &&
+      conflictLinesTarget > 0 &&
+      combined.split("\n").length < conflictLinesTarget
+    ) {
+      const missing = conflictLinesTarget - combined.split("\n").length;
+      const filler = Array.from(
+        { length: missing },
+        (_, index) =>
+          `// v018c filler ${index + 1} 中文占位 distinct-${index + 1}`,
+      ).join("\n");
+      combined = combined.replace(
+        "// footer-end\n",
+        `${filler}\n// footer-end\n`,
+      );
+    }
+    if (conflictLongLine) {
+      combined = combined.replace(
+        "// header-do-not-merge\n",
+        `// header-do-not-merge\n// longline-${"x".repeat(5000)}\n`,
+      );
+    }
     workingContent = combined;
   } else {
     if (scenario === "damaged")

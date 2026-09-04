@@ -57,6 +57,112 @@ export const V018_PERFORMANCE_THRESHOLDS_PLACEHOLDER: DiffPerformanceThresholds 
     reducedMaxConflictBlocks: 500,
   };
 
+/**
+ * V018-C 冲突大文件分级降级（v0.1.8 规划 §4.3）。
+ *
+ * 三档语义（§4.3）：低于阈值=完整统一视图；接近阈值=关高亮/减上下文/
+ * 隐藏未激活只读来源；超阈值=保留草稿+简化编辑器或外部工具出口。
+ * 任一降级显示原因+当前模式+可恢复动作；不静默改内容；5MB 安全上限不动；
+ * 不切成破坏 marker/region/hash 的伪文件。包无 VirtualizedUnresolvedFile
+ *（侦察确认），渲染器恒为 UnresolvedFile/结果编辑器，不强行虚拟化。
+ *
+ * 判定维度：actualLines（以实际行数为准）+ 冲突块数 + 长行维度。
+ */
+
+/** 冲突判定输入：行数以 actualLines 为准，长行单独成维。 */
+export interface ConflictPerformanceInput {
+  /** 实际行数（含 marker 开销，如 500 块×1000 行目标实际约 3501 行）。 */
+  actualLines: number;
+  conflictBlocks: number;
+  /** 最长行字符数（UTF-16），缺省 0 视为无长行。 */
+  maxLineLength?: number;
+}
+
+/** 冲突分级决策：模式 + 中文原因 + 可执行的展示降级动作。 */
+export interface ConflictPerformanceDecision {
+  mode: DiffPerformanceMode;
+  reasons: DiffPerformanceReason[];
+  /** 接近阈值档：关闭非必要高亮（纯文本语言）。 */
+  disableHighlight: boolean;
+  /** 接近阈值档：上下文展示上限（行），full 档为 null（不限制）。 */
+  maxContextLines: number | null;
+  /** 接近阈值档：隐藏未激活只读来源窗格（默认折叠）。 */
+  hideInactiveSourcePanes: boolean;
+  /** 超阈值档：建议简化编辑器/外部工具出口（草稿保留）。 */
+  recommendSimplified: boolean;
+}
+
+/** V018-C 长行阈值：单行超 1000 字符视为长行放大器（至少进入精简档）。 */
+export const V018C_LONG_LINE_THRESHOLD = 1000;
+
+/** V018-C 精简档上下文上限：只读来源展示截断行数（展示降级，不改草稿）。 */
+export const V018C_REDUCED_CONTEXT_LINES = 200;
+
+/** V018-C 冲突中文模式标签（UI 直接展示）。 */
+export const V018C_MODE_LABELS: Record<DiffPerformanceMode, string> = {
+  full: "完整视图",
+  reduced: "精简视图",
+  simplified: "简化编辑器",
+};
+
+/**
+ * 纯函数：冲突三档阈值判定（actualLines + 块数 + 长行）。
+ * - 边界含等于：actualLines/fullMaxLines 与块数/fullMaxConflictBlocks 处仍为 full；
+ *   reduced 上限处仍为 reduced，超出才进 simplified。
+ * - 长行（maxLineLength > 1000）至少进入 reduced，原因复用“行数超过完整模式上限”。
+ * - 返回值仅为展示降级建议：reduced 指导降高亮/上下文/隐藏来源；simplified
+ *   指导保留草稿并提供简化编辑器/外部工具出口；不切换渲染器，不切分文件。
+ */
+export function decideConflictPerformanceMode(
+  input: ConflictPerformanceInput,
+  thresholds: DiffPerformanceThresholds = V018_PERFORMANCE_THRESHOLDS_PLACEHOLDER,
+): ConflictPerformanceDecision {
+  const actualLines = Math.max(0, Math.floor(input.actualLines));
+  const conflictBlocks = Math.max(0, Math.floor(input.conflictBlocks));
+  const maxLineLength = Math.max(0, Math.floor(input.maxLineLength ?? 0));
+  const hasLongLine = maxLineLength > V018C_LONG_LINE_THRESHOLD;
+  const reasons = new Set<DiffPerformanceReason>();
+  let mode: DiffPerformanceMode = "full";
+  if (
+    actualLines > thresholds.fullMaxLines ||
+    conflictBlocks > thresholds.fullMaxConflictBlocks ||
+    hasLongLine
+  ) {
+    mode = "reduced";
+    if (actualLines > thresholds.fullMaxLines || hasLongLine) {
+      reasons.add("行数超过完整模式上限");
+    }
+    if (conflictBlocks > thresholds.fullMaxConflictBlocks) {
+      reasons.add("冲突块数超过完整模式上限");
+    }
+  }
+  if (
+    actualLines > thresholds.reducedMaxLines ||
+    conflictBlocks > thresholds.reducedMaxConflictBlocks
+  ) {
+    mode = "simplified";
+    if (actualLines > thresholds.reducedMaxLines) {
+      reasons.add("行数超过精简模式上限");
+    }
+    if (conflictBlocks > thresholds.reducedMaxConflictBlocks) {
+      reasons.add("冲突块数超过精简模式上限");
+    }
+  }
+  const reduced = mode !== "full";
+  return {
+    mode,
+    reasons: [...reasons],
+    disableHighlight: reduced,
+    maxContextLines: reduced ? V018C_REDUCED_CONTEXT_LINES : null,
+    hideInactiveSourcePanes: reduced,
+    recommendSimplified: mode === "simplified",
+  };
+}
+
+/** V018-C 实测证据指针（普通 evidence，gitignored，不污染已发布 evidence）。 */
+export const V018C_EVIDENCE_RUN =
+  ".validation/evidence/v0.1.8/v018c-conflict-browser" as const;
+
 /** 规划 §3 候选预算（只读参照，调整必须说明原因，不可为通过而放宽）。 */
 export const V018_CANDIDATE_BUDGETS = {
   /** 普通 Diff 5000 行首个可见内容 P95 ≤800ms。 */
