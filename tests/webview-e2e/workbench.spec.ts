@@ -631,7 +631,7 @@ test("turns a grouping suggestion into a previewed SVN changelist", async ({
 }) => {
   await page.goto("/");
   await openModule(page, "变更集");
-  await page.getByRole("button", { name: "生成分组建议" }).click();
+  await page.getByRole("button", { name: "自动整理" }).click();
   await page.getByRole("button", { name: "套用并调整" }).click();
   await page.getByRole("button", { name: "生成应用预览" }).click();
   // 预览与对话框均含同一命令，使用 direct child code 避免对话框重复匹配
@@ -1038,7 +1038,8 @@ test("change understanding: local check then receipt-confirmed model analysis (v
   ).toBeVisible();
   await expect(page.getByText("修改了 2 个文件")).toBeVisible();
 
-  // 受限差异回执：先展示回执，再确认开始模型分析。
+  // 受限差异回执：先展开帮助面板，再展示回执确认开始模型分析（V016-D）。
+  await page.getByRole("button", { name: "需要帮助" }).click();
   await page.getByRole("button", { name: /重新分析|查看并开始分析/ }).click();
   const receiptRegion = page.getByRole("region", {
     name: "变更解读外发回执",
@@ -1069,6 +1070,8 @@ test("change understanding: validated evidence opens the file diff (v0.0.12)", a
 }) => {
   await page.goto("/");
   await openModule(page, "变更解读");
+  // v0.1.6 V016-D：模型入口收进帮助面板，先展开「需要帮助」。
+  await page.getByRole("button", { name: "需要帮助" }).click();
   await page.getByRole("button", { name: /重新分析|查看并开始分析/ }).click();
   const receiptRegion = page.getByRole("region", {
     name: "变更解读外发回执",
@@ -1086,6 +1089,8 @@ test("semantic changelist split: receipt-confirmed then purpose/deps suggestions
 }) => {
   await page.goto("/");
   await openModule(page, "变更集");
+  // v0.1.6 V016-D：语义拆分收进帮助面板，先展开「需要帮助」。
+  await page.getByRole("button", { name: "需要帮助" }).click();
   await page.getByRole("button", { name: /按改动意图拆分/ }).click();
   const receiptRegion = page.getByRole("region", {
     name: "语义拆分外发回执",

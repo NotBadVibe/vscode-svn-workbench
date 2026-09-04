@@ -502,6 +502,39 @@ export const conflictAssistanceLabels = {
     "合并建议已过期（已切换冲突文件，只能查看）；请重新获取建议。",
 } as const;
 
+/**
+ * v0.1.6 V016-D：Changelists 分组帮助面板领域文案。
+ * - 「自动整理」为页头次级轻量动作（去 sparkle，不弹回执预告）：未配置模型时走
+ *   本地目录/类型分组；Host `changelist/suggest mode:metadata` 在模型可用时实际可调
+ *   用模型（`runAiScenario commitSplit`），此时建议来源如实标为“模型建议”。
+ * - 「按改动意图拆分」是唯一模型入口，收进 AssistancePanel 模型组（kind:model），
+ *   走 `changelist/preview-receipt` 回执链；未配置时禁用并如实说明。
+ */
+export const changelistAssistanceLabels = {
+  panelTitle: "分组帮助",
+  panelSummary:
+    "自动整理按目录与类型快速分组；按改动意图拆分需确认后外发，建议须经预览确认才写入。",
+  autoTidy: "自动整理",
+  semanticSplit: "按改动意图拆分（含差异需确认）",
+  semanticSplitHint: "含差异，需确认后外发",
+  unconfiguredDisabledReason: "未配置外部模型，本地检查仍可用",
+} as const;
+
+/**
+ * v0.1.6 V016-D：Understanding 分析帮助面板领域文案。
+ * - 本地检查是默认可用主路径，页头保留次级入口。
+ * - 模型分析是唯一模型入口，收进 AssistancePanel 模型组（kind:model），
+ *   走 `understanding/preview-receipt` 回执链；未配置时禁用并如实说明。
+ */
+export const understandingAssistanceLabels = {
+  panelTitle: "分析帮助",
+  panelSummary:
+    "本地检查默认可用；模型分析需确认后外发，不会修改文件或执行提交。",
+  analysisHint: "含差异，需确认后外发",
+  unconfiguredDisabledReason:
+    "未配置外部模型，可先运行本地检查；请先配置模型后再试。",
+} as const;
+
 export function describeCommitSelectionEvaluation(
   evaluation: CommitSelectionExplanation,
 ): string {

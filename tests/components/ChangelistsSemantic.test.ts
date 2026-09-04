@@ -77,6 +77,8 @@ function renderWith(overrides: Partial<ChangelistsSnapshot> = {}) {
 describe("ChangelistsModule 语义拆分（v0.0.12 批次 B）", () => {
   it("“按改动意图拆分”先请求回执，不直接调用模型", async () => {
     const onAction = renderWith();
+    // v0.1.6 V016-D：语义拆分收进 AssistancePanel，先展开「需要帮助」。
+    await fireEvent.click(screen.getByRole("button", { name: "需要帮助" }));
     await fireEvent.click(
       screen.getByRole("button", { name: /按改动意图拆分/ }),
     );

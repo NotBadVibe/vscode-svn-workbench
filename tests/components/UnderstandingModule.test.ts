@@ -139,15 +139,21 @@ describe("UnderstandingModule 变更解读", () => {
     expect(screen.getByText(/已看 0\/2 条/)).toBeInTheDocument();
   });
 
-  it("首屏展示用途、范围与“只运行本地检查 / 查看并开始分析”", () => {
+  it("首屏展示用途、范围与本地主路径；模型分析收进帮助面板（V016-D）", async () => {
     renderUnderstanding();
     expect(
       screen.getByText(/理解当前修改、找出需要确认的风险/),
     ).toBeInTheDocument();
     expect(screen.getByText(/AI 不会修改文件或执行提交/)).toBeInTheDocument();
+    // 本地检查是页头默认可用主路径（次级按钮）。
     expect(
       screen.getByRole("button", { name: "只运行本地检查" }),
     ).toBeInTheDocument();
+    // 模型入口已收进 AssistancePanel：默认折叠不可见，展开后可达。
+    expect(
+      screen.queryByRole("button", { name: "查看并开始分析（1）" }),
+    ).toBeNull();
+    await fireEvent.click(screen.getByRole("button", { name: "需要帮助" }));
     expect(
       screen.getByRole("button", { name: "查看并开始分析（1）" }),
     ).toBeInTheDocument();

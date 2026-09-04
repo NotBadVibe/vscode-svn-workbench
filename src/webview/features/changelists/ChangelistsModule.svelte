@@ -42,7 +42,13 @@
   import { SvelteMap, SvelteSet } from "svelte/reactivity";
   import OperationIntentDialog from "../../components/operation/OperationIntentDialog.svelte";
   import TaskEmptyState from "../../components/task/TaskEmptyState.svelte";
+  import AssistancePanel from "../../components/assistance/AssistancePanel.svelte";
+  import type {
+    AssistanceActionItem,
+    AssistanceSourceState,
+  } from "../../components/assistance/assistanceTypes";
   import {
+    changelistAssistanceLabels,
     fileStatusLabels,
     sourceLabels,
     taskStateCopy,
@@ -387,6 +393,36 @@
   }
 
   let receiptExpanded = $state(false);
+  /*
+   * v0.1.6 V016-D：语义拆分收进 AssistancePanel（单一「需要帮助」入口）。
+   * - 页头只保留次级「自动整理」（去 sparkle，直接 changelist/suggest metadata，
+   *   无回执预告；模型可用时 Host 实际可调模型，来源徽章如实标“模型建议”）。
+   * - 面板模型组唯一模型入口「按改动意图拆分」（kind:model），回执卡与三动作
+   *   移入面板 children，回执 token 仍由页面闭包持有，绝不进入组件。
+   * - 页面级唯一 primary=意向单入口（确认应用/移出变更集）；面板内展开动作不计。
+   * - 协议与 Host 零改动。
+   */
+  let assistanceExpanded = $state(false);
+  const assistanceConfigured = $derived(
+    !snapshot.aiPrivacy.model.includes("未配置"),
+  );
+  const assistanceSource = $derived<AssistanceSourceState>(snapshot.source);
+  const assistanceModelActions = $derived.by((): AssistanceActionItem[] => [
+    {
+      label: changelistAssistanceLabels.semanticSplit,
+      kind: "model",
+      hint: changelistAssistanceLabels.semanticSplitHint,
+      disabled: !assistanceConfigured,
+      disabledReason: assistanceConfigured
+        ? undefined
+        : changelistAssistanceLabels.unconfiguredDisabledReason,
+      onSelect: requestSemanticSplit,
+    },
+  ]);
+  /* 回执到达自动展开面板，保证“生成后可见”；用户可手动收起。 */
+  $effect(() => {
+    if (changelistReceipt) assistanceExpanded = true;
+  });
   // v0.0.14 批次 D：变更集应用意向单
   let changelistIntentOpen = $state(false);
   let changelistTriggerEl = $state<HTMLElement | null>(null);
@@ -466,15 +502,11 @@
         建议分组按目录和文件类型生成，不表示语义或依赖关系分析。模型可用时来源为“模型建议”，否则为本地检查；应用前仍由扩展主机校验范围与最新工作副本状态。
       </p>
     </div>
+    <!-- v0.1.6 V016-D：页头只保留次级「自动整理」（去 sparkle，不弹回执预告）；语义拆分收进下方 AssistancePanel。 -->
     <button
-      class="button button--primary"
+      class="button button--secondary"
       onclick={() => onAction("changelist/suggest", { mode: "metadata" })}
-      ><span class="codicon codicon-sparkle" aria-hidden="true"
-      ></span>生成分组建议</button
-    >
-    <button class="button button--secondary" onclick={requestSemanticSplit}
-      ><span class="codicon codicon-sparkle" aria-hidden="true"
-      ></span>按改动意图拆分（含差异需确认）</button
+      >{changelistAssistanceLabels.autoTidy}</button
     >
   </header>
   {#if snapshot.feedback}<div class="notice notice--success" role="status">
@@ -483,94 +515,107 @@
   <div class="privacy-note">
     <strong>外发预览</strong><span
       >{snapshot.aiPrivacy.data}；最多 {snapshot.aiPrivacy.fileLimit} 个文件；模型
-      {snapshot.aiPrivacy.model}；不含历史。点击“生成分组建议”才会发送。</span
+      {snapshot.aiPrivacy.model}；不含历史。点击“自动整理”才会发送。</span
     >
   </div>
-  {#if changelistReceipt}
-    <div class="commit-receipt" role="region" aria-label="语义拆分外发回执">
-      <div class="commit-receipt__head">
-        <span class="codicon codicon-arrow-up" aria-hidden="true"></span>
-        <strong>语义拆分外发回执（尚未发送）</strong>
-        <span class="commit-receipt__tag" role="status">等待确认</span>
-      </div>
-      <dl class="commit-receipt__meta">
-        <div>
-          <dt>任务</dt>
-          <dd>语义拆分（{changelistReceipt.receipt.task}）</dd>
+  <!-- v0.1.6 V016-D：分组帮助单一「需要帮助」入口（默认折叠；回执卡与三动作收进面板，token 链原样）。 -->
+  <AssistancePanel
+    title={changelistAssistanceLabels.panelTitle}
+    summary={changelistAssistanceLabels.panelSummary}
+    sourceState={assistanceSource}
+    model={assistanceConfigured ? snapshot.aiPrivacy.model : undefined}
+    configured={assistanceConfigured}
+    expanded={assistanceExpanded}
+    modelActions={assistanceModelActions}
+    onExpand={() => (assistanceExpanded = true)}
+    onCollapse={() => (assistanceExpanded = false)}
+  >
+    {#if changelistReceipt}
+      <div class="commit-receipt" role="region" aria-label="语义拆分外发回执">
+        <div class="commit-receipt__head">
+          <span class="codicon codicon-arrow-up" aria-hidden="true"></span>
+          <strong>语义拆分外发回执（尚未发送）</strong>
+          <span class="commit-receipt__tag" role="status">等待确认</span>
         </div>
-        <div>
-          <dt>模型</dt>
-          <dd>{changelistReceipt.receipt.model}</dd>
-        </div>
-        <div>
-          <dt>数据类型</dt>
-          <dd>{changelistReceipt.receipt.dataTypes.join("、")}</dd>
-        </div>
-        <div>
-          <dt>文件数</dt>
-          <dd>{changelistReceipt.receipt.files} 个已发送候选</dd>
-        </div>
-        <div>
-          <dt>预算</dt>
-          <dd>
-            单文件 {changelistReceipt.receipt.perFileBudget} 字符 / 总计 {changelistReceipt
-              .receipt.totalBudget} 字符
-          </dd>
-        </div>
-      </dl>
-      <p class="commit-receipt__coverage">
-        覆盖率：已分析 {changelistReceipt.coverage.analyzed} · 截断
-        {changelistReceipt.coverage.truncated} · 二进制
-        {changelistReceipt.coverage.binary} · 读取失败
-        {changelistReceipt.coverage.readFailed} · 预算外
-        {changelistReceipt.coverage.budgetExcluded}（共
-        {changelistReceipt.coverage.total} 个候选）
-      </p>
-      <button
-        type="button"
-        class="commit-receipt__toggle"
-        aria-expanded={receiptExpanded}
-        onclick={() => (receiptExpanded = !receiptExpanded)}
-        >{receiptExpanded ? "收起" : "展开"}包含 / 排除文件清单</button
-      >
-      {#if receiptExpanded}
-        <ul class="commit-receipt__files" aria-label="包含与排除文件清单">
-          {#each changelistReceipt.files as file (file.candidateId)}
-            <li
-              class="commit-receipt__file"
-              class:commit-receipt__file--excluded={file.state !== "analyzed"}
-            >
-              <span>{file.projectRelativePath}</span>
-              <small
-                >{file.state}{file.reason ? `（${file.reason}）` : ""}</small
+        <dl class="commit-receipt__meta">
+          <div>
+            <dt>任务</dt>
+            <dd>语义拆分（{changelistReceipt.receipt.task}）</dd>
+          </div>
+          <div>
+            <dt>模型</dt>
+            <dd>{changelistReceipt.receipt.model}</dd>
+          </div>
+          <div>
+            <dt>数据类型</dt>
+            <dd>{changelistReceipt.receipt.dataTypes.join("、")}</dd>
+          </div>
+          <div>
+            <dt>文件数</dt>
+            <dd>{changelistReceipt.receipt.files} 个已发送候选</dd>
+          </div>
+          <div>
+            <dt>预算</dt>
+            <dd>
+              单文件 {changelistReceipt.receipt.perFileBudget} 字符 / 总计 {changelistReceipt
+                .receipt.totalBudget} 字符
+            </dd>
+          </div>
+        </dl>
+        <p class="commit-receipt__coverage">
+          覆盖率：已分析 {changelistReceipt.coverage.analyzed} · 截断
+          {changelistReceipt.coverage.truncated} · 二进制
+          {changelistReceipt.coverage.binary} · 读取失败
+          {changelistReceipt.coverage.readFailed} · 预算外
+          {changelistReceipt.coverage.budgetExcluded}（共
+          {changelistReceipt.coverage.total} 个候选）
+        </p>
+        <button
+          type="button"
+          class="commit-receipt__toggle"
+          aria-expanded={receiptExpanded}
+          onclick={() => (receiptExpanded = !receiptExpanded)}
+          >{receiptExpanded ? "收起" : "展开"}包含 / 排除文件清单</button
+        >
+        {#if receiptExpanded}
+          <ul class="commit-receipt__files" aria-label="包含与排除文件清单">
+            {#each changelistReceipt.files as file (file.candidateId)}
+              <li
+                class="commit-receipt__file"
+                class:commit-receipt__file--excluded={file.state !== "analyzed"}
               >
-            </li>
-          {/each}
-        </ul>
-      {/if}
-      <p class="commit-receipt__note">
-        不会发送：{changelistReceipt.notSent.join("；")}。
-      </p>
-      <p class="commit-receipt__note">{changelistReceipt.retentionNote}</p>
-      <div class="commit-receipt__actions">
-        <button
-          type="button"
-          class="button button--primary"
-          onclick={confirmSemanticSplit}>开始语义拆分</button
-        >
-        <button
-          type="button"
-          class="button button--secondary"
-          onclick={continueMetadataSplit}>继续仅目录分组</button
-        >
-        <button
-          type="button"
-          class="button button--secondary"
-          onclick={dismissSplitReceipt}>放弃</button
-        >
+                <span>{file.projectRelativePath}</span>
+                <small
+                  >{file.state}{file.reason ? `（${file.reason}）` : ""}</small
+                >
+              </li>
+            {/each}
+          </ul>
+        {/if}
+        <p class="commit-receipt__note">
+          不会发送：{changelistReceipt.notSent.join("；")}。
+        </p>
+        <p class="commit-receipt__note">{changelistReceipt.retentionNote}</p>
+        <div class="commit-receipt__actions">
+          <button
+            type="button"
+            class="button button--primary"
+            onclick={confirmSemanticSplit}>开始语义拆分</button
+          >
+          <button
+            type="button"
+            class="button button--secondary"
+            onclick={continueMetadataSplit}>继续仅目录分组</button
+          >
+          <button
+            type="button"
+            class="button button--secondary"
+            onclick={dismissSplitReceipt}>放弃</button
+          >
+        </div>
       </div>
-    </div>
-  {/if}
+    {/if}
+  </AssistancePanel>
   {#if snapshot.suggestions.length > 0}<div class="ai-source">
       建议来源：{sourceLabels[snapshot.source]}
     </div>{/if}
@@ -926,8 +971,9 @@
             >
           </div>{/each}
       </div>
+      <!-- v0.1.6 V016-D：页面级唯一 primary=意向单入口（确认应用/移出变更集），此处降为次级。 -->
       <button
-        class="button button--primary commit-button"
+        class="button button--secondary commit-button"
         disabled={!name || applyPaths.length === 0}
         onclick={() =>
           onAction("changelist/preview-apply", {

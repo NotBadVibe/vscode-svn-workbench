@@ -160,7 +160,7 @@ test("保存每个 Svelte 功能页面的验收截图", async ({ page }) => {
 
   await test.step("Changelists", async () => {
     await openModule(page, "变更集");
-    await page.getByRole("button", { name: "生成分组建议" }).click();
+    await page.getByRole("button", { name: "自动整理" }).click();
     await page.getByRole("button", { name: "套用并调整" }).click();
     await page.getByRole("button", { name: "生成应用预览" }).click();
     await expect(
