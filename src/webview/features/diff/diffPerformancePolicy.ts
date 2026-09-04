@@ -364,3 +364,134 @@ export function decideDiffOverviewGate(
       : [],
   };
 }
+
+/*
+ * V018-E 可选同步只读比较窗格 go/no-go（v0.1.8 规划 §4.5）。
+ *
+ * 结论：no-go，保留 v0.1.3 单视口（Tabs），不视为版本失败。
+ * 本节只记录验证数据与纯门控，不挂载任何三窗格 UI，不调用私有 API。
+ *
+ * 逐条验证（证据均为平台无关的静态契约或既有实测复用，未新建浏览器运行）：
+ * 1. 角色清楚（GO-可行）：协议已提供 base/mine/theirs/working 四路
+ *    ConflictFileContentView（src/protocol/workbenchProtocol.ts），领域
+ *    ConflictRegion{mine,base?,theirs} + ConflictFileModel 四角色标签
+ *    （src/conflict/conflictDiffModel.ts）；Mine vs BASE（old=base/new=mine）
+ *    与 Theirs vs BASE（old=base/new=theirs）只读 FileDiff 输入可纯构造，
+ *    缺 BASE/截断/读取失败时 fail-closed 回单视口。
+ * 2. 公开 API（NO-GO-严格）：ScrollSyncManager 公开 setup/cleanUp 仅同步
+ *    同一 FileDiff 内左右栏横向 scrollTo({left})（dist/managers/
+ *    ScrollSyncManager.js 实证），enabled 为私有守卫；FileDiff.d.ts
+ *    中 scrollSyncManager/codeDeletions/codeAdditions 均为 protected，公开
+ *    纵向 API 仅 revealLine（hunk 展开语义，非连续滚动），get/setCodeScrollLeft
+ *    仅横向；CodeView/Coordinator 为多条目虚拟列表容器与 slot 快照协调
+ *    （dist/components/CodeView.d.ts），非跨窗格滚动同步器。跨实例纵向
+ *    像素同步需触及 shadow 内 protected 节点，属私有，不可维护。
+ * 3. 可关闭无震荡（未实测）：关闭模式存在（cleanUp/dispose 幂等 +
+ *    ScrollSyncManager 内 isDeletionsScrolling 互斥守卫可借鉴），但跨窗格
+ *    纵向无震荡未经浏览器 A/B 实测，不可标 GO。
+ * 4. 按需挂载与清理（部分）：单实例幂等 dispose + observer 回收已有
+ *    diffViewAdapter/conflictDiffViewAdapter 与单测，但三实例挂载成本与
+ *    文件切换内存回收未经实测。
+ * 5. 1024px 门限（模式可行，未实测）：ConflictsModule 已有 Tabs 单视口
+ *    （working/mine/theirs/base）与 760px 折叠先例，但 1024px 多栏门限与
+ *    小屏自动回 Tabs 未实现、未做视口 E2E。
+ * 6. 键盘与读屏（未实测）：现有 tablist/region/aria-label 模式可复用，但三窗格
+ *    焦点顺序与读屏语义未设计、未做 axe/真实读屏（设计基线 §3.4 明确真实读屏未执行）。
+ * 7. 性能与内存（NO-GO）：V018-B 单只读 FileDiff 5000 行首屏 P95 2056ms，
+ *    已超 800ms 候选预算 2.6x；三实例（2 只读 + 1 结果）外推远超首屏与
+ *    100 块首个可操作冲突预算，且无三实例 A/B 实测；按硬约束不得缩 fixture
+ *    或放宽断言取通过。
+ * 任一条件不满足即 no-go（规划 §4.5），故三窗格默认关闭且不提供开启入口。
+ */
+
+/** V018-E 多栏生效的最小视口宽度（含等于；以下自动回 Tabs/单视口）。 */
+export const V018E_MULTICOLUMN_MIN_WIDTH_PX = 1024;
+
+/**
+ * V018-E 证据说明：未新建三窗格浏览器运行（代码不存在，不可测）；
+ * 静态证据为包内 dts/js 契约审计，性能外推复用 V018-B 普通 evidence。
+ */
+export const V018E_EVIDENCE_NOTE: string =
+  "静态契约审计（@pierre/diffs@1.3.4 dist dts/js）+ 复用 " +
+  V018B_EVIDENCE_RUN +
+  " 单实例首屏数据外推；无三实例 A/B 运行";
+
+/** V018-E 跨窗格纵向同步 API 处置：no-go（仅横向 intra-diff 同步可用）。 */
+export const V018E_SYNC_API_DISPOSITION = {
+  crossPaneVertical: "no-go" as const,
+  reason:
+    "ScrollSyncManager 仅同步同一 FileDiff 内左右栏横向 scrollLeft；" +
+    "跨实例纵向同步无公开 API，需触及 shadow 内 protected 节点，属私有，不可维护",
+} as const;
+
+/** V018-E 门控输入（纯数据，不读 DOM，平台无关）。 */
+export interface V018ESyncPanesInput {
+  /** 实际行数（含 marker 开销）。 */
+  actualLines: number;
+  conflictBlocks: number;
+  /** 最长行字符数（UTF-16），缺省 0 视为无长行。 */
+  maxLineLength?: number;
+  /** 四路内容是否齐全可用（缺 BASE/截断/读取失败即 fail-closed）。 */
+  hasBase: boolean;
+  hasMine: boolean;
+  hasTheirs: boolean;
+  truncated: boolean;
+  hasReadError: boolean;
+  /** 视口宽度 px；缺省视为未知（不可启用）。 */
+  viewportWidthPx?: number;
+  /** 用户显式开启（默认关；no-go 下即使为 true 仍不启用）。 */
+  userEnabled: boolean;
+}
+
+/** V018-E 门控决策：当前证据下恒为不启用（翻转需新证据）。 */
+export interface V018ESyncPanesDecision {
+  enabled: false;
+  /** no-go 下恒为 true（门控生效，保留单视口）。 */
+  gated: true;
+  /** 中文原因（可直接展示，不静默）。 */
+  reasons: string[];
+}
+
+/**
+ * 纯函数：V018-E 同步窗格门控。当前证据下恒返回不启用，并按输入逐项给出
+ * 中文原因；跨窗格纵向同步原因恒存在。未来若有新证据支持启用，必须同步
+ * 更新本决策、证据说明与对应测试，不得绕过本门控直接挂载三窗格。
+ */
+export function decideV018ESyncPanes(
+  input: V018ESyncPanesInput,
+  thresholds: DiffPerformanceThresholds = V018_PERFORMANCE_THRESHOLDS_PLACEHOLDER,
+): V018ESyncPanesDecision {
+  const actualLines = Math.max(0, Math.floor(input.actualLines));
+  const conflictBlocks = Math.max(0, Math.floor(input.conflictBlocks));
+  const maxLineLength = Math.max(0, Math.floor(input.maxLineLength ?? 0));
+  const reasons: string[] = [];
+  const contentOk =
+    input.hasBase &&
+    input.hasMine &&
+    input.hasTheirs &&
+    !input.truncated &&
+    !input.hasReadError;
+  if (!contentOk) {
+    reasons.push("只读来源不完整（缺 BASE/截断/读取失败），已保留单视口");
+  }
+  const sizeOk =
+    actualLines <= thresholds.fullMaxLines &&
+    conflictBlocks <= thresholds.fullMaxConflictBlocks &&
+    maxLineLength <= V018C_LONG_LINE_THRESHOLD;
+  if (!sizeOk) {
+    reasons.push("行数/块数/长行超过完整模式上限，三窗格不在预算内");
+  }
+  const viewportOk =
+    input.viewportWidthPx !== undefined &&
+    Math.floor(input.viewportWidthPx) >= V018E_MULTICOLUMN_MIN_WIDTH_PX;
+  if (!viewportOk) {
+    reasons.push(
+      `视口不足 ${V018E_MULTICOLUMN_MIN_WIDTH_PX}px（或未知），自动回 Tabs/单视口`,
+    );
+  }
+  if (!input.userEnabled) {
+    reasons.push("三窗格默认关闭，需用户显式开启（当前未开启）");
+  }
+  reasons.push(V018E_SYNC_API_DISPOSITION.reason);
+  return { enabled: false, gated: true, reasons };
+}
