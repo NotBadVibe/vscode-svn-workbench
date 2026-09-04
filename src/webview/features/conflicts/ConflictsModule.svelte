@@ -1278,6 +1278,11 @@
       return;
     }
     shortcutHelpOpen = !shortcutHelpOpen;
+    if (!shortcutHelpOpen) {
+      // V017-F：模块级 `?`/工具栏按钮关闭时焦点同样返回工具栏 `?` 按钮，
+      // 与面板内 Esc/`?`/关闭按钮路径（returnFocusTo）一致，避免焦点掉到 body。
+      queueMicrotask(() => focusToolbarHelpTrigger()?.focus());
+    }
   }
 
   /** 帮助 Esc 关闭后焦点返回工具栏 `?` 按钮。 */
