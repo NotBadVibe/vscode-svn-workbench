@@ -9,10 +9,10 @@
   import { hashText } from "../../../conflict/conflictDiffModel";
   import {
     CONFLICT_SHORTCUTS,
-    CONFLICT_SHORTCUT_LIST,
     REPLACE_DEFERRED_NOTE,
     isImeComposingEvent,
   } from "./conflictShortcuts";
+  import ShortcutHelp from "../../components/help/ShortcutHelp.svelte";
 
   /**
    * V012-C 可撤销取舍工具栏（当前块作用域）。
@@ -26,6 +26,7 @@
   let {
     resultEditor,
     onDraftChange,
+    onToggleShortcutHelp,
   }: {
     resultEditor: {
       getMergeState: () => MergeDocumentState | undefined;
@@ -43,6 +44,11 @@
       getText: () => string;
     };
     onDraftChange?: (text: string, revision?: number) => void;
+    /**
+     * V017-B 双轨收敛：模块内使用时 `?` 委托模块级单一帮助实例；
+     * 未提供时回退为工具栏内联共享面板（独立使用场景）。
+     */
+    onToggleShortcutHelp?: () => void;
   } = $props();
 
   let isBusy = $state(false);
@@ -255,6 +261,18 @@
   let canUndo = $derived(canUndoState);
   let canRedo = $derived(canRedoState);
   let showShortcutHelp = $state(false);
+
+  /**
+   * V017-B 双轨收敛：模块内使用时 `?` 委托模块级单一帮助实例
+   * （`onToggleShortcutHelp`），独立使用时回退为内联共享面板。
+   */
+  function toggleShortcutHelp(): void {
+    if (onToggleShortcutHelp) {
+      onToggleShortcutHelp();
+      return;
+    }
+    showShortcutHelp = !showShortcutHelp;
+  }
 
   async function runAction(
     action: "take-mine" | "take-theirs" | "take-both" | "restore-original",
@@ -528,7 +546,8 @@
     // ? 帮助（单一来源）
     if (e.key === "?" && !e.ctrlKey && !e.metaKey && !e.altKey) {
       e.preventDefault();
-      showShortcutHelp = !showShortcutHelp;
+      e.stopPropagation();
+      toggleShortcutHelp();
       return;
     }
     // Alt+↑/↓ 块导航（与 Diff 一致，沿用现有行为确认可用）
@@ -597,7 +616,7 @@
         data-testid="toolbar-shortcut-help"
         aria-label="快捷键帮助"
         title={CONFLICT_SHORTCUTS.help.title}
-        onclick={() => (showShortcutHelp = !showShortcutHelp)}
+        onclick={toggleShortcutHelp}
       >
         ?
       </button>
@@ -726,32 +745,16 @@
     </button>
   </div>
 
-  {#if showShortcutHelp}
-    <div
-      class="toolbar-shortcut-help"
-      role="region"
-      aria-label="快捷键帮助"
-      data-testid="shortcut-help"
-    >
-      <strong>快捷键</strong>
-      <ul>
-        {#each CONFLICT_SHORTCUT_LIST as sc (sc.id)}
-          <li>
-            <span>{sc.label}</span><code>{sc.display}</code><small
-              >{sc.title}</small
-            >
-          </li>
-        {/each}
-      </ul>
-      <small class="muted" data-testid="replace-deferred-note"
-        >{REPLACE_DEFERRED_NOTE}</small
-      >
-      <button
-        class="button button--secondary"
-        data-testid="shortcut-help-close"
-        onclick={() => (showShortcutHelp = false)}>关闭</button
-      >
-    </div>
+  {#if !onToggleShortcutHelp && showShortcutHelp}
+    <ShortcutHelp
+      region="conflicts"
+      showTrigger={false}
+      bind:open={showShortcutHelp}
+      triggerTestId="toolbar-shortcut-help"
+      panelTestId="shortcut-help"
+      closeTestId="shortcut-help-close"
+      extraNote={REPLACE_DEFERRED_NOTE}
+    />
   {/if}
 
   {#if errorTip}

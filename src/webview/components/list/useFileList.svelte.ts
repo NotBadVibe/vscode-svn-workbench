@@ -9,6 +9,8 @@
  * - 模块通过 options 省略不适用能力（选择、行菜单、路径详情），但不得
  *   改变共享手势的含义；渲染标记仍由各模块持有（列表列差异大，不抽
  *   通用 DataList）。
+ * - V017-B：`/` 聚焦搜索由 `onFocusSearch` 接线（仅有搜索框的列表），
+ *   未接线时无绑定，帮助中亦不出现。
  */
 
 import {
@@ -43,6 +45,11 @@ export interface UseFileListOptions<T> {
   onToggleActive?: (row: T, index: number) => void;
   /** Shift+F10/Menu：打开活动行菜单；返回 true 才阻止默认。 */
   onOpenRowMenu?: (row: T, index: number) => boolean;
+  /**
+   * V017-B `/` 聚焦搜索（集中 keymap `list/searchFocus`）：仅有搜索框的
+   * 列表接线；未提供时 `/` 无绑定（帮助中亦不出现）。
+   */
+  onFocusSearch?: () => void;
 }
 
 export interface FileListController<T> {
@@ -240,6 +247,12 @@ export function useFileList<T>(
     if (event.key === "Enter" && activeIndex >= 0 && options.onActivate) {
       event.preventDefault();
       options.onActivate(rows[activeIndex], activeIndex);
+      return;
+    }
+    // V017-B `/` 聚焦搜索：列表容器聚焦且不在输入/IME 候选中（总闸门已保证）。
+    if (event.key === "/" && options.onFocusSearch) {
+      event.preventDefault();
+      options.onFocusSearch();
     }
   }
 

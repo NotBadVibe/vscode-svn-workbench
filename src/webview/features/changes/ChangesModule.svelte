@@ -23,6 +23,7 @@
   import BulkActionBar from "../../components/list/BulkActionBar.svelte";
   import SearchInput from "../../components/list/SearchInput.svelte";
   import ResultCount from "../../components/list/ResultCount.svelte";
+  import ListShortcutHint from "../../components/help/ListShortcutHint.svelte";
   import PreviewPathList from "../../components/list/PreviewPathList.svelte";
   import OperationIntentDialog from "../../components/operation/OperationIntentDialog.svelte";
   import TaskEmptyState from "../../components/task/TaskEmptyState.svelte";
@@ -88,6 +89,8 @@
   const MODE = "changes" as const;
 
   let query = $state("");
+  /** V017-B `/` 聚焦搜索目标（集中 keymap `list/searchFocus`）。 */
+  let searchInputRef = $state<{ focusInput: () => void } | undefined>();
   let activeStatus = $state<WorkbenchFileStatus | "all">("all");
   // v0.0.17 批次 E（C-13）：文件类型筛选（选项从当前候选推导）与命名预设。
   let activeFileType = $state("all");
@@ -347,6 +350,8 @@
       rowMenuOpen = true;
       return true;
     },
+    // V017-B `/` 聚焦搜索（集中 keymap `list/searchFocus`，仅有搜索框的列表）。
+    onFocusSearch: () => searchInputRef?.focusInput(),
   });
 
   $effect(() => {
@@ -701,6 +706,7 @@
 <section class="feature-layout">
   <div class="feature-toolbar">
     <SearchInput
+      bind:this={searchInputRef}
       bind:value={query}
       ariaLabel="筛选变更文件"
       placeholder="筛选文件…"
@@ -895,6 +901,8 @@
   />
 
   <div class="table-card">
+    <!-- V017-B 列表紧凑提示条（按区域实际绑定生成，可忽略、可关闭）。 -->
+    <ListShortcutHint region="list" hintKey="changes-list" searchAvailable />
     {#if pathDetail && list.detailOpen}
       <div class="path-detail-host">
         <div class="path-detail-host__bar">

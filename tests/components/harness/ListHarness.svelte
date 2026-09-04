@@ -17,6 +17,8 @@
   let requestedDetail = $state<string | undefined>();
   let activated = $state<string | undefined>();
   let detailArrived = $state(false);
+  /** V017-B `/` 聚焦搜索接线指示（默认接线，用于覆盖 keymap 绑定）。 */
+  let searchFocused = $state(false);
 
   const list = useFileList<string>({
     rows: () => items,
@@ -27,6 +29,9 @@
     },
     onActivate: (item) => {
       activated = item;
+    },
+    onFocusSearch: () => {
+      searchFocused = true;
     },
   });
 </script>
@@ -50,6 +55,9 @@
 {/if}
 {#if activated}
   <span data-testid="activated">{activated}</span>
+{/if}
+{#if searchFocused}
+  <span data-testid="search-focused">搜索已聚焦</span>
 {/if}
 <div
   class="harness-list"

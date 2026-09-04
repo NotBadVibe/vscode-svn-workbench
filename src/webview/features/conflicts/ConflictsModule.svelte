@@ -19,7 +19,6 @@
   } from "../../../conflict/conflictDiffModel";
   import {
     CONFLICT_SHORTCUTS,
-    CONFLICT_SHORTCUT_LIST,
     REPLACE_DEFERRED_NOTE,
     isImeComposingEvent,
   } from "./conflictShortcuts";
@@ -43,6 +42,7 @@
   import ConflictDiffView from "./ConflictDiffView.svelte";
   import ConflictResultEditor from "./ConflictResultEditor.svelte";
   import MergeActionToolbar from "./MergeActionToolbar.svelte";
+  import ShortcutHelp from "../../components/help/ShortcutHelp.svelte";
   import ConflictStepBar from "./ConflictStepBar.svelte";
   import type { DiffErrorInfo } from "../diff/diffErrorTaxonomy";
   import ScrollArea from "../../components/ui/ScrollArea.svelte";
@@ -509,6 +509,8 @@
   let diffActionFeedback = $state("");
   let sourceDetailsOpen = $state(false);
   let helpDetailsOpen = $state(false);
+  /** V017-B 双轨收敛：冲突帮助单一实例（工具栏 `?` 与模块 `?` 共用）。 */
+  let shortcutHelpOpen = $state(false);
   // V011-E 安全降级：fail-closed 保留草稿
   let diffErrorInfo = $state<DiffErrorInfo | null>(null);
   let useSimplified = $state(false);
@@ -1255,6 +1257,26 @@
     useSimplified = true;
   }
 
+  /**
+   * V017-B 双轨收敛：工具栏与模块 `?` 共用单一帮助实例。
+   * 首次打开同时展开解决确认区；已展开时只切换帮助面板。
+   */
+  function toggleModuleShortcutHelp(): void {
+    if (!helpDetailsOpen) {
+      helpDetailsOpen = true;
+      shortcutHelpOpen = true;
+      return;
+    }
+    shortcutHelpOpen = !shortcutHelpOpen;
+  }
+
+  /** 帮助 Esc 关闭后焦点返回工具栏 `?` 按钮。 */
+  function focusToolbarHelpTrigger(): HTMLElement | null {
+    return document.querySelector<HTMLElement>(
+      '[data-testid="toolbar-shortcut-help"]',
+    );
+  }
+
   function focusBlock(delta: -1 | 1): void {
     if (!diffProgress.total) return;
     const next = Math.max(
@@ -1280,10 +1302,10 @@
       flushCheckpoint();
       return;
     }
-    // ? 快捷键帮助（单一来源，按钮与面板共用）
+    // ? 快捷键帮助（集中 keymap；与工具栏 `?` 共用模块级单一实例）
     if (!isMod && !e.altKey && e.key === "?") {
       e.preventDefault();
-      helpDetailsOpen = !helpDetailsOpen;
+      toggleModuleShortcutHelp();
       return;
     }
     // Alt+↑/↓ 块导航（与 Diff 一致）
@@ -2182,6 +2204,7 @@
             <MergeActionToolbar
               {resultEditor}
               onDraftChange={(text) => handleResultDraftChange(text, 0)}
+              onToggleShortcutHelp={toggleModuleShortcutHelp}
             />
           {/if}
           {#if diffActionFeedback}<div
@@ -2620,31 +2643,19 @@
               >
             {/if}
           </section>
-          <!-- V012-E：快捷键帮助（单一来源，按钮 title 与本面板共用；? 切换） -->
-          <section
-            class="conflict-shortcut-help"
-            aria-label="快捷键帮助"
-            data-testid="conflict-shortcut-help"
-            title={CONFLICT_SHORTCUTS.help.title}
-          >
-            <h3>快捷键（{CONFLICT_SHORTCUTS.help.display} 打开/关闭）</h3>
-            <ul>
-              {#each CONFLICT_SHORTCUT_LIST as sc (sc.id)}
-                <li data-testid={`shortcut-${sc.id}`}>
-                  <span>{sc.label}</span><code>{sc.display}</code><small
-                    >{sc.title}</small
-                  >
-                </li>
-              {/each}
-            </ul>
-            <small class="muted" data-testid="replace-deferred-note"
-              >{REPLACE_DEFERRED_NOTE}</small
-            >
-            <small class="muted"
-              >查找面板的英文 placeholder 为第三方库内部
-              UI，属已知限制；关闭查找后焦点返回编辑位置。</small
-            >
-          </section>
+          <!-- V017-B：快捷键帮助单一实例（集中 keymap 生成；工具栏 `?` 与模块 `?` 共用） -->
+          {#if shortcutHelpOpen}
+            <ShortcutHelp
+              region="conflicts"
+              showTrigger={false}
+              bind:open={shortcutHelpOpen}
+              triggerTestId="toolbar-shortcut-help"
+              panelTestId="conflict-shortcut-help"
+              closeTestId="conflict-shortcut-help-close"
+              returnFocusTo={focusToolbarHelpTrigger}
+              extraNote={`${REPLACE_DEFERRED_NOTE}查找面板的英文 placeholder 为第三方库内部 UI，属已知限制；关闭查找后焦点返回编辑位置。`}
+            />
+          {/if}
         </details>
       </div>
     {:else}

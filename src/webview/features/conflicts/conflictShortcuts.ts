@@ -1,5 +1,8 @@
 /**
- * 冲突结果编辑快捷键单一来源（V012-E）。
+ * 冲突结果编辑快捷键（V012-E 建立，V017-B 收敛为集中 keymap 的兼容视图）。
+ * - 唯一来源：`src/webview/keyboard/shortcuts.ts`（区域 `conflicts`）。
+ *   本文件的 `CONFLICT_SHORTCUTS` / `CONFLICT_SHORTCUT_LIST` 仅是
+ *   旧调用点（工具栏标题、模块帮助）的只读视图，禁止在此另写按键文案。
  * - 查找经 Editor keymap 绑定到内部命令 `openSearchPanel` 间接启用（Pierre 无程序化打开 API）。
  * - 替换（`openSearchReplacePanel`）已延期：输入框无 isComposing 保护 + 面板英文硬编码 UI + 只能 keymap 间接打开，不满足中文界面/IME 约束。
  * - 查找面板的英文 placeholder 为第三方库内部 UI，属已知限制，可接受但须如实说明。
@@ -7,69 +10,51 @@
  */
 
 import type { EditorKeymap } from "@pierre/diffs/edit";
+import {
+  getShortcutsForRegion,
+  type ShortcutDef,
+} from "../../keyboard/shortcuts";
+import { replaceDeferredNote } from "../../i18n/shortcutHelp";
 
-/** 快捷键定义（单一来源，按钮 title 与帮助面板共用） */
-export const CONFLICT_SHORTCUTS = {
-  undo: {
-    id: "undo" as const,
-    label: "撤销",
-    display: "Ctrl/Cmd+Z",
-    title: "撤销（Ctrl/Cmd+Z）",
-    keys: ["Ctrl+Z", "Cmd+Z"] as const,
-  },
-  redo: {
-    id: "redo" as const,
-    label: "重做",
-    display: "Ctrl/Cmd+Shift+Z / Ctrl+Y",
-    title: "重做（Ctrl/Cmd+Shift+Z / Ctrl+Y）",
-    keys: ["Ctrl+Shift+Z", "Cmd+Shift+Z", "Ctrl+Y"] as const,
-  },
-  find: {
-    id: "find" as const,
-    label: "查找",
-    display: "Ctrl/Cmd+F",
-    title: "查找（Ctrl/Cmd+F）",
-    keys: ["Ctrl+F", "Cmd+F"] as const,
-  },
-  saveCheckpoint: {
-    id: "saveCheckpoint" as const,
-    label: "保存检查点",
-    display: "Ctrl/Cmd+S",
-    // 明确不写入工作副本（V012-E 3）
-    title: "保存检查点（Ctrl/Cmd+S，不写入工作副本）",
-    keys: ["Ctrl+S", "Cmd+S"] as const,
-  },
-  prevBlock: {
-    id: "prevBlock" as const,
-    label: "上一个块",
-    display: "Alt+↑",
-    title: "上一个块（Alt+↑）",
-    keys: ["Alt+ArrowUp"] as const,
-  },
-  nextBlock: {
-    id: "nextBlock" as const,
-    label: "下一个块",
-    display: "Alt+↓",
-    title: "下一个块（Alt+↓）",
-    keys: ["Alt+ArrowDown"] as const,
-  },
-  help: {
-    id: "help" as const,
-    label: "快捷键帮助",
-    display: "?",
-    title: "快捷键帮助（?）",
-    keys: ["?"] as const,
-  },
-} as const;
+interface ConflictShortcutView {
+  readonly id: string;
+  readonly label: string;
+  readonly display: string;
+  readonly title: string;
+  readonly keys: readonly string[];
+}
+
+function toView(def: ShortcutDef): ConflictShortcutView {
+  return {
+    id: def.id,
+    label: def.label,
+    display: def.display,
+    title: def.title,
+    keys: def.keys,
+  };
+}
+
+/** 快捷键定义（集中 keymap 的只读视图，按钮 title 与帮助面板共用） */
+export const CONFLICT_SHORTCUTS = Object.fromEntries(
+  getShortcutsForRegion("conflicts").map((def) => [def.id, toView(def)]),
+) as {
+  readonly saveCheckpoint: ConflictShortcutView;
+  readonly prevBlock: ConflictShortcutView;
+  readonly nextBlock: ConflictShortcutView;
+  readonly undo: ConflictShortcutView;
+  readonly redo: ConflictShortcutView;
+  readonly find: ConflictShortcutView;
+  readonly help: ConflictShortcutView;
+};
 
 export type ConflictShortcutId = keyof typeof CONFLICT_SHORTCUTS;
 
 /** 列表形式，便于帮助面板遍历 */
-export const CONFLICT_SHORTCUT_LIST = Object.values(CONFLICT_SHORTCUTS);
+export const CONFLICT_SHORTCUT_LIST: readonly ConflictShortcutView[] =
+  Object.values(CONFLICT_SHORTCUTS);
 
 /** 替换延期结论（须在界面或文档中如实说明） */
-export const REPLACE_DEFERRED_NOTE =
-  "替换（replace）已延期：查找面板替换功能因输入框无 IME 保护、面板英文硬编码、仅能经 keymap 间接打开，不满足中文界面/IME 约束；查找面板的英文 placeholder 为第三方库内部 UI，属已知限制。";
+export const REPLACE_DEFERRED_NOTE = replaceDeferredNote;
 
 /**
  * Pierre Editor 查找 keymap（V012-E）。

@@ -27,6 +27,26 @@ describe("SearchInput 共享搜索框", () => {
     expect(screen.queryByRole("button", { name: "清除筛选" })).toBeNull();
   });
 
+  it("Esc 清除筛选并保持焦点；IME 候选中不清除", async () => {
+    render(SearchInput, { ariaLabel: "筛选条目" });
+    const input = screen.getByRole("textbox", {
+      name: "筛选条目",
+    }) as HTMLInputElement;
+    await fireEvent.input(input, { target: { value: "src" } });
+    expect(input.value).toBe("src");
+    input.focus();
+    // IME 候选阶段的 Esc 先处理输入法，不清除。
+    await fireEvent.keyDown(input, { key: "Escape", isComposing: true });
+    expect(input.value).toBe("src");
+    await fireEvent.keyDown(input, { key: "Escape" });
+    expect(input.value).toBe("");
+    // 清空后焦点仍在输入框，键盘用户可继续输入。
+    expect(document.activeElement).toBe(input);
+    // 空值时 Esc 不抛错。
+    await fireEvent.keyDown(input, { key: "Escape" });
+    expect(input.value).toBe("");
+  });
+
   it("IME composition 阶段的 Enter 不改变筛选值", async () => {
     render(SearchInput, { ariaLabel: "筛选条目" });
     const input = screen.getByRole("textbox", {
@@ -101,6 +121,16 @@ describe("useFileList 共享列表控制器", () => {
     const rendered = document.querySelectorAll(".harness-row");
     expect(rendered.length).toBeGreaterThan(0);
     expect(rendered.length).toBeLessThan(items.length);
+  });
+
+  it("`/` 聚焦搜索（仅接线列表）；`?` 不触发搜索", async () => {
+    render(ListHarness, { items: ["a", "b"] });
+    const container = screen.getByRole("list");
+    container.focus();
+    await fireEvent.keyDown(container, { key: "/" });
+    expect(screen.getByTestId("search-focused")).toHaveTextContent(
+      "搜索已聚焦",
+    );
   });
 
   it("resetNavigation 后清除活动行", async () => {

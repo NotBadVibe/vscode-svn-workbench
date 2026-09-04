@@ -16,8 +16,24 @@
     diffHunkPositionLabel,
     diffViewLabels,
   } from "../../i18n/terminology";
+  import { SHORTCUTS_BY_REGION } from "../../keyboard/shortcuts";
   import { computeDiffHunks, computePatchHunks } from "./diffHunks";
   import type { DiffErrorInfo } from "./diffErrorTaxonomy";
+
+  /**
+   * V017-B：导航/保存按钮 title 来自集中 keymap（区域 `diff`），
+   * 禁止硬编码快捷键文案。
+   */
+  const diffShortcutTitles = (() => {
+    const byId = new Map(
+      SHORTCUTS_BY_REGION.diff.map((def) => [def.id, def.title]),
+    );
+    return {
+      prevHunk: byId.get("prevHunk") ?? "上一处差异",
+      nextHunk: byId.get("nextHunk") ?? "下一处差异",
+      save: byId.get("save") ?? "保存到工作副本",
+    };
+  })();
 
   let {
     snapshot,
@@ -594,7 +610,7 @@
             disabled={hunks.length === 0}
             title={hunks.length === 0
               ? diffViewLabels.noHunks
-              : `${diffViewLabels.prevHunk}（Alt+↑）`}
+              : diffShortcutTitles.prevHunk}
             aria-label={diffViewLabels.prevHunk}
             onclick={() => navigate(-1)}
           >
@@ -612,7 +628,7 @@
             disabled={hunks.length === 0}
             title={hunks.length === 0
               ? diffViewLabels.noHunks
-              : `${diffViewLabels.nextHunk}（Alt+↓）`}
+              : diffShortcutTitles.nextHunk}
             aria-label={diffViewLabels.nextHunk}
             onclick={() => navigate(1)}
           >
@@ -709,7 +725,7 @@
             title={saving
               ? diffViewLabels.saving
               : dirty
-                ? `${diffViewLabels.saveToWorkingCopy}（Ctrl/Cmd+S）`
+                ? diffShortcutTitles.save
                 : "没有未保存的修改"}
             onclick={saveWorkingCopy}>{diffViewLabels.saveToWorkingCopy}</button
           >
