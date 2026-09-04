@@ -249,7 +249,9 @@ export function formatExternalMergeCommandPreview(
   args: readonly string[],
 ): string {
   const parts = [command, ...args].map((item) =>
-    /[\s"]/.test(item) ? `"${item.replace(/"/g, '\\"')}"` : item,
+    /[\s"]/.test(item)
+      ? `"${item.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`
+      : item,
   );
   return parts.join(" ");
 }
