@@ -3,6 +3,8 @@
   import { MergeView } from "@codemirror/merge";
   import { EditorView, lineNumbers } from "@codemirror/view";
   import { isImeComposing } from "../../i18n/keyboard";
+  // 中文注释：V017-C T6——本地实现收敛到共享主区落点 action，行为不变。
+  import { focusOnMount } from "../../components/ui/focusOnMount";
   import type {
     DiffSaveWorkingResult,
     DiffSnapshot,
@@ -131,6 +133,10 @@
   let pendingSaveContent: string | undefined;
   /** 目标切换三选一对话框引用（焦点管理）。 */
   let switchDialog = $state<HTMLDivElement>();
+  /** 中文注释：V017-C T2——模块根容器（背景 inert 作用域与焦点回退落点）。 */
+  let sectionEl = $state<HTMLElement>();
+  /** 中文注释：V017-C T2——对话框打开时的触发点，关闭后焦点返回此处。 */
+  let switchPreviousFocus = $state<HTMLElement | null>(null);
 
   /** 仅当确认请求针对当前目标且确有脏内容（编辑中脏或已有脏草稿）时展示。 */
   const showTargetSwitchDialog = $derived(
@@ -360,13 +366,37 @@
     }
   });
 
-  // 对话框打开时焦点进入主操作（读屏与键盘可达）。
+  // 中文注释：V017-C T2——对话框打开时记录触发点并焦点进入主操作
+  // （读屏与键盘可达）；关闭后焦点返回触发点，触发点已卸载时回退模块主区。
   $effect(() => {
     if (showTargetSwitchDialog && switchDialog) {
+      if (!switchPreviousFocus) {
+        switchPreviousFocus = document.activeElement as HTMLElement | null;
+      }
       const primary = switchDialog.querySelector<HTMLButtonElement>(
         "button[data-primary]",
       );
       queueMicrotask(() => primary?.focus());
+    } else if (!showTargetSwitchDialog && switchPreviousFocus) {
+      const target = switchPreviousFocus;
+      switchPreviousFocus = null;
+      queueMicrotask(() => {
+        if (target.isConnected) target.focus();
+        else sectionEl?.focus();
+      });
+    }
+  });
+
+  // 中文注释：V017-C T2——假模态打开期间背景兄弟容器加 inert
+  // （对齐 showModal 背景不可交互契约；对话框自身不受影响）。
+  $effect(() => {
+    const root = sectionEl;
+    if (!root) return;
+    for (const child of Array.from(root.children)) {
+      if (!(child instanceof HTMLElement)) continue;
+      if (child.classList.contains("diff-switch-backdrop")) continue;
+      if (showTargetSwitchDialog) child.setAttribute("inert", "");
+      else child.removeAttribute("inert");
     }
   });
 
@@ -444,10 +474,6 @@
 
   function exportDraft(): void {
     if (targetId) onAction("diff/draft-export", { targetId });
-  }
-
-  function focusOnMount(node: HTMLElement): void {
-    queueMicrotask(() => node.focus());
   }
 
   function handleDiffReady(api: {
@@ -551,6 +577,7 @@
 </script>
 
 <section
+  bind:this={sectionEl}
   use:focusOnMount
   class="feature-layout diff-feature"
   tabindex="-1"

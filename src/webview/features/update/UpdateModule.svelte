@@ -6,6 +6,8 @@
   } from "@protocol/workbenchProtocol";
   import { isOperationIntentStale } from "../../../operation/operationIntent";
   import PreviewPathList from "../../components/list/PreviewPathList.svelte";
+  // 中文注释：V017-C T6——模块主区落点（挂载聚焦一次，刷新不抢焦点）。
+  import { focusOnMount } from "../../components/ui/focusOnMount";
   import OperationIntentDialog from "../../components/operation/OperationIntentDialog.svelte";
   import PrimaryActionBar from "../../components/task/PrimaryActionBar.svelte";
   import ResultNextStep from "../../components/task/ResultNextStep.svelte";
@@ -264,7 +266,7 @@
   }
 </script>
 
-<section class="feature-layout">
+<section class="feature-layout" use:focusOnMount tabindex="-1">
   {#if snapshot.recovery}
     <!-- v0.1.5 V015-B2：recovery 阻断 notice→TaskSummary full warning（进入恢复按钮语义保留）。 -->
     <TaskSummary

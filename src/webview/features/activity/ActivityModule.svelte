@@ -6,6 +6,8 @@
   import ScrollArea from "../../components/ui/ScrollArea.svelte";
   import ResultCount from "../../components/list/ResultCount.svelte";
   import TaskEmptyState from "../../components/task/TaskEmptyState.svelte";
+  // 中文注释：V017-C T6——模块主区落点（挂载聚焦一次，刷新不抢焦点）。
+  import { focusOnMount } from "../../components/ui/focusOnMount";
   import { taskStateCopy } from "../../i18n/terminology";
   import { formatZhDateTime } from "../../i18n/formatters";
 
@@ -53,7 +55,7 @@
   }
 </script>
 
-<section class="activity-page">
+<section class="activity-page" use:focusOnMount tabindex="-1">
   <header class="page-heading">
     <div>
       <span class="eyebrow">操作记录</span>

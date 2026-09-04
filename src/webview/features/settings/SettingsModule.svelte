@@ -6,6 +6,8 @@
   } from "@protocol/workbenchProtocol";
   import ScrollArea from "../../components/ui/ScrollArea.svelte";
   import { formatZhDateTime } from "../../i18n/formatters";
+  // 中文注释：V017-C T6——模块主区落点（挂载聚焦一次，刷新不抢焦点）。
+  import { focusOnMount } from "../../components/ui/focusOnMount";
   import { confidenceLabels, sourceLabels } from "../../i18n/terminology";
   import SelectionTask from "./SelectionTask.svelte";
 
@@ -105,7 +107,7 @@
   }
 </script>
 
-<section class="settings-page">
+<section class="settings-page" use:focusOnMount tabindex="-1">
   <header class="page-heading">
     <div>
       <span class="eyebrow">工作台设置</span>

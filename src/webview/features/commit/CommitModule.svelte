@@ -6,6 +6,8 @@
     WorkbenchFileView,
   } from "@protocol/workbenchProtocol";
   import { isCommitHandoffView } from "@protocol/workbenchProtocol";
+  // 中文注释：V017-C T6——模块主区落点（挂载聚焦一次，刷新不抢焦点）。
+  import { focusOnMount } from "../../components/ui/focusOnMount";
   import ScrollArea from "../../components/ui/ScrollArea.svelte";
   import FilePathDetail from "../../components/svn/FilePathDetail.svelte";
   import PathCell from "../../components/list/PathCell.svelte";
@@ -772,7 +774,11 @@
   }
 </script>
 
-<section class="commit-layout commit-layout--compact">
+<section
+  class="commit-layout commit-layout--compact"
+  use:focusOnMount
+  tabindex="-1"
+>
   <ScrollArea class="commit-compact" label="提交紧凑视图">
     <!-- V014-D 首屏要素 1：待提交摘要条（权威计数 + 分组 + 阻止项 + 调整入口）。 -->
     <div

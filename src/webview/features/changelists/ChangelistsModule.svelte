@@ -7,6 +7,8 @@
     WorkbenchFileStatus,
   } from "@protocol/workbenchProtocol";
   import ScrollArea from "../../components/ui/ScrollArea.svelte";
+  // 中文注释：V017-C T6——模块主区落点（挂载聚焦一次，刷新不抢焦点）。
+  import { focusOnMount } from "../../components/ui/focusOnMount";
   import SearchInput from "../../components/list/SearchInput.svelte";
   import ResultCount from "../../components/list/ResultCount.svelte";
   import PathCell from "../../components/list/PathCell.svelte";
@@ -493,7 +495,7 @@
   }
 </script>
 
-<section class="changelist-page">
+<section class="changelist-page" use:focusOnMount tabindex="-1">
   <header class="page-heading page-heading--actions">
     <div>
       <span class="eyebrow">SVN 变更集</span>

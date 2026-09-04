@@ -44,6 +44,8 @@
   import MergeActionToolbar from "./MergeActionToolbar.svelte";
   import ShortcutHelp from "../../components/help/ShortcutHelp.svelte";
   import ConflictStepBar from "./ConflictStepBar.svelte";
+  // 中文注释：V017-C T6——模块主区落点（挂载聚焦一次，刷新不抢焦点）。
+  import { focusOnMount } from "../../components/ui/focusOnMount";
   import type { DiffErrorInfo } from "../diff/diffErrorTaxonomy";
   import ScrollArea from "../../components/ui/ScrollArea.svelte";
   import SearchInput from "../../components/list/SearchInput.svelte";
@@ -949,7 +951,15 @@
     if (pathDetail) list.markPathDetailArrived();
   });
 
+  // 中文注释：V017-C T1——首块聚焦改为事件驱动三态：null=初始打开已武装，
+  // 路径=用户显式选择该文件后武装（含列表点击/键盘激活/上下导航/解决后自动
+  // 进入下一个），undefined=已消费。Host 快照/token 轮换（后台刷新）不经过
+  // selectConflict，不武装、不抢正在输入的焦点；武装只在新快照到达且路径
+  // 匹配时消费，避免旧文件视图提前消费导致新文件不聚焦。
+  let focusArmedFor = $state<string | null | undefined>(null);
+
   function selectConflict(relativePath: string): void {
+    focusArmedFor = relativePath;
     onAction("conflict/select", { relativePath });
   }
 
@@ -1323,13 +1333,17 @@
     }
   }
 
+  // 中文注释：V017-C T1——武装且块进度就绪时聚焦首块一次并消费；后台刷新
+  // （token/快照轮换）保持 undefined，不抢焦点。
   $effect(() => {
-    const tp = snapshot.selected?.relativePath;
-    const tk = snapshot.selected?.mergeEditor.token;
-    void tp;
-    void tk;
-    const total = untrack(() => diffProgress.total);
-    if (total > 0) {
+    const total = diffProgress.total;
+    const currentPath = snapshot.selected?.relativePath;
+    const armed = focusArmedFor;
+    if (
+      total > 0 &&
+      (armed === null || (armed !== undefined && armed === currentPath))
+    ) {
+      focusArmedFor = undefined;
       queueMicrotask(() => diffView?.focusConflict(0));
     }
   });
@@ -1339,6 +1353,8 @@
   class="conflict-layout"
   role="region"
   aria-label="冲突处理"
+  use:focusOnMount
+  tabindex="-1"
   onkeydown={handleModuleKeydown}
 >
   <aside class="conflict-list-pane">

@@ -6,6 +6,8 @@
     HostToWebviewMessage,
     WebviewAction,
   } from "@protocol/workbenchProtocol";
+  import { isImeComposing } from "../../i18n/keyboard";
+
   import ScrollArea from "../../components/ui/ScrollArea.svelte";
   import FilePathDetail from "../../components/svn/FilePathDetail.svelte";
   import TaskEmptyState from "../../components/task/TaskEmptyState.svelte";
@@ -193,8 +195,10 @@
     confirmText = "";
   }
 
+  // 中文注释：V017-C——统一使用共享 isImeComposing 守卫
+  // （isComposing + keyCode 229），候选阶段 Enter 不触发确认。
   function handleConfirmKeydown(event: KeyboardEvent): void {
-    if (event.isComposing) return;
+    if (isImeComposing(event)) return;
     if (event.key === "Enter") {
       event.preventDefault();
       confirmFact();
@@ -225,7 +229,7 @@
   );
 </script>
 
-<ScrollArea class="understanding-layout" label="变更解读">
+<ScrollArea class="understanding-layout" label="变更解读" autofocusOnMount>
   <div class="feature-toolbar">
     <div>
       <h2>{understandingLabels.task}</h2>

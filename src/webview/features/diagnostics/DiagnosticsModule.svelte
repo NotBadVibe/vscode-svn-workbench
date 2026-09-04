@@ -6,6 +6,8 @@
   } from "@protocol/workbenchProtocol";
   import ScrollArea from "../../components/ui/ScrollArea.svelte";
   import ResultCount from "../../components/list/ResultCount.svelte";
+  // 中文注释：V017-C T6——模块主区落点（挂载聚焦一次，刷新不抢焦点）。
+  import { focusOnMount } from "../../components/ui/focusOnMount";
   import TaskEmptyState from "../../components/task/TaskEmptyState.svelte";
   import { taskStateCopy } from "../../i18n/terminology";
   import { formatZhDateTime } from "../../i18n/formatters";
@@ -157,7 +159,7 @@
   }
 </script>
 
-<section class="diagnostics-page">
+<section class="diagnostics-page" use:focusOnMount tabindex="-1">
   <header class="page-heading page-heading--actions">
     <div>
       <span class="eyebrow">运行状态与验收</span>

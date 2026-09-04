@@ -1,5 +1,7 @@
 <script lang="ts">
   import { SvelteSet } from "svelte/reactivity";
+  // 中文注释：V017-C T6——模块主区落点（挂载聚焦一次，刷新不抢焦点）。
+  import { focusOnMount } from "../../components/ui/focusOnMount";
   import type {
     HistoryQueryView,
     HistorySnapshot,
@@ -368,7 +370,7 @@
   }
 </script>
 
-<section class="history-layout">
+<section class="history-layout" use:focusOnMount tabindex="-1">
   <div class="history-list-pane">
     <div class="feature-toolbar feature-toolbar--compact">
       <div>

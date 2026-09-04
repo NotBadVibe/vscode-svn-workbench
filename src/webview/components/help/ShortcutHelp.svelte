@@ -103,7 +103,11 @@
     ) {
       event.preventDefault();
       event.stopPropagation();
+      // 中文注释：V017-C T4——面板内按 `?` 关闭时同样返回触发按钮，
+      // 否则焦点随已卸载的关闭按钮丢失到 body。
+      const wasOpen = open;
       toggleHelp();
+      if (wasOpen) focusTarget()?.focus();
     }
   }
 </script>

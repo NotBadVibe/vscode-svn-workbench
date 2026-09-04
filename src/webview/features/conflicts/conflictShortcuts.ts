@@ -69,9 +69,6 @@ export const CONFLICT_EDITOR_FIND_KEYMAP: EditorKeymap = [
   },
 ] as EditorKeymap;
 
-/** 中文 IME 组合中判定（与 src/webview/i18n/keyboard.ts 一致，本地轻量复用避免循环依赖） */
-export function isImeComposingEvent(
-  event: Pick<KeyboardEvent, "isComposing" | "keyCode">,
-): boolean {
-  return Boolean(event.isComposing || event.keyCode === 229);
-}
+// 中文注释：V017-C 收敛——本地副本已合并到 `src/webview/keyboard/ime.ts`；
+// 名称保留为兼容别名，调用方无需改动导入路径。
+export { isImeComposing as isImeComposingEvent } from "../../keyboard/ime";

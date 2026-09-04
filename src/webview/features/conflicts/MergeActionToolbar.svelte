@@ -261,6 +261,11 @@
   let canUndo = $derived(canUndoState);
   let canRedo = $derived(canRedoState);
   let showShortcutHelp = $state(false);
+  // 中文注释：V017-C T4——独立内联帮助的触发按钮引用，关闭后焦点返回此处。
+  let helpTriggerEl = $state<HTMLButtonElement | undefined>();
+  function focusHelpTrigger(): HTMLElement | null {
+    return helpTriggerEl ?? null;
+  }
 
   /**
    * V017-B 双轨收敛：模块内使用时 `?` 委托模块级单一帮助实例
@@ -613,6 +618,7 @@
       >
       <button
         class="button button--secondary"
+        bind:this={helpTriggerEl}
         data-testid="toolbar-shortcut-help"
         aria-label="快捷键帮助"
         title={CONFLICT_SHORTCUTS.help.title}
@@ -753,6 +759,7 @@
       triggerTestId="toolbar-shortcut-help"
       panelTestId="shortcut-help"
       closeTestId="shortcut-help-close"
+      returnFocusTo={focusHelpTrigger}
       extraNote={REPLACE_DEFERRED_NOTE}
     />
   {/if}

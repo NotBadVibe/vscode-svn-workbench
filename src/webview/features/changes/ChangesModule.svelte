@@ -1,5 +1,7 @@
 <script lang="ts">
   import { ContextMenu } from "bits-ui";
+  // 中文注释：V017-C T6——模块主区落点（挂载聚焦一次，刷新不抢焦点）。
+  import { focusOnMount } from "../../components/ui/focusOnMount";
   import { tick } from "svelte";
   import type {
     ChangesSnapshot,
@@ -295,6 +297,9 @@
   let moreTriggerEl = $state<HTMLElement | null>(null);
   let blockedReasonsOpen = $state(false);
   let blockedReasonsEl = $state<HTMLElement | null>(null);
+  // 中文注释：V017-C T5——绑定的触发按钮引用；Esc 返回焦点用此引用，
+  // 避免全局 querySelector 在状态切换时选中错误按钮。
+  let blockedReasonsTrigger = $state<HTMLElement | null>(null);
 
   // 刷新合法交集：只保留新快照中仍存在且未变 blocked 的选择；新文件不自动加入。
   let lastRefreshedFiles: WorkbenchFileView[] | undefined;
@@ -703,7 +708,7 @@
   }
 </script>
 
-<section class="feature-layout">
+<section class="feature-layout" use:focusOnMount tabindex="-1">
   <div class="feature-toolbar">
     <SearchInput
       bind:this={searchInputRef}
@@ -1352,6 +1357,7 @@
       {:else if primaryAction.kind === "blocked"}
         <button
           class="button button--primary"
+          bind:this={blockedReasonsTrigger}
           onclick={(event) =>
             toggleBlockedReasons(event.currentTarget as HTMLElement)}
           aria-expanded={blockedReasonsOpen}
@@ -1405,11 +1411,7 @@
           if (event.key === "Escape") {
             event.stopPropagation();
             blockedReasonsOpen = false;
-            document
-              .querySelector<HTMLButtonElement>(
-                ".bulk-action-bar .button--primary",
-              )
-              ?.focus();
+            blockedReasonsTrigger?.focus();
           }
         }}
       >
