@@ -2,7 +2,7 @@
   "name": "svn-workbench",
   "displayName": "SVN 工作台",
   "description": "面向中文用户的 AI 原生 SVN 工作台。",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "publisher": "local",
   "private": true,
   "license": "MIT",

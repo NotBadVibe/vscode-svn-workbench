@@ -741,6 +741,12 @@ export interface HistorySnapshot {
     command: string;
     canExecute: boolean;
     issues: string[];
+    /**
+     * v0.1.6 V016-F1：预览生成时的绑定（Webview 意向单自检 stale 用）。
+     * 文件内容复验仍走 Host 内部 contentHash，不经 Webview 回传。
+     */
+    scopeHash?: string;
+    repositoryUuid?: string;
   };
   feedback?: string;
   freshness?: SnapshotFreshness;
@@ -1151,6 +1157,13 @@ export interface RepositorySnapshot {
       issues: string[];
       canExecute: boolean;
       destructive: boolean;
+      /**
+       * v0.1.6 V016-F1：预览生成时的绑定（Webview 意向单自检 stale 用）。
+       * Host 执行前复验仍以会话权威状态为准，不信任 Webview 回传。
+       */
+      scopeHash?: string;
+      candidateHash?: string;
+      repositoryUuid?: string;
     };
     releaseNotes?: {
       markdown: string;
@@ -1176,6 +1189,13 @@ export interface UpdatePreviewView {
   messages: string[];
   commands: string[];
   error?: string;
+  /**
+   * v0.1.6 V016-F1：预览生成时的绑定（Webview 意向单自检 stale 用）。
+   * Host 执行前复验仍以会话权威状态为准，不信任 Webview 回传。
+   */
+  scopeHash?: string;
+  candidateHash?: string;
+  repositoryUuid?: string;
 }
 
 /** v0.0.17 批次 A：更新执行结果段（携带冲突直达 CTA 数据）。 */

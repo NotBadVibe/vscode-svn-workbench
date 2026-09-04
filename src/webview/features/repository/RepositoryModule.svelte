@@ -14,6 +14,7 @@
   import OperationIntentDialog from "../../components/operation/OperationIntentDialog.svelte";
   import {
     extractRelocateTarget,
+    isOperationIntentStale,
     type OperationIntentKind,
   } from "../../../operation/operationIntent";
   import {
@@ -42,6 +43,8 @@
     taskId = "repository/browse",
     onAction,
     pathDetail,
+    scopeHash,
+    repositoryUuid,
   }: {
     snapshot: RepositorySnapshot;
     taskId: WorkbenchTaskId;
@@ -51,6 +54,12 @@
       HostToWebviewMessage,
       { type: "file/path-detail-result" }
     >["payload"];
+    /**
+     * v0.1.6 V016-F1：信封当前绑定（意向单自检 stale 的“当前值”侧）。
+     * 缺省时回退预览自带绑定，不误判。
+     */
+    scopeHash?: string;
+    repositoryUuid?: string;
   } = $props();
 
   /*
@@ -185,6 +194,52 @@
   }
 
   let previewToken = $state<string | undefined>();
+  /*
+   * v0.1.6 V016-F1：高级预览生成时绑定（token 首见时快照，Host 随预览下发）。
+   * 与当前信封绑定比对自检 stale：范围/仓库/本地修订变化后，对话框在确认前
+   * 即只读展示（Host 执行前复验不动，候选变化仍由 Host 拒绝并作废预览）。
+   * 声明必须在 advancedIntent 之前（$derived 求值立即执行，不可前向引用）。
+   */
+  let advancedBinding = $state<
+    | {
+        token: string;
+        scopeHash?: string;
+        candidateHash?: string;
+        repositoryUuid?: string;
+        revision?: string;
+      }
+    | undefined
+  >(undefined);
+  $effect(() => {
+    const preview = snapshot.advanced.preview;
+    if (preview && advancedBinding?.token !== preview.token) {
+      advancedBinding = {
+        token: preview.token,
+        scopeHash: preview.scopeHash,
+        candidateHash: preview.candidateHash,
+        repositoryUuid: preview.repositoryUuid,
+        revision: snapshot.info.revision,
+      };
+    }
+    if (!preview) advancedBinding = undefined;
+  });
+  const advancedStale = $derived.by(() => {
+    if (!advancedBinding) return false;
+    return isOperationIntentStale(
+      {
+        scopeHash: advancedBinding.scopeHash,
+        candidateHash: advancedBinding.candidateHash,
+        repositoryUuid: advancedBinding.repositoryUuid,
+        revision: advancedBinding.revision,
+      },
+      {
+        repositoryUuid: repositoryUuid ?? advancedBinding.repositoryUuid ?? "",
+        scopeHash: scopeHash ?? advancedBinding.scopeHash ?? "",
+        candidateHash: undefined,
+        revision: snapshot.info.revision,
+      },
+    );
+  });
   // v0.0.14 批次 D：高级操作意向单（Switch/Relocate/Merge 等）
   let advancedIntentOpen = $state(false);
   let advancedTriggerEl = $state<HTMLElement | null>(null);
@@ -260,7 +315,10 @@
         };
       })(),
       commands: preview.commands,
-      stale: false,
+      scopeHash: preview.scopeHash,
+      candidateHash: preview.candidateHash,
+      repositoryUuid: preview.repositoryUuid,
+      stale: advancedStale,
     };
   });
   const advancedConfirmLabel = $derived.by(() => {

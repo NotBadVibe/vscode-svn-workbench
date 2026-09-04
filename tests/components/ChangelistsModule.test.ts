@@ -257,4 +257,21 @@ describe("ChangelistsModule", () => {
     );
     expect(defaultRows[0]).toHaveTextContent("readme.md");
   });
+
+  it("页面级 button--primary ≤1（对话框/展开区内除外，v0.1.6 V016-E）", () => {
+    const { container } = render(ChangelistsModule, {
+      snapshot: buildSnapshot(),
+      onAction: vi.fn(),
+    });
+    // 确认区外唯一 primary：回执卡内确认动作为规划 §5 豁免，不计入统计。
+    const pagePrimaries = Array.from(
+      container.querySelectorAll(".button--primary"),
+    ).filter(
+      (el) =>
+        !el.closest(
+          "dialog, [role='dialog'], [role='alertdialog'], details, [data-confirmation-zone]",
+        ),
+    );
+    expect(pagePrimaries.length).toBeLessThanOrEqual(1);
+  });
 });

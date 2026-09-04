@@ -2922,6 +2922,9 @@ export class WorkbenchController implements vscode.Disposable {
           revision,
           relativePath: normalizeRelative(fileRoot.relativePath),
           issues,
+          // v0.1.6 V016-F1：预览携带生成时绑定，Webview 意向单据此自检 stale。
+          scopeHash: session.scopeHash,
+          repositoryUuid: session.repositoryUuid,
         };
         state.feedback = undefined;
         session.historyState = state;
@@ -2959,6 +2962,14 @@ export class WorkbenchController implements vscode.Disposable {
             true,
             message.requestId,
           );
+          // v0.1.6 V016-F1：作废预览后主动推送快照，Webview 对话框随之关闭。
+          // 拒绝错误已下发，快照构建需走真实 SVN 历史采集，异常环境下失败
+          //（非工作副本/离线）不得掩盖原拒绝或二次抛错，仅尽力而为。
+          try {
+            await this.sendHistorySnapshot(session, message.requestId);
+          } catch {
+            // 忽略：原拒绝已送达，旧预览已作废。
+          }
           return;
         }
         if (
@@ -2973,6 +2984,14 @@ export class WorkbenchController implements vscode.Disposable {
             true,
             message.requestId,
           );
+          // v0.1.6 V016-F1：作废预览后主动推送快照，Webview 对话框随之关闭。
+          // 拒绝错误已下发，快照构建需走真实 SVN 历史采集，异常环境下失败
+          //（非工作副本/离线）不得掩盖原拒绝或二次抛错，仅尽力而为。
+          try {
+            await this.sendHistorySnapshot(session, message.requestId);
+          } catch {
+            // 忽略：原拒绝已送达，旧预览已作废。
+          }
           return;
         }
         const cat = await runSvnCommand(
@@ -6468,6 +6487,8 @@ export class WorkbenchController implements vscode.Disposable {
             command: `svn cat -r ${session.historyState.restorePreview.revision} ${quoteRelative(session.historyState.restorePreview.relativePath)} > <working-file>`,
             canExecute: session.historyState.restorePreview.issues.length === 0,
             issues: session.historyState.restorePreview.issues,
+            scopeHash: session.historyState.restorePreview.scopeHash,
+            repositoryUuid: session.historyState.restorePreview.repositoryUuid,
           }
         : undefined,
       feedback: session.historyState.feedback,

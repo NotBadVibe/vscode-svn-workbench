@@ -14,13 +14,17 @@
 
   /**
    * 诊断文本密钥模式（基础检测，fail-closed）：
-   * 覆盖 `apiKey=` / `password=` / `passwd` / `secret=` / 私钥块等常见写法。
-   * 有意不匹配通用 `token`（确认令牌是合法诊断内容）。
+   * 覆盖 `apiKey=` / `password=` / `passwd` / `pwd=` / URL 嵌 `token=` /
+   * `secret=` / 私钥块等常见写法。
+   * 有意不匹配通用 `token`（确认令牌是合法诊断内容，仅 URL 查询/片段中的
+   * `token=` 视为嵌密写法拦截）。
    */
   const SECRET_PATTERNS: RegExp[] = [
     /api[_-]?key\s*[:=]/i,
     /password\s*[:=]/i,
     /passwd/i,
+    /\bpwd\s*[:=]/i,
+    /[?&#]\w*token\s*=/i,
     /secret\s*[:=]/i,
     /private[_-]?key/i,
     /bearer\s+[A-Za-z0-9]/i,
@@ -118,8 +122,8 @@
   .task-error-state {
     display: flex;
     align-items: flex-start;
-    gap: 8px;
-    padding: 8px 12px;
+    gap: var(--space-xs);
+    padding: var(--space-xs) var(--space-sm);
     border: 1px solid var(--vscode-inputValidation-errorBorder);
     border-left-width: 4px;
     border-radius: 4px;
@@ -161,7 +165,7 @@
   .task-error-state__actions {
     display: flex;
     flex-wrap: wrap;
-    gap: 8px;
+    gap: var(--space-xs);
     margin-top: 4px;
   }
 </style>

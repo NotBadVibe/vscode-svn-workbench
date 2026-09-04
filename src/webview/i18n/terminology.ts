@@ -439,6 +439,114 @@ export const taskSkeletonLabels = {
     "诊断信息疑似包含密钥，已隐藏以保护安全。请复制前自行脱敏。",
 } as const;
 
+/**
+ * v0.1.6 V016-F1：骨架动作溢出提示（次级 >2 / 主要 >1 时渲染文字说明，
+ * 不再仅 DEV 日志静默截断；渲染侧仍只缩小不扩大）。
+ */
+export function taskSecondaryOverflowLabel(hiddenCount: number): string {
+  return `另有 ${hiddenCount} 个次要操作未显示`;
+}
+
+export function taskExtraPrimaryLabel(extraCount: number): string {
+  return `另有 ${extraCount} 个主要操作未显示，仅展示首个`;
+}
+
+/**
+ * v0.1.6 V016-B：共享帮助容器统一文案（AssistancePanel 专用）。
+ * - 组件内不生造领域文案：入口、分组、外发说明、过期、错误出口全部收口此处。
+ * - 本地结果禁止显示 AI 字样：本地分组与未配置提示均不含“AI/智能”。
+ */
+export const assistanceLabels = {
+  needHelp: "需要帮助",
+  collapse: "收起帮助",
+  localGroup: "本地检查",
+  modelGroup: "模型辅助（需确认后外发）",
+  unconfiguredHint: "未配置外部模型，本地检查仍可用；模型辅助需先配置。",
+  modelExplainPrefix: "已选择“",
+  modelExplainSuffix: "”，将按外发回执确认后才外发；本地动作不会外发。",
+  staleAdoptHint:
+    "范围或候选已变化，该结果只能查看，不能直接采用；请重新获取建议。",
+  errorActions: "错误恢复操作",
+  retry: "重试",
+  discard: "放弃",
+} as const;
+
+/**
+ * v0.1.6 V016-C：Commit 提交说明帮助面板领域文案。
+ * - 提交说明旁只保留一个“生成建议草稿”模型入口；模式选择收进面板展开区。
+ * - 选择辅助降级为本地规则默认：此处不出现“AI/智能”字样，结果进本地检查摘要。
+ */
+export const commitAssistanceLabels = {
+  panelTitle: "提交说明帮助",
+  panelSummary: "生成建议草稿、查看外发回执与证据；建议不覆盖已填提交说明。",
+  generateModeLabel: "生成输入模式",
+  metadataOnly: "仅文件信息",
+  limitedDiff: "含差异（需确认）",
+  limitedDiffNote:
+    "受限差异模式：生成前会先展示外发回执（数据类型、文件数、预算与排除项），确认后才发送脱敏差异正文；不会发送本地绝对路径、范围外内容或凭据。",
+  selectionDemotedHint:
+    "选择建议默认使用本地规则，结果见下方本地检查摘要；模型选择已收起。",
+  unconfiguredDisabledReason: "未配置外部模型，本地检查仍可用",
+} as const;
+
+/**
+ * v0.1.6 V016-C2：Conflicts 冲突帮助面板领域文案。
+ * - 「本地建议 / AI 分析 / 解释冲突意图」统一收进 AssistancePanel 单一入口。
+ * - 未配置模型时只启用本地建议，不标 AI；模型动作禁用并如实说明原因。
+ * v0.1.6 V016-C3b（必修 3，选①）：「AI 分析」走 conflict/advise（轻量建议动作，
+ * 无独立回执设计），kind 归为 local，提示文案不得承诺“回执确认后才外发”；
+ * 只有「解释冲突意图」走 conflict/preview-receipt 回执链（kind:model）。
+ */
+export const conflictAssistanceLabels = {
+  panelTitle: "冲突帮助",
+  panelSummary:
+    "合并建议与解释：本地建议默认可用；模型辅助需确认后外发，不会自动标记解决。",
+  localHint: "不会外发",
+  modelAdviseHint: "直接生成建议，不单独确认",
+  interpretHint: "含差异，需确认后外发",
+  unconfiguredDisabledReason:
+    "未配置外部模型，本地检查仍可用；请先配置模型后再试。",
+  adoptAdvice: "采用合并建议到草稿",
+  adoptAdviceHint: "仅写入合并草稿，不保存也不标记解决",
+  adoptAdviceManualReason: "该建议需要人工合并，无法一键采用",
+  adoptAdviceNoBlocksReason: "当前草稿无冲突标记块，无需一键采用",
+  adviceExpiredNotice:
+    "合并建议已过期（已切换冲突文件，只能查看）；请重新获取建议。",
+} as const;
+
+/**
+ * v0.1.6 V016-D：Changelists 分组帮助面板领域文案。
+ * - 「自动整理」为页头次级轻量动作（去 sparkle，不弹回执预告）：未配置模型时走
+ *   本地目录/类型分组；Host `changelist/suggest mode:metadata` 在模型可用时实际可调
+ *   用模型（`runAiScenario commitSplit`），此时建议来源如实标为“模型建议”。
+ * - 「按改动意图拆分」是唯一模型入口，收进 AssistancePanel 模型组（kind:model），
+ *   走 `changelist/preview-receipt` 回执链；未配置时禁用并如实说明。
+ */
+export const changelistAssistanceLabels = {
+  panelTitle: "分组帮助",
+  panelSummary:
+    "自动整理按目录与类型快速分组；按改动意图拆分需确认后外发，建议须经预览确认才写入。",
+  autoTidy: "自动整理",
+  semanticSplit: "按改动意图拆分（含差异需确认）",
+  semanticSplitHint: "含差异，需确认后外发",
+  unconfiguredDisabledReason: "未配置外部模型，本地检查仍可用",
+} as const;
+
+/**
+ * v0.1.6 V016-D：Understanding 分析帮助面板领域文案。
+ * - 本地检查是默认可用主路径，页头保留次级入口。
+ * - 模型分析是唯一模型入口，收进 AssistancePanel 模型组（kind:model），
+ *   走 `understanding/preview-receipt` 回执链；未配置时禁用并如实说明。
+ */
+export const understandingAssistanceLabels = {
+  panelTitle: "分析帮助",
+  panelSummary:
+    "本地检查默认可用；模型分析需确认后外发，不会修改文件或执行提交。",
+  analysisHint: "含差异，需确认后外发",
+  unconfiguredDisabledReason:
+    "未配置外部模型，可先运行本地检查；请先配置模型后再试。",
+} as const;
+
 export function describeCommitSelectionEvaluation(
   evaluation: CommitSelectionExplanation,
 ): string {

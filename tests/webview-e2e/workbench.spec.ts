@@ -151,6 +151,8 @@ test("limited-diff receipt flow: preview then confirm generation (v0.0.11 §3)",
   await page.goto("/");
   await openModule(page, "提交");
   // 选择受限差异模式：先展示外发回执，不调用模型。
+  // V016-C：模式选择收进帮助面板展开区，先展开再选择。
+  await page.getByRole("button", { name: "需要帮助" }).click();
   await page.getByLabel("生成输入模式").selectOption("limited-diff");
   await expect(
     page.getByText(/受限差异模式：生成前会先展示外发回执/),
@@ -211,6 +213,8 @@ test("limited-diff receipt can be dismissed without sending (v0.0.11 §3)", asyn
 }) => {
   await page.goto("/");
   await openModule(page, "提交");
+  // V016-C：模式选择收进帮助面板展开区，先展开再选择。
+  await page.getByRole("button", { name: "需要帮助" }).click();
   await page.getByLabel("生成输入模式").selectOption("limited-diff");
   await page.getByRole("button", { name: "生成建议草稿" }).click();
   const receiptRegion = page.getByRole("region", {
@@ -229,6 +233,8 @@ test("validated evidence opens the file diff (v0.0.11 §4)", async ({
 }) => {
   await page.goto("/");
   await openModule(page, "提交");
+  // V016-C：模式选择收进帮助面板展开区，先展开再选择。
+  await page.getByRole("button", { name: "需要帮助" }).click();
   await page.getByLabel("生成输入模式").selectOption("limited-diff");
   await page.getByRole("button", { name: "生成建议草稿" }).click();
   const receiptRegion = page.getByRole("region", {
@@ -256,6 +262,8 @@ test("partial completion retries only failed items (v0.0.11 §6)", async ({
   // commitMessage=partial：mock 建议包含读取失败项，展示“重试失败项”。
   await page.goto("/?commitMessage=partial");
   await openModule(page, "提交");
+  // V016-C：模式选择收进帮助面板展开区，先展开再选择。
+  await page.getByRole("button", { name: "需要帮助" }).click();
   await page.getByLabel("生成输入模式").selectOption("limited-diff");
   await page.getByRole("button", { name: "生成建议草稿" }).click();
   const receiptRegion = page.getByRole("region", {
@@ -285,25 +293,32 @@ test("partial completion retries only failed items (v0.0.11 §6)", async ({
   ).toBeVisible();
 });
 
-test("keeps AI file selection advisory and user-editable", async ({ page }) => {
+test("V016-C：选择辅助降级为本地规则默认（无模型选择入口），用户仍可手动调整", async ({
+  page,
+}) => {
   await page.goto("/");
   await openModule(page, "提交");
-  // V014-D：选择控制台收进按需展开区，先展开再操作。
+  // 选择控制台收进按需展开区，先展开再操作。
   await page.getByText("完整文件选择与策略").click();
-  await page.getByRole("button", { name: "获取 AI 建议" }).click();
+  // 模型选择入口已收编：无“获取 AI 建议”，本地规则默认可用。
+  await expect(page.getByRole("button", { name: "获取 AI 建议" })).toHaveCount(
+    0,
+  );
+  await expect(page.getByText(/选择建议默认使用本地规则/)).toBeVisible();
+  await page.getByRole("button", { name: "应用本地规则" }).click();
   await expect(
-    page.getByText("建议选择 1 个文件；1 个需要人工确认，1 个建议排除。"),
+    page.getByText(
+      "已按本地规则应用推荐选择 2 个文件；1 个文件待确认，可手动勾选。",
+    ),
   ).toBeVisible();
-  await expect(page.getByText(/来源：模型建议/)).toBeVisible();
+  // 用户仍可手动调整选择（取消后重新勾选）。
+  await page.getByLabel("选择 src/extension.ts").uncheck();
+  await expect(page.getByLabel("选择 src/extension.ts")).not.toBeChecked();
+  await page.getByLabel("选择 src/extension.ts").check();
   await expect(page.getByLabel("选择 src/extension.ts")).toBeChecked();
-  await expect(
-    page.getByLabel("选择 src/webview/App.svelte"),
-  ).not.toBeChecked();
-  await page.getByLabel("选择 src/webview/App.svelte").check();
-  await expect(page.getByLabel("选择 src/webview/App.svelte")).toBeChecked();
 });
 
-test("offers 配置 AI entry instead of an AI-labelled action when unconfigured", async ({
+test("V016-C：AI 未配置时手写提交说明 + 预览主路径完整（无模型入口）", async ({
   page,
 }) => {
   await page.goto("/?commitAi=none");
@@ -311,24 +326,26 @@ test("offers 配置 AI entry instead of an AI-labelled action when unconfigured"
   await expect(
     page.getByRole("heading", { name: "提交当前范围" }),
   ).toBeVisible();
-  // V014-D：选择控制台与规则入口收进按需展开区，先展开再断言。
+  // 选择控制台收进按需展开区：无“获取 AI 建议”/“配置 AI”，本地规则可用。
   await page.getByText("完整文件选择与策略").click();
-  // 未配置 AI 时不再把本地规则称为 AI 建议。
-  await expect(
-    page.getByRole("button", { name: /AI 建议选择/ }),
-  ).not.toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "获取 AI 建议" }),
-  ).not.toBeVisible();
+  // 未配置 AI 时不再把本地规则称为 AI 建议，也不设选择模型入口。
+  await expect(page.getByRole("button", { name: /AI 建议选择/ })).toHaveCount(
+    0,
+  );
+  await expect(page.getByRole("button", { name: "获取 AI 建议" })).toHaveCount(
+    0,
+  );
+  await expect(page.getByRole("button", { name: "配置 AI" })).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: "应用本地规则" }),
   ).toBeVisible();
-
-  await page.getByRole("button", { name: "配置 AI" }).click();
-  await expect(page.getByRole("tab", { name: "AI 模型" })).toHaveAttribute(
-    "aria-selected",
-    "true",
-  );
+  // 手写提交说明 + 预览主路径完整（AI 未配置锁定）。
+  await page
+    .getByRole("textbox", { name: "提交说明" })
+    .fill("feat(commit): 手写提交说明");
+  await page.getByRole("button", { name: /预览提交/ }).click();
+  await expect(page.getByText("范围、状态和远端检查已通过")).toBeVisible();
+  await expect(page.getByRole("button", { name: /确认提交/ })).toBeEnabled();
 });
 
 test("applies local rules with Chinese feedback", async ({ page }) => {
@@ -346,40 +363,48 @@ test("applies local rules with Chinese feedback", async ({ page }) => {
   ).toBeVisible();
 });
 
-test("keeps the current selection and offers local-rule recovery when AI fails", async ({
+test("V016-C：失败场景下本地规则恢复可用，手写与预览主路径不受影响", async ({
   page,
 }) => {
   await page.goto("/?commitAi=fail");
   await openModule(page, "提交");
-  // V014-D：选择控制台（含 AI 建议入口与文件复选框）位于按需展开区；
-  // 失败结果到达后 AI 折叠区自动展开。
+  // 选择控制台位于按需展开区；模型选择入口已收编，无“获取 AI 建议”。
   await page.getByText("完整文件选择与策略").click();
-  await page.getByRole("button", { name: "获取 AI 建议" }).click();
-  await expect(
-    page.getByText("AI 建议获取失败，已保留当前选择。"),
-  ).toBeVisible();
-  await expect(page.getByText(/失败原因：/)).toBeVisible();
-  // 当前选择保留，未被失败结果替换（文件选择展开区此前已展开）。
-  await expect(page.getByLabel("选择 src/extension.ts")).toBeChecked();
-
-  // 恢复动作为 AI 折叠区失败卡片上的“应用本地规则”（ai-recover-button）。
-  await page.locator(".ai-recover-button").click();
+  await expect(page.getByRole("button", { name: "获取 AI 建议" })).toHaveCount(
+    0,
+  );
+  // 本地规则恢复动作可用，当前选择保留。
+  await page.getByRole("button", { name: "应用本地规则" }).click();
   await expect(
     page.getByText(
       "已按本地规则应用推荐选择 2 个文件；1 个文件待确认，可手动勾选。",
     ),
   ).toBeVisible();
+  await expect(page.getByLabel("选择 src/extension.ts")).toBeChecked();
+  // 手写 + 预览主路径不受影响。
+  await page
+    .getByRole("textbox", { name: "提交说明" })
+    .fill("feat(commit): 本地规则后手写");
+  await page.getByRole("button", { name: /预览提交/ }).click();
+  await expect(page.getByText("范围、状态和远端检查已通过")).toBeVisible();
 });
 
-test("marks stale AI results as view-only", async ({ page }) => {
+test("V016-C：stale 场景下无模型选择入口，本地规则与预览主路径可用", async ({
+  page,
+}) => {
   await page.goto("/?commitAi=stale");
   await openModule(page, "提交");
-  // V014-D：AI 入口位于文件选择按需展开区。
+  // 模型选择入口已收编；过期采用契约由组件测试锁定，此处锁定本地主路径。
   await page.getByText("完整文件选择与策略").click();
-  await page.getByRole("button", { name: "获取 AI 建议" }).click();
-  await expect(page.getByText(/结果已过期/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "获取 AI 建议" })).toHaveCount(
+    0,
+  );
+  await expect(page.getByText(/选择建议默认使用本地规则/)).toBeVisible();
+  await page.getByRole("button", { name: "应用本地规则" }).click();
   await expect(
-    page.getByText(/只能查看，不能直接采用；请重新获取 AI 建议。/),
+    page.getByText(
+      "已按本地规则应用推荐选择 2 个文件；1 个文件待确认，可手动勾选。",
+    ),
   ).toBeVisible();
 });
 
@@ -415,10 +440,12 @@ test("keeps conflict advice separate from explicit resolve", async ({
   await page.goto("/");
   await openModule(page, "冲突");
   await expect(page.getByRole("heading", { name: "待处理冲突" })).toBeVisible();
-  await page.getByText("需要帮助（合并建议与解释）").click();
+  // v0.1.6 V016-C2：建议入口收进帮助面板，先展开「需要帮助」；解决预览仍在下方折叠区。
+  await page.getByRole("button", { name: "需要帮助" }).click();
   await expect(page.getByText(/点击“AI 分析”后才会发送/)).toBeVisible();
   await page.getByRole("button", { name: "AI 分析" }).click();
   await expect(page.getByText("两侧都修改了同一处行为")).toBeVisible();
+  await page.locator('[data-testid="conflict-help-details"] summary').click();
   await page.getByRole("button", { name: "生成解决预览" }).click();
   await expect(
     page.getByRole("button", { name: "确认使用当前工作副本内容并标记解决" }),
@@ -604,7 +631,7 @@ test("turns a grouping suggestion into a previewed SVN changelist", async ({
 }) => {
   await page.goto("/");
   await openModule(page, "变更集");
-  await page.getByRole("button", { name: "生成分组建议" }).click();
+  await page.getByRole("button", { name: "自动整理" }).click();
   await page.getByRole("button", { name: "套用并调整" }).click();
   await page.getByRole("button", { name: "生成应用预览" }).click();
   // 预览与对话框均含同一命令，使用 direct child code 避免对话框重复匹配
@@ -1011,7 +1038,8 @@ test("change understanding: local check then receipt-confirmed model analysis (v
   ).toBeVisible();
   await expect(page.getByText("修改了 2 个文件")).toBeVisible();
 
-  // 受限差异回执：先展示回执，再确认开始模型分析。
+  // 受限差异回执：先展开帮助面板，再展示回执确认开始模型分析（V016-D）。
+  await page.getByRole("button", { name: "需要帮助" }).click();
   await page.getByRole("button", { name: /重新分析|查看并开始分析/ }).click();
   const receiptRegion = page.getByRole("region", {
     name: "变更解读外发回执",
@@ -1042,6 +1070,8 @@ test("change understanding: validated evidence opens the file diff (v0.0.12)", a
 }) => {
   await page.goto("/");
   await openModule(page, "变更解读");
+  // v0.1.6 V016-D：模型入口收进帮助面板，先展开「需要帮助」。
+  await page.getByRole("button", { name: "需要帮助" }).click();
   await page.getByRole("button", { name: /重新分析|查看并开始分析/ }).click();
   const receiptRegion = page.getByRole("region", {
     name: "变更解读外发回执",
@@ -1059,6 +1089,8 @@ test("semantic changelist split: receipt-confirmed then purpose/deps suggestions
 }) => {
   await page.goto("/");
   await openModule(page, "变更集");
+  // v0.1.6 V016-D：语义拆分收进帮助面板，先展开「需要帮助」。
+  await page.getByRole("button", { name: "需要帮助" }).click();
   await page.getByRole("button", { name: /按改动意图拆分/ }).click();
   const receiptRegion = page.getByRole("region", {
     name: "语义拆分外发回执",
@@ -1095,7 +1127,9 @@ test("conflict intent interpretation: receipt-confirmed six-section output (v0.0
     .getByRole("button", { name: /选择一个冲突文件|app\/conflicted/ })
     .isVisible()
     .catch(() => undefined);
-  await page.getByRole("button", { name: "解释冲突意图" }).first().click();
+  // v0.1.6 V016-C2：解释入口收进帮助面板，先展开「需要帮助」。
+  await page.getByRole("button", { name: "需要帮助" }).click();
+  await page.getByRole("button", { name: "解释冲突意图" }).click();
   const receiptRegion = page.getByRole("region", {
     name: "冲突意图解释回执",
   });
@@ -1104,7 +1138,8 @@ test("conflict intent interpretation: receipt-confirmed six-section output (v0.0
     receiptRegion.getByText("冲突意图解释（conflict-interpret）"),
   ).toBeVisible();
   await receiptRegion.getByRole("button", { name: "开始解释" }).click();
-  await page.getByText("需要帮助（合并建议与解释）").click();
+  // v0.1.6 V016-C2：意图解释结果收进帮助面板（保持展开，直接断言）。
+  await expect(page.getByRole("button", { name: "收起帮助" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "意图解释" })).toBeVisible();
   await expect(page.getByText("我的修改意图")).toBeVisible();
   await expect(page.getByText("对方修改意图")).toBeVisible();

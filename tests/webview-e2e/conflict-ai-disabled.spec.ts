@@ -249,23 +249,27 @@ test.describe("AI 完全关闭主路径 E2E", () => {
     await expect(
       page.getByRole("heading", { name: "待处理冲突" }),
     ).toBeVisible();
+    // v0.1.6 V016-C2：建议入口收进帮助面板（默认折叠），先展开「需要帮助」。
+    await page.getByRole("button", { name: "需要帮助" }).click();
     // 按钮应为本地建议而非 AI 分析
-    await expect(page.getByRole("button", { name: "本地建议" })).toBeVisible();
+    const localButton = page.getByRole("button", { name: "本地建议" });
+    await expect(localButton).toBeVisible();
+    await expect(localButton).toBeEnabled();
+    await expect(page.getByRole("button", { name: "AI 分析" })).toBeDisabled();
     await expect(
-      page.getByRole("button", { name: "AI 分析" }),
-    ).not.toBeVisible();
-    // 展开帮助区
-    await page.getByText("需要帮助（合并建议与解释）").click();
+      page.getByRole("button", { name: "解释冲突意图" }),
+    ).toBeDisabled();
+    // 帮助面板内隐私说明如实（本地可用，不标 AI）
     await expect(
       page.getByText(/未配置外部模型，将运行本地规则，不会外发。/),
     ).toBeVisible();
-    await expect(page.getByText(/不会外发/)).toBeVisible();
+    await expect(page.getByText(/不会外发/).first()).toBeVisible();
     // 点击本地建议触发本地规则
     await page.getByRole("button", { name: "本地建议" }).click();
     await expect(page.getByText("两侧都修改了同一处行为")).toBeVisible();
     // 来源应为本地检查，而非模型建议
-    await expect(page.getByText("本地检查")).toBeVisible();
-    await expect(page.getByText("模型建议")).not.toBeVisible();
+    await expect(page.getByText("本地检查").first()).toBeVisible();
+    await expect(page.getByText("模型建议")).toHaveCount(0);
     // 外发预览文案仍如实显示本地规则
     await expect(page.getByText(/本地规则/)).toBeVisible();
     const ce = await getConsoleErrors(page);
@@ -363,8 +367,11 @@ test.describe("AI 完全关闭主路径 E2E", () => {
       page.getByRole("heading", { name: "待处理冲突" }),
     ).toBeVisible();
     await expect(page.getByTestId("conflict-role-bar")).toBeVisible();
-    await page.getByText("需要帮助（合并建议与解释）").click();
-    await expect(page.getByText(/未配置外部模型/)).toBeVisible();
+    // v0.1.6 V016-C2：建议入口收进帮助面板，先展开「需要帮助」。
+    await page.getByRole("button", { name: "需要帮助" }).click();
+    await expect(
+      page.getByText(/未配置外部模型，将运行本地规则，不会外发。/).first(),
+    ).toBeVisible();
     await page.getByRole("button", { name: "本地建议" }).click();
     await expect(page.getByText("两侧都修改了同一处行为")).toBeVisible();
     await page.getByRole("button", { name: "采用我的修改" }).first().click();
@@ -383,8 +390,10 @@ test.describe("AI 完全关闭主路径 E2E", () => {
     expect(initPageErrors, "不应有 pageerror").toEqual([]);
     expect(consoleMessages, "console error 事件应为空").toEqual([]);
     expect(pageErrors, "pageerror 事件应为空").toEqual([]);
-    // 合法提示文案可见且措辞如实
-    await page.getByText("需要帮助（合并建议与解释）").scrollIntoViewIfNeeded();
+    // 合法提示文案可见且措辞如实（帮助面板保持展开，隐私说明仍可见）
+    await page
+      .getByRole("button", { name: "收起帮助" })
+      .scrollIntoViewIfNeeded();
     await expect(
       page.getByText(/未配置外部模型，将运行本地规则，不会外发。/).first(),
     ).toBeVisible();

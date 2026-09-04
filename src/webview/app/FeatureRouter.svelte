@@ -8,6 +8,8 @@
   let {
     snapshot,
     taskId,
+    scopeHash,
+    repositoryUuid,
     editSession,
     diffSaveResult,
     draftAck,
@@ -23,6 +25,12 @@
   }: {
     snapshot: WorkbenchModuleSnapshot;
     taskId: WorkbenchTaskId;
+    /**
+     * v0.1.6 V016-F1：信封当前绑定（Update/History/Repository 意向单自检
+     * stale 的“当前值”侧；缺省时回退快照内绑定，不误判）。
+     */
+    scopeHash?: string;
+    repositoryUuid?: string;
     editSession?: Extract<
       HostToWebviewMessage,
       { type: "diff/edit-opened" }
@@ -105,7 +113,13 @@
     />{/await}
 {:else if snapshot.kind === "history"}
   {#await import("../features/history/HistoryModule.svelte")}{@render loadingModule()}{:then module}{@const Feature =
-      module.default}<Feature {snapshot} {onAction} {pathDetail} />{/await}
+      module.default}<Feature
+      {snapshot}
+      {onAction}
+      {pathDetail}
+      {scopeHash}
+      {repositoryUuid}
+    />{/await}
 {:else if snapshot.kind === "conflicts"}
   {#await import("../features/conflicts/ConflictsModule.svelte")}{@render loadingModule()}{:then module}{@const Feature =
       module.default}<Feature
@@ -124,7 +138,13 @@
       module.default}<Feature {snapshot} {taskId} {onAction} />{/await}
 {:else if snapshot.kind === "update"}
   {#await import("../features/update/UpdateModule.svelte")}{@render loadingModule()}{:then module}{@const Feature =
-      module.default}<Feature {snapshot} {onAction} {pathDetail} />{/await}
+      module.default}<Feature
+      {snapshot}
+      {onAction}
+      {pathDetail}
+      {scopeHash}
+      {repositoryUuid}
+    />{/await}
 {:else if snapshot.kind === "repository"}
   {#await import("../features/repository/RepositoryModule.svelte")}{@render loadingModule()}{:then module}{@const Feature =
       module.default}<Feature
@@ -132,6 +152,8 @@
       {taskId}
       {onAction}
       {pathDetail}
+      {scopeHash}
+      {repositoryUuid}
     />{/await}
 {:else if snapshot.kind === "change-understanding"}
   {#await import("../features/understanding/UnderstandingModule.svelte")}{@render loadingModule()}{:then module}{@const Feature =

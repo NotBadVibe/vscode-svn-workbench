@@ -47,7 +47,7 @@ async function clickTakeMine(page: Page) {
   await btn.click();
 }
 
-// 中文注释：确保“需要帮助”折叠区已展开，使“生成解决预览”等按钮可见
+// 中文注释：确保解决确认折叠区已展开，使“生成解决预览”等按钮可见（v0.1.6 V016-C2：建议已移入帮助面板，此处只覆盖解决确认）
 async function ensureHelpOpen(page: Page) {
   const details = page.getByTestId("conflict-help-details");
   const isOpen = await details
@@ -60,7 +60,7 @@ async function ensureHelpOpen(page: Page) {
     if ((await summary.count()) > 0) {
       await summary.click();
     } else {
-      await page.getByText("需要帮助（合并建议与解释）").click();
+      await page.getByText("解决确认与快捷键").click();
     }
     await expect(details).toHaveAttribute("open", "");
   }
@@ -258,7 +258,9 @@ test.describe("V013 主路径闭环", () => {
       page.getByRole("heading", { name: "待处理冲突" }),
     ).toBeVisible();
     await expect(page.getByTestId("merge-action-toolbar")).toBeVisible();
-    // 中文注释：AI 未配置时按钮文案为“本地建议”而非“AI 分析”，但主路径不受影响
+    // 中文注释：AI 未配置时帮助面板内为“本地建议”而非“AI 分析”，但主路径不受影响
+    // 中文注释：v0.1.6 V016-C2 面板默认折叠，先展开「需要帮助」
+    await page.getByRole("button", { name: "需要帮助" }).click();
     await expect(page.getByRole("button", { name: "本地建议" })).toBeVisible();
     // 中文注释：步骤条五阶段仍可见
     await expect(page.getByTestId("conflict-step-bar")).toBeVisible();

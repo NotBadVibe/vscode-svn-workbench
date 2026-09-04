@@ -237,4 +237,32 @@ describe("V015-C2 Relocate 白名单目标复述", () => {
     expect(extractRelocateTarget(["新根：未填写"])).toBeUndefined();
     expect(extractRelocateTarget(undefined)).toBeUndefined();
   });
+  it("V016-F1：userinfo 段不折叠（仅主机小写），大小写不一致拒绝", () => {
+    // userinfo 保持原样：主机折叠后仍不得把 User 与 user 误判一致。
+    expect(
+      normalizeConfirmationTarget("HTTPS://User@SVN.EXAMPLE.TEST/Repo/"),
+    ).toBe("https://User@svn.example.test/Repo");
+    expect(normalizeConfirmationTarget("https://user:PASS@h/r")).toBe(
+      "https://user:PASS@h/r",
+    );
+    expect(
+      isConfirmationChallengeSatisfied(
+        "https://user@svn.example.test/repos/wb",
+        "https://User@svn.example.test/repos/wb",
+      ),
+    ).toBe(false);
+    // userinfo 一致时主机大小写仍放行；userinfo 本身大小写不同则拒绝。
+    expect(
+      isConfirmationChallengeSatisfied(
+        "https://user@svn.example.test/repos/wb",
+        "HTTPS://USER@SVN.EXAMPLE.TEST/repos/wb/",
+      ),
+    ).toBe(false);
+    expect(
+      isConfirmationChallengeSatisfied(
+        "https://user@svn.example.test/repos/wb",
+        "HTTPS://user@SVN.EXAMPLE.TEST/repos/wb/",
+      ),
+    ).toBe(true);
+  });
 });

@@ -107,6 +107,9 @@ export interface WorkbenchSession extends OpenWorkbenchRequest {
       revision: string;
       relativePath: string;
       issues: string[];
+      /** v0.1.6 V016-F1：预览生成时绑定，随快照下发供 Webview 意向单自检。 */
+      scopeHash: string;
+      repositoryUuid: string;
     };
     feedback?: string;
   };
@@ -206,6 +209,9 @@ export interface WorkbenchSession extends OpenWorkbenchRequest {
       preview?: {
         token: string;
         candidateHash: string;
+        /** v0.1.6 V016-F1：预览生成时绑定，随快照下发供 Webview 意向单自检。 */
+        scopeHash: string;
+        repositoryUuid: string;
         operation: NonNullable<
           RepositorySnapshot["advanced"]["preview"]
         >["operation"];

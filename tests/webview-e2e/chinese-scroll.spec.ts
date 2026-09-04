@@ -157,8 +157,10 @@ test("SCR-05：冲突列表、编辑器正文和解决确认在小高度下可�
     });
   }
 
-  await page.getByText("需要帮助（合并建议与解释）").click();
+  // v0.1.6 V016-C2：建议入口收进帮助面板；解决预览仍在下方折叠区。
+  await page.getByRole("button", { name: "需要帮助" }).click();
   await page.getByRole("button", { name: "AI 分析" }).click();
+  await page.locator('[data-testid="conflict-help-details"] summary').click();
   await page.getByRole("button", { name: "生成解决预览" }).click();
   const workspace = page.getByRole("region", { name: "冲突处理工作区" });
   await assertScrollable(
@@ -173,7 +175,7 @@ test("SCR-06：变更集三栏拥有独立滚动归属且选择不丢失", async
   await openModule(page, "变更集");
   const current = page.getByRole("region", { name: "变更集与未分组文件" });
   await assertScrollable(current, current.locator(".changelist-row").last());
-  await page.getByRole("button", { name: "生成分组建议" }).click();
+  await page.getByRole("button", { name: "自动整理" }).click();
   const suggestions = page.getByRole("region", { name: "分组建议" });
   await assertScrollable(
     suggestions,

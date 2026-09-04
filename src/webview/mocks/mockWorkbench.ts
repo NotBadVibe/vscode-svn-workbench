@@ -826,10 +826,15 @@ export function startMockWorkbench(): void {
       }
     }
     if (action === "commit/apply-template") {
+      mockCommitDraftMessage = "需求: \n\n范围: \n影响: ";
       injectSnapshot(
         "commit",
         commitSnapshot({ message: "需求: \n\n范围: \n影响: " }),
       );
+    }
+    // v0.1.6 V016-F2：记忆用户草稿（只记录不下发快照；旧用例无此动作，行为不变）。
+    if (action === "commit/update-draft" && typeof data.message === "string") {
+      mockCommitDraftMessage = data.message;
     }
     if (action === "commit/generate-message") {
       // v0.0.9 §4：生成建议草稿，不覆盖当前提交说明（message 保持不变）。
@@ -2305,6 +2310,14 @@ function commitSnapshot(
     typeof window !== "undefined"
       ? new URLSearchParams(window.location.search).get("dataset")
       : undefined;
+  // v0.1.6 V016-F2：`?ai=disabled` 为 AI 关闭人工路径验收新增（只加分支，不改旧语义）。
+  // 与 conflicts 快照的 aiDisabled 口径一致；commitAi=none 旧分支保持不变。
+  const commitAiDisabled =
+    typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).get("ai") === "disabled";
+  const commitMessageModel = commitAiDisabled
+    ? "本地规则（未配置外部模型）"
+    : "deepseek-v4-flash";
   const snapshotFiles = (
     isScrollDataset()
       ? Array.from({ length: 80 }, (_, index) => ({
@@ -2332,11 +2345,11 @@ function commitSnapshot(
       blocked: 0,
     },
     selectedPaths: snapshotFiles.map((item) => item.relativePath),
-    message: "",
+    message: mockCommitDraftMessage ?? "",
     messageIssues: ["提交说明不能为空。"],
     conventionHint: "前缀：feat, fix；模块：workbench",
     selectionAi:
-      commitAiScenario === "none"
+      commitAiScenario === "none" || commitAiDisabled
         ? { configured: false }
         : { configured: true, model: "deepseek-v4-flash" },
     feedback:
@@ -2357,7 +2370,7 @@ function commitSnapshot(
       },
       {
         scenario: "message",
-        model: "deepseek-v4-flash",
+        model: commitMessageModel,
         fileLimit: 80,
         data: "已选文件元数据与增删行统计；不发送文件正文",
         historyIncluded: false,
@@ -2920,6 +2933,10 @@ let mockSelectionState: MockSelectionState = initialMockSelectionState();
 let mockCommitSuggestion: CommitMessageSuggestion | undefined;
 /** v0.0.11 §6：重试失败项后生成建议时并入的说明（一次性）。 */
 let mockRetryNote: string | undefined;
+/** v0.1.6 V016-F2：Mock 记忆用户提交说明草稿（只加不改旧语义）：
+ * 真实 Host 持有草稿并随快照下发；此前 mock 快照恒为 ""，放弃回执等后续快照会误清空已填草稿。
+ * 未收到过 update-draft/apply-template 时仍为 ""，旧用例行为不变；显式 overrides 优先。 */
+let mockCommitDraftMessage: string | undefined;
 
 function mockSelectionCandidateInputs(): Array<{
   relativePath: string;
@@ -3501,6 +3518,10 @@ function injectMockChangelistReceipt(): void {
 function changelistsSnapshot(
   overrides: Record<string, unknown> = {},
 ): WorkbenchModuleSnapshot {
+  // v0.1.6 V016-F2：`?ai=disabled` 新增 AI 关闭分支（只加不改旧语义）。
+  const changelistAiDisabled =
+    typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).get("ai") === "disabled";
   const scrollFiles = isScrollDataset()
     ? Array.from({ length: 40 }, (_, index) => ({
         relativePath: `项目资料/未分组-${index + 1}.ts`,
@@ -3528,7 +3549,9 @@ function changelistsSnapshot(
     kind: "changelists",
     source: "local-rule",
     aiPrivacy: {
-      model: "deepseek-v4-flash",
+      model: changelistAiDisabled
+        ? "本地规则（未配置外部模型）"
+        : "deepseek-v4-flash",
       fileLimit: 120,
       data: "文件相对路径、状态、类型和模块分组；不发送文件正文",
       historyIncluded: false,
@@ -3544,10 +3567,15 @@ function changelistsSnapshot(
 function understandingSnapshot(
   overrides: Record<string, unknown> = {},
 ): WorkbenchModuleSnapshot {
+  // v0.1.6 V016-F2：`?ai=disabled` 新增 AI 关闭分支（只加不改旧语义）：
+  // 本地检查为主路径（source local-rule），receipt.model 含「未配置」使面板进入未配置态。
+  const understandingAiDisabled =
+    typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).get("ai") === "disabled";
   return {
     kind: "change-understanding",
     state: "ready",
-    source: "mixed",
+    source: understandingAiDisabled ? "local-rule" : "mixed",
     binding: {
       repositoryUuid: "mock-repository-uuid",
       scopeHash: "mock-scope-hash",
@@ -3559,7 +3587,9 @@ function understandingSnapshot(
     receipt: {
       task: "understand-changes",
       projectId: "mock-project",
-      model: "deepseek-v4-flash",
+      model: understandingAiDisabled
+        ? "本地规则（未配置外部模型）"
+        : "deepseek-v4-flash",
       dataTypes: ["项目内相对路径、SVN 状态、脱敏差异片段"],
       files: 1,
       totalBudget: 40000,
@@ -3640,6 +3670,8 @@ function understandingSnapshot(
     userConfirmations: [],
     limitations: [],
     warnings: [],
+    // v0.1.6 V016-F2：AI 关闭分支初始即纯本地（不带模型发现；只加分支）。
+    ...(understandingAiDisabled ? { findings: [], userConfirmations: [] } : {}),
     ...overrides,
   } as WorkbenchModuleSnapshot;
 }

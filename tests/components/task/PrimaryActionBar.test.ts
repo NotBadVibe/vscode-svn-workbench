@@ -49,7 +49,7 @@ describe("PrimaryActionBar", () => {
     expect(primary.onClick).toHaveBeenCalledTimes(1);
   });
 
-  it("secondary 超过 2 个时 DEV 警告并截断", () => {
+  it("secondary 超过 2 个时 DEV 警告并截断，同时渲染溢出提示", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       render(PrimaryActionBar, {
@@ -69,9 +69,23 @@ describe("PrimaryActionBar", () => {
       expect(screen.getByText("次要一")).toBeInTheDocument();
       expect(screen.getByText("次要二")).toBeInTheDocument();
       expect(screen.queryByText("次要三")).toBeNull();
+      // v0.1.6 V016-F1：截断不再静默，溢出数量走 role=status 文字播报。
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "另有 1 个次要操作未显示",
+      );
     } finally {
       warn.mockRestore();
     }
+  });
+
+  it("secondary 不超限时不渲染溢出提示", () => {
+    render(PrimaryActionBar, {
+      props: {
+        primary: primaryAction(),
+        secondary: [{ label: "次要一", onClick: vi.fn() }],
+      },
+    });
+    expect(screen.queryByRole("status")).toBeNull();
   });
 
   it("busy 三态：primary 禁用 + 文案 + role=status 播报", () => {

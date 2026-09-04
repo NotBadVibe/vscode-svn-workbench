@@ -146,9 +146,11 @@ test("保存每个 Svelte 功能页面的验收截图", async ({ page }) => {
 
   await test.step("Conflicts", async () => {
     await openModule(page, "冲突");
-    await page.getByText("需要帮助（合并建议与解释）").click();
+    // v0.1.6 V016-C2：建议入口收进帮助面板；解决预览仍在下方折叠区。
+    await page.getByRole("button", { name: "需要帮助" }).click();
     await page.getByRole("button", { name: "AI 分析" }).click();
     await expect(page.getByText("两侧都修改了同一处行为")).toBeVisible();
+    await page.locator('[data-testid="conflict-help-details"] summary').click();
     await page.getByRole("button", { name: "生成解决预览" }).click();
     await expect(
       page.getByRole("button", { name: "确认使用当前工作副本内容并标记解决" }),
@@ -158,7 +160,7 @@ test("保存每个 Svelte 功能页面的验收截图", async ({ page }) => {
 
   await test.step("Changelists", async () => {
     await openModule(page, "变更集");
-    await page.getByRole("button", { name: "生成分组建议" }).click();
+    await page.getByRole("button", { name: "自动整理" }).click();
     await page.getByRole("button", { name: "套用并调整" }).click();
     await page.getByRole("button", { name: "生成应用预览" }).click();
     await expect(

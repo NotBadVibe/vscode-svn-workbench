@@ -2,7 +2,8 @@
   /*
    * v0.1.5 V015-B PrimaryActionBar：唯一主动作 + 有限次级动作。
    * - `primary` 为类型级单个对象，保证同页只有一个主操作（primary 唯一性）。
-   * - `secondary` 最多 2 个：超出部分截断并在 DEV 下警告（只缩小不扩大）。
+   * - `secondary` 最多 2 个：超出部分截断并在 DEV 下警告，同时渲染溢出
+   *   提示文字（v0.1.6 V016-F1：不再静默截断，只缩小不扩大）。
    * - `busy` / `stale` 时 primary 强制禁用，并用 `role="status"` 文字播报，
    *   stale 下点击不触发回调（旧预览 / 旧 token 不得继续可用）。
    * - 中文 IME 保护：复用 `keyboard.ts` 的 `isImeComposing` 模式，
@@ -11,7 +12,10 @@
    * - 布局约束：`role="toolbar"`，按钮原生可聚焦，无焦点陷阱。
    */
   import { isImeComposing } from "../../i18n/keyboard";
-  import { taskSkeletonLabels } from "../../i18n/terminology";
+  import {
+    taskSecondaryOverflowLabel,
+    taskSkeletonLabels,
+  } from "../../i18n/terminology";
   import type { TaskBarAction } from "./taskTypes";
 
   let {
@@ -45,8 +49,11 @@
   /** 候选阶段标记：`oncompositionstart/end` 跟踪（OperationIntentDialog 同模式）。 */
   let isComposing = $state(false);
 
-  /** 次级动作上限 2 个：超出截断，DEV 下警告（只缩小不扩大）。 */
+  /** 次级动作上限 2 个：超出截断，DEV 下警告并渲染溢出提示（只缩小不扩大）。 */
   const visibleSecondary = $derived(secondary.slice(0, 2));
+  const secondaryOverflow = $derived(
+    secondary.length > 2 ? secondary.length - 2 : 0,
+  );
   $effect(() => {
     if (
       typeof import.meta !== "undefined" &&
@@ -143,6 +150,11 @@
       </button>
     {/each}
   </span>
+  {#if secondaryOverflow > 0}
+    <span class="primary-action-bar__overflow" role="status"
+      >{taskSecondaryOverflowLabel(secondaryOverflow)}</span
+    >
+  {/if}
   {#if statusText}
     <span class="primary-action-bar__status" role="status">{statusText}</span>
   {/if}
@@ -154,8 +166,8 @@
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 8px;
-    padding: 8px 0;
+    gap: var(--space-xs);
+    padding: var(--space-xs) 0;
   }
   .primary-action-bar__count {
     font-size: 12px;
@@ -164,9 +176,10 @@
   .primary-action-bar__buttons {
     display: flex;
     flex-wrap: wrap;
-    gap: 8px;
+    gap: var(--space-xs);
   }
-  .primary-action-bar__status {
+  .primary-action-bar__status,
+  .primary-action-bar__overflow {
     font-size: 12px;
     color: var(--vscode-descriptionForeground);
   }

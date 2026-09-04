@@ -137,6 +137,9 @@ export class UpdateWorkbenchActions {
       remoteChanges,
       remoteCheckError,
     );
+    // v0.1.6 V016-F1：预览携带生成时绑定，Webview 意向单据此自检 stale
+    //（Host 执行前仍以会话权威状态复验，不信任 Webview 回传）。
+    const candidateHash = hashCandidateState(candidates, "", []);
     session.updateState = {
       preview: {
         token: randomUUID(),
@@ -151,8 +154,11 @@ export class UpdateWorkbenchActions {
           `svn update --accept postpone ${session.scope.roots.map((root) => quoteRelative(root.relativePath)).join(" ")}`,
         ],
         error: remoteCheckError,
+        scopeHash: session.scopeHash,
+        candidateHash,
+        repositoryUuid: session.repositoryUuid,
       },
-      candidateHash: hashCandidateState(candidates, "", []),
+      candidateHash,
       result: session.updateState?.result,
     };
     await this.sendUpdateSnapshot(session, requestId);
@@ -220,6 +226,14 @@ export class UpdateWorkbenchActions {
         true,
         requestId,
       );
+      // v0.1.6 V016-F1：作废预览后主动推送快照，Webview 对话框随之关闭，
+      // 不再停留可确认态造成重复确认。拒绝错误已下发，快照构建含真实 SVN
+      // 查询，异常环境下失败不得掩盖原拒绝或二次抛错，仅尽力而为。
+      try {
+        await this.sendUpdateSnapshot(session, requestId);
+      } catch {
+        // 忽略：原拒绝已送达，旧预览已作废。
+      }
       return;
     }
     if (currentHash !== session.updateState?.candidateHash) {
@@ -231,6 +245,14 @@ export class UpdateWorkbenchActions {
         true,
         requestId,
       );
+      // v0.1.6 V016-F1：作废预览后主动推送快照，Webview 对话框随之关闭。
+      // 拒绝错误已下发，快照构建含真实 SVN 查询，异常环境下失败不得掩盖
+      // 原拒绝或二次抛错，仅尽力而为。
+      try {
+        await this.sendUpdateSnapshot(session, requestId);
+      } catch {
+        // 忽略：原拒绝已送达，旧预览已作废。
+      }
       return;
     }
     await this.host.post({

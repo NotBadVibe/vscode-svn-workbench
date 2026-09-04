@@ -129,6 +129,8 @@
     <FeatureRouter
       snapshot={state.snapshot}
       taskId={state.taskId}
+      scopeHash={state.scopeHash}
+      repositoryUuid={state.repositoryUuid}
       editSession={state.editSession}
       diffSaveResult={state.diffSaveResult}
       draftAck={state.draftAck}

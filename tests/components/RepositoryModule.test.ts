@@ -446,6 +446,54 @@ describe("RepositoryModule", () => {
     );
   });
 
+  it("V016-F1：高级意向单携带预览绑定，范围变化后确认前只读失效", async () => {
+    const onAction = vi.fn();
+    type AdvancedPreview = NonNullable<
+      RepositorySnapshot["advanced"]["preview"]
+    >;
+    const preview: AdvancedPreview = {
+      token: "branch-stale",
+      operation: "branch",
+      title: "创建分支",
+      commands: ["svn copy …"],
+      details: ["源：https://svn.example.test/repos/wb/trunk"],
+      issues: [],
+      canExecute: true,
+      destructive: false,
+      scopeHash: "scope-1",
+      candidateHash: "cand-1",
+      repositoryUuid: "repo-1",
+    };
+    const baseSnapshot: RepositorySnapshot = {
+      kind: "repository",
+      info: { name: "repo", revision: "5" },
+      properties: { available: true, target: ".", items: [] },
+      cleanup: { available: true, target: "." },
+      advanced: { preview },
+    };
+    const { rerender } = render(RepositoryModule, {
+      snapshot: baseSnapshot,
+      taskId: "repository/branch",
+      scopeHash: "scope-1",
+      repositoryUuid: "repo-1",
+      onAction,
+    });
+    await fireEvent.click(
+      screen.getByRole("button", { name: "确认执行创建分支" }),
+    );
+    const dialog = screen.getByRole("dialog", { name: "创建分支" });
+    expect(dialog).not.toHaveTextContent("已失效（只读）");
+    // 同 token 下范围变化：确认前即只读展示。
+    await rerender({
+      snapshot: baseSnapshot,
+      taskId: "repository/branch",
+      scopeHash: "scope-2",
+      repositoryUuid: "repo-1",
+      onAction,
+    });
+    expect(dialog).toHaveTextContent("已失效（只读）");
+  });
+
   // v0.1.5 V015-D2：页内 H1 与 ScopeBar H1 逐字重复已删（任务标题由 ScopeBar 表达）。
   it("页内不重复任务 H1；子任务标题保持 h2 层级", async () => {
     render(RepositoryModule, {

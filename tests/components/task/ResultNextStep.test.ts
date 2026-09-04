@@ -111,7 +111,7 @@ describe("ResultNextStep", () => {
     }
   });
 
-  it("secondary 超过 2 个时截断", () => {
+  it("secondary 超过 2 个时截断并渲染溢出提示", () => {
     render(ResultNextStep, {
       props: {
         tone: "success",
@@ -129,6 +129,36 @@ describe("ResultNextStep", () => {
     expect(screen.getByText("次要一")).toBeInTheDocument();
     expect(screen.getByText("次要二")).toBeInTheDocument();
     expect(screen.queryByText("次要三")).toBeNull();
+    // v0.1.6 V016-F1：截断不再静默。
+    expect(screen.getByText("另有 1 个次要操作未显示")).toBeInTheDocument();
+  });
+
+  it("多个 primary 时只取首个并渲染溢出提示", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      render(ResultNextStep, {
+        props: {
+          tone: "success",
+          result: "完成。",
+          nextStep: "下一步。",
+          actions: [
+            { label: "主要一", action: "a", kind: "primary" },
+            { label: "主要二", action: "b", kind: "primary" },
+          ],
+          onAction: vi.fn(),
+        },
+      });
+      expect(screen.getByText("主要一")).toBeInTheDocument();
+      expect(screen.queryByText("主要二")).toBeNull();
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining("primary 动作只能有 1 个"),
+      );
+      expect(
+        screen.getByText("另有 1 个主要操作未显示，仅展示首个"),
+      ).toBeInTheDocument();
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it("组件不 import Host、不拼 action 名（源码静态断言）", () => {

@@ -36,8 +36,9 @@ test("V014-E2：Changes→Commit 交接后显示来源行且不重复选择控�
   await expect(
     page.locator("details.commit-compact-details--files[open]"),
   ).toHaveCount(0);
+  // V016-C：AI 折叠区已迁移进 AssistancePanel（region），不再是 details。
   await expect(
-    page.locator("details.commit-compact-details--ai"),
+    page.getByRole("region", { name: "提交说明帮助" }),
   ).toBeVisible();
   // 唯一主操作：首屏只有一个 primary（新预览入口）。
   await expect(page.locator(".commit-compact .button--primary")).toHaveCount(1);

@@ -141,12 +141,8 @@ test("V014-F2(a)：Commit 紧凑模式 720×480 摘要条/折叠区/唯一主操
   await assertInsideContent(page, summary, "待提交文件摘要");
   await expect(summary.getByText(/待提交 \d+ 个文件/)).toBeVisible();
 
-  // 三个常驻折叠区 summary 键盘 Enter 可展开。
-  for (const name of [
-    "完整文件选择与策略",
-    "AI 建议与外发回执",
-    "团队规则详情",
-  ]) {
+  // 两个常驻 details 折叠区 summary 键盘 Enter 可展开。
+  for (const name of ["完整文件选择与策略", "团队规则详情"]) {
     await test.step(name, async () => {
       const trigger = page.locator("summary", { hasText: name });
       await trigger.scrollIntoViewIfNeeded();
@@ -158,6 +154,17 @@ test("V014-F2(a)：Commit 紧凑模式 720×480 摘要条/折叠区/唯一主操
       ).toHaveJSProperty("open", true);
     });
   }
+
+  // V016-C：帮助面板经“需要帮助”按钮键盘展开（面板替代原 AI details）。
+  await test.step("提交说明帮助", async () => {
+    const trigger = page.getByRole("button", { name: "需要帮助" });
+    await trigger.scrollIntoViewIfNeeded();
+    await trigger.focus();
+    await expect(trigger).toBeFocused();
+    await trigger.press("Enter");
+    await expect(page.getByRole("button", { name: "收起帮助" })).toBeVisible();
+    await expect(page.getByLabel("生成输入模式")).toBeVisible();
+  });
 
   // 唯一主操作可达（紧凑模式首屏只有一个 primary）。
   await expect(page.locator(".commit-compact .button--primary")).toHaveCount(1);

@@ -136,10 +136,10 @@ describe("CommitModule", () => {
     });
   });
 
-  it("始终提供“应用本地规则”，AI 已配置时提供“获取 AI 建议”", async () => {
+  it("V016-C：选择辅助降级为本地规则默认，不再设“AI”按钮（已配置也不例外）", async () => {
     const onAction = renderCommit();
 
-    // V014-D：文件选择折叠区与团队规则折叠区各有一个入口，均发送同一动作。
+    // 文件选择折叠区与团队规则折叠区各有一个本地规则入口，均发送同一动作。
     const applyButtons = screen.getAllByRole("button", {
       name: "应用本地规则",
     });
@@ -147,16 +147,40 @@ describe("CommitModule", () => {
     await fireEvent.click(applyButtons[0]);
     expect(onAction).toHaveBeenCalledWith("commit/apply-local-rules");
 
-    await fireEvent.click(screen.getByRole("button", { name: "获取 AI 建议" }));
-    expect(onAction).toHaveBeenCalledWith("commit/ai-select");
+    // 选择场景不再有模型入口：已配置也不出现“获取 AI 建议”，本地结果进检查摘要。
+    expect(
+      screen.queryByRole("button", { name: "获取 AI 建议" }),
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /AI 建议选择/ }),
     ).not.toBeInTheDocument();
+    expect(screen.getByText(/选择建议默认使用本地规则/)).toBeInTheDocument();
+    expect(onAction).not.toHaveBeenCalledWith(
+      "commit/ai-select",
+      expect.anything(),
+    );
   });
 
-  it("未配置 AI 时显示“配置 AI”入口并跳转设置 AI 标签", async () => {
-    const onAction = renderCommit({
+  it("V016-C：未配置时无选择模型入口，帮助面板如实提示本地可用", async () => {
+    // V016-C3a：面板配置态取消息场景（aiPrivacy[message]），此处双场景均未配置。
+    renderCommit({
       selectionAi: { configured: false },
+      aiPrivacy: [
+        {
+          scenario: "selection",
+          model: "本地规则（未配置外部模型）",
+          fileLimit: 200,
+          data: "metadata",
+          historyIncluded: false,
+        },
+        {
+          scenario: "message",
+          model: "本地规则（未配置外部模型）",
+          fileLimit: 80,
+          data: "statistics",
+          historyIncluded: false,
+        },
+      ],
     });
 
     expect(
@@ -165,16 +189,133 @@ describe("CommitModule", () => {
     expect(
       screen.queryByRole("button", { name: /AI 建议选择/ }),
     ).not.toBeInTheDocument();
-    // V014-D：手动规则入口收进折叠区（文件选择与团队规则各一），首屏无按钮。
+    expect(
+      screen.queryByRole("button", { name: "配置 AI" }),
+    ).not.toBeInTheDocument();
+    // 手动规则入口收进折叠区（文件选择与团队规则各一），首屏无按钮。
     expect(
       screen.getAllByRole("button", { name: "应用本地规则" }),
     ).toHaveLength(2);
 
-    await fireEvent.click(screen.getByRole("button", { name: "配置 AI" }));
-    expect(onAction).toHaveBeenCalledWith("open-module", {
-      moduleId: "settings",
-      taskId: "settings/ai",
+    // 展开帮助面板：未配置提示如实说明本地检查仍可用。
+    await fireEvent.click(screen.getByRole("button", { name: "需要帮助" }));
+    expect(
+      screen.getByText(/未配置外部模型，本地检查仍可用/),
+    ).toBeInTheDocument();
+  });
+
+  it("V016-C3a：仅配 commitMessage 时生成入口可用且面板为已配置", async () => {
+    renderCommit({
+      selectionAi: { configured: false },
+      aiPrivacy: [
+        {
+          scenario: "selection",
+          model: "本地规则（未配置外部模型）",
+          fileLimit: 200,
+          data: "metadata",
+          historyIncluded: false,
+        },
+        {
+          scenario: "message",
+          model: "deepseek-v4-flash",
+          fileLimit: 80,
+          data: "statistics",
+          historyIncluded: false,
+        },
+      ],
     });
+
+    // 选择场景未配不影响消息场景入口：生成建议草稿仍可用。
+    expect(screen.getByRole("button", { name: "生成建议草稿" })).toBeEnabled();
+    await fireEvent.click(screen.getByRole("button", { name: "需要帮助" }));
+    expect(
+      screen.queryByText(/未配置外部模型，本地检查仍可用/),
+    ).not.toBeInTheDocument();
+  });
+
+  it("V016-C3a：仅配 commitSelection 时生成入口禁用且面板为未配置", async () => {
+    const onAction = renderCommit({
+      selectionAi: { configured: true, model: "deepseek-v4-flash" },
+      aiPrivacy: [
+        {
+          scenario: "selection",
+          model: "deepseek-v4-flash",
+          fileLimit: 200,
+          data: "metadata",
+          historyIncluded: false,
+        },
+        {
+          scenario: "message",
+          model: "本地规则（未配置外部模型）",
+          fileLimit: 80,
+          data: "statistics",
+          historyIncluded: false,
+        },
+      ],
+    });
+
+    // 选择场景已配也不得点亮消息场景入口：禁用 + 如实原因。
+    const generate = screen.getByRole("button", {
+      name: "生成建议草稿",
+    });
+    expect(generate).toBeDisabled();
+    expect(generate.getAttribute("title")).toMatch(
+      /未配置外部模型，本地检查仍可用/,
+    );
+    // 禁用态点击不直调生成（守卫 fail-closed）。
+    await fireEvent.click(generate);
+    expect(onAction).not.toHaveBeenCalledWith(
+      "commit/generate-message",
+      expect.anything(),
+    );
+    expect(onAction).not.toHaveBeenCalledWith(
+      "commit/preview-receipt",
+      expect.anything(),
+    );
+    // 面板同源回退到未配置：展开后如实提示本地可用。
+    await fireEvent.click(screen.getByRole("button", { name: "需要帮助" }));
+    expect(
+      screen.getByText(/未配置外部模型，本地检查仍可用/),
+    ).toBeInTheDocument();
+  });
+
+  it("V016-C3a：消息场景已配置时生成入口恢复可用并可直调生成", async () => {
+    const onAction = renderCommit({
+      selectionAi: { configured: false },
+      aiPrivacy: [
+        {
+          scenario: "selection",
+          model: "本地规则（未配置外部模型）",
+          fileLimit: 200,
+          data: "metadata",
+          historyIncluded: false,
+        },
+        {
+          scenario: "message",
+          model: "deepseek-v4-flash",
+          fileLimit: 80,
+          data: "statistics",
+          historyIncluded: false,
+        },
+      ],
+    });
+
+    const generate = screen.getByRole("button", {
+      name: "生成建议草稿",
+    });
+    expect(generate).toBeEnabled();
+    await fireEvent.click(generate);
+    expect(onAction).toHaveBeenCalledWith(
+      "commit/generate-message",
+      expect.objectContaining({ diffMode: "metadata-only" }),
+    );
+  });
+
+  it("V016-C：选择场景不再展示外发预览（已配置也不例外），提交说明外发预览保留", () => {
+    renderCommit();
+    expect(screen.queryByText(/最多 200 个文件/)).not.toBeInTheDocument();
+    // 提交说明场景的外发预览仍在提交说明旁，内容完整。
+    expect(screen.getByText(/最多 80 个文件/)).toBeInTheDocument();
   });
 
   it("未配置 AI 时不显示选择场景的外发预览", () => {
@@ -298,7 +439,8 @@ describe("CommitModule", () => {
       },
     });
 
-    expect(screen.getByText(/结果已过期/)).toBeInTheDocument();
+    // V016-C：面板来源徽标与选择结果区同时标记过期（均有文字，不只靠颜色）。
+    expect(screen.getAllByText(/结果已过期/).length).toBeGreaterThanOrEqual(1);
     expect(
       screen.getByText(/只能查看，不能直接采用；请重新获取 AI 建议。/),
     ).toBeInTheDocument();
@@ -623,6 +765,9 @@ describe("CommitModule 受限差异外发回执（v0.0.11 §3）", () => {
 
   it("选择“含差异（需确认）”后点击生成走 preview-receipt", async () => {
     const onAction = renderCommit();
+    // V016-C：模式选择收进帮助面板展开区，折叠时不在 DOM，先展开再选择。
+    expect(screen.queryByLabelText("生成输入模式")).not.toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "需要帮助" }));
     await fireEvent.change(screen.getByLabelText("生成输入模式"), {
       target: { value: "limited-diff" },
     });
@@ -880,12 +1025,13 @@ describe("CommitModule 紧凑模式（v0.1.4 V014-D）", () => {
     );
   });
 
-  it("四个按需展开区默认收起，调整文件可展开完整选择", async () => {
+  it("V016-C：三个 details 按需展开区默认收起，帮助面板默认折叠", async () => {
     const { container } = renderCompact();
     const folds = Array.from(
       container.querySelectorAll("details.commit-compact-details"),
     );
-    expect(folds).toHaveLength(4);
+    // AI 折叠区已迁移进 AssistancePanel，不再是 details。
+    expect(folds).toHaveLength(3);
     for (const fold of folds) {
       expect((fold as HTMLDetailsElement).open).toBe(false);
     }
@@ -996,30 +1142,25 @@ describe("CommitModule 紧凑模式（v0.1.4 V014-D）", () => {
     );
   });
 
-  it("已配置时选择场景外发预览收进文件选择折叠区", () => {
+  it("V016-C：选择场景不再展示外发预览，提交说明外发预览保留在首屏", () => {
     renderCompact();
-    const privacyNote = screen.getByText(/最多 200 个文件/);
-    expect(
-      privacyNote.closest("details.commit-compact-details--files"),
-    ).not.toBeNull();
+    expect(screen.queryByText(/最多 200 个文件/)).not.toBeInTheDocument();
+    expect(screen.getByText(/最多 80 个文件/)).toBeInTheDocument();
   });
 
-  it("无回执与建议时 AI 折叠区保持收起，回执卡不打扰首屏", () => {
-    const { container } = renderCompact();
-    expect(
-      (
-        container.querySelector(
-          "details.commit-compact-details--ai",
-        ) as HTMLDetailsElement
-      ).open,
-    ).toBe(false);
+  it("V016-C：无回执与建议时帮助面板保持折叠，回执卡不打扰首屏", () => {
+    renderCompact();
+    expect(screen.getByRole("button", { name: "需要帮助" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
     expect(
       screen.queryByRole("region", { name: "受限差异外发回执" }),
     ).not.toBeInTheDocument();
   });
 
-  it("建议到达时自动展开 AI 折叠区", () => {
-    const { container } = renderCompact({
+  it("V016-C：建议到达时帮助面板自动展开", () => {
+    renderCompact({
       messageSuggestion: {
         token: "suggestion-compact-1",
         message: "feat(core): update",
@@ -1038,12 +1179,82 @@ describe("CommitModule 紧凑模式（v0.1.4 V014-D）", () => {
     expect(
       screen.getByRole("region", { name: "提交说明建议草稿" }),
     ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "收起帮助" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+  });
+
+  it("V016-C：提交说明旁只有一个模型入口，模式选择在展开后出现", async () => {
+    renderCompact();
     expect(
-      (
-        container.querySelector(
-          "details.commit-compact-details--ai",
-        ) as HTMLDetailsElement
-      ).open,
-    ).toBe(true);
+      screen.getAllByRole("button", { name: "生成建议草稿" }),
+    ).toHaveLength(1);
+    expect(
+      screen.queryByRole("button", { name: "获取 AI 建议" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("生成输入模式")).not.toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "需要帮助" }));
+    expect(screen.getByLabelText("生成输入模式")).toBeInTheDocument();
+  });
+
+  it("V016-C：放弃建议后帮助面板自动折叠回主表单", async () => {
+    const { onAction } = renderCompact({
+      messageSuggestion: {
+        token: "suggestion-compact-2",
+        message: "feat(core): update",
+        source: "local-rule",
+        metadataOnly: true,
+        diffMode: "metadata-only",
+        warnings: [],
+        binding: {
+          repositoryUuid: "uuid-1",
+          scopeHash: "scope-1",
+          candidateHash: "candidates-1",
+          generatedAt: "2026-07-30T10:00:00.000Z",
+        },
+      },
+    });
+    expect(
+      screen.getByRole("button", { name: "收起帮助" }),
+    ).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "放弃" }));
+    expect(onAction).toHaveBeenCalledWith("commit/discard-suggestion", {
+      token: "suggestion-compact-2",
+    });
+    expect(screen.getByRole("button", { name: "需要帮助" })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+  });
+
+  it("V016-C：过期建议在面板内只读（面板过期提示 + 采用禁用）", () => {
+    renderCompact({
+      messageSuggestion: {
+        token: "suggestion-compact-3",
+        message: "feat(core): update",
+        source: "configured-model",
+        model: "deepseek-v4-flash",
+        metadataOnly: true,
+        diffMode: "metadata-only",
+        stale: true,
+        warnings: [],
+        binding: {
+          repositoryUuid: "uuid-1",
+          scopeHash: "scope-1",
+          candidateHash: "candidates-1",
+          generatedAt: "2026-07-30T10:00:00.000Z",
+          model: "deepseek-v4-flash",
+        },
+      },
+    });
+    // 面板级过期提示（AssistancePanel stale 链），采用类只能查看。
+    expect(
+      screen.getByText(
+        "范围或候选已变化，该结果只能查看，不能直接采用；请重新获取建议。",
+      ),
+    ).toBeInTheDocument();
+    // 建议区采用契约不变：插入禁用，复制与放弃可用。
+    expect(screen.getByRole("button", { name: "插入空白字段" })).toBeDisabled();
   });
 });

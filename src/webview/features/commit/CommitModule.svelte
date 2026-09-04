@@ -14,7 +14,7 @@
   import SearchInput from "../../components/list/SearchInput.svelte";
   import ResultCount from "../../components/list/ResultCount.svelte";
   import { useFileList } from "../../components/list/useFileList.svelte";
-  import { isExplicitSubmitShortcut } from "../../i18n/keyboard";
+  import CommitMessageEditor from "./CommitMessageEditor.svelte";
   import { formatZhDateTime } from "../../i18n/formatters";
   import {
     commitSelectionAiSourceLabels,
@@ -25,7 +25,11 @@
   } from "../../i18n/terminology";
   import StatusExplanation from "../../components/svn/StatusExplanation.svelte";
   import TaskEmptyState from "../../components/task/TaskEmptyState.svelte";
-  import { taskStateCopy } from "../../i18n/terminology";
+  import AssistancePanel from "../../components/assistance/AssistancePanel.svelte";
+  import {
+    commitAssistanceLabels,
+    taskStateCopy,
+  } from "../../i18n/terminology";
   import {
     diffDraftAgainstSuggestion,
     insertSuggestionBlankFields,
@@ -418,18 +422,9 @@
     );
     return file?.projectRelativePath ?? relativePath;
   }
-  const selectionPrivacy = $derived(
-    snapshot.selectionAi.configured
-      ? snapshot.aiPrivacy.find((item) => item.scenario === "selection")
-      : undefined,
-  );
   const messagePrivacy = $derived(
     snapshot.aiPrivacy.find((item) => item.scenario === "message"),
   );
-
-  function updateDraft(): void {
-    onAction("commit/update-draft", { message });
-  }
 
   /*
    * v0.0.9 §4 建议草稿：快照中的建议只在本地计算差异对比；
@@ -446,6 +441,33 @@
     suggestion?.coverageFiles?.filter(
       (file) => file.state === "readFailed" || file.state === "budgetExcluded",
     ).length ?? 0,
+  );
+
+  /*
+   * v0.1.6 V016-C：AssistancePanel 接线（只表达状态与事件）。
+   * 回执 token 生成/绑定/消费、scope 校验、stale 判定与模型调用留在页面
+   * 闭包与 Host；组件只展示来源、回执与结果状态，不持有业务状态机。
+   * V016-C3a：生成建议草稿走 commitMessage 场景（aiPrivacy[message]），
+   * 不得取选择场景 selectionAi（commitSelection）；判定同式 ConflictsModule
+   * conflictAdviceConfigured：看相应 privacy.model 是否含「未配置」。
+   */
+  const assistanceConfigured = $derived(
+    messagePrivacy?.model !== undefined &&
+      !messagePrivacy.model.includes("未配置"),
+  );
+  const assistanceSourceState = $derived<
+    "local-rule" | "configured-model" | "local-rule-fallback" | "unconfigured"
+  >(
+    suggestion
+      ? suggestion.source
+      : snapshot.ai
+        ? snapshot.ai.source
+        : assistanceConfigured
+          ? "local-rule"
+          : "unconfigured",
+  );
+  const assistanceStale = $derived(
+    suggestion?.stale ?? snapshot.ai?.stale ?? false,
   );
 
   /** v0.0.11 §6：只重试失败项——Host 对失败文件重新采集并下发回执。 */
@@ -479,6 +501,8 @@
       mode: "insert-blank-fields",
       currentMessage: message,
     });
+    // v0.1.6 V016-C：采用后回到提交主流程，面板自动折叠（建议由页面持有不丢失）。
+    aiExpanded = false;
   }
 
   function openReplaceConfirm(): void {
@@ -497,6 +521,8 @@
       mode: "replace",
       currentMessage: previousMessage,
     });
+    // v0.1.6 V016-C：采用后回到提交主流程，面板自动折叠（备份与撤销契约不变）。
+    aiExpanded = false;
   }
 
   function copySuggestion(): void {
@@ -507,10 +533,14 @@
   function discardSuggestion(): void {
     if (!suggestion) return;
     onAction("commit/discard-suggestion", { token: suggestion.token });
+    // v0.1.6 V016-C：放弃后不长期挤压提交主表单，面板自动折叠。
+    aiExpanded = false;
   }
 
   function undoSuggestionReplace(): void {
     onAction("commit/undo-suggestion-replace");
+    // v0.1.6 V016-C：撤销后回到提交主流程，面板自动折叠。
+    aiExpanded = false;
   }
 
   /*
@@ -519,6 +549,8 @@
    * commit/generate-message 携带 receiptToken 实际生成。
    */
   function requestGenerate(): void {
+    // V016-C3a：消息场景未配置时入口已禁用；此处再守卫一次，误触不外发。
+    if (!assistanceConfigured) return;
     if (diffMode === "limited-diff") {
       onAction("commit/preview-receipt", {
         selectedPaths: selectedPaths(),
@@ -568,6 +600,8 @@
       onAction("commit/receipt-dismiss", { token: receipt.token });
     }
     commitReceipt = undefined;
+    // v0.1.6 V016-C：放弃后不长期挤压提交主表单，面板自动折叠。
+    aiExpanded = false;
   }
 
   const coverageLabels: Record<
@@ -590,15 +624,6 @@
     inferred: "推断",
     toConfirm: "待确认",
   };
-
-  function handleMessageKeydown(event: KeyboardEvent): void {
-    if (!isExplicitSubmitShortcut(event)) return;
-    event.preventDefault();
-    onAction("commit/preview", {
-      selectedPaths: selectedPaths(),
-      message,
-    });
-  }
 
   const filterLabels: Record<CommitFilter, string> = {
     all: "全部",
@@ -990,32 +1015,11 @@
             ><span class="codicon codicon-checklist" aria-hidden="true"
             ></span>应用本地规则</button
           >
-          {#if snapshot.selectionAi.configured}
-            <button
-              class="button button--secondary"
-              onclick={() => onAction("commit/ai-select")}
-              ><span class="codicon codicon-sparkle" aria-hidden="true"
-              ></span>获取 AI 建议</button
-            >
-          {:else}
-            <button
-              class="button button--secondary"
-              onclick={() =>
-                onAction("open-module", {
-                  moduleId: "settings",
-                  taskId: "settings/ai",
-                })}
-              ><span class="codicon codicon-settings-gear" aria-hidden="true"
-              ></span>配置 AI</button
-            >
-          {/if}
         </div>
-        {#if selectionPrivacy}<div class="privacy-note">
-            <strong>外发预览</strong><span
-              >{selectionPrivacy.data}；最多 {selectionPrivacy.fileLimit} 个文件；模型
-              {selectionPrivacy.model}；不含历史。</span
-            >
-          </div>{/if}
+        <!-- v0.1.6 V016-C：选择辅助降级为本地规则默认（结果进本地检查摘要，不再设“AI”按钮）。 -->
+        <p class="commit-selection-demoted" role="note">
+          {commitAssistanceLabels.selectionDemotedHint}
+        </p>
         <SelectionSummary
           selectedCount={selected.size}
           {actionableCount}
@@ -1203,21 +1207,17 @@
           <h2>提交说明</h2>
         </div>
         <div class="generate-actions">
-          <label class="generate-mode">
-            <span class="generate-mode__label">生成输入</span>
-            <select
-              aria-label="生成输入模式"
-              value={diffMode}
-              onchange={(event) => {
-                diffMode = (event.currentTarget as HTMLSelectElement).value as
-                  "metadata-only" | "limited-diff";
-              }}
-            >
-              <option value="metadata-only">仅文件信息</option>
-              <option value="limited-diff">含差异（需确认）</option>
-            </select>
-          </label>
-          <button class="button button--secondary" onclick={requestGenerate}>
+          <!-- v0.1.6 V016-C：提交说明旁只保留一个“生成建议草稿”入口；模式选择收进下方帮助面板展开区。 -->
+          <!-- V016-C3a：消息场景（commitMessage）未配置时禁用，本地检查仍可用；配置后恢复。 -->
+          <button
+            class="button button--secondary"
+            disabled={!assistanceConfigured}
+            title={!assistanceConfigured
+              ? commitAssistanceLabels.unconfiguredDisabledReason
+              : undefined}
+            aria-disabled={!assistanceConfigured}
+            onclick={requestGenerate}
+          >
             <span class="codicon codicon-sparkle" aria-hidden="true"></span>
             生成建议草稿
           </button>
@@ -1230,57 +1230,68 @@
               : "不含历史"}。</span
           >
         </div>{/if}
-      {#if diffMode === "limited-diff"}<p class="commit-suggestion__note">
-          受限差异模式：生成前会先展示外发回执（数据类型、文件数、预算与
-          排除项），确认后才发送脱敏差异正文；不会发送本地绝对路径、范围外
-          内容或凭据。
-        </p>{/if}
-      <div class="template-row" aria-label="提交说明模板">
-        {#each snapshot.templates as template (template.id)}
-          <button
-            title={template.body}
-            onclick={() =>
-              onAction("commit/apply-template", { templateId: template.id })}
-            >{template.label}</button
-          >
-        {/each}
-      </div>
-      <textarea
-        bind:value={message}
-        onblur={updateDraft}
-        oninput={() => onAction("commit/update-draft", { message })}
-        onkeydown={handleMessageKeydown}
-        aria-label="提交说明"
-        aria-describedby="commit-message-shortcut"
-        placeholder="说明改动意图、范围与影响…"
-        maxlength="2000"></textarea>
-      <div class="compose-meta">
-        <span>{message.length}/2000 个字符</span>
-        <span id="commit-message-shortcut">按 Ctrl/⌘ + Enter 生成提交预览</span>
-        {#if snapshot.conventionHint}<span title={snapshot.conventionHint}
-            >团队规范已加载</span
-          >{/if}
-      </div>
-      {#if snapshot.messageIssues.length > 0}
-        <div class="issue-list" role="alert">
-          {#each snapshot.messageIssues as issue, issueIndex (issueIndex)}
-            <div>
-              <span class="codicon codicon-warning" aria-hidden="true"
-              ></span>{issue}
-            </div>
-          {/each}
-        </div>
-      {/if}
+      <!-- v0.1.6 V016-E：提交说明编辑区已抽取为 CommitMessageEditor（受控展示 + 事件透传，state 仍由本模块权威）。 -->
+      <CommitMessageEditor
+        bind:message
+        templates={snapshot.templates}
+        messageIssues={snapshot.messageIssues}
+        conventionHint={snapshot.conventionHint}
+        onApplyTemplate={(templateId) =>
+          onAction("commit/apply-template", { templateId })}
+        onDraftUpdate={(next) =>
+          onAction("commit/update-draft", { message: next })}
+        onPreviewRequest={() =>
+          onAction("commit/preview", {
+            selectedPaths: selectedPaths(),
+            message,
+          })}
+      />
     </div>
 
-    <!-- V014-D 按需展开：AI 建议与外发回执（回执卡的“开始模型生成”是按需展开区内的主操作，未展开时不出现）。 -->
-    <details
-      class="commit-compact-details commit-compact-details--ai"
-      bind:open={aiExpanded}
+    <!-- v0.1.6 V016-C：AI 建议与外发回执迁移进 AssistancePanel（回执卡的“开始模型生成”是面板内的确认动作，未展开时不出现；回执 token 仍由页面闭包携带，绝不进入组件）。 -->
+    <AssistancePanel
+      title={commitAssistanceLabels.panelTitle}
+      summary={commitAssistanceLabels.panelSummary}
+      sourceState={assistanceSourceState}
+      configured={assistanceConfigured}
+      expanded={aiExpanded}
+      stale={assistanceStale}
+      onExpand={() => (aiExpanded = true)}
+      onCollapse={() => (aiExpanded = false)}
     >
-      <summary>AI 建议与外发回执</summary>
+      <!-- v0.1.6 V016-C：生成输入模式选择收进面板展开区（提交说明旁不再平铺）。 -->
+      <div class="commit-assistance__mode">
+        <label class="generate-mode">
+          <span class="generate-mode__label"
+            >{commitAssistanceLabels.generateModeLabel}</span
+          >
+          <select
+            aria-label={commitAssistanceLabels.generateModeLabel}
+            value={diffMode}
+            onchange={(event) => {
+              diffMode = (event.currentTarget as HTMLSelectElement).value as
+                "metadata-only" | "limited-diff";
+            }}
+          >
+            <option value="metadata-only"
+              >{commitAssistanceLabels.metadataOnly}</option
+            >
+            <option value="limited-diff"
+              >{commitAssistanceLabels.limitedDiff}</option
+            >
+          </select>
+        </label>
+        {#if diffMode === "limited-diff"}<p class="commit-suggestion__note">
+            {commitAssistanceLabels.limitedDiffNote}
+          </p>{/if}
+      </div>
       {#if commitReceipt}
-        <div class="commit-receipt" role="region" aria-label="受限差异外发回执">
+        <div
+          class="commit-receipt"
+          role="region"
+          aria-label="受限差异外发回执"
+          data-confirmation-zone="receipt"
+        >
           <div class="commit-receipt__head">
             <span class="codicon codicon-arrow-up" aria-hidden="true"></span>
             <strong>受限差异外发回执（尚未发送）</strong>
@@ -1579,6 +1590,9 @@
               {/if}
             </details>
           {/if}
+          <!-- v0.1.6 V016-C3b（低危 5）：建议区采用/查看动作保留内联 disabled={suggestion.stale}，
+            不迁移为 AssistancePanel 的 adopt:true——它们位于 children 插槽而非 localActions/
+            modelActions，组件级 stale 禁采用链仅作用于 action items；此处内联即等效禁采用。 -->
           <div class="commit-suggestion__actions">
             <button
               type="button"
@@ -1693,7 +1707,7 @@
           </div>
         </div>
       {/if}
-    </details>
+    </AssistancePanel>
 
     <!-- V014-D 按需展开：团队规则详情（规范原文 + 本地规则应用入口；首屏不再放该按钮）。 -->
     <details
@@ -1990,5 +2004,16 @@
   .commit-local-check__auto {
     margin: 0 0 8px;
     font-size: 12px;
+  }
+  /* v0.1.6 V016-C：选择降级提示与面板内模式选择（scoped，无全局 overflow）。 */
+  .commit-selection-demoted {
+    margin: 8px 0 0;
+    color: var(--muted);
+    font-size: 12px;
+  }
+  .commit-assistance__mode {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
   }
 </style>
