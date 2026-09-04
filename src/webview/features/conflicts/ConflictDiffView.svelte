@@ -25,6 +25,10 @@
     type ConflictResolution,
   } from "../../../conflict/conflictResolution";
   import { diffErrorInfo } from "../diff/diffErrorTaxonomy";
+  import {
+    whitespaceIgnoredLabel,
+    whitespaceLabels,
+  } from "../../i18n/terminology";
 
   let {
     workingText,
@@ -35,6 +39,9 @@
     onError,
     onReady,
     onBlockProgress,
+    showWhitespace = false,
+    ignoreWhitespace = false,
+    ignoredWhitespaceCount = 0,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     readonly: _readonly = false,
   }: {
@@ -53,6 +60,15 @@
     onReady?: (api: ConflictDiffViewApi) => void;
     onBlockProgress?: (progress: { current: number; total: number }) => void;
     readonly?: boolean;
+    /**
+     * V018-D 空白选项（v0.1.8 规划 §4.4）：纯呈现开关。
+     * - showWhitespace：渲染层图例，不改变挂载文本；
+     * - ignoreWhitespace：仅横幅标注 + 定位器状态，挂载文本恒为原始草稿，
+     *   identity/hash/草稿/undo 不受影响（切换不重建结果编辑器）。
+     */
+    showWhitespace?: boolean;
+    ignoreWhitespace?: boolean;
+    ignoredWhitespaceCount?: number;
   } = $props();
 
   let host = $state<HTMLDivElement>();
@@ -274,9 +290,35 @@
 
 <div
   class="conflict-diff-view"
+  class:show-whitespace={showWhitespace}
   data-testid="conflict-diff-view"
   data-file-identity={fileIdentity}
+  data-show-whitespace={showWhitespace ? "true" : "false"}
 >
+  {#if ignoreWhitespace}
+    <div
+      class="module-state"
+      role="status"
+      data-testid="ignore-whitespace-banner"
+    >
+      <span class="codicon codicon-info"></span>
+      <span
+        >{whitespaceLabels.ignoreBanner}（{whitespaceIgnoredLabel(
+          ignoredWhitespaceCount ?? 0,
+        )}，最终文本不受影响）</span
+      >
+    </div>
+  {/if}
+  {#if showWhitespace}
+    <div
+      class="module-state"
+      role="status"
+      data-testid="show-whitespace-legend"
+    >
+      <span class="codicon codicon-symbol-misc"></span>
+      <span>{whitespaceLabels.showWhitespaceLegend}</span>
+    </div>
+  {/if}
   <div class="conflict-roles" role="note" aria-label="冲突角色说明">
     <span class="role role--mine">{displayRoles.mine}</span>
     <span class="role role--theirs">{displayRoles.theirs}</span>
@@ -375,7 +417,10 @@
     background: var(--vscode-editor-background, #1e1e1e);
   }
   .role--merged {
-    background: var(--vscode-editor-selectionBackground, #264f78);
+    /* V018-D 对比度修复：背景与前景必须成对取自同一主题（选中配色），
+       不得出现深底深字；回退对 (#264f78/#ffffff) 自身达标。 */
+    background: var(--vscode-list-activeSelectionBackground, #264f78);
+    color: var(--vscode-list-activeSelectionForeground, #ffffff);
   }
   .conflict-diff-host {
     min-height: 240px;

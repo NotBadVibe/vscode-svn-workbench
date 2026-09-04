@@ -499,10 +499,11 @@ test.describe("V011-F 冲突 Webview E2E 自动化验收", () => {
     await expect(nextButton).toBeFocused();
     await expect(page.getByTestId("block-progress")).toBeVisible();
     await page.keyboard.press("Tab");
-    const focusedAfterTab = await page.evaluate(
-      () => document.activeElement?.textContent ?? "",
-    );
-    expect(focusedAfterTab.length).toBeGreaterThan(0);
+    // V018-D：块导航后新增空白开关复选框（input 自身无文本内容）；
+    // 此处意图仍是“Tab 后焦点不丢”，与下方 ArrowDown 断言同口径校验未掉到 body。
+    await expect(
+      page.evaluate(() => document.activeElement?.tagName !== "BODY"),
+    ).resolves.toBe(true);
     await prevButton.focus();
     await page.keyboard.press("ArrowDown");
     // ArrowDown 在块导航区不强制移动焦点，只需保证焦点未丢失到 body

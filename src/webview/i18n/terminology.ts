@@ -269,6 +269,58 @@ export function diffHunkPositionLabel(current: number, total: number): string {
   return `变更块 ${current}/${total}`;
 }
 
+/**
+ * V018-D 空白选项与定位器文案（v0.1.8 规划 §4.4）。
+ * 全部中文复用此处，不在单页面创造同义文案；最终文本永不被空白选项改写。
+ */
+export const whitespaceLabels = {
+  showWhitespace: "显示空白字符",
+  showWhitespaceHint:
+    "仅改变渲染层呈现（图例与备用视图符号），不改变文件内容与最终文本。",
+  showWhitespaceLegend:
+    "空白字符图例：空格 · ／制表符 → ／行尾 ↵（仅渲染层标记，最终文本不受影响）。",
+  ignoreWhitespace: "忽略空白差异",
+  ignoreWhitespaceHint:
+    "只改变比较呈现：归一化文本仅用于差异渲染与块导航，草稿、保存与导出始终使用原始文本。",
+  ignoreBanner: "比较视图：已忽略空白差异",
+  ignoreBannerDetail: "最终文本不受影响；退出编辑后可切换。",
+  editForcesOriginal:
+    "进入页内编辑已恢复原始文本比较；编辑始终作用于原始工作副本内容。",
+  editBlocksIgnore:
+    "页内编辑期间仅显示原始文本比较，请先回到审阅再切换忽略空白。",
+  patchBlocksIgnore: "修订比较暂不支持忽略空白差异。",
+  binaryBlocksIgnore: "二进制文件不支持忽略空白差异。",
+} as const;
+
+/** V018-D 定位器忽略计数（参数化标签，页面不各自拼字符串）。 */
+export function whitespaceIgnoredLabel(count: number): string {
+  return `已忽略 ${count} 处仅空白差异`;
+}
+
+/**
+ * V018-D 定位器（overview/locator）文案。
+ * 状态图形+文字/aria 双通道，不只用颜色表达。
+ */
+export const overviewLabels = {
+  region: "差异定位器",
+  toggleExpand: "展开定位器",
+  toggleCollapse: "收起定位器",
+  listGroup: "变更块定位列表",
+  railGroup: "变更分布条",
+  current: "当前",
+  gotoBlockHint: "选择后滚动到对应块，不改变文件与操作范围。",
+  overThresholdNote:
+    "块数较多，定位器已默认收起；如需展开，导航可能较慢（实测 100 块约 132ms、500 块约 1340ms）。",
+} as const;
+
+/**
+ * V018-D 定位器门控成本提示（参数化标签，页面不各自拼字符串）。
+ * 引用实测：100 块 P95 约 132ms 略超 100ms 预算、500 块 P95 约 1428ms。
+ */
+export function overviewGateHint(count: number, threshold: number): string {
+  return `共 ${count} 块，超过 ${threshold} 块阈值，定位器已默认收起；展开后导航可能较慢（实测 100 块约 132ms、500 块约 1340ms）。`;
+}
+
 /** 差异渲染组件失败时的中文降级提示。 */
 export const diffFallbackNotices = {
   mergeView:

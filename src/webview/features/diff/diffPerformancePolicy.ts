@@ -312,3 +312,55 @@ export function suggestDiffPerformanceMode(
   }
   return { mode, reasons: [...reasons] };
 }
+
+/*
+ * V018-D 定位器（DiffOverview）阈值门控（v0.1.8 规划 §4.4 + §8 纪律修正）。
+ *
+ * 实测（scripts/measure-v018d-locator.js，生产构建 preview 真实 Chromium）：
+ * - 小档（100 块）导航 P95 约 132ms，略超 100ms 导航候选预算；
+ * - 大档（500 块）导航 P50 约 1340ms / P95 约 1428ms，超预算 14 倍，verdict no-go；
+ * - 瓶颈在 UnresolvedFile.focusConflict 的 Pierre 侧布局成本，非定位器自身模型
+ *   （模型构建约 0.2ms 通过）。
+ * 规划 §4.4 要求「100/500 块下仍满足导航和滚动预算」，§8 禁止「扩大超时或删除
+ * 断言取得通过」；超预算组件默认开启属违规，故按块数门控：≤ 阈值默认展开，
+ * 超阈值默认折叠（不渲染分布条与列表，用户可显式展开，展开时提示成本）。
+ * 定位器可存在但必须受控（720×480/200% 折叠态零占位，不占用主编辑区）。
+ */
+
+/** V018-D 定位器默认展开的块数上限（含等于；超阈值默认折叠）。 */
+export const V018D_OVERVIEW_BLOCK_THRESHOLD = 100;
+
+/** 定位器门控决策：是否超阈值 + 默认展开态 + 中文原因。 */
+export interface DiffOverviewGateDecision {
+  /** 块数（已钳制为非负整数）。 */
+  blockCount: number;
+  /** 生效阈值（默认 100，可注入复用，不散落魔法数字）。 */
+  threshold: number;
+  /** 超阈值则门控生效（默认折叠，不渲染列表；用户可显式展开）。 */
+  gated: boolean;
+  /** 默认展开态：未门控展开，门控折叠（用户显式选择可覆盖）。 */
+  defaultExpanded: boolean;
+  /** 中文原因（可直接展示，不静默）。 */
+  reasons: string[];
+}
+
+/**
+ * 纯函数：定位器阈值门控。边界含等于：块数 ≤ 阈值默认展开，> 阈值默认折叠。
+ */
+export function decideDiffOverviewGate(
+  blockCount: number,
+  threshold: number = V018D_OVERVIEW_BLOCK_THRESHOLD,
+): DiffOverviewGateDecision {
+  const count = Math.max(0, Math.floor(blockCount));
+  const limit = Math.max(0, Math.floor(threshold));
+  const gated = count > limit;
+  return {
+    blockCount: count,
+    threshold: limit,
+    gated,
+    defaultExpanded: !gated,
+    reasons: gated
+      ? [`共 ${count} 块，超过 ${limit} 块阈值，已默认收起定位器`]
+      : [],
+  };
+}

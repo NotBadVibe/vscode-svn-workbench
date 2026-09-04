@@ -40,6 +40,12 @@
   import type { ConflictCompletionState } from "../../../conflict/conflictCompletionModel";
 
   import ConflictDiffView from "./ConflictDiffView.svelte";
+  import DiffOverview from "../diff/DiffOverview.svelte";
+  import {
+    buildConflictOverviewBlocks,
+    countWhitespaceOnlyConflictBlocks,
+  } from "../diff/diffOverviewModel";
+  import { whitespaceLabels } from "../../i18n/terminology";
   import ConflictResultEditor from "./ConflictResultEditor.svelte";
   import MergeActionToolbar from "./MergeActionToolbar.svelte";
   import ShortcutHelp from "../../components/help/ShortcutHelp.svelte";
@@ -559,6 +565,30 @@
   const workingDirty = $derived(mergeDraft !== savedWorking);
   // v0.1.1 V011-D：块级差异视图实例与进度（动作紧邻冲突块，进度与列表统一）。
   let diffView = $state<ConflictDiffView>();
+  /*
+   * V018-D 回归修复（v017g-keyboard-paths PATH-2）：保存成功后保存按钮由
+   * 可用变禁用，焦点掉到 body，后续正向 Tab 不再从保存栏续走（D 新增的
+   * 定位器停留点放大了该丢失，实测从页首重走并困在 pierre 宿主内，主线仅
+   * 需 3 步）。焦点确已丢失时收回到保存检查点按钮，还原主线键盘流；用户
+   * 已在别处聚焦时绝不抢焦点（后台刷新不抢焦点基线）。
+   */
+  let saveButtonEl = $state<HTMLButtonElement>();
+  let checkpointButtonEl = $state<HTMLButtonElement>();
+  const saveNowDisabled = $derived(
+    !snapshot.selected?.mergeEditor.editable || !workingDirty,
+  );
+  $effect(() => {
+    const disabled = saveNowDisabled;
+    const feedback = snapshot.selected?.mergeEditor.feedback ?? "";
+    if (!disabled) return;
+    if (!feedback.includes("工作副本合并结果已保存")) return;
+    if (typeof document === "undefined") return;
+    const active = document.activeElement as HTMLElement | null;
+    const lost = !active || active === document.body || active === saveButtonEl;
+    if (!lost) return;
+    const target = checkpointButtonEl;
+    if (target && !target.disabled) target.focus();
+  });
   let diffProgress = $state({ current: 1, total: 0 });
   let diffActionFeedback = $state("");
   let sourceDetailsOpen = $state(false);
@@ -577,6 +607,38 @@
       : "") as ConflictFileIdentity,
   );
   const diffWorkingText = $derived(mergeDraft);
+  /**
+   * V018-D 空白选项与定位器（v0.1.8 规划 §4.4）：纯呈现开关。
+   * 挂载文本恒为原始 mergeDraft（不归一、不重建结果编辑器），
+   * 因此 identity/hash/草稿/undo 不丢失，无需只读限制；横幅明确标注。
+   */
+  let conflictShowWhitespace = $state(false);
+  let conflictIgnoreWhitespace = $state(false);
+  const conflictOverviewBlocks = $derived(
+    snapshot.selected
+      ? buildConflictOverviewBlocks(mergeDraft, conflictIgnoreWhitespace)
+      : [],
+  );
+  const conflictIgnoredWhitespaceCount = $derived(
+    conflictIgnoreWhitespace
+      ? countWhitespaceOnlyConflictBlocks(mergeDraft)
+      : 0,
+  );
+  const conflictOverviewTotalLines = $derived(
+    Math.max(1, mergeDraft.split("\n").length),
+  );
+  const conflictOverviewCurrent = $derived(
+    conflictOverviewBlocks.length === 0
+      ? 0
+      : Math.min(
+          Math.max(0, diffProgress.current - 1),
+          conflictOverviewBlocks.length - 1,
+        ),
+  );
+  /** V018-D：定位器选择（点击/键盘）滚动到正确块；只改导航索引。 */
+  function selectConflictOverviewBlock(index: number): void {
+    diffView?.focusConflict(index);
+  }
   // V018-C：进入精简/简化档自动折叠未激活只读来源（用户可手动再展开）。
   $effect(() => {
     if (conflictPerf.hideInactiveSourcePanes && effectivePerfMode !== "full") {
@@ -2356,18 +2418,65 @@
               >
             </div>
           {/if}
+          <!--
+            V018-D 空白选项（纯呈现，不重建结果编辑器，草稿/identity 不丢）：
+            显示空白字符走渲染层图例；忽略空白仅标注横幅 + 定位器状态。
+          -->
+          <div
+            class="conflict-whitespace-settings"
+            role="group"
+            aria-label="空白显示设置"
+          >
+            <label
+              class="conflict-whitespace-option"
+              title={whitespaceLabels.showWhitespaceHint}
+            >
+              <input
+                type="checkbox"
+                checked={conflictShowWhitespace}
+                onchange={() =>
+                  (conflictShowWhitespace = !conflictShowWhitespace)}
+              />
+              {whitespaceLabels.showWhitespace}
+            </label>
+            <label
+              class="conflict-whitespace-option"
+              title={whitespaceLabels.ignoreWhitespaceHint}
+            >
+              <input
+                type="checkbox"
+                checked={conflictIgnoreWhitespace}
+                onchange={() =>
+                  (conflictIgnoreWhitespace = !conflictIgnoreWhitespace)}
+              />
+              {whitespaceLabels.ignoreWhitespace}
+            </label>
+          </div>
           {#if !useSimplified}
-            <ConflictDiffView
-              bind:this={diffView}
-              workingText={diffWorkingText}
-              relativePath={snapshot.selected?.relativePath ?? ""}
-              language={perfHighlightLanguage}
-              fileIdentity={conflictFileIdentity}
-              onBlockProgress={notifyBlockProgress}
-              onMergeConflictAction={handleDiffAction}
-              onError={handleDiffError}
-              onReady={handleDiffReady}
-            />
+            <div class="conflict-diff-row">
+              <div class="conflict-diff-main">
+                <ConflictDiffView
+                  bind:this={diffView}
+                  workingText={diffWorkingText}
+                  relativePath={snapshot.selected?.relativePath ?? ""}
+                  language={perfHighlightLanguage}
+                  fileIdentity={conflictFileIdentity}
+                  showWhitespace={conflictShowWhitespace}
+                  ignoreWhitespace={conflictIgnoreWhitespace}
+                  ignoredWhitespaceCount={conflictIgnoredWhitespaceCount}
+                  onBlockProgress={notifyBlockProgress}
+                  onMergeConflictAction={handleDiffAction}
+                  onError={handleDiffError}
+                  onReady={handleDiffReady}
+                />
+              </div>
+              <DiffOverview
+                blocks={conflictOverviewBlocks}
+                currentIndex={conflictOverviewCurrent}
+                totalLines={conflictOverviewTotalLines}
+                onSelect={selectConflictOverviewBlock}
+              />
+            </div>
           {:else}
             <div
               class="notice notice--info"
@@ -2647,6 +2756,7 @@
                 ? "有尚未保存的合并修改（Host 草稿已同步）"
                 : "工作副本与已保存内容一致"}</span
             ><button
+              bind:this={saveButtonEl}
               class={snapshot.resolvePreview
                 ? "button button--secondary"
                 : "button button--primary"}
@@ -2661,6 +2771,7 @@
                   content: mergeDraft,
                 })}>保存工作副本合并结果</button
             ><button
+              bind:this={checkpointButtonEl}
               class="button button--secondary"
               data-testid="save-checkpoint"
               disabled={isComposing || (resultEditor?.isComposing?.() ?? false)}
@@ -2941,3 +3052,49 @@
     </dialog>
   {/if}
 </section>
+
+<style>
+  /* V018-D：冲突差异区 + 定位器行，局部滚动归属，不用全局 overflow。 */
+  .conflict-diff-row {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+    min-height: 0;
+  }
+  .conflict-diff-main {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+  }
+  .conflict-diff-row .diff-overview {
+    max-height: min(64vh, 640px);
+  }
+  .conflict-whitespace-settings {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    align-items: center;
+    margin: 6px 0;
+    font-size: 12px;
+  }
+  .conflict-whitespace-option {
+    display: inline-flex;
+    gap: 6px;
+    align-items: center;
+    cursor: pointer;
+  }
+  @media (max-width: 760px) {
+    .conflict-diff-row {
+      flex-direction: column;
+      /* 纵向堆叠时交叉轴为水平：必须拉伸，否则 Shadow DOM 内容
+         不参与固有宽度计算，主冲突区会塌成数像素宽。 */
+      align-items: stretch;
+    }
+    .conflict-diff-main {
+      width: 100%;
+    }
+    .conflict-diff-row .diff-overview {
+      max-height: 200px;
+    }
+  }
+</style>
