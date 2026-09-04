@@ -47,7 +47,12 @@
   } = $props();
 </script>
 
-<div class="receipt-summary" role="region" aria-label="外发回执确认">
+<div
+  class="receipt-summary"
+  role="region"
+  aria-label="外发回执确认"
+  data-confirmation-zone="receipt"
+>
   <p class="receipt-summary__title">
     <span class="codicon codicon-shield" aria-hidden="true"></span>
     外发前请确认以下内容

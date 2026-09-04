@@ -3,10 +3,11 @@ import AxeBuilder from "@axe-core/playwright";
 
 /*
  * V016-F2(3) · 四模块视觉矩阵（含 AssistancePanel 折叠态）。
- * 720×480 + 200% 代理 + 三主题：每页 button--primary=1（对话框/展开区除外）、
+ * 720×480 + 200% 代理 + 三主题：确认区外 button--primary=1（回执卡/意向单/dialog
+ * 内确认动作为规划 §5「Dialog 内当前执行动作」豁免，不计入主任务区统计）、
  * 面板折叠态不挤压主任务区、无横向溢出；axe 零违规。
  * 复用 v014-interactions.spec.ts 矩阵模式（expect 轮询 + 键盘事件，无 waitForTimeout）。
- * 只改测试；不动业务源码与 mock 旧语义。
+ * 只改测试；不动业务源码与 mock 旧语义（V016-F3 除外：见下）。
  */
 
 async function assertNoPageHorizontalOverflow(page: Page): Promise<void> {
@@ -45,17 +46,39 @@ async function assertInsideContent(
   ).toBeLessThanOrEqual(contentBox!.y + contentBox!.height + 1);
 }
 
-/** 对话框/展开区除外：只统计主任务区可见 primary（面板折叠态无展开区，隐藏对话框不计）。 */
+/**
+ * 确认区外唯一 primary：回执卡容器以 data-confirmation-zone 标记，卡内
+ * 「开始模型生成/开始解释/开始语义拆分/开始模型分析」为待确认动作，适用
+ * 规划 §5「Dialog 内当前执行动作除外」豁免，不计入主任务区统计。
+ * 平台无关：纯 DOM 可见性判定（尺寸 + visibility/display），不依赖平台 API。
+ */
+async function assertSingleOutsidePrimary(page: Page, label: string) {
+  const outsideCount = await page.evaluate(() => {
+    const buttons = Array.from(
+      document.querySelectorAll(".workbench-content .button--primary"),
+    ) as HTMLElement[];
+    return buttons.filter((element) => {
+      const rect = element.getBoundingClientRect();
+      const style = getComputedStyle(element);
+      const visible =
+        rect.width > 0 &&
+        rect.height > 0 &&
+        style.visibility !== "hidden" &&
+        style.display !== "none";
+      return visible && !element.closest("[data-confirmation-zone]");
+    }).length;
+  });
+  expect(outsideCount, `${label} 确认区外 primary 不唯一`).toBe(1);
+}
+
+/** 折叠态主任务区断言：无对话框、帮助面板保持折叠，且确认区外 primary=1。 */
 async function assertSingleMainPrimary(page: Page, label: string) {
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(
     page.getByRole("button", { name: "收起帮助" }),
     `${label} 帮助面板应保持折叠`,
   ).toHaveCount(0);
-  await expect(
-    page.locator(".workbench-content .button--primary:visible"),
-    `${label} 主任务区 primary 不唯一`,
-  ).toHaveCount(1);
+  await assertSingleOutsidePrimary(page, label);
 }
 
 const themes = {
@@ -303,15 +326,8 @@ test("V016-F2(3c)：三主题下四模块主任务可见且 axe 零违规", asyn
         page.getByRole("heading", { name: "待处理冲突" }),
       ).toBeVisible();
       await expect(page.getByTestId("conflict-role-bar")).toBeVisible();
-      // 已知遗留：选中冲突行 small 文案用 --vscode-foreground 落在 active 背景上，
-      // Light 下对比度不足（业务样式，V016-F2 只改测试不动源码；见汇报⑥）。
-      expect(
-        (
-          await new AxeBuilder({ page })
-            .exclude(".conflict-row.active")
-            .analyze()
-        ).violations,
-      ).toEqual([]);
+      // V016-F3 真修：.conflict-row.active small 改用选中前景，对比度达标后不再排除。
+      expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
 
       await page.goto("/?module=changelists");
       await applyTheme(page, theme);
@@ -334,4 +350,56 @@ test("V016-F2(3c)：三主题下四模块主任务可见且 axe 零违规", asyn
       expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([]);
     });
   }
+});
+
+test("V016-F3(3d)：展开态回执可见时确认区外仍唯一 primary", async ({
+  page,
+}) => {
+  // 豁免依据：规划 §5「每页强调色 primary=1（Dialog 内当前执行动作除外）」；
+  // 回执卡是待确认的外发动作（data-confirmation-zone 标记），卡内 primary 豁免，
+  // 卡外主任务区仍须唯一 primary 且主操作保持可达。
+  await page.setViewportSize({ width: 1024, height: 700 });
+
+  await test.step("Commit 回执展开态", async () => {
+    await page.goto("/?module=commit");
+    await expect(
+      page.getByRole("heading", { name: "提交当前范围" }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "需要帮助" }).click();
+    await page.getByLabel("生成输入模式").selectOption("limited-diff");
+    await page.getByRole("button", { name: "生成建议草稿" }).click();
+    const receipt = page.getByRole("region", {
+      name: "受限差异外发回执",
+    });
+    await expect(receipt).toBeVisible();
+    // 回执卡内确认动作为豁免项：卡内 primary 可见。
+    await expect(
+      receipt.getByRole("button", { name: "开始模型生成" }),
+    ).toBeVisible();
+    // 面板外主操作仍存在，且确认区外无第二个 primary。
+    await expect(
+      page.getByRole("button", { name: /预览提交 \d+ 个文件/ }),
+    ).toBeVisible();
+    await assertSingleOutsidePrimary(page, "Commit 展开回执");
+  });
+
+  await test.step("Conflicts 回执展开态", async () => {
+    await page.goto("/?module=conflicts");
+    await expect(
+      page.getByRole("heading", { name: "待处理冲突" }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "需要帮助" }).click();
+    await page.getByRole("button", { name: "解释冲突意图" }).click();
+    const receipt = page.getByRole("region", {
+      name: "冲突意图解释回执",
+    });
+    await expect(receipt).toBeVisible();
+    await expect(
+      receipt.getByRole("button", { name: "开始解释" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "保存工作副本合并结果" }),
+    ).toBeVisible();
+    await assertSingleOutsidePrimary(page, "Conflicts 展开回执");
+  });
 });

@@ -263,11 +263,14 @@ describe("ChangelistsModule", () => {
       snapshot: buildSnapshot(),
       onAction: vi.fn(),
     });
+    // 确认区外唯一 primary：回执卡内确认动作为规划 §5 豁免，不计入统计。
     const pagePrimaries = Array.from(
       container.querySelectorAll(".button--primary"),
     ).filter(
       (el) =>
-        !el.closest("dialog, [role='dialog'], [role='alertdialog'], details"),
+        !el.closest(
+          "dialog, [role='dialog'], [role='alertdialog'], details, [data-confirmation-zone]",
+        ),
     );
     expect(pagePrimaries.length).toBeLessThanOrEqual(1);
   });

@@ -30,6 +30,8 @@ describe("ReceiptSummary", () => {
     render(ReceiptSummary, { props: baseProps() });
     const region = screen.getByRole("region", { name: "外发回执确认" });
     expect(region).toBeInTheDocument();
+    // 回执卡为确认区：标记 data-confirmation-zone，卡内 primary 适用规划 §5 豁免。
+    expect(region).toHaveAttribute("data-confirmation-zone", "receipt");
     expect(screen.getByText("demo-model")).toBeInTheDocument();
     expect(screen.getByText("仅文件信息")).toBeInTheDocument();
     expect(screen.getByText("当前范围 2 个文件")).toBeInTheDocument();

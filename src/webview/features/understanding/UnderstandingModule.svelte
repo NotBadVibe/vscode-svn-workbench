@@ -279,7 +279,12 @@
     onCollapse={() => (assistanceExpanded = false)}
   >
     {#if understandingReceipt}
-      <div class="commit-receipt" role="region" aria-label="变更解读外发回执">
+      <div
+        class="commit-receipt"
+        role="region"
+        aria-label="变更解读外发回执"
+        data-confirmation-zone="receipt"
+      >
         <div class="commit-receipt__head">
           <span class="codicon codicon-arrow-up" aria-hidden="true"></span>
           <strong>变更解读外发回执（尚未发送）</strong>

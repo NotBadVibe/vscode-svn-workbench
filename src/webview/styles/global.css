@@ -2427,6 +2427,8 @@ button.path-detail__value:hover {
 }
 .conflict-row.active {
   background: var(--surface-active);
+  /* 选中行整体改用选中前景，行内主次文案在 active 背景上对比度达标 */
+  color: var(--vscode-list-activeSelectionForeground, var(--vscode-foreground));
 }
 .conflict-row > .codicon-warning {
   color: var(--danger);
@@ -2446,7 +2448,8 @@ button.path-detail__value:hover {
   color: var(--muted);
 }
 .conflict-row.active small {
-  color: var(--vscode-foreground);
+  /* 选中行次级文案改用选中前景，保证 Light 下 active 背景对比度达标 */
+  color: var(--vscode-list-activeSelectionForeground, var(--vscode-foreground));
 }
 .conflict-workspace {
   min-width: 0;

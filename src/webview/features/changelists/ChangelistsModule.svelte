@@ -531,7 +531,12 @@
     onCollapse={() => (assistanceExpanded = false)}
   >
     {#if changelistReceipt}
-      <div class="commit-receipt" role="region" aria-label="语义拆分外发回执">
+      <div
+        class="commit-receipt"
+        role="region"
+        aria-label="语义拆分外发回执"
+        data-confirmation-zone="receipt"
+      >
         <div class="commit-receipt__head">
           <span class="codicon codicon-arrow-up" aria-hidden="true"></span>
           <strong>语义拆分外发回执（尚未发送）</strong>

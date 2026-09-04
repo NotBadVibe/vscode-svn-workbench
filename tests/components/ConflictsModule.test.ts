@@ -632,11 +632,14 @@ describe("ConflictsModule 采用链（v0.1.6 V016-C3b 低危 5）", () => {
       snapshot,
       onAction: vi.fn(),
     });
+    // 确认区外唯一 primary：回执卡内确认动作为规划 §5 豁免，不计入统计。
     const pagePrimaries = Array.from(
       container.querySelectorAll(".button--primary"),
     ).filter(
       (el) =>
-        !el.closest("dialog, [role='dialog'], [role='alertdialog'], details"),
+        !el.closest(
+          "dialog, [role='dialog'], [role='alertdialog'], details, [data-confirmation-zone]",
+        ),
     );
     expect(pagePrimaries.length).toBeLessThanOrEqual(1);
   });

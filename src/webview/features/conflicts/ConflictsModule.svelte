@@ -1758,7 +1758,12 @@
         {/if}
       </AssistancePanel>
       {#if conflictReceipt}
-        <div class="commit-receipt" role="region" aria-label="冲突意图解释回执">
+        <div
+          class="commit-receipt"
+          role="region"
+          aria-label="冲突意图解释回执"
+          data-confirmation-zone="receipt"
+        >
           <div class="commit-receipt__head">
             <span class="codicon codicon-arrow-up" aria-hidden="true"></span>
             <strong>冲突意图解释回执（尚未发送）</strong>
