@@ -733,6 +733,7 @@
           />
         </div>
       {/if}
+      <!-- V017-D P2-5 豁免：changelist-list 与 useFileList 元素绑定 + 节内 role=list 共存，暂保持原生 scroll-region div（已带 scroll-region/data-scroll-region），不接入 ScrollArea；缺统一 data 状态为已知取舍。 -->
       <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_static_element_interactions -- 文件列表需要键盘焦点与统一键盘导航；各节自身是 role=list。 -->
       <div
         class="changelist-list scroll-region"

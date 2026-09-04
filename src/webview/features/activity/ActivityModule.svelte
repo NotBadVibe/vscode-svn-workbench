@@ -191,8 +191,12 @@
     display: flex;
     flex-direction: column;
     gap: 12px;
+    min-height: 100%;
+    padding: 18px;
   }
-  .activity-list :global(.scroll-region) {
+  /* V017-D P0-1：ScrollArea class 透传到同一节点，命中自身而非后代。 */
+  .activity-list:global(.scroll-region) {
+    min-height: 0;
     max-height: 100%;
   }
   .activity-row {

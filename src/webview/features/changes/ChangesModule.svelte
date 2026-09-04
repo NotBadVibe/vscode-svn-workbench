@@ -1025,6 +1025,7 @@
       >
         <ContextMenu.Trigger>
           {#snippet child({ props })}
+            <!-- V017-D P2-5 豁免：file-list 需 ContextMenu.Trigger props 透传 + 虚拟化行定位，暂保持原生 scroll-region div（已带 scroll-region/data-scroll-region/无障碍属性），不接入 ScrollArea；缺滚动阴影 data 状态为已知取舍。 -->
             <!-- svelte-ignore a11y_no_noninteractive_tabindex -- 文件列表需要键盘焦点，以支持 PageUp/PageDown 和 End 滚动。 -->
             <div
               {...props}
