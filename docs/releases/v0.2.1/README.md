@@ -34,8 +34,8 @@
 ### V021-R06 · 超过 300 条历史的窗口化滚动完整性
 
 - **原评审映射：** 第 6 项。
-- **优先级 / 证据等级：** P1 / 待复现风险。
-- **实施状态：** 待实施。
+- **优先级 / 证据等级：** P1 / 待复现风险（已复现并修复）。
+- **实施状态：** 已实现（行高 64→68 与 CSS 对齐 + 首尾占位复用 Commit 模式；`HistoryModule.svelte`；`tests/components/HistoryV021R06.test.ts` 10 用例；复现证据见 `.validation/evidence/v0.2.1/r06-reproduction/`，工作区 gitignored）。
 - **看到的现状：** History 使用默认 300 条阈值的 useFileList，只渲染 visibleRows，却没有全高容器或首尾占位；控制器行高 64 与 CSS 最小 68 也不一致。
 - **用户影响：** 可能出现加载计数很大但滚不到末项、滚动跳动或键盘定位错误；上一轮未完成浏览器复现。
 - **现有证据与预计改动入口：** [HistoryModule.svelte](../../../src/webview/features/history/HistoryModule.svelte)、[useFileList.svelte.ts](../../../src/webview/components/list/useFileList.svelte.ts)、[global.css](../../../src/webview/styles/global.css)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
@@ -49,17 +49,17 @@
 
 **验收场景与完成条件：**
 
-- [ ] 各档滚动、End、PageDown 可到真实最后修订。
-- [ ] 切换最早/最新顺序后首尾正确。
-- [ ] 追加一批与清除搜索后选中版本、比较对象和阅读位置可解释地保留。
+- [x] 各档滚动、End、PageDown 可到真实最后修订。
+- [x] 切换最早/最新顺序后首尾正确。
+- [x] 追加一批与清除搜索后选中版本、比较对象和阅读位置可解释地保留。
 
 <a id="v021-r14"></a>
 
 ### V021-R14 · 发布说明按修订范围完整采集
 
 - **原评审映射：** 第 14 项。
-- **优先级 / 证据等级：** P1 / 源码已确认。
-- **实施状态：** 待实施。
+- **优先级 / 证据等级：** P1 / 源码已确认（已实现）。
+- **实施状态：** 已实现（按范围只读分页采集 + HEAD 请求开始固定 + 完整性/取消/失败显式标记 + 20 路径省略与 `fullMarkdown` 完整导出；`repositoryWorkbenchActions.ts`、`advancedRepositoryTools.ts`、`svnHistory.ts`、`ReleaseNotesTask.svelte`；`releaseNotesRange.test.ts`、`advancedRepositoryTools.test.ts`、`RepositoryModule.test.ts` 及终审 `workbenchReleaseNotesUpdateHost.test.ts`、`releaseNotesUpdateProtocolGuards.test.ts`）。
 - **看到的现状：** generateReleaseNotes 固定读取最近 200 条后在内存过滤；结束输入提示 HEAD 但 Host 仅接受数字；每修订路径只取前 20 条且缺省略提示。
 - **用户影响：** 旧发布区间为空、大区间遗漏，用户可能拿不完整内容对外发布。
 - **现有证据与预计改动入口：** [repositoryWorkbenchActions.ts](../../../src/extension/workbench/repositoryWorkbenchActions.ts)、[advancedRepositoryTools.ts](../../../src/repository/advancedRepositoryTools.ts)、[ReleaseNotesTask.svelte](../../../src/webview/features/repository/tasks/ReleaseNotesTask.svelte)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
@@ -73,17 +73,17 @@
 
 **验收场景与完成条件：**
 
-- [ ] 目标区间完全早于最近 200 条时仍生成正确说明。
-- [ ] 超过 200 修订、单修订超过 20 路径、空范围、反向范围、HEAD 均有确定结果。
-- [ ] 取消/分页失败显式标记部分结果，重试不重复计数。
+- [x] 目标区间完全早于最近 200 条时仍生成正确说明。
+- [x] 超过 200 修订、单修订超过 20 路径、空范围、反向范围、HEAD 均有确定结果。
+- [x] 取消/分页失败显式标记部分结果，重试不重复计数。
 
 <a id="v021-r15"></a>
 
 ### V021-R15 · 更新预览区分远端全部变化与本地重叠
 
 - **原评审映射：** 第 15 项。
-- **优先级 / 证据等级：** P1 / 源码已确认的展示缺口。
-- **实施状态：** 待实施。
+- **优先级 / 证据等级：** P1 / 源码已确认的展示缺口（已实现）。
+- **实施状态：** 已实现（远端全清单与本地重叠区分 + `remoteIncomplete` 失败分支 + 预览时间与 HEAD 可变诚实文案；`updateWorkbenchActions.ts`、`updateFlow.ts`、`UpdateModule.svelte`；`updateRemoteDetail.test.ts`、`UpdateModule.test.ts` 及终审 `workbenchReleaseNotesUpdateHost.test.ts`、`releaseNotesUpdateProtocolGuards.test.ts`）。
 - **看到的现状：** Update 意向单 paths 使用 overlapPaths，主界面重点呈现数量和重叠；无重叠时缺少全部远端变更对象的可检查清单。
 - **用户影响：** 用户知道将更新若干项，却不能检查具体哪些路径，降低预览可信度。
 - **现有证据与预计改动入口：** [UpdateModule.svelte](../../../src/webview/features/update/UpdateModule.svelte)、[updateWorkbenchActions.ts](../../../src/extension/workbench/updateWorkbenchActions.ts)、[updateFlow.ts](../../../src/update/updateFlow.ts)、[workbenchProtocol.ts](../../../src/protocol/workbenchProtocol.ts)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
@@ -97,10 +97,10 @@
 
 **验收场景与完成条件：**
 
-- [ ] 无本地重叠仍能查看远端文件全清单。
-- [ ] 重叠/新增/删除/外部工作副本归属准确。
-- [ ] 预览后远端变化时文案如实，不把预估数当执行保证。
-- [ ] 读取失败不能展示空清单并称无变化。
+- [x] 无本地重叠仍能查看远端文件全清单。
+- [x] 重叠/新增/删除/外部工作副本归属准确。
+- [x] 预览后远端变化时文案如实，不把预估数当执行保证。
+- [x] 读取失败不能展示空清单并称无变化。
 
 <a id="v021-r17"></a>
 
@@ -131,8 +131,8 @@
 ### V021-R19 · 历史比较两端可见且可调整
 
 - **原评审映射：** 第 19 项。
-- **优先级 / 证据等级：** P2 / 源码已确认的反馈缺口。
-- **实施状态：** 待实施。
+- **优先级 / 证据等级：** P2 / 源码已确认的反馈缺口（已实现）。
+- **实施状态：** 已实现（两端起点/终点芯片 + 移除/交换/设端 + 第三次替换明示；`HistoryModule.svelte`；`tests/components/HistoryModule.test.ts`）。
 - **看到的现状：** 比较栏主要显示 0/2 数量；第三次勾选自动淘汰最早选择，跨搜索后不易辨认对象。
 - **用户影响：** 用户可能比较错两个 revision，难追溯刚才的选择。
 - **现有证据与预计改动入口：** [HistoryModule.svelte](../../../src/webview/features/history/HistoryModule.svelte)、[PrimaryActionBar.svelte](../../../src/webview/components/task/PrimaryActionBar.svelte)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
@@ -146,17 +146,17 @@
 
 **验收场景与完成条件：**
 
-- [ ] 跨分页/搜索仍看得见两端身份。
-- [ ] 第三条选择的替换对象明确。
-- [ ] 取消/清空/同一 revision/顺序反转与 Host 排序契约一致。
+- [x] 跨分页/搜索仍看得见两端身份。
+- [x] 第三条选择的替换对象明确。
+- [x] 取消/清空/同一 revision/顺序反转与 Host 排序契约一致。
 
 <a id="v021-r20"></a>
 
 ### V021-R20 · 切换修订时处理失效的路径筛选
 
 - **原评审映射：** 第 20 项。
-- **优先级 / 证据等级：** P2 / 源码已确认。
-- **实施状态：** 待实施。
+- **优先级 / 证据等级：** P2 / 源码已确认（已实现）。
+- **实施状态：** 已实现（失效操作筛选自动清除并轻量说明 + 空态区分 + 一键清除不碰比较；`HistoryModule.svelte`；`tests/components/HistoryModule.test.ts`）。
 - **看到的现状：** pathActionFilter 持续保留，但筛选按钮根据新修订类型生成；旧删除条件可能继续过滤只有修改的新修订。
 - **用户影响：** 列表空了但导致空结果的筛选按钮已消失，用户无法理解。
 - **现有证据与预计改动入口：** [HistoryModule.svelte](../../../src/webview/features/history/HistoryModule.svelte)、[SearchInput.svelte](../../../src/webview/components/list/SearchInput.svelte)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
@@ -170,9 +170,9 @@
 
 **验收场景与完成条件：**
 
-- [ ] 删除筛选→只有修改的修订不会出现不明原因空列表。
-- [ ] 返回上一修订后筛选行为可解释。
-- [ ] 搜索无匹配可一键恢复且不改变比较选择。
+- [x] 删除筛选→只有修改的修订不会出现不明原因空列表。
+- [x] 返回上一修订后筛选行为可解释。
+- [x] 搜索无匹配可一键恢复且不改变比较选择。
 
 ## 4. 测试落点
 

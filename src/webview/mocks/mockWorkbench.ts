@@ -2,6 +2,8 @@ import {
   defaultWorkbenchTask,
   isFileTargetView,
   isHistoryQueryView,
+  isReleaseNotesView,
+  isUpdatePreviewView,
   isWorkbenchModuleId,
   isWorkbenchTaskForModule,
   WORKBENCH_PROTOCOL_VERSION,
@@ -356,6 +358,15 @@ function createInitialMockSnapshot(
 function updateSnapshot(
   overrides: Record<string, unknown> = {},
 ): WorkbenchModuleSnapshot {
+  // V021 终审 P2-1：Mock 外发 preview 先经协议守卫，畸形覆盖按缺省处理（fail-closed）。
+  const guardedOverrides: Record<string, unknown> = { ...overrides };
+  if (
+    "preview" in guardedOverrides &&
+    guardedOverrides.preview !== undefined &&
+    !isUpdatePreviewView(guardedOverrides.preview)
+  ) {
+    delete guardedOverrides.preview;
+  }
   return {
     kind: "update",
     info: {
@@ -368,7 +379,7 @@ function updateSnapshot(
       count: 2,
       paths: ["src/conflict/OrderList.tsx", "src/conflict/README.md"],
     },
-    ...overrides,
+    ...guardedOverrides,
   } as WorkbenchModuleSnapshot;
 }
 
@@ -3818,6 +3829,23 @@ function activitySnapshot(): WorkbenchModuleSnapshot {
 function repositorySnapshot(
   overrides: Record<string, unknown> = {},
 ): WorkbenchModuleSnapshot {
+  // V021 终审 P2-1：Mock 外发 advanced.releaseNotes 先经协议守卫，畸形覆盖按缺省处理（fail-closed）。
+  const guardedOverrides: Record<string, unknown> = { ...overrides };
+  if (
+    "advanced" in guardedOverrides &&
+    guardedOverrides.advanced !== undefined
+  ) {
+    const advanced = guardedOverrides.advanced as Record<string, unknown>;
+    if (
+      "releaseNotes" in advanced &&
+      advanced.releaseNotes !== undefined &&
+      !isReleaseNotesView(advanced.releaseNotes)
+    ) {
+      const rest: Record<string, unknown> = { ...advanced };
+      delete rest.releaseNotes;
+      guardedOverrides.advanced = rest;
+    }
+  }
   const propertyItems = isScrollDataset()
     ? Array.from({ length: 36 }, (_, index) => ({
         name: `svn:custom-property-${index + 1}`,
@@ -3874,7 +3902,7 @@ function repositorySnapshot(
         entries: browserEntries,
       },
     },
-    ...overrides,
+    ...guardedOverrides,
   } as WorkbenchModuleSnapshot;
 }
 

@@ -2295,6 +2295,232 @@ export function isHistorySnapshot(value: unknown): value is HistorySnapshot {
   return true;
 }
 
+/**
+ * V021-R14：RepositorySnapshot.advanced.releaseNotes 类型守卫（Host/Webview/Mock 共用）。
+ * markdown/count 必填；其余完整性字段（revisionsRead/complete/partialReason/
+ * cancelled/failedUpperBound/omittedPathCount/truncatedRevisions/resolvedHeadRevision/
+ * requestedFrom/requestedTo/rangeNote/fullMarkdown/fromRevision/toRevision）缺省即合法
+ * （旧快照兼容），携带时必须类型正确；complete=false 的语义诚实性由 Host 构建
+ * 与 Webview 渲染保证，守卫只做形状校验。畸形载荷一律拒绝（fail-closed，
+ * 调用方按“无发布说明”处理，不冒充完整）。
+ */
+export function isReleaseNotesView(
+  value: unknown,
+): value is NonNullable<RepositorySnapshot["advanced"]["releaseNotes"]> {
+  if (!isRecord(value)) {
+    return false;
+  }
+  if (
+    typeof value.markdown !== "string" ||
+    typeof value.count !== "number" ||
+    !Number.isFinite(value.count)
+  ) {
+    return false;
+  }
+  if (
+    (value.fullMarkdown !== undefined &&
+      typeof value.fullMarkdown !== "string") ||
+    (value.fromRevision !== undefined &&
+      typeof value.fromRevision !== "string") ||
+    (value.toRevision !== undefined && typeof value.toRevision !== "string") ||
+    (value.revisionsRead !== undefined &&
+      (typeof value.revisionsRead !== "number" ||
+        !Number.isFinite(value.revisionsRead))) ||
+    (value.complete !== undefined && typeof value.complete !== "boolean") ||
+    (value.partialReason !== undefined &&
+      typeof value.partialReason !== "string") ||
+    (value.cancelled !== undefined && typeof value.cancelled !== "boolean") ||
+    (value.failedUpperBound !== undefined &&
+      typeof value.failedUpperBound !== "string") ||
+    (value.omittedPathCount !== undefined &&
+      (typeof value.omittedPathCount !== "number" ||
+        !Number.isFinite(value.omittedPathCount))) ||
+    (value.resolvedHeadRevision !== undefined &&
+      typeof value.resolvedHeadRevision !== "string") ||
+    (value.requestedFrom !== undefined &&
+      typeof value.requestedFrom !== "string") ||
+    (value.requestedTo !== undefined &&
+      typeof value.requestedTo !== "string") ||
+    (value.rangeNote !== undefined && typeof value.rangeNote !== "string")
+  ) {
+    return false;
+  }
+  if (value.truncatedRevisions !== undefined) {
+    if (!Array.isArray(value.truncatedRevisions)) return false;
+    for (const entry of value.truncatedRevisions as unknown[]) {
+      if (!isRecord(entry)) return false;
+      if (
+        typeof entry.revision !== "string" ||
+        typeof entry.omitted !== "number" ||
+        !Number.isFinite(entry.omitted)
+      ) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+/**
+ * V021-R15：UpdatePreviewView 类型守卫（Host/Webview/Mock 共用）。
+ * token/canExecute/localCount/risk/overlapPaths 必填；远端明细（remotePaths/
+ * remoteItems/remoteByStatus/remoteIncomplete）与绑定字段缺省即合法（旧快照兼容），
+ * 携带时必须逐项严检；畸形载荷（如 remotePaths=42）一律拒绝（fail-closed，
+ * 调用方按“无预览”处理，不把空清单当作“无变化”）。
+ */
+export function isUpdatePreviewView(
+  value: unknown,
+): value is UpdatePreviewView {
+  if (!isRecord(value)) {
+    return false;
+  }
+  if (
+    typeof value.token !== "string" ||
+    value.token.length === 0 ||
+    typeof value.canExecute !== "boolean" ||
+    typeof value.localCount !== "number" ||
+    !Number.isFinite(value.localCount) ||
+    (value.risk !== "low" &&
+      value.risk !== "medium" &&
+      value.risk !== "high") ||
+    !Array.isArray(value.overlapPaths) ||
+    !(value.overlapPaths as unknown[]).every((item) => typeof item === "string")
+  ) {
+    return false;
+  }
+  if (value.remotePaths !== undefined) {
+    if (
+      !Array.isArray(value.remotePaths) ||
+      !(value.remotePaths as unknown[]).every(
+        (item) => typeof item === "string",
+      )
+    ) {
+      return false;
+    }
+  }
+  if (value.remoteItems !== undefined) {
+    if (!Array.isArray(value.remoteItems)) return false;
+    for (const entry of value.remoteItems as unknown[]) {
+      if (!isRecord(entry)) return false;
+      if (
+        typeof entry.relativePath !== "string" ||
+        typeof entry.repositoryStatus !== "string"
+      ) {
+        return false;
+      }
+    }
+  }
+  if (value.remoteByStatus !== undefined) {
+    if (!isRecord(value.remoteByStatus)) return false;
+    for (const count of Object.values(value.remoteByStatus)) {
+      if (typeof count !== "number" || !Number.isFinite(count)) return false;
+    }
+  }
+  if (
+    (value.remoteCount !== undefined &&
+      (typeof value.remoteCount !== "number" ||
+        !Number.isFinite(value.remoteCount))) ||
+    (value.checkedRevision !== undefined &&
+      typeof value.checkedRevision !== "string") ||
+    (value.remoteIncomplete !== undefined &&
+      typeof value.remoteIncomplete !== "boolean") ||
+    (value.previewedAt !== undefined &&
+      typeof value.previewedAt !== "string") ||
+    (value.error !== undefined && typeof value.error !== "string") ||
+    (value.scopeHash !== undefined && typeof value.scopeHash !== "string") ||
+    (value.candidateHash !== undefined &&
+      typeof value.candidateHash !== "string") ||
+    (value.repositoryUuid !== undefined &&
+      typeof value.repositoryUuid !== "string")
+  ) {
+    return false;
+  }
+  if (
+    value.messages !== undefined &&
+    (!Array.isArray(value.messages) ||
+      !(value.messages as unknown[]).every((item) => typeof item === "string"))
+  ) {
+    return false;
+  }
+  if (
+    value.commands !== undefined &&
+    (!Array.isArray(value.commands) ||
+      !(value.commands as unknown[]).every((item) => typeof item === "string"))
+  ) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * V021-R14/R15：RepositorySnapshot / UpdateSnapshot 类型守卫（Host/Webview/Mock 共用）。
+ * 无 releaseNotes/preview 的旧快照继续接受（向后兼容）；携带时必须分别通过
+ * isReleaseNotesView/isUpdatePreviewView，否则整快照拒绝（fail-closed）。
+ */
+export function isRepositorySnapshot(
+  value: unknown,
+): value is RepositorySnapshot {
+  if (!isRecord(value)) {
+    return false;
+  }
+  if (
+    value.kind !== "repository" ||
+    !isRecord(value.info) ||
+    !isRecord(value.properties) ||
+    !isRecord(value.cleanup) ||
+    !isRecord(value.advanced)
+  ) {
+    return false;
+  }
+  const advanced = value.advanced as Record<string, unknown>;
+  if (
+    advanced.releaseNotes !== undefined &&
+    !isReleaseNotesView(advanced.releaseNotes)
+  ) {
+    return false;
+  }
+  return true;
+}
+
+export function isUpdateSnapshot(value: unknown): value is UpdateSnapshot {
+  if (!isRecord(value)) {
+    return false;
+  }
+  if (
+    value.kind !== "update" ||
+    !isRecord(value.info) ||
+    !isRecord(value.conflicts)
+  ) {
+    return false;
+  }
+  const conflicts = value.conflicts as Record<string, unknown>;
+  if (
+    typeof conflicts.count !== "number" ||
+    !Number.isFinite(conflicts.count) ||
+    !Array.isArray(conflicts.paths) ||
+    !(conflicts.paths as unknown[]).every((item) => typeof item === "string") ||
+    (conflicts.error !== undefined && typeof conflicts.error !== "string")
+  ) {
+    return false;
+  }
+  if (value.preview !== undefined && !isUpdatePreviewView(value.preview)) {
+    return false;
+  }
+  if (value.result !== undefined) {
+    if (!isRecord(value.result)) return false;
+    const result = value.result as Record<string, unknown>;
+    if (
+      typeof result.ok !== "boolean" ||
+      typeof result.hasConflicts !== "boolean" ||
+      typeof result.message !== "string" ||
+      (result.revision !== undefined && typeof result.revision !== "string")
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export function isWebviewToHostMessage(
   value: unknown,
 ): value is WebviewToHostMessage {

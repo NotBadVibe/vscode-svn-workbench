@@ -2,6 +2,7 @@ import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import {
   WORKBENCH_PROTOCOL_VERSION,
+  isUpdatePreviewView,
   type HostToWebviewMessage,
   type UpdateSnapshot,
   type WorkbenchModuleId,
@@ -96,7 +97,13 @@ export class UpdateWorkbenchActions {
         repositoryRoot: info?.repositoryRoot,
         revision: info?.revision,
       },
-      preview: session.updateState?.preview,
+      // V021-R15：外发前纵深校验预览形状；畸形时 fail-closed 丢弃预览
+      //（不把坏清单发给 Webview，更不把空清单冒充“无变化”）。
+      preview:
+        session.updateState?.preview !== undefined &&
+        !isUpdatePreviewView(session.updateState.preview)
+          ? undefined
+          : session.updateState?.preview,
       result: session.updateState?.result,
       conflicts,
     };

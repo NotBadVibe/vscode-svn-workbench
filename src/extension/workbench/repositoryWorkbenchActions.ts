@@ -10,6 +10,7 @@ import {
 import { collectSvnProperties } from "../../properties/svnProperties";
 import {
   WORKBENCH_PROTOCOL_VERSION,
+  isReleaseNotesView,
   type HostToWebviewMessage,
   type RepositorySnapshot,
   type WorkbenchModuleId,
@@ -83,6 +84,14 @@ export class RepositoryWorkbenchActions {
   constructor(private readonly host: RepositoryWorkbenchHost) {}
 
   async buildRepositorySnapshot(session: WorkbenchSession) {
+    // V021-R14：外发前纵深校验 releaseNotes 形状；畸形时 fail-closed 丢弃
+    // 该字段（保留 feedback 说明），不把坏载荷发给 Webview。
+    const storedReleaseNotes = session.repositoryState?.advanced?.releaseNotes;
+    const releaseNotes =
+      storedReleaseNotes !== undefined &&
+      !isReleaseNotesView(storedReleaseNotes)
+        ? undefined
+        : storedReleaseNotes;
     const infoResult = await runSvnCommand(
       session.svnPath,
       ["info", "--xml", session.scope.repositoryRoot],
@@ -156,7 +165,7 @@ export class RepositoryWorkbenchActions {
       },
       advanced: {
         browser: session.repositoryState?.advanced?.browser,
-        releaseNotes: session.repositoryState?.advanced?.releaseNotes,
+        releaseNotes,
         feedback: session.repositoryState?.advanced?.feedback,
         preview: session.repositoryState?.advanced?.preview
           ? {
