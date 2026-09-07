@@ -764,6 +764,14 @@ export interface HistorySnapshot {
    */
   hasMore?: boolean;
   fileActionsAvailable: boolean;
+  /**
+   * V020-R10：行右键定位的单文件历史目标（Host 在原 scope 内复验后写入）。
+   * 缺省表示目录范围历史；notice 存在时目标已失效（显示目录历史并提供返回入口）。
+   */
+  fileTarget?: {
+    relativePath: string;
+    notice?: string;
+  };
   blame?: Array<{
     line: number;
     revision: string;

@@ -261,6 +261,8 @@ let mockConflictsOverride:
 /** v0.0.13：mock 待确认的冲突文件切换（脏草稿三选一）。 */
 let mockPendingConflictSwitch:
   { currentRelativePath: string; nextRelativePath: string } | undefined;
+/** V020-R10：mock 单文件历史目标（行右键进入后保持，供加载更早/查询回显）。 */
+let mockHistoryFileTarget: { relativePath: string } | undefined;
 /** 等待三选一决定的 mock 切换目标。 */
 let pendingMockSwitch: string | undefined;
 /** mock Host 的编辑基准（保存轮换；用于校验第二次保存负载）。 */
@@ -604,6 +606,25 @@ export function startMockWorkbench(): void {
           changelistsSnapshot({
             preselected: { count: selectedPaths.length, paths: selectedPaths },
           }),
+          taskId,
+        );
+      } else if (
+        moduleId === "history" &&
+        createSnapshot &&
+        typeof data.relativePath === "string"
+      ) {
+        // V020-R10：行右键单文件历史——记录目标并回显横幅（Host 侧复验逻辑由单测覆盖）。
+        mockHistoryFileTarget = { relativePath: data.relativePath };
+        injectSnapshot(moduleId, historySnapshot(), taskId);
+      } else if (
+        moduleId === "conflicts" &&
+        createSnapshot &&
+        typeof data.relativePath === "string"
+      ) {
+        // V020-R10：行右键冲突入口——定位所点文件（未知路径回退首个冲突）。
+        injectSnapshot(
+          moduleId,
+          conflictSnapshotForPath(data.relativePath),
           taskId,
         );
       } else if (createSnapshot) {
@@ -1405,7 +1426,8 @@ export function startMockWorkbench(): void {
           nextRelativePath: data.relativePath,
         });
       } else {
-        injectSnapshot("conflicts", conflictSnapshot());
+        // V020-R10：选中所点冲突（未知路径回退首个冲突，与 Host 快照语义一致）。
+        injectSnapshot("conflicts", conflictSnapshotForPath(data.relativePath));
       }
     }
     if (action === "conflict/advise") {
@@ -2693,6 +2715,18 @@ function mockCommitEvaluation(status: string) {
 function historySnapshot(
   overrides: Record<string, unknown> = {},
 ): WorkbenchModuleSnapshot {
+  // V020-R10：行目标进入后保持单文件横幅（加载更早/查询同样回显目标）。
+  if (
+    !mockHistoryFileTarget &&
+    typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).get("historyFileTarget") === "1"
+  ) {
+    mockHistoryFileTarget = { relativePath: "src/extension.ts" };
+  }
+  const fileTargetOverride =
+    mockHistoryFileTarget && !("fileTarget" in overrides)
+      ? { fileTarget: mockHistoryFileTarget }
+      : {};
   const revisions = isScrollDataset()
     ? Array.from({ length: 48 }, (_, index) => ({
         revision: String(120 - index),
@@ -2731,8 +2765,31 @@ function historySnapshot(
     // v0.0.18 批次 C：mock 演示“可能还有更早修订”与加载更早交互。
     hasMore: true,
     fileActionsAvailable: true,
+    ...fileTargetOverride,
     ...overrides,
   } as WorkbenchModuleSnapshot;
+}
+
+/**
+ * V020-R10：按相对路径定位冲突快照选中项（Mock 侧回显）。
+ * 未知路径回退默认首个冲突；与 Host“不存在则回列表”语义一致。
+ */
+function conflictSnapshotForPath(
+  relativePath: string,
+): WorkbenchModuleSnapshot {
+  const base = conflictSnapshot() as Extract<
+    WorkbenchModuleSnapshot,
+    { kind: "conflicts" }
+  >;
+  const known = base.conflicts.some(
+    (item) => item.relativePath === relativePath,
+  );
+  if (!known || !base.selected || base.selected.relativePath === relativePath) {
+    return base;
+  }
+  return conflictSnapshot({
+    selected: { ...base.selected, relativePath },
+  });
 }
 
 function conflictSnapshot(

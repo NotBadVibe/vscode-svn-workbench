@@ -73,9 +73,11 @@ describe("Changes 冲突直达与筛选预设（v0.0.17）", () => {
     await fireEvent.click(
       screen.getByRole("button", { name: "处理 src/c.ts 的冲突" }),
     );
+    // V020-R10：行入口携带所点文件，Host 在原 scope 内复验后定位。
     expect(onAction).toHaveBeenCalledWith("open-module", {
       moduleId: "conflicts",
       taskId: "conflicts/resolve",
+      relativePath: "src/c.ts",
     });
   });
 

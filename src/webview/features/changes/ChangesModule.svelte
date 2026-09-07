@@ -1143,7 +1143,9 @@
                     <!-- V020-R03：冲突动作与差异动作归入固定操作列（与表头空操作列对齐）。 -->
                     <span class="file-row__actions">
                       {#if file.status === "conflicted"}
-                        <!-- v0.0.17 批次 B（U-06）：冲突行直达冲突处理（范围不变）。 -->
+                        <!-- v0.0.17 批次 B（U-06）：冲突行直达冲突处理（范围不变）。
+                          V020-R10：携带所点文件，Host 在原 scope 内复验后定位；
+                          目标已解决则给出原因并保留列表。 -->
                         <button
                           class="icon-button icon-button--small"
                           aria-label={`处理 ${file.relativePath} 的冲突`}
@@ -1151,6 +1153,7 @@
                             onAction("open-module", {
                               moduleId: "conflicts",
                               taskId: "conflicts/resolve",
+                              relativePath: file.relativePath,
                             })}
                           ><span
                             class="codicon codicon-warning"
@@ -1199,11 +1202,14 @@
               >
               <ContextMenu.Item
                 class="context-menu-item"
+                disabled={contextFile.status === "unversioned"}
                 onSelect={() =>
                   afterContextMenuClose(() =>
                     onAction("open-module", {
                       moduleId: "history",
                       taskId: "history/revisions",
+                      // V020-R10：携带所点文件，Host 在原 scope 内复验后收窄为单文件历史。
+                      relativePath: contextFile?.relativePath,
                     }),
                   )}
                 ><span class="codicon codicon-history" aria-hidden="true"

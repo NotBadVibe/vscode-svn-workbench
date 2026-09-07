@@ -106,6 +106,13 @@ export interface WorkbenchSession extends OpenWorkbenchRequest {
      */
     historyRequestSeq?: number;
     blame?: HistorySnapshot["blame"];
+    /**
+     * V020-R10：行右键定位的单文件历史目标（Host 在原 scope 内复验后写入）。
+     * scope 本身不变，仅收窄 svn log 查询；失效时改写 fileTargetNotice 并回退目录历史。
+     */
+    fileTarget?: { relativePath: string; absolutePath: string };
+    /** V020-R10：单文件目标失效时的中文原因（随快照下发，不抢焦点）。 */
+    fileTargetNotice?: string;
     restorePreview?: {
       token: string;
       contentHash: string;

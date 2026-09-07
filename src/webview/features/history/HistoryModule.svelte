@@ -390,12 +390,16 @@
   }
 
   /** ResultNextStep / TaskEmptyState 动作纯透传：只映射页面已知标识。 */
+  function backToChanges(): void {
+    onAction("open-module", {
+      moduleId: "changes",
+      taskId: "changes/overview",
+    });
+  }
+
   function handleHistoryResultAction(action: string): void {
     if (action === "history-view-changes") {
-      onAction("open-module", {
-        moduleId: "changes",
-        taskId: "changes/overview",
-      });
+      backToChanges();
       return;
     }
     if (action === "history/load-more") {
@@ -453,6 +457,27 @@
     <p class="history-filter-hint">
       修订搜索仅在已加载结果内筛选，不会向仓库请求；需要更早修订时，请用下方的条件表单发起新的只读请求。
     </p>
+    <!-- V020-R10：行右键单文件历史横幅——目标文件、失效原因与返回来源列表入口；
+      快照刷新只更新文本，不移动焦点。 -->
+    {#if snapshot.fileTarget}
+      <div
+        class={snapshot.fileTarget.notice ? "notice notice--warning" : "notice"}
+        role="status"
+        data-testid="history-file-target"
+      >
+        <span class="codicon codicon-history" aria-hidden="true"></span>
+        <span
+          >{#if snapshot.fileTarget.notice}{snapshot.fileTarget
+              .notice}{:else}当前为单文件历史：{snapshot.fileTarget
+              .relativePath}；文件级 blame 与恢复可用。{/if}</span
+        >
+        <button
+          type="button"
+          class="button button--secondary"
+          onclick={backToChanges}>返回本地修改</button
+        >
+      </div>
+    {/if}
     <details class="history-load-conditions">
       <summary>按条件加载更早修订</summary>
       <div class="history-load-conditions__fields">

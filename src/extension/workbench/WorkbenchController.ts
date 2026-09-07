@@ -369,6 +369,7 @@ import {
   buildDiffTargetKey,
   normalizeDiffOpenMode,
   orderRevisionPair,
+  parseRowTargetRelativePath,
   shouldOpenInOtherWindow,
   workbenchRevealTarget,
 } from "./workbenchRouting";
@@ -784,6 +785,55 @@ export class WorkbenchController implements vscode.Disposable {
     // 项目切换后恢复该项目保留的草稿（仅提交说明与手动选择；旧预览、
     // 确认令牌与 AI 结果永不恢复）。
     await this.restoreProjectDraft(this.session);
+    // V020-R10：跨窗口行目标（history/conflicts）：在目标窗口的原 scope 内复验。
+    // 伪造范围外路径 fail-closed（清除目标并给出原因）；冲突存在性在此确认，
+    // 历史可读性在快照构建时复验（失效回退目录历史 + 横幅原因，不抢焦点）。
+    let rowTargetNotice: string | undefined;
+    if (
+      (this.session.moduleId === "history" ||
+        this.session.moduleId === "conflicts") &&
+      request.targetFile
+    ) {
+      const absolutePath = path.resolve(
+        request.scope.repositoryRoot,
+        request.targetFile,
+      );
+      const displayPath =
+        path.relative(request.scope.repositoryRoot, absolutePath) ||
+        path.basename(absolutePath);
+      this.session.targetFile = undefined;
+      if (
+        validatePathsInScope(request.scope, [absolutePath], nativePathSemantics)
+          .outOfScopeItems.length > 0
+      ) {
+        rowTargetNotice = `目标文件${displayPath}不在当前操作范围内。`;
+        if (this.session.moduleId === "history") {
+          this.session.historyState = {
+            compareRevisions: [],
+            fileTarget: { relativePath: displayPath, absolutePath },
+            fileTargetNotice: `${rowTargetNotice}已显示目录历史；可返回本地修改重新选择。`,
+          };
+        }
+      } else if (this.session.moduleId === "history") {
+        this.presetHistoryRowTarget(this.session, displayPath, absolutePath);
+      } else {
+        const conflicts = await collectConflictItems(
+          this.session.svnPath,
+          this.session.scope,
+        ).catch(() => undefined);
+        const hit = conflicts?.find(
+          (item) =>
+            item.relativePath === displayPath ||
+            path.resolve(request.scope.repositoryRoot, item.relativePath) ===
+              absolutePath,
+        );
+        if (hit) {
+          this.session.conflictState = { selectedPath: hit.relativePath };
+        } else {
+          rowTargetNotice = `目标文件${displayPath}已不再冲突（可能已解决或状态已变化），已显示冲突列表。`;
+        }
+      }
+    }
     // v0.1.4 V014-E：跨窗口交接（目标为 commit 且带选择）整批复验。
     // 交接选择优先于项目草稿恢复的选择（更新近的显式用户动作）。
     // 全部非法时拒绝打开：恢复旧会话（无旧会话时丢弃新会话），
@@ -824,6 +874,15 @@ export class WorkbenchController implements vscode.Disposable {
     if (this.ready) {
       await this.sendInitialize();
       await this.loadInitialModule(this.session);
+      // V020-R10：跨窗口行目标失效时在首屏给出原因（快照已回退到列表）。
+      if (rowTargetNotice) {
+        await this.sendError(
+          this.session.moduleId,
+          "目标已变化",
+          rowTargetNotice,
+          true,
+        );
+      }
     }
   }
 
@@ -1188,6 +1247,35 @@ export class WorkbenchController implements vscode.Disposable {
           );
           return;
         }
+        // V020-R10：行右键目标文件（查看历史/处理冲突定位所点文件）。
+        // 源窗口先在原 scope 内复验，伪造范围外路径 fail-closed（不切换、不转发）。
+        let rowTargetAbsolute: string | undefined;
+        if (moduleId === "history" || moduleId === "conflicts") {
+          const rowTarget = parseRowTargetRelativePath(data);
+          if (rowTarget !== undefined) {
+            const absolutePath = path.resolve(
+              session.scope.repositoryRoot,
+              rowTarget,
+            );
+            if (
+              validatePathsInScope(
+                session.scope,
+                [absolutePath],
+                nativePathSemantics,
+              ).outOfScopeItems.length > 0
+            ) {
+              await this.sendError(
+                session.moduleId,
+                "范围校验失败",
+                "该文件不在当前右键操作范围内。",
+                false,
+                message.requestId,
+              );
+              return;
+            }
+            rowTargetAbsolute = absolutePath;
+          }
+        }
         // 同模块任务导航留在当前窗口；跨模块由窗口管理器路由到目标模块窗口。
         if (
           shouldOpenInOtherWindow(
@@ -1203,6 +1291,7 @@ export class WorkbenchController implements vscode.Disposable {
               svnPath: session.svnPath,
               scope: session.scope,
               selectedPaths: asStringArray(data.selectedPaths),
+              targetFile: rowTargetAbsolute,
             }),
           );
           return;
@@ -1250,6 +1339,26 @@ export class WorkbenchController implements vscode.Disposable {
         session.taskId = taskId;
         session.selectedPaths = asStringArray(data.selectedPaths);
         session.targetFile = undefined;
+        // V020-R10：同窗行目标落点（目标窗口复验为准，此处先做源侧预置）。
+        // 历史收窄为单文件查询（scope 不变）；冲突预置选中，不存在则拒绝切换。
+        if (moduleId === "history" && rowTargetAbsolute !== undefined) {
+          this.presetHistoryRowTarget(
+            session,
+            parseRowTargetRelativePath(data) ?? "",
+            rowTargetAbsolute,
+          );
+        }
+        if (moduleId === "conflicts" && rowTargetAbsolute !== undefined) {
+          const applied = await this.applyConflictRowTarget(
+            session,
+            parseRowTargetRelativePath(data) ?? "",
+            rowTargetAbsolute,
+            message.requestId,
+          );
+          if (!applied) {
+            return;
+          }
+        }
         // v0.1.4 V014-E3 必修 3：空交接落入通用分支时同样初始化 commit
         // 选择并显式失效旧 preview/token 与 handoff（apply 内已处理，
         // 此处兜底保证通用直写不残留旧预览有效）。
@@ -2793,7 +2902,8 @@ export class WorkbenchController implements vscode.Disposable {
         return;
       }
       case "history/blame": {
-        const fileRoot = getSingleFileScopeRoot(session.scope);
+        // V020-R10：单文件入口 = 有效行目标，或单文件 scope。
+        const fileRoot = this.resolveHistoryFileRoot(session);
         if (!fileRoot) {
           await this.sendError(
             "history",
@@ -2844,7 +2954,8 @@ export class WorkbenchController implements vscode.Disposable {
         return;
       }
       case "history/preview-restore": {
-        const fileRoot = getSingleFileScopeRoot(session.scope);
+        // V020-R10：单文件入口 = 有效行目标，或单文件 scope。
+        const fileRoot = this.resolveHistoryFileRoot(session);
         const revision =
           asRevision(data.revision) ?? session.historyState?.selectedRevision;
         if (!fileRoot || !revision) {
@@ -2889,7 +3000,8 @@ export class WorkbenchController implements vscode.Disposable {
       case "history/execute-restore": {
         const token = asString(data.previewToken);
         const preview = session.historyState?.restorePreview;
-        const fileRoot = getSingleFileScopeRoot(session.scope);
+        // V020-R10：单文件入口 = 有效行目标，或单文件 scope。
+        const fileRoot = this.resolveHistoryFileRoot(session);
         if (
           !token ||
           !preview ||
@@ -2978,6 +3090,50 @@ export class WorkbenchController implements vscode.Disposable {
       case "conflict/select": {
         const relativePath = asString(data.relativePath);
         if (!relativePath) {
+          return;
+        }
+        // V020-R10：显式选择先在原 scope 内复验，伪造范围外路径 fail-closed；
+        // 再用新鲜冲突集合确认仍在冲突，已解决/删除的目标给出原因并回列表。
+        const selectAbsolute = path.resolve(
+          session.scope.repositoryRoot,
+          relativePath,
+        );
+        if (
+          validatePathsInScope(
+            session.scope,
+            [selectAbsolute],
+            nativePathSemantics,
+          ).outOfScopeItems.length > 0
+        ) {
+          await this.sendError(
+            "conflicts",
+            "范围校验失败",
+            "该文件不在当前右键操作范围内。",
+            false,
+            message.requestId,
+          );
+          return;
+        }
+        const freshConflicts = await collectConflictItems(
+          session.svnPath,
+          session.scope,
+        ).catch(() => undefined);
+        if (
+          !freshConflicts?.some(
+            (item) =>
+              item.relativePath === relativePath ||
+              path.resolve(session.scope.repositoryRoot, item.relativePath) ===
+                selectAbsolute,
+          )
+        ) {
+          await this.sendError(
+            "conflicts",
+            "冲突已变化",
+            `目标文件${relativePath}已不再冲突（可能已解决或状态已变化），已保留冲突列表；请刷新状态后重试。`,
+            true,
+            message.requestId,
+          );
+          await this.sendConflictSnapshot(session, message.requestId);
           return;
         }
         const currentPath = session.conflictState?.selectedPath;
@@ -6555,6 +6711,170 @@ export class WorkbenchController implements vscode.Disposable {
     }
   }
 
+  /**
+   * V020-R10：预置单文件历史目标（同窗 open-module / 跨窗口 open() 共用）。
+   * 仅做会话预置；调用前已在原 scope 内复验范围。存在性与可读性在快照构建时
+   * 复验，失效则回退目录历史并给出中文原因（历史为只读，不抢焦点）。
+   * 切换目标即清理旧文件的选中修订、比较、Blame 与恢复预览（fail-closed）。
+   */
+  private presetHistoryRowTarget(
+    session: WorkbenchSession,
+    relativePath: string,
+    absolutePath: string,
+  ): void {
+    session.historyState = {
+      selectedRevision: undefined,
+      compareRevisions: [],
+      historyLimit: session.historyState?.historyLimit,
+      historyQuery: session.historyState?.historyQuery,
+      historyRequestSeq: session.historyState?.historyRequestSeq,
+      blame: undefined,
+      restorePreview: undefined,
+      feedback: undefined,
+      fileTarget: { relativePath, absolutePath },
+      fileTargetNotice: undefined,
+    };
+  }
+
+  /**
+   * V020-R10：行目标单文件查询 scope（scope 本体不变，仅收窄 svn log 查询）。
+   * 目标失效（范围外）时回退原 scope；原因由快照构建写入 fileTargetNotice。
+   */
+  private historyCollectScope(session: WorkbenchSession): OperationScope {
+    const target = session.historyState?.fileTarget;
+    if (
+      target &&
+      !session.historyState?.fileTargetNotice &&
+      validatePathsInScope(
+        session.scope,
+        [target.absolutePath],
+        nativePathSemantics,
+      ).outOfScopeItems.length === 0
+    ) {
+      return {
+        ...session.scope,
+        id: `row-target-${Date.now()}`,
+        roots: [
+          {
+            absolutePath: target.absolutePath,
+            relativePath: target.relativePath,
+            kind: "file",
+          },
+        ],
+        createdAt: Date.now(),
+      };
+    }
+    return session.scope;
+  }
+
+  /**
+   * V020-R10：快照构建前复验行目标（范围、磁盘存在性）。
+   * 失效时写入中文原因并清理旧文件绑定（Blame/恢复预览），调用方回退目录历史。
+   * 返回 true 表示目标有效、可做单文件查询与文件级动作。
+   */
+  private async refreshHistoryFileTargetState(
+    session: WorkbenchSession,
+  ): Promise<boolean> {
+    const state = session.historyState;
+    const target = state?.fileTarget;
+    if (!state || !target) return false;
+    if (
+      validatePathsInScope(
+        session.scope,
+        [target.absolutePath],
+        nativePathSemantics,
+      ).outOfScopeItems.length > 0
+    ) {
+      state.fileTargetNotice = `目标文件${target.relativePath}已不在当前操作范围内，已显示目录历史；可返回本地修改重新选择。`;
+      state.blame = undefined;
+      state.restorePreview = undefined;
+      return false;
+    }
+    try {
+      await fs.stat(target.absolutePath);
+    } catch {
+      state.fileTargetNotice = `目标文件${target.relativePath}已不在工作副本中（可能已删除），当前显示目录历史；可返回本地修改重新选择。`;
+      state.blame = undefined;
+      state.restorePreview = undefined;
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * V020-R10：单文件历史入口 = 有效行目标，或单文件 scope。
+   * 失效行目标回退目录（Blame/恢复不可用，横幅给出原因与返回入口）。
+   */
+  private resolveHistoryFileRoot(
+    session: WorkbenchSession,
+  ): { absolutePath: string; relativePath: string } | undefined {
+    const state = session.historyState;
+    const target = state?.fileTarget;
+    if (
+      target &&
+      !state?.fileTargetNotice &&
+      validatePathsInScope(
+        session.scope,
+        [target.absolutePath],
+        nativePathSemantics,
+      ).outOfScopeItems.length === 0
+    ) {
+      return {
+        absolutePath: target.absolutePath,
+        relativePath: target.relativePath,
+      };
+    }
+    return getSingleFileScopeRoot(session.scope) ?? undefined;
+  }
+
+  /**
+   * V020-R10：预置行目标冲突选中（同窗 open-module / 跨窗口 open() 共用）。
+   * 在原 scope 内复验 + 新鲜冲突集合中确认仍在冲突；伪造或已解决的目标
+   * fail-closed：给出中文原因并拒绝切换，不扩大可操作范围。
+   */
+  private async applyConflictRowTarget(
+    session: WorkbenchSession,
+    relativePath: string,
+    absolutePath: string,
+    requestId?: string,
+  ): Promise<boolean> {
+    const conflicts = await collectConflictItems(
+      session.svnPath,
+      session.scope,
+    ).catch(() => undefined);
+    if (!conflicts) {
+      await this.sendError(
+        session.moduleId,
+        "无法确认冲突目标",
+        "冲突状态采集失败，未切换页面；请刷新本地修改后重试。",
+        true,
+        requestId,
+      );
+      return false;
+    }
+    const hit = conflicts.find(
+      (item) =>
+        item.relativePath === relativePath ||
+        path.resolve(session.scope.repositoryRoot, item.relativePath) ===
+          absolutePath,
+    );
+    if (!hit) {
+      await this.sendError(
+        session.moduleId,
+        "目标冲突已不存在",
+        `目标文件${relativePath}已不再冲突（可能已解决或状态已变化），未切换页面；可刷新本地修改后重试。`,
+        true,
+        requestId,
+      );
+      return false;
+    }
+    session.conflictState = {
+      ...session.conflictState,
+      selectedPath: hit.relativePath,
+    };
+    return true;
+  }
+
   private async buildHistorySnapshot(
     session: WorkbenchSession,
     providedPage?: SvnHistoryPage,
@@ -6563,14 +6883,48 @@ export class WorkbenchController implements vscode.Disposable {
     // 不再硬编码；hasMore 区分“没有更多”与“尚未加载”。
     const historyLimit = session.historyState?.historyLimit ?? 100;
     const historyQuery = session.historyState?.historyQuery ?? {};
-    const page =
-      providedPage ??
-      (await collectSvnHistoryPage(
-        session.svnPath,
-        session.scope,
-        historyLimit,
-        historyQuery,
-      ));
+    // V020-R10：行目标先复验（范围/存在性），有效才做单文件查询；
+    // 失效回退目录历史，原因随 fileTarget 下发（不抢焦点）。
+    const rowTarget = session.historyState?.fileTarget;
+    const rowTargetValid =
+      rowTarget && !providedPage
+        ? await this.refreshHistoryFileTargetState(session)
+        : Boolean(
+            rowTarget &&
+            !session.historyState?.fileTargetNotice &&
+            validatePathsInScope(
+              session.scope,
+              [rowTarget.absolutePath],
+              nativePathSemantics,
+            ).outOfScopeItems.length === 0,
+          );
+    let page = providedPage;
+    if (!page && rowTargetValid && rowTarget) {
+      try {
+        page = await collectSvnHistoryPage(
+          session.svnPath,
+          this.historyCollectScope(session),
+          historyLimit,
+          historyQuery,
+        );
+        if (session.historyState) {
+          session.historyState.fileTargetNotice = undefined;
+        }
+      } catch (error) {
+        if (session.historyState) {
+          session.historyState.fileTargetNotice = `无法读取目标文件${rowTarget.relativePath}的历史（${errorMessage(error)}），当前显示目录历史；可返回本地修改重新选择。`;
+          session.historyState.blame = undefined;
+          session.historyState.restorePreview = undefined;
+        }
+        page = undefined;
+      }
+    }
+    page ??= await collectSvnHistoryPage(
+      session.svnPath,
+      session.scope,
+      historyLimit,
+      historyQuery,
+    );
     const revisions = page.revisions;
     if (!session.historyState) {
       session.historyState = {
@@ -6594,7 +6948,16 @@ export class WorkbenchController implements vscode.Disposable {
       limit: historyLimit,
       query: historyQuery,
       hasMore: page.hasMore,
-      fileActionsAvailable: Boolean(getSingleFileScopeRoot(session.scope)),
+      fileActionsAvailable:
+        Boolean(rowTargetValid) ||
+        Boolean(getSingleFileScopeRoot(session.scope)),
+      // V020-R10：行目标横幅（单文件历史/失效原因 + 返回本地修改入口）。
+      fileTarget: rowTarget
+        ? {
+            relativePath: rowTarget.relativePath,
+            notice: session.historyState?.fileTargetNotice,
+          }
+        : undefined,
       blame: session.historyState.blame,
       restorePreview: session.historyState.restorePreview
         ? {
@@ -6745,9 +7108,10 @@ export class WorkbenchController implements vscode.Disposable {
     });
     let page: SvnHistoryPage;
     try {
+      // V020-R10：行目标有效时“加载更早/按条件查询”同样只查目标文件（scope 不变）。
       page = await collectSvnHistoryPage(
         session.svnPath,
-        session.scope,
+        this.historyCollectScope(session),
         nextLimit,
         normalizedQuery.query,
         controller.signal,
