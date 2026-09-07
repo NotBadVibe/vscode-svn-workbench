@@ -138,6 +138,17 @@ export function buildDiffTargetKey(request: OpenWorkbenchRequest): string {
         revisions: request.revisionCompare
           ? orderRevisionPair(request.revisionCompare.revisions)
           : undefined,
+        // V021-R17：单文件该次修改按修订 + 仓库路径 + 动作区分目标。
+        pathDiff: request.revisionCompare?.pathDiff
+          ? {
+              revision: request.revisionCompare.pathDiff.revision,
+              reposPath: request.revisionCompare.pathDiff.reposPath,
+              action: request.revisionCompare.pathDiff.action,
+              copyFromPath: request.revisionCompare.pathDiff.copyFromPath,
+              copyFromRevision:
+                request.revisionCompare.pathDiff.copyFromRevision,
+            }
+          : undefined,
       }),
     )
     .digest("hex");

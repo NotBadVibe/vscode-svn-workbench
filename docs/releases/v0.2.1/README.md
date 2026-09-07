@@ -108,7 +108,7 @@
 
 - **原评审映射：** 第 17 项。
 - **优先级 / 证据等级：** P1 / 能力完善。
-- **实施状态：** 待实施。
+- **实施状态：** 已实现（`history/view-path-diff` + `history/view-path-history`；纯规划 `src/history/historyChangedPath.ts`，Host `WorkbenchController.runHistoryPathDiffAction/runHistoryPathHistoryAction/runChangedPathDiff`，Webview `HistoryModule.svelte` 行动作，Mock 同步；`historyState` 不动，返回历史保留所选修订/比较两端）。
 - **看到的现状：** Changed Paths 已有搜索/排序/复制/详情，缺少查看该修订文件差异和文件历史的直接动作。
 - **用户影响：** 找到某次提交后仍需返回 Explorer 寻找文件，删除文件更难继续检查。
 - **现有证据与预计改动入口：** [HistoryModule.svelte](../../../src/webview/features/history/HistoryModule.svelte)、[WorkbenchController.ts](../../../src/extension/workbench/WorkbenchController.ts)、[svnUrl.ts](../../../src/svn/svnUrl.ts)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
@@ -122,9 +122,9 @@
 
 **验收场景与完成条件：**
 
-- [ ] 新增比较空→新增内容，删除比较旧内容→空，复制显示可解释来源。
-- [ ] 历史文件已不在工作副本仍可只读查看合法修订内容。
-- [ ] 返回历史保留所选修订/筛选/比较两端，越界拒绝。
+- [x] 新增比较空→新增内容，删除比较旧内容→空，复制显示可解释来源。
+- [x] 历史文件已不在工作副本仍可只读查看合法修订内容。
+- [x] 返回历史保留所选修订/筛选/比较两端，越界拒绝。
 
 <a id="v021-r19"></a>
 

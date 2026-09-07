@@ -2364,11 +2364,19 @@ button.path-detail__value:hover {
 .changed-path-row {
   min-height: 34px;
   display: grid;
-  grid-template-columns: 26px minmax(0, 1fr) auto auto;
+  /* V021-R17：徽标 + 路径 + 查看修改（主动作）+ 文件历史 + 复制 + 详情。 */
+  grid-template-columns: 26px minmax(0, 1fr) auto auto auto auto;
   gap: 7px;
   align-items: center;
   padding: 5px 8px;
   border-bottom: 1px solid var(--border);
+}
+/* V021-R17：行主动作紧凑展示，不撑高行（路径列 ellipsis 收缩）。 */
+.changed-path-row .changed-path-action {
+  min-height: 24px;
+  padding: 2px 8px;
+  font-size: 12px;
+  white-space: nowrap;
 }
 .changed-path-row:last-child {
   border-bottom: 0;

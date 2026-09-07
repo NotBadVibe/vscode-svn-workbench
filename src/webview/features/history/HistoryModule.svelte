@@ -1039,6 +1039,28 @@
               >{item.action}</span
             >
             <span class="changed-path-text" title={item.path}>{item.path}</span>
+            <!-- V021-R17：行主动作查看此修订修改，次级动作查看文件历史。 -->
+            <button
+              type="button"
+              class="button button--primary changed-path-action"
+              aria-label={`查看 r${selected?.revision ?? ""} 对 ${item.path} 的修改`}
+              title="查看此修订修改"
+              onclick={() =>
+                onAction("history/view-path-diff", {
+                  revision: selected?.revision ?? "",
+                  path: item.path,
+                })}>查看此修订修改</button
+            >
+            <button
+              type="button"
+              class="icon-button icon-button--small"
+              aria-label={`查看 ${item.path} 的文件历史`}
+              title="查看文件历史"
+              onclick={() =>
+                onAction("history/view-path-history", { path: item.path })}
+              ><span class="codicon codicon-history" aria-hidden="true"
+              ></span></button
+            >
             <button
               type="button"
               class="icon-button icon-button--small"

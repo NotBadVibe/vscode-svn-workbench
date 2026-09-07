@@ -1297,6 +1297,110 @@ export function startMockWorkbench(): void {
         message: "修订比较 r41 → r42",
       });
     }
+    // V021-R17：查看该次修改（只读行主动作）。按快照真值动作构造四类
+    // revision-file 快照；路径不在当前修订变更中时如实拒绝（不虚构内容）。
+    if (action === "history/view-path-diff") {
+      const revision =
+        typeof data.revision === "string" && data.revision ? data.revision : "";
+      const repoPath =
+        typeof data.path === "string" && data.path ? data.path : "";
+      const history = historySnapshot() as unknown as {
+        revisions: Array<{
+          revision: string;
+          changedPaths: Array<{
+            action: string;
+            path: string;
+            copyFromPath?: string;
+            copyFromRevision?: string;
+          }>;
+        }>;
+      };
+      const changed = history.revisions
+        .find((item) => item.revision === revision)
+        ?.changedPaths.find((item) => item.path === repoPath);
+      if (!changed) {
+        injectHostMessage("operation/error", {
+          title: "无法查看该次修改",
+          message: `该路径不属于 r${revision || "?"} 的变更，请刷新后重试。`,
+          recoverable: true,
+        });
+      } else {
+        const wcRelative = repoPath.replace(/^\/+/, "");
+        const previous =
+          /^[1-9]\d*$/.test(revision) && BigInt(revision) > 1n
+            ? String(BigInt(revision) - 1n)
+            : undefined;
+        const oldContent = `// ${wcRelative} @ r${previous ?? "?"}\nexport const version = ${previous ?? 0};\n`;
+        const newContent = `// ${wcRelative} @ r${revision}\nexport const version = ${revision};\n`;
+        const isCopy = changed.action === "A" && changed.copyFromPath;
+        const original = changed.action === "A" && !isCopy ? "" : oldContent;
+        const modified = changed.action === "D" ? "" : newContent;
+        const actionLabel =
+          changed.action === "A"
+            ? "新增"
+            : changed.action === "D"
+              ? "删除"
+              : changed.action === "R"
+                ? "替换"
+                : "修改";
+        const copyNote =
+          isCopy && changed.copyFromRevision
+            ? `；复制自 ${changed.copyFromPath}@r${changed.copyFromRevision}`
+            : "";
+        injectSnapshot("diff", {
+          kind: "diff",
+          relativePath: wcRelative,
+          // V021-R17：mock 单文件历史身份（真实路径经 targetPath 携带）。
+          compare: {
+            kind: "revision-file",
+            title: `r${revision} · ${wcRelative}（${actionLabel}）`,
+            targetPath: wcRelative,
+            ...(changed.action === "A" && !isCopy
+              ? {}
+              : {
+                  leftRevision:
+                    isCopy && changed.copyFromRevision
+                      ? changed.copyFromRevision
+                      : previous,
+                }),
+            ...(changed.action === "D" ? {} : { rightRevision: revision }),
+          },
+          original,
+          modified,
+          language: "typescript",
+          truncated: false,
+          binary: false,
+          edit: {
+            supported: false,
+            reason:
+              "修订比较为双侧只读，不支持页内编辑；请从工作副本打开差异后编辑。",
+          },
+          message: `r${revision}${actionLabel} · ${wcRelative}（只读）${copyNote}`,
+        });
+      }
+    }
+    // V021-R17：查看文件历史（次级动作）。收窄为单文件历史横幅；
+    // 以 deleted/ 开头的演示路径模拟“已不在工作副本”，如实拒绝。
+    if (action === "history/view-path-history") {
+      const repoPath =
+        typeof data.path === "string" && data.path ? data.path : "";
+      const wcRelative = repoPath.replace(/^\/+/, "");
+      if (wcRelative.startsWith("deleted/")) {
+        injectHostMessage("operation/error", {
+          title: "无法查看文件历史",
+          message: `文件${wcRelative}已不在工作副本中（可能已删除），无法查看其文件历史；可使用「查看此修订修改」只读查看该次内容。`,
+          recoverable: true,
+        });
+      } else {
+        injectSnapshot(
+          "history",
+          historySnapshot({
+            fileTarget: { relativePath: wcRelative },
+            feedback: `已显示 ${wcRelative} 的文件历史（只读）。`,
+          }),
+        );
+      }
+    }
     if (action === "history/load-more") {
       // v0.0.18 批次 C：模拟加载更早修订（追加更早编号，limit 增大）。
       const base = historySnapshot() as { revisions: unknown[] };

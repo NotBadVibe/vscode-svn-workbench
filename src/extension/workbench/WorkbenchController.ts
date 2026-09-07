@@ -144,6 +144,14 @@ import {
   type SvnHistoryQuery,
 } from "../../history/svnHistory";
 import {
+  buildChangedPathDiffPlan,
+  isHistoryRevisionParam,
+  mapReposPathToWorkingCopyRelative,
+  normalizeReposPath,
+  type ChangedPathSide,
+} from "../../history/historyChangedPath";
+import { parseSvnLogXml } from "../../history/svnHistoryParser";
+import {
   collectConflictItems,
   type SvnConflictItem,
 } from "../../conflict/conflictCollector";
@@ -279,6 +287,7 @@ import {
   renderWebviewShell,
 } from "./renderWebviewShell";
 import type {
+  ChangedPathDiffRequest,
   CommitSessionState,
   OpenWorkbenchRequest,
   WorkbenchSession,
@@ -894,6 +903,15 @@ export class WorkbenchController implements vscode.Disposable {
    */
   private async loadInitialModule(session: WorkbenchSession): Promise<void> {
     if (session.revisionCompare) {
+      // V021-R17：单文件该次修改直接构建 revision-file 快照，不走范围 patch。
+      if (session.revisionCompare.pathDiff) {
+        await this.runChangedPathDiff(
+          session,
+          session.revisionCompare.pathDiff,
+          session.moduleId,
+        );
+        return;
+      }
       await this.runRevisionCompare(
         session,
         session.revisionCompare.revisions,
@@ -2899,6 +2917,20 @@ export class WorkbenchController implements vscode.Disposable {
           session,
           ordered,
           this.servedModule,
+          message.requestId,
+        );
+        return;
+      }
+      case "history/view-path-diff": {
+        // V021-R17：查看该修订文件差异（只读行主动作）。
+        await this.runHistoryPathDiffAction(session, data, message.requestId);
+        return;
+      }
+      case "history/view-path-history": {
+        // V021-R17：查看文件历史（次级动作，收窄为单文件历史）。
+        await this.runHistoryPathHistoryAction(
+          session,
+          data,
           message.requestId,
         );
         return;
@@ -5871,6 +5903,337 @@ export class WorkbenchController implements vscode.Disposable {
       message: truncatedDiff
         ? `修订比较 r${ordered[0]} → r${ordered[1]}（超过 5 MB，已截断）`
         : `修订比较 r${ordered[0]} → r${ordered[1]}`,
+    };
+    await this.post({
+      protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+      type: "module/snapshot",
+      requestId,
+      moduleId: "diff",
+      payload: { snapshot },
+    });
+  }
+
+  /**
+   * V021-R17：查看该次修改（只读行主动作）。Webview 只提供修订 +
+   * 仓库路径；动作与复制来源以 `svn log -r` 真值为准（防虚构路径）。
+   * 历史会话状态不动：返回历史时所选修订/比较两端保持。
+   */
+  private async runHistoryPathDiffAction(
+    session: WorkbenchSession,
+    data: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    const revision = asRevision(data.revision);
+    const reposPath = normalizeReposPath(data.path);
+    if (!revision || !isHistoryRevisionParam(revision) || !reposPath) {
+      await this.sendError(
+        "history",
+        "无法查看该次修改",
+        "修订或变更路径无效，请刷新历史后重试。",
+        true,
+        requestId,
+      );
+      return;
+    }
+    const truth = await this.readRevisionChangedPathTruth(session, revision);
+    if (!truth) {
+      await this.sendError(
+        "history",
+        "无法查看该次修改",
+        `无法读取 r${revision} 的变更记录，历史可能已变化；请刷新后重试。`,
+        true,
+        requestId,
+      );
+      return;
+    }
+    const changed = truth.changedPaths.find((item) => item.path === reposPath);
+    if (!changed) {
+      await this.sendError(
+        "history",
+        "无法查看该次修改",
+        `该路径不属于 r${revision} 的变更（历史已变化），请刷新后重试。`,
+        true,
+        requestId,
+      );
+      return;
+    }
+    const pathDiff: ChangedPathDiffRequest = {
+      revision,
+      reposPath,
+      action: changed.action,
+      ...(changed.copyFromPath ? { copyFromPath: changed.copyFromPath } : {}),
+      ...(changed.copyFromRevision
+        ? { copyFromRevision: changed.copyFromRevision }
+        : {}),
+    };
+    // 非 Diff 窗口经窗口管理器在独立 Diff 窗口展示单文件该次修改，历史面板保持不变。
+    if (this.servedModule !== "diff" && this.onOpenInOtherWindow) {
+      await this.onOpenInOtherWindow(
+        buildDiffWindowRequest({
+          svnPath: session.svnPath,
+          scope: session.scope,
+          revisionCompare: { revisions: [revision, revision], pathDiff },
+        }),
+      );
+      return;
+    }
+    session.moduleId = "diff";
+    session.taskId = defaultWorkbenchTask("diff");
+    session.targetFile = undefined;
+    this.panel!.title = getModuleTitle("diff", session.taskId);
+    await this.runChangedPathDiff(
+      session,
+      pathDiff,
+      this.servedModule,
+      requestId,
+    );
+  }
+
+  /**
+   * V021-R17：查看文件历史（次级动作）。映射到工作副本相对路径并经
+   * 范围复验后，复用 V020-R10 行目标机制收窄为单文件历史（scope 本体不变）。
+   * 文件已不在工作副本时 fail-closed：只读差异仍可经「查看此修订修改」查看。
+   */
+  private async runHistoryPathHistoryAction(
+    session: WorkbenchSession,
+    data: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    const reposPath = normalizeReposPath(data.path);
+    if (!reposPath) {
+      await this.sendError(
+        "history",
+        "无法查看文件历史",
+        "变更路径无效，请刷新历史后重试。",
+        true,
+        requestId,
+      );
+      return;
+    }
+    const mapped = mapReposPathToWorkingCopyRelative(
+      reposPath,
+      session.repositoryRootUrl,
+      session.workingCopyUrl,
+    );
+    if (mapped === undefined || mapped === "") {
+      await this.sendError(
+        "history",
+        "范围校验失败",
+        `该文件不在当前右键操作范围内（${reposPath}）。请返回本地修改重新选择范围后重试。`,
+        false,
+        requestId,
+      );
+      return;
+    }
+    const wcRelative = normalizeRelative(mapped);
+    const absolutePath = path.resolve(session.scope.repositoryRoot, wcRelative);
+    if (
+      validatePathsInScope(session.scope, [absolutePath], nativePathSemantics)
+        .outOfScopeItems.length > 0
+    ) {
+      await this.sendError(
+        "history",
+        "范围校验失败",
+        `该文件不在当前右键操作范围内（${wcRelative}）。请返回本地修改重新选择范围后重试。`,
+        false,
+        requestId,
+      );
+      return;
+    }
+    try {
+      await fs.stat(absolutePath);
+    } catch {
+      await this.sendError(
+        "history",
+        "无法查看文件历史",
+        `文件${wcRelative}已不在工作副本中（可能已删除），无法查看其文件历史；可使用「查看此修订修改」只读查看该次内容。`,
+        true,
+        requestId,
+      );
+      return;
+    }
+    this.presetHistoryRowTarget(session, wcRelative, absolutePath);
+    await this.loadModule("history", undefined, requestId);
+  }
+
+  /** V021-R17：单修订变更真值（`svn log -r <rev> -v`，只读，不走 Webview 断言）。 */
+  private async readRevisionChangedPathTruth(
+    session: WorkbenchSession,
+    revision: string,
+  ): Promise<
+    | {
+        changedPaths: Array<{
+          action: string;
+          path: string;
+          copyFromPath?: string;
+          copyFromRevision?: string;
+        }>;
+      }
+    | undefined
+  > {
+    const targetPaths = session.scope.roots.map((root) => root.absolutePath);
+    const result = await runSvnCommand(
+      session.svnPath,
+      ["log", "--xml", "-v", "-r", revision, ...targetPaths],
+      session.scope.repositoryRoot,
+      { maxOutputBytes: MAX_DIFF_BYTES },
+    );
+    if (result.exitCode !== 0) return undefined;
+    return parseSvnLogXml(result.stdout).find(
+      (item) => item.revision === revision,
+    );
+  }
+
+  /**
+   * V021-R17：单文件该次修改差异构建。左右内容经仓库 URL 以 peg revision
+   * 只读读取（`svn cat -r`），文件已不在工作副本仍可查看合法修订内容；
+   * 快照为 R09 revision-file（双侧只读，真实单文件身份经 targetPath 携带）。
+   */
+  private async runChangedPathDiff(
+    session: WorkbenchSession,
+    pathDiff: ChangedPathDiffRequest,
+    errorModuleId: WorkbenchModuleId,
+    requestId?: string,
+  ): Promise<void> {
+    const fail = async (message: string, recoverable = true): Promise<void> => {
+      await this.sendError(
+        errorModuleId,
+        "无法查看该次修改",
+        message,
+        recoverable,
+        requestId,
+      );
+    };
+    const planned = buildChangedPathDiffPlan(pathDiff);
+    if (!planned.ok) {
+      await fail(planned.message);
+      return;
+    }
+    const plan = planned.plan;
+    const mapped = mapReposPathToWorkingCopyRelative(
+      pathDiff.reposPath,
+      session.repositoryRootUrl,
+      session.workingCopyUrl,
+    );
+    if (mapped === undefined) {
+      await this.sendError(
+        errorModuleId,
+        "范围校验失败",
+        `该文件不在当前右键操作范围内（${pathDiff.reposPath}）。请返回本地修改重新选择范围后重试。`,
+        false,
+        requestId,
+      );
+      return;
+    }
+    if (mapped === "") {
+      await fail(
+        `该变更目标为目录（${pathDiff.reposPath}），无单文件差异内容；可使用修订比较查看范围差异。`,
+      );
+      return;
+    }
+    const wcRelative = normalizeRelative(mapped);
+    const absolutePath = path.resolve(session.scope.repositoryRoot, wcRelative);
+    if (
+      validatePathsInScope(session.scope, [absolutePath], nativePathSemantics)
+        .outOfScopeItems.length > 0
+    ) {
+      await this.sendError(
+        errorModuleId,
+        "范围校验失败",
+        `该文件不在当前右键操作范围内（${wcRelative}）。请返回本地修改重新选择范围后重试。`,
+        false,
+        requestId,
+      );
+      return;
+    }
+    const readPegContent = async (
+      side: ChangedPathSide,
+    ): Promise<
+      { ok: true; content: string } | { ok: false; message: string }
+    > => {
+      if (side.kind === "empty") return { ok: true, content: "" };
+      if (!side.revision || !side.reposPath) {
+        return { ok: false, message: "变更内容规划无效，请刷新历史后重试。" };
+      }
+      if (!session.repositoryRootUrl) {
+        return {
+          ok: false,
+          message: "无法确定仓库地址，请检查 SVN 环境后重试。",
+        };
+      }
+      const stripped = normalizeReposPath(side.reposPath)?.slice(1) ?? "";
+      const url = joinSvnUrl(session.repositoryRootUrl, stripped);
+      const result = await runSvnCommand(
+        session.svnPath,
+        ["cat", "-r", side.revision, url],
+        session.scope.repositoryRoot,
+        { maxOutputBytes: MAX_DIFF_BYTES },
+      );
+      if (result.exitCode !== 0) {
+        return {
+          ok: false,
+          message: `无法读取 ${side.reposPath}@r${side.revision} 的内容（${result.stderr || "SVN 读取失败"}）。若路径已移动请刷新历史后重试。`,
+        };
+      }
+      const buffer = Buffer.from(result.stdout, "utf8");
+      if (buffer.byteLength > MAX_DIFF_BYTES) {
+        return {
+          ok: false,
+          message: "该修订文件超过 5 MB，工作台不展示其差异内容。",
+        };
+      }
+      if (containsNull(buffer)) {
+        return {
+          ok: false,
+          message: "目标修订疑似二进制文件，工作台不展示其文本差异。",
+        };
+      }
+      if (result.truncated) {
+        return { ok: false, message: "文件内容读取被截断，未展示不完整差异。" };
+      }
+      return { ok: true, content: result.stdout };
+    };
+    const leftResult = await readPegContent(plan.left);
+    if (!leftResult.ok) {
+      await fail(leftResult.message);
+      return;
+    }
+    const rightResult = await readPegContent(plan.right);
+    if (!rightResult.ok) {
+      await fail(rightResult.message);
+      return;
+    }
+    const leftRevision =
+      plan.left.kind === "revision" ? plan.left.revision : undefined;
+    const rightRevision =
+      plan.right.kind === "revision" ? plan.right.revision : undefined;
+    const snapshot: DiffSnapshot = {
+      kind: "diff",
+      relativePath: wcRelative,
+      // V021-R17：单文件历史比较身份（真实路径经 targetPath 携带，不把标签当路径）。
+      compare: {
+        kind: "revision-file",
+        title: `r${pathDiff.revision} · ${wcRelative}（${plan.actionLabel}）`,
+        targetPath: wcRelative,
+        ...(leftRevision ? { leftRevision } : {}),
+        ...(rightRevision ? { rightRevision } : {}),
+      },
+      original: leftResult.content,
+      modified: rightResult.content,
+      language: inferLanguage(wcRelative),
+      truncated: false,
+      binary: false,
+      edit: {
+        supported: false,
+        reason:
+          "修订比较为双侧只读，不支持页内编辑；请从工作副本打开差异后编辑。",
+      },
+      message: [
+        `r${pathDiff.revision}${plan.actionLabel} · ${wcRelative}（只读）`,
+        plan.sourceNote,
+      ]
+        .filter((part): part is string => Boolean(part))
+        .join("；"),
     };
     await this.post({
       protocolVersion: WORKBENCH_PROTOCOL_VERSION,

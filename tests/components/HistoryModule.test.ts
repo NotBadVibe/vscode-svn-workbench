@@ -685,6 +685,34 @@ describe("HistoryModule", () => {
     expect(screen.getByText("/trunk/a.ts")).toBeInTheDocument();
   });
 
+  // V021-R17：行主动作查看此修订修改，次级动作查看文件历史。
+  it("V021-R17：查看此修订修改发送修订与仓库路径", async () => {
+    const onAction = vi.fn();
+    render(HistoryModule, { snapshot, onAction });
+    const primary = screen.getByRole("button", {
+      name: "查看 r12 对 /trunk/a.ts 的修改",
+    });
+    expect(primary).toHaveTextContent("查看此修订修改");
+    await fireEvent.click(primary);
+    expect(onAction).toHaveBeenCalledWith("history/view-path-diff", {
+      revision: "12",
+      path: "/trunk/a.ts",
+    });
+  });
+
+  it("V021-R17：查看文件历史发送仓库路径", async () => {
+    const onAction = vi.fn();
+    render(HistoryModule, { snapshot, onAction });
+    const secondary = screen.getByRole("button", {
+      name: "查看 /trunk/new/b.ts 的文件历史",
+    });
+    expect(secondary).toHaveAttribute("title", "查看文件历史");
+    await fireEvent.click(secondary);
+    expect(onAction).toHaveBeenCalledWith("history/view-path-history", {
+      path: "/trunk/new/b.ts",
+    });
+  });
+
   it("V021-R20：无变更与被筛选隐藏空态不同，一键清除不丢比较", async () => {
     const onAction = vi.fn();
     render(HistoryModule, { snapshot, onAction });

@@ -1646,6 +1646,8 @@ export type WebviewAction =
   | "understanding/clear-confirmations"
   | "history/select"
   | "history/compare"
+  | "history/view-path-diff"
+  | "history/view-path-history"
   | "history/blame"
   | "history/query"
   | "history/load-more"
@@ -1797,6 +1799,8 @@ export const webviewActions = [
   "understanding/clear-confirmations",
   "history/select",
   "history/compare",
+  "history/view-path-diff",
+  "history/view-path-history",
   "history/blame",
   "history/query",
   "history/load-more",
