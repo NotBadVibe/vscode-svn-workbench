@@ -233,6 +233,28 @@ export function edgeActiveIndex(edge: "home" | "end", length: number): number {
   return edge === "home" ? 0 : length - 1;
 }
 
+/**
+ * V020-R16 · 稳定身份锚点解析（纯函数，无 DOM 依赖）。
+ * 锚点跟随身份键在当前可见顺序中的位置：命中则返回新位置；
+ * 目标不在新集合（筛选/刷新剔除）或旧位置越界时返回 -1（清除锚点，
+ * 调用方将其视为无锚点并在下一次点击建立新锚点）。
+ */
+export function resolveAnchorIndex(options: {
+  /** 当前可见行的身份键（与行一一对应，缺失用 undefined 占位）。 */
+  orderedKeys: readonly (string | undefined)[];
+  /** 建立锚点时的身份键（无稳定身份时为 undefined，走位置回退）。 */
+  anchorKey: string | undefined;
+  /** 建立锚点时的旧位置（无身份键时的回退依据）。 */
+  anchorIndex: number;
+}): number {
+  const { orderedKeys, anchorKey, anchorIndex } = options;
+  if (anchorIndex < 0) return -1;
+  if (anchorKey !== undefined) {
+    return orderedKeys.indexOf(anchorKey);
+  }
+  return anchorIndex < orderedKeys.length ? anchorIndex : -1;
+}
+
 /** Shift 连续选择：返回 anchor 到 active 之间（含两端）的有序项。 */
 export function rangeItems<T>(
   orderedItems: readonly T[],

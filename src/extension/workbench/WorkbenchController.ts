@@ -56,6 +56,10 @@ import {
   validateCommitSplitResult,
 } from "../../ai/commitSplitAi";
 import {
+  hashChangelistPlan,
+  isSameChangelistPlan,
+} from "../../changelist/changelistPlan";
+import {
   applySvnChangelist,
   collectSvnChangelists,
 } from "../../changelist/svnChangelists";
@@ -150,6 +154,8 @@ import {
 import {
   WORKBENCH_PROTOCOL_VERSION,
   defaultWorkbenchTask,
+  isFileTargetView,
+  isHistoryQueryView,
   isWebviewToHostMessage,
   isWorkbenchModuleId,
   isWorkbenchTaskForModule,
@@ -365,6 +371,7 @@ import {
   buildDiffTargetKey,
   normalizeDiffOpenMode,
   orderRevisionPair,
+  parseRowTargetRelativePath,
   shouldOpenInOtherWindow,
   workbenchRevealTarget,
 } from "./workbenchRouting";
@@ -780,6 +787,55 @@ export class WorkbenchController implements vscode.Disposable {
     // 项目切换后恢复该项目保留的草稿（仅提交说明与手动选择；旧预览、
     // 确认令牌与 AI 结果永不恢复）。
     await this.restoreProjectDraft(this.session);
+    // V020-R10：跨窗口行目标（history/conflicts）：在目标窗口的原 scope 内复验。
+    // 伪造范围外路径 fail-closed（清除目标并给出原因）；冲突存在性在此确认，
+    // 历史可读性在快照构建时复验（失效回退目录历史 + 横幅原因，不抢焦点）。
+    let rowTargetNotice: string | undefined;
+    if (
+      (this.session.moduleId === "history" ||
+        this.session.moduleId === "conflicts") &&
+      request.targetFile
+    ) {
+      const absolutePath = path.resolve(
+        request.scope.repositoryRoot,
+        request.targetFile,
+      );
+      const displayPath =
+        path.relative(request.scope.repositoryRoot, absolutePath) ||
+        path.basename(absolutePath);
+      this.session.targetFile = undefined;
+      if (
+        validatePathsInScope(request.scope, [absolutePath], nativePathSemantics)
+          .outOfScopeItems.length > 0
+      ) {
+        rowTargetNotice = `目标文件${displayPath}不在当前操作范围内。`;
+        if (this.session.moduleId === "history") {
+          this.session.historyState = {
+            compareRevisions: [],
+            fileTarget: { relativePath: displayPath, absolutePath },
+            fileTargetNotice: `${rowTargetNotice}已显示目录历史；可返回本地修改重新选择。`,
+          };
+        }
+      } else if (this.session.moduleId === "history") {
+        this.presetHistoryRowTarget(this.session, displayPath, absolutePath);
+      } else {
+        const conflicts = await collectConflictItems(
+          this.session.svnPath,
+          this.session.scope,
+        ).catch(() => undefined);
+        const hit = conflicts?.find(
+          (item) =>
+            item.relativePath === displayPath ||
+            path.resolve(request.scope.repositoryRoot, item.relativePath) ===
+              absolutePath,
+        );
+        if (hit) {
+          this.session.conflictState = { selectedPath: hit.relativePath };
+        } else {
+          rowTargetNotice = `目标文件${displayPath}已不再冲突（可能已解决或状态已变化），已显示冲突列表。`;
+        }
+      }
+    }
     // v0.1.4 V014-E：跨窗口交接（目标为 commit 且带选择）整批复验。
     // 交接选择优先于项目草稿恢复的选择（更新近的显式用户动作）。
     // 全部非法时拒绝打开：恢复旧会话（无旧会话时丢弃新会话），
@@ -820,6 +876,15 @@ export class WorkbenchController implements vscode.Disposable {
     if (this.ready) {
       await this.sendInitialize();
       await this.loadInitialModule(this.session);
+      // V020-R10：跨窗口行目标失效时在首屏给出原因（快照已回退到列表）。
+      if (rowTargetNotice) {
+        await this.sendError(
+          this.session.moduleId,
+          "目标已变化",
+          rowTargetNotice,
+          true,
+        );
+      }
     }
   }
 
@@ -1184,6 +1249,35 @@ export class WorkbenchController implements vscode.Disposable {
           );
           return;
         }
+        // V020-R10：行右键目标文件（查看历史/处理冲突定位所点文件）。
+        // 源窗口先在原 scope 内复验，伪造范围外路径 fail-closed（不切换、不转发）。
+        let rowTargetAbsolute: string | undefined;
+        if (moduleId === "history" || moduleId === "conflicts") {
+          const rowTarget = parseRowTargetRelativePath(data);
+          if (rowTarget !== undefined) {
+            const absolutePath = path.resolve(
+              session.scope.repositoryRoot,
+              rowTarget,
+            );
+            if (
+              validatePathsInScope(
+                session.scope,
+                [absolutePath],
+                nativePathSemantics,
+              ).outOfScopeItems.length > 0
+            ) {
+              await this.sendError(
+                session.moduleId,
+                "范围校验失败",
+                "该文件不在当前右键操作范围内。",
+                false,
+                message.requestId,
+              );
+              return;
+            }
+            rowTargetAbsolute = absolutePath;
+          }
+        }
         // 同模块任务导航留在当前窗口；跨模块由窗口管理器路由到目标模块窗口。
         if (
           shouldOpenInOtherWindow(
@@ -1199,6 +1293,7 @@ export class WorkbenchController implements vscode.Disposable {
               svnPath: session.svnPath,
               scope: session.scope,
               selectedPaths: asStringArray(data.selectedPaths),
+              targetFile: rowTargetAbsolute,
             }),
           );
           return;
@@ -1246,6 +1341,26 @@ export class WorkbenchController implements vscode.Disposable {
         session.taskId = taskId;
         session.selectedPaths = asStringArray(data.selectedPaths);
         session.targetFile = undefined;
+        // V020-R10：同窗行目标落点（目标窗口复验为准，此处先做源侧预置）。
+        // 历史收窄为单文件查询（scope 不变）；冲突预置选中，不存在则拒绝切换。
+        if (moduleId === "history" && rowTargetAbsolute !== undefined) {
+          this.presetHistoryRowTarget(
+            session,
+            parseRowTargetRelativePath(data) ?? "",
+            rowTargetAbsolute,
+          );
+        }
+        if (moduleId === "conflicts" && rowTargetAbsolute !== undefined) {
+          const applied = await this.applyConflictRowTarget(
+            session,
+            parseRowTargetRelativePath(data) ?? "",
+            rowTargetAbsolute,
+            message.requestId,
+          );
+          if (!applied) {
+            return;
+          }
+        }
         // v0.1.4 V014-E3 必修 3：空交接落入通用分支时同样初始化 commit
         // 选择并显式失效旧 preview/token 与 handoff（apply 内已处理，
         // 此处兜底保证通用直写不残留旧预览有效）。
@@ -2789,7 +2904,8 @@ export class WorkbenchController implements vscode.Disposable {
         return;
       }
       case "history/blame": {
-        const fileRoot = getSingleFileScopeRoot(session.scope);
+        // V020-R10：单文件入口 = 有效行目标，或单文件 scope。
+        const fileRoot = this.resolveHistoryFileRoot(session);
         if (!fileRoot) {
           await this.sendError(
             "history",
@@ -2822,96 +2938,26 @@ export class WorkbenchController implements vscode.Disposable {
         await this.sendHistorySnapshot(session, message.requestId);
         return;
       }
+      case "history/query": {
+        // V020-R05：始终可用的按条件查询入口，与加载下一批分离；
+        // 新查询从首批重新读取（清理旧游标），输入由 Webview 保留。
+        await this.runHistoryRead(session, data, message.requestId, {
+          fresh: true,
+        });
+        return;
+      }
       case "history/load-more": {
         // v0.0.18 批次 C（C-06）：每次加载前都重新校验 Webview 的只读
         // 查询条件；条件变化时从首批开始，未变化时才继续扩大上限。
-        const normalizedQuery = normalizeSvnHistoryQuery(data);
-        if (normalizedQuery.issues.length > 0) {
-          await this.sendError(
-            "history",
-            "历史条件无效",
-            normalizedQuery.issues.join(" "),
-            true,
-            message.requestId,
-          );
-          return;
-        }
-        const previousQuery = session.historyState?.historyQuery ?? {};
-        const queryChanged = !sameHistoryQuery(
-          previousQuery,
-          normalizedQuery.query,
-        );
-        const previousLimit = queryChanged
-          ? 0
-          : (session.historyState?.historyLimit ?? 100);
-        const nextLimit = previousLimit === 0 ? 100 : previousLimit + 200;
-        const controller = new AbortController();
-        session.activeOperation = { moduleId: "history", controller };
-        await this.post({
-          protocolVersion: WORKBENCH_PROTOCOL_VERSION,
-          type: "operation/progress",
-          requestId: message.requestId,
-          moduleId: "history",
-          payload: {
-            title: `正在加载更早修订（最多 ${nextLimit} 条）`,
-            message: "svn log --limit",
-            cancellable: true,
-          },
+        // V020-R05：慢旧响应由序号守卫丢弃，不覆盖新查询。
+        await this.runHistoryRead(session, data, message.requestId, {
+          fresh: false,
         });
-        let page: SvnHistoryPage;
-        try {
-          page = await collectSvnHistoryPage(
-            session.svnPath,
-            session.scope,
-            nextLimit,
-            normalizedQuery.query,
-            controller.signal,
-          );
-          const state = session.historyState ?? { compareRevisions: [] };
-          state.historyLimit = nextLimit;
-          state.historyQuery = normalizedQuery.query;
-          // v0.1.5 V015-D2：加载更多携带本地比较选择时一并保留，快照刷新不丢选中；
-          // 未携带该键时保持既有选择不变。
-          if (data.compareRevisions !== undefined) {
-            state.compareRevisions = asRevisionArray(data.compareRevisions);
-          }
-          const condition = describeHistoryQuery(normalizedQuery.query);
-          state.feedback = condition
-            ? `已按${condition}读取 ${page.revisions.length} 条修订。`
-            : `已加载最近 ${page.revisions.length} 条修订。`;
-          session.historyState = state;
-        } catch (error) {
-          if (controller.signal.aborted) {
-            await this.post({
-              protocolVersion: WORKBENCH_PROTOCOL_VERSION,
-              type: "operation/cancelled",
-              requestId: message.requestId,
-              moduleId: "history",
-              payload: {
-                title: "已取消加载更早修订",
-                message: "已保留当前列表；可再次点击“加载更早”重试。",
-              },
-            });
-            return;
-          }
-          await this.sendError(
-            "history",
-            "加载更早修订失败",
-            errorMessage(error),
-            true,
-            message.requestId,
-          );
-          return;
-        } finally {
-          if (session.activeOperation?.controller === controller)
-            session.activeOperation = undefined;
-        }
-        // 将同一可取消请求的结果直接下发，避免完成后无提示地再次 svn log。
-        await this.sendHistorySnapshot(session, message.requestId, page);
         return;
       }
       case "history/preview-restore": {
-        const fileRoot = getSingleFileScopeRoot(session.scope);
+        // V020-R10：单文件入口 = 有效行目标，或单文件 scope。
+        const fileRoot = this.resolveHistoryFileRoot(session);
         const revision =
           asRevision(data.revision) ?? session.historyState?.selectedRevision;
         if (!fileRoot || !revision) {
@@ -2956,7 +3002,8 @@ export class WorkbenchController implements vscode.Disposable {
       case "history/execute-restore": {
         const token = asString(data.previewToken);
         const preview = session.historyState?.restorePreview;
-        const fileRoot = getSingleFileScopeRoot(session.scope);
+        // V020-R10：单文件入口 = 有效行目标，或单文件 scope。
+        const fileRoot = this.resolveHistoryFileRoot(session);
         if (
           !token ||
           !preview ||
@@ -3045,6 +3092,50 @@ export class WorkbenchController implements vscode.Disposable {
       case "conflict/select": {
         const relativePath = asString(data.relativePath);
         if (!relativePath) {
+          return;
+        }
+        // V020-R10：显式选择先在原 scope 内复验，伪造范围外路径 fail-closed；
+        // 再用新鲜冲突集合确认仍在冲突，已解决/删除的目标给出原因并回列表。
+        const selectAbsolute = path.resolve(
+          session.scope.repositoryRoot,
+          relativePath,
+        );
+        if (
+          validatePathsInScope(
+            session.scope,
+            [selectAbsolute],
+            nativePathSemantics,
+          ).outOfScopeItems.length > 0
+        ) {
+          await this.sendError(
+            "conflicts",
+            "范围校验失败",
+            "该文件不在当前右键操作范围内。",
+            false,
+            message.requestId,
+          );
+          return;
+        }
+        const freshConflicts = await collectConflictItems(
+          session.svnPath,
+          session.scope,
+        ).catch(() => undefined);
+        if (
+          !freshConflicts?.some(
+            (item) =>
+              item.relativePath === relativePath ||
+              path.resolve(session.scope.repositoryRoot, item.relativePath) ===
+                selectAbsolute,
+          )
+        ) {
+          await this.sendError(
+            "conflicts",
+            "冲突已变化",
+            `目标文件${relativePath}已不再冲突（可能已解决或状态已变化），已保留冲突列表；请刷新状态后重试。`,
+            true,
+            message.requestId,
+          );
+          await this.sendConflictSnapshot(session, message.requestId);
           return;
         }
         const currentPath = session.conflictState?.selectedPath;
@@ -4863,6 +4954,14 @@ export class WorkbenchController implements vscode.Disposable {
         state.preview = {
           token,
           candidateHash: hashCandidateState(candidates, "", []),
+          // V020-R08：保存范围/仓库绑定与方案指纹，执行前复验最终方案。
+          scopeHash: session.scopeHash,
+          repositoryUuid: session.repositoryUuid,
+          planHash: hashChangelistPlan({
+            name: remove ? undefined : name,
+            remove,
+            paths,
+          }),
           name: remove ? undefined : name,
           remove,
           paths,
@@ -4881,6 +4980,58 @@ export class WorkbenchController implements vscode.Disposable {
       case "changelist/execute-apply": {
         const token = asString(data.previewToken);
         const preview = session.changelistState?.preview;
+        // V020-R08：Host 方案指纹防线——执行请求携带用户当前看到的最终方案
+        // （Webview 确认时回传编辑器中的名称/路径/方向）；与保存的方案指纹
+        // 不一致说明预览后方案已更改，旧 token 不得执行（fail-closed）。
+        const carriesFinalPlan =
+          data.name !== undefined ||
+          data.paths !== undefined ||
+          data.remove !== undefined;
+        if (preview && carriesFinalPlan) {
+          const finalPaths = asStringArray(data.paths) ?? [];
+          const finalPlan = {
+            name: typeof data.name === "string" ? data.name : undefined,
+            remove: data.remove === true,
+            paths: finalPaths,
+          };
+          if (
+            !isSameChangelistPlan(finalPlan, {
+              name: preview.name,
+              remove: preview.remove,
+              paths: preview.paths,
+            })
+          ) {
+            session.changelistState!.preview = undefined;
+            await this.sendError(
+              "changelists",
+              "Changelist 方案已更改",
+              "预览后变更集名称或文件已变化，旧预览已只读失效，不能凭旧确认继续执行。请重新生成预览。",
+              true,
+              message.requestId,
+            );
+            await this.sendChangelistsSnapshot(session, message.requestId);
+            return;
+          }
+        }
+        // V020-R08：范围/仓库绑定复验——预览生成后范围或仓库变化，旧 token 失效。
+        if (
+          preview &&
+          ((preview.scopeHash !== undefined &&
+            preview.scopeHash !== session.scopeHash) ||
+            (preview.repositoryUuid !== undefined &&
+              preview.repositoryUuid !== session.repositoryUuid))
+        ) {
+          session.changelistState!.preview = undefined;
+          await this.sendError(
+            "changelists",
+            "Changelist 预览已失效",
+            "操作范围或仓库已变化，旧预览已只读失效。请重新生成预览。",
+            true,
+            message.requestId,
+          );
+          await this.sendChangelistsSnapshot(session, message.requestId);
+          return;
+        }
         // v0.0.12 批次 B：执行前再次复验重复归属（fail-closed，防止
         // 预览后工作副本变化导致同文件进入两个真实 Changelist）。
         if (preview && !preview.remove && preview.issues.length === 0) {
@@ -4923,6 +5074,38 @@ export class WorkbenchController implements vscode.Disposable {
           return;
         }
         const candidates = await this.collectScopeCandidates(session);
+        // V020-R08：保存的方案仍须是当前候选的子集——预览后删文件、文件失效
+        // 或改组导致旧方案不再精确成立时，旧 token 不得执行。
+        const candidatePaths = new Set(
+          candidates.map((item) => item.relativePath),
+        );
+        const missingPaths = preview.paths.filter(
+          (item) => !candidatePaths.has(item),
+        );
+        if (missingPaths.length > 0) {
+          session.changelistState!.preview = undefined;
+          await this.sendError(
+            "changelists",
+            "工作副本已变化",
+            `预览中的 ${missingPaths.length} 个文件已不在当前范围，请刷新后重新生成 Changelist 预览。`,
+            true,
+            message.requestId,
+          );
+          await this.sendChangelistsSnapshot(session, message.requestId);
+          return;
+        }
+        if (!preview.remove && !(preview.name ?? "").trim()) {
+          session.changelistState!.preview = undefined;
+          await this.sendError(
+            "changelists",
+            "Changelist 方案已更改",
+            "预览中的变更集名称已失效。请填写名称后重新生成预览。",
+            true,
+            message.requestId,
+          );
+          await this.sendChangelistsSnapshot(session, message.requestId);
+          return;
+        }
         // v0.0.14 批次 B：Changelist 通用意向单校验
         const candidateHashForChangelist = hashCandidateState(
           candidates,
@@ -4963,6 +5146,7 @@ export class WorkbenchController implements vscode.Disposable {
             true,
             message.requestId,
           );
+          await this.sendChangelistsSnapshot(session, message.requestId);
           return;
         }
         if (candidateHashForChangelist !== preview.candidateHash) {
@@ -4974,6 +5158,7 @@ export class WorkbenchController implements vscode.Disposable {
             true,
             message.requestId,
           );
+          await this.sendChangelistsSnapshot(session, message.requestId);
           return;
         }
         const result = await applySvnChangelist(
@@ -4984,6 +5169,8 @@ export class WorkbenchController implements vscode.Disposable {
         );
         if (result.exitCode !== 0) {
           const errMsg = result.stderr || result.stdout || "未知错误";
+          // V020-R08：执行失败后旧预览不再可确认，恢复必须走新预览。
+          session.changelistState!.preview = undefined;
           await this.sendError(
             "changelists",
             "Changelist 更新失败",
@@ -4991,6 +5178,7 @@ export class WorkbenchController implements vscode.Disposable {
             true,
             message.requestId,
           );
+          await this.sendChangelistsSnapshot(session, message.requestId);
           this.appendActivityRecord({
             kind: "operation-execution",
             moduleId: "changelists",
@@ -5642,16 +5830,45 @@ export class WorkbenchController implements vscode.Disposable {
       return;
     }
     const diffBuffer = Buffer.from(result.stdout, "utf8");
+    const truncatedDiff =
+      Boolean(result.truncated) || diffBuffer.byteLength >= MAX_DIFF_BYTES;
+    // V020-R09：单文件历史比较保留真实单文件身份；范围比较为 patch，
+    // 不携带单文件身份（Webview 据此隐藏本地路径操作，防虚构路径）。
+    const fileRoot = getSingleFileScopeRoot(session.scope);
+    const fileRelative = fileRoot
+      ? normalizeRelative(fileRoot.relativePath)
+      : undefined;
     const snapshot: DiffSnapshot = {
       kind: "diff",
-      relativePath: `${session.scope.roots.map((root) => root.relativePath).join(", ")} · r${ordered[0]} → r${ordered[1]}`,
+      relativePath:
+        fileRelative ??
+        `${session.scope.roots.map((root) => root.relativePath).join(", ")} · r${ordered[0]} → r${ordered[1]}`,
+      compare: fileRelative
+        ? {
+            kind: "revision-file",
+            title: `r${ordered[0]} → r${ordered[1]} · ${fileRelative}`,
+            targetPath: fileRelative,
+            leftRevision: ordered[0],
+            rightRevision: ordered[1],
+          }
+        : {
+            kind: "revision-patch",
+            title: `修订比较 r${ordered[0]} → r${ordered[1]} · ${session.scope.roots.length} 个路径`,
+            leftRevision: ordered[0],
+            rightRevision: ordered[1],
+            pathCount: session.scope.roots.length,
+          },
       original: "",
       modified: truncateUtf8(diffBuffer),
       language: "diff",
-      truncated:
-        Boolean(result.truncated) || diffBuffer.byteLength >= MAX_DIFF_BYTES,
+      truncated: truncatedDiff,
       binary: false,
-      message: result.truncated
+      edit: {
+        supported: false,
+        reason:
+          "修订比较为双侧只读，不支持页内编辑；请从工作副本打开差异后编辑。",
+      },
+      message: truncatedDiff
         ? `修订比较 r${ordered[0]} → r${ordered[1]}（超过 5 MB，已截断）`
         : `修订比较 r${ordered[0]} → r${ordered[1]}`,
     };
@@ -5901,6 +6118,18 @@ export class WorkbenchController implements vscode.Disposable {
       relativePath: normalizeRelative(
         path.relative(session.scope.repositoryRoot, absolutePath),
       ),
+      // V020-R09：本地单文件比较身份（真实路径 + 左右基线）。
+      compare: {
+        kind: "working-copy",
+        title: normalizeRelative(
+          path.relative(session.scope.repositoryRoot, absolutePath),
+        ),
+        targetPath: normalizeRelative(
+          path.relative(session.scope.repositoryRoot, absolutePath),
+        ),
+        leftRevision: "BASE",
+        rightRevision: "工作副本",
+      },
       original,
       modified,
       language: inferLanguage(absolutePath),
@@ -6484,6 +6713,170 @@ export class WorkbenchController implements vscode.Disposable {
     }
   }
 
+  /**
+   * V020-R10：预置单文件历史目标（同窗 open-module / 跨窗口 open() 共用）。
+   * 仅做会话预置；调用前已在原 scope 内复验范围。存在性与可读性在快照构建时
+   * 复验，失效则回退目录历史并给出中文原因（历史为只读，不抢焦点）。
+   * 切换目标即清理旧文件的选中修订、比较、Blame 与恢复预览（fail-closed）。
+   */
+  private presetHistoryRowTarget(
+    session: WorkbenchSession,
+    relativePath: string,
+    absolutePath: string,
+  ): void {
+    session.historyState = {
+      selectedRevision: undefined,
+      compareRevisions: [],
+      historyLimit: session.historyState?.historyLimit,
+      historyQuery: session.historyState?.historyQuery,
+      historyRequestSeq: session.historyState?.historyRequestSeq,
+      blame: undefined,
+      restorePreview: undefined,
+      feedback: undefined,
+      fileTarget: { relativePath, absolutePath },
+      fileTargetNotice: undefined,
+    };
+  }
+
+  /**
+   * V020-R10：行目标单文件查询 scope（scope 本体不变，仅收窄 svn log 查询）。
+   * 目标失效（范围外）时回退原 scope；原因由快照构建写入 fileTargetNotice。
+   */
+  private historyCollectScope(session: WorkbenchSession): OperationScope {
+    const target = session.historyState?.fileTarget;
+    if (
+      target &&
+      !session.historyState?.fileTargetNotice &&
+      validatePathsInScope(
+        session.scope,
+        [target.absolutePath],
+        nativePathSemantics,
+      ).outOfScopeItems.length === 0
+    ) {
+      return {
+        ...session.scope,
+        id: `row-target-${Date.now()}`,
+        roots: [
+          {
+            absolutePath: target.absolutePath,
+            relativePath: target.relativePath,
+            kind: "file",
+          },
+        ],
+        createdAt: Date.now(),
+      };
+    }
+    return session.scope;
+  }
+
+  /**
+   * V020-R10：快照构建前复验行目标（范围、磁盘存在性）。
+   * 失效时写入中文原因并清理旧文件绑定（Blame/恢复预览），调用方回退目录历史。
+   * 返回 true 表示目标有效、可做单文件查询与文件级动作。
+   */
+  private async refreshHistoryFileTargetState(
+    session: WorkbenchSession,
+  ): Promise<boolean> {
+    const state = session.historyState;
+    const target = state?.fileTarget;
+    if (!state || !target) return false;
+    if (
+      validatePathsInScope(
+        session.scope,
+        [target.absolutePath],
+        nativePathSemantics,
+      ).outOfScopeItems.length > 0
+    ) {
+      state.fileTargetNotice = `目标文件${target.relativePath}已不在当前操作范围内，已显示目录历史；可返回本地修改重新选择。`;
+      state.blame = undefined;
+      state.restorePreview = undefined;
+      return false;
+    }
+    try {
+      await fs.stat(target.absolutePath);
+    } catch {
+      state.fileTargetNotice = `目标文件${target.relativePath}已不在工作副本中（可能已删除），当前显示目录历史；可返回本地修改重新选择。`;
+      state.blame = undefined;
+      state.restorePreview = undefined;
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * V020-R10：单文件历史入口 = 有效行目标，或单文件 scope。
+   * 失效行目标回退目录（Blame/恢复不可用，横幅给出原因与返回入口）。
+   */
+  private resolveHistoryFileRoot(
+    session: WorkbenchSession,
+  ): { absolutePath: string; relativePath: string } | undefined {
+    const state = session.historyState;
+    const target = state?.fileTarget;
+    if (
+      target &&
+      !state?.fileTargetNotice &&
+      validatePathsInScope(
+        session.scope,
+        [target.absolutePath],
+        nativePathSemantics,
+      ).outOfScopeItems.length === 0
+    ) {
+      return {
+        absolutePath: target.absolutePath,
+        relativePath: target.relativePath,
+      };
+    }
+    return getSingleFileScopeRoot(session.scope) ?? undefined;
+  }
+
+  /**
+   * V020-R10：预置行目标冲突选中（同窗 open-module / 跨窗口 open() 共用）。
+   * 在原 scope 内复验 + 新鲜冲突集合中确认仍在冲突；伪造或已解决的目标
+   * fail-closed：给出中文原因并拒绝切换，不扩大可操作范围。
+   */
+  private async applyConflictRowTarget(
+    session: WorkbenchSession,
+    relativePath: string,
+    absolutePath: string,
+    requestId?: string,
+  ): Promise<boolean> {
+    const conflicts = await collectConflictItems(
+      session.svnPath,
+      session.scope,
+    ).catch(() => undefined);
+    if (!conflicts) {
+      await this.sendError(
+        session.moduleId,
+        "无法确认冲突目标",
+        "冲突状态采集失败，未切换页面；请刷新本地修改后重试。",
+        true,
+        requestId,
+      );
+      return false;
+    }
+    const hit = conflicts.find(
+      (item) =>
+        item.relativePath === relativePath ||
+        path.resolve(session.scope.repositoryRoot, item.relativePath) ===
+          absolutePath,
+    );
+    if (!hit) {
+      await this.sendError(
+        session.moduleId,
+        "目标冲突已不存在",
+        `目标文件${relativePath}已不再冲突（可能已解决或状态已变化），未切换页面；可刷新本地修改后重试。`,
+        true,
+        requestId,
+      );
+      return false;
+    }
+    session.conflictState = {
+      ...session.conflictState,
+      selectedPath: hit.relativePath,
+    };
+    return true;
+  }
+
   private async buildHistorySnapshot(
     session: WorkbenchSession,
     providedPage?: SvnHistoryPage,
@@ -6491,15 +6884,53 @@ export class WorkbenchController implements vscode.Disposable {
     // v0.0.18 批次 C（C-06）：limit 来自会话状态（“加载更早”逐步增大），
     // 不再硬编码；hasMore 区分“没有更多”与“尚未加载”。
     const historyLimit = session.historyState?.historyLimit ?? 100;
-    const historyQuery = session.historyState?.historyQuery ?? {};
-    const page =
-      providedPage ??
-      (await collectSvnHistoryPage(
-        session.svnPath,
-        session.scope,
-        historyLimit,
-        historyQuery,
-      ));
+    // V020 终审 P1-1：外发 query 先经协议守卫，畸形按无条件处理（fail-closed，不抛错）。
+    const rawHistoryQuery = session.historyState?.historyQuery ?? {};
+    const historyQuery = isHistoryQueryView(rawHistoryQuery)
+      ? rawHistoryQuery
+      : {};
+    // V020-R10：行目标先复验（范围/存在性），有效才做单文件查询；
+    // 失效回退目录历史，原因随 fileTarget 下发（不抢焦点）。
+    const rowTarget = session.historyState?.fileTarget;
+    const rowTargetValid =
+      rowTarget && !providedPage
+        ? await this.refreshHistoryFileTargetState(session)
+        : Boolean(
+            rowTarget &&
+            !session.historyState?.fileTargetNotice &&
+            validatePathsInScope(
+              session.scope,
+              [rowTarget.absolutePath],
+              nativePathSemantics,
+            ).outOfScopeItems.length === 0,
+          );
+    let page = providedPage;
+    if (!page && rowTargetValid && rowTarget) {
+      try {
+        page = await collectSvnHistoryPage(
+          session.svnPath,
+          this.historyCollectScope(session),
+          historyLimit,
+          historyQuery,
+        );
+        if (session.historyState) {
+          session.historyState.fileTargetNotice = undefined;
+        }
+      } catch (error) {
+        if (session.historyState) {
+          session.historyState.fileTargetNotice = `无法读取目标文件${rowTarget.relativePath}的历史（${errorMessage(error)}），当前显示目录历史；可返回本地修改重新选择。`;
+          session.historyState.blame = undefined;
+          session.historyState.restorePreview = undefined;
+        }
+        page = undefined;
+      }
+    }
+    page ??= await collectSvnHistoryPage(
+      session.svnPath,
+      session.scope,
+      historyLimit,
+      historyQuery,
+    );
     const revisions = page.revisions;
     if (!session.historyState) {
       session.historyState = {
@@ -6523,7 +6954,22 @@ export class WorkbenchController implements vscode.Disposable {
       limit: historyLimit,
       query: historyQuery,
       hasMore: page.hasMore,
-      fileActionsAvailable: Boolean(getSingleFileScopeRoot(session.scope)),
+      fileActionsAvailable:
+        Boolean(rowTargetValid) ||
+        Boolean(getSingleFileScopeRoot(session.scope)),
+      // V020-R10：行目标横幅（单文件历史/失效原因 + 返回本地修改入口）。
+      // V020 终审 P1-1：外发 fileTarget 先经协议守卫，畸形按目录历史处理（fail-closed）。
+      fileTarget:
+        rowTarget &&
+        isFileTargetView({
+          relativePath: rowTarget.relativePath,
+          notice: session.historyState?.fileTargetNotice,
+        })
+          ? {
+              relativePath: rowTarget.relativePath,
+              notice: session.historyState?.fileTargetNotice,
+            }
+          : undefined,
       blame: session.historyState.blame,
       restorePreview: session.historyState.restorePreview
         ? {
@@ -6618,6 +7064,139 @@ export class WorkbenchController implements vscode.Disposable {
         ? "此操作不能在工作台中一键撤销"
         : undefined,
     });
+  }
+
+  /**
+   * V020-R05：历史只读请求统一入口（按条件查询 / 加载更早）。
+   * fresh=true 时从首批重新读取并清理旧游标；fresh=false 且条件未变
+   * 时才扩大上限。取消或失败不改动上一成功结果；慢旧响应按序号丢弃。
+   */
+  private async runHistoryRead(
+    session: WorkbenchSession,
+    data: Record<string, unknown>,
+    requestId?: string,
+    options: { fresh: boolean } = { fresh: false },
+  ): Promise<void> {
+    const normalizedQuery = normalizeSvnHistoryQuery(data);
+    if (normalizedQuery.issues.length > 0) {
+      await this.sendError(
+        "history",
+        "历史条件无效",
+        normalizedQuery.issues.join(" "),
+        true,
+        requestId,
+      );
+      return;
+    }
+    // V020 终审 P1-1：协议守卫纵深——归一化结果仍须通过独立 payload 守卫，否则拒绝。
+    if (!isHistoryQueryView(normalizedQuery.query)) {
+      await this.sendError(
+        "history",
+        "历史条件无效",
+        "查询条件结构异常，已保留上一成功结果；可调整条件后再次查询。",
+        true,
+        requestId,
+      );
+      return;
+    }
+    const previousQuery = session.historyState?.historyQuery ?? {};
+    const queryChanged = !sameHistoryQuery(
+      previousQuery,
+      normalizedQuery.query,
+    );
+    const previousLimit =
+      queryChanged || options.fresh
+        ? 0
+        : (session.historyState?.historyLimit ?? 100);
+    const nextLimit = previousLimit === 0 ? 100 : previousLimit + 200;
+    // 新查询先中断上一历史请求，并以单调序号绑定本次查询身份。
+    session.activeOperation?.controller.abort();
+    const nextSeq = (session.historyState?.historyRequestSeq ?? 0) + 1;
+    const state = session.historyState ?? { compareRevisions: [] };
+    state.historyRequestSeq = nextSeq;
+    session.historyState = state;
+    const sessionId = session.sessionId;
+    const controller = new AbortController();
+    session.activeOperation = { moduleId: "history", controller };
+    await this.post({
+      protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+      type: "operation/progress",
+      requestId,
+      moduleId: "history",
+      payload: {
+        title: `正在加载更早修订（最多 ${nextLimit} 条）`,
+        message: "svn log --limit",
+        cancellable: true,
+      },
+    });
+    let page: SvnHistoryPage;
+    try {
+      // V020-R10：行目标有效时“加载更早/按条件查询”同样只查目标文件（scope 不变）。
+      page = await collectSvnHistoryPage(
+        session.svnPath,
+        this.historyCollectScope(session),
+        nextLimit,
+        normalizedQuery.query,
+        controller.signal,
+      );
+    } catch (error) {
+      if (controller.signal.aborted) {
+        await this.post({
+          protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+          type: "operation/cancelled",
+          requestId,
+          moduleId: "history",
+          payload: {
+            title: "已取消历史查询",
+            message: "已保留当前列表与输入；可调整条件后再次查询。",
+          },
+        });
+        return;
+      }
+      await this.sendError(
+        "history",
+        options.fresh ? "按条件查询失败" : "加载更早修订失败",
+        `${errorMessage(error)}已保留上一成功结果。`,
+        true,
+        requestId,
+      );
+      return;
+    } finally {
+      if (session.activeOperation?.controller === controller)
+        session.activeOperation = undefined;
+    }
+    // 慢旧响应守卫：会话替换或已有更新查询时丢弃本次结果。
+    if (
+      this.session !== session ||
+      session.sessionId !== sessionId ||
+      session.historyState?.historyRequestSeq !== nextSeq
+    ) {
+      return;
+    }
+    const current = session.historyState ?? { compareRevisions: [] };
+    current.historyLimit = nextLimit;
+    current.historyQuery = normalizedQuery.query;
+    if (options.fresh || queryChanged) {
+      // 新查询清理旧游标：Blame 绑定旧修订集合，不再有效。
+      current.blame = undefined;
+    }
+    // v0.1.5 V015-D2：携带本地比较选择时一并保留，快照刷新不丢选中；
+    // 未携带该键时保持既有选择不变。
+    if (data.compareRevisions !== undefined) {
+      current.compareRevisions = asRevisionArray(data.compareRevisions);
+    }
+    const condition = describeHistoryQuery(normalizedQuery.query);
+    current.feedback =
+      page.revisions.length === 0
+        ? condition
+          ? `按${condition}没有找到修订；已保留查询条件，可调整后再次查询。`
+          : "当前范围没有可显示的修订记录。"
+        : condition
+          ? `已按${condition}读取 ${page.revisions.length} 条修订。`
+          : `已加载最近 ${page.revisions.length} 条修订。`;
+    session.historyState = current;
+    // 将同一可取消请求的结果直接下发，避免完成后无提示地再次 svn log。
+    await this.sendHistorySnapshot(session, requestId, page);
   }
 
   private async sendHistorySnapshot(
@@ -8760,6 +9339,11 @@ export class WorkbenchController implements vscode.Disposable {
                 `svn changelist "${(preview.name ?? "").replace(/\\/g, "\\\\").replace(/"/g, '\\"')}" ${preview.paths.map(quoteRelative).join(" ")}`,
             canExecute: (previewIssues ?? preview.issues).length === 0,
             issues: previewIssues ?? preview.issues,
+            // V020-R08：预览生成时的绑定，随快照下发供 Webview 自检 stale。
+            scopeHash: preview.scopeHash,
+            candidateHash: preview.candidateHash,
+            repositoryUuid: preview.repositoryUuid,
+            planHash: preview.planHash,
           }
         : undefined,
       feedback: state.feedback,

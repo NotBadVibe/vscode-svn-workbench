@@ -8,6 +8,10 @@
     HostToWebviewMessage,
     WebviewAction,
   } from "@protocol/workbenchProtocol";
+  import {
+    isFileTargetView,
+    isHistoryQueryView,
+  } from "@protocol/workbenchProtocol";
   import ScrollArea from "../../components/ui/ScrollArea.svelte";
   import SearchInput from "../../components/list/SearchInput.svelte";
   import ResultCount from "../../components/list/ResultCount.svelte";
@@ -74,8 +78,9 @@
   });
 
   // Host 成功应用条件后，以快照中的实际条件回填；未成功请求不会覆盖用户输入。
+  // V020 终审 P1-1：快照 query 先经协议守卫，畸形载荷按无条件处理（不抛错、不扩大范围）。
   $effect(() => {
-    loadQuery = { ...(snapshot.query ?? {}) };
+    loadQuery = isHistoryQueryView(snapshot.query) ? { ...snapshot.query } : {};
   });
 
   const visible = $derived(
@@ -153,6 +158,8 @@
   const list = useFileList<(typeof orderedRevisions)[number]>({
     rows: () => orderedRevisions,
     rowHeight: () => 64,
+    // 中文注释：V020-R16 锚点稳定身份；升降序后 Shift 范围按可见顺序解析。
+    keyOf: (revision) => String(revision.revision),
     onPathDetailRequest: (relativePath) =>
       onAction("file/path-detail", { relativePath }),
     onActivate: (revision) =>
@@ -192,6 +199,38 @@
 
   function updateLoadQuery(key: keyof HistoryQueryView, value: string): void {
     loadQuery = { ...loadQuery, [key]: value };
+    queryError = undefined;
+  }
+
+  // V020-R05：始终可用的按条件查询入口（与加载下一批分离）。
+  // 新查询从首批重新读取；输入保留，快照回填只发生在 Host 成功后。
+  let queryError = $state<string | undefined>(undefined);
+
+  function validateLoadQuery(target: HistoryQueryView): string | undefined {
+    if (
+      target.revisionFrom &&
+      target.revisionTo &&
+      BigInt(target.revisionFrom) > BigInt(target.revisionTo)
+    ) {
+      return "较早修订号不能大于较晚修订号，请调整后再查询。";
+    }
+    if (target.dateFrom && target.dateTo && target.dateFrom > target.dateTo) {
+      return "开始日期不能晚于结束日期，请调整后再查询。";
+    }
+    return undefined;
+  }
+
+  function requestHistoryQuery(): void {
+    const invalid = validateLoadQuery(loadQuery);
+    queryError = invalid;
+    if (invalid) return;
+    const selection = [...compare];
+    onAction(
+      "history/query",
+      selection.length > 0
+        ? { ...loadQuery, compareRevisions: selection }
+        : { ...loadQuery },
+    );
   }
 
   // v0.1.5 V015-D2：加载更多携带本地比较选择，Host 回显后快照刷新不丢选中；
@@ -223,8 +262,20 @@
     return parts.join("、");
   }
 
+  /*
+   * V020 终审 P1-1：快照 fileTarget 先经协议守卫，畸形载荷按目录历史处理
+   * （横幅不渲染，不抛错，不扩大范围）。
+   */
+  const safeFileTarget = $derived(
+    snapshot.fileTarget && isFileTargetView(snapshot.fileTarget)
+      ? snapshot.fileTarget
+      : undefined,
+  );
+
   const appliedQueryDescription = $derived(
-    describeHistoryQuery(snapshot.query),
+    describeHistoryQuery(
+      isHistoryQueryView(snapshot.query) ? snapshot.query : undefined,
+    ),
   );
 
   // v0.1.5 V015-B2：已加载数量 + 只读条件 + 快照新鲜度收敛进一条 TaskSummary compact（计算逻辑不动）。
@@ -356,12 +407,16 @@
   }
 
   /** ResultNextStep / TaskEmptyState 动作纯透传：只映射页面已知标识。 */
+  function backToChanges(): void {
+    onAction("open-module", {
+      moduleId: "changes",
+      taskId: "changes/overview",
+    });
+  }
+
   function handleHistoryResultAction(action: string): void {
     if (action === "history-view-changes") {
-      onAction("open-module", {
-        moduleId: "changes",
-        taskId: "changes/overview",
-      });
+      backToChanges();
       return;
     }
     if (action === "history/load-more") {
@@ -419,6 +474,26 @@
     <p class="history-filter-hint">
       修订搜索仅在已加载结果内筛选，不会向仓库请求；需要更早修订时，请用下方的条件表单发起新的只读请求。
     </p>
+    <!-- V020-R10：行右键单文件历史横幅——目标文件、失效原因与返回来源列表入口；
+      快照刷新只更新文本，不移动焦点。 -->
+    {#if safeFileTarget}
+      <div
+        class={safeFileTarget.notice ? "notice notice--warning" : "notice"}
+        role="status"
+        data-testid="history-file-target"
+      >
+        <span class="codicon codicon-history" aria-hidden="true"></span>
+        <span
+          >{#if safeFileTarget.notice}{safeFileTarget.notice}{:else}当前为单文件历史：{safeFileTarget.relativePath}；文件级
+            blame 与恢复可用。{/if}</span
+        >
+        <button
+          type="button"
+          class="button button--secondary"
+          onclick={backToChanges}>返回本地修改</button
+        >
+      </div>
+    {/if}
     <details class="history-load-conditions">
       <summary>按条件加载更早修订</summary>
       <div class="history-load-conditions__fields">
@@ -493,6 +568,20 @@
       <p>
         条件只限制本次只读历史请求，不改变当前范围；条件变化后会从首批重新读取。加载期间可使用页面顶部的“取消”。
       </p>
+      {#if queryError}
+        <p class="history-query-error" role="alert">{queryError}</p>
+      {/if}
+      <div class="history-load-conditions__actions">
+        <button
+          type="button"
+          class="button button--primary"
+          data-history-query
+          onclick={requestHistoryQuery}>按条件查询</button
+        >
+        <span class="history-load-conditions__hint"
+          >新查询从首批重新读取；取消或失败保留上一成功结果与输入。</span
+        >
+      </div>
     </details>
     <!-- v0.1.5 V015-B2：比较栏→PrimaryActionBar（唯一 primary + 数量口径一致；修订不可变，不接 stale）。 -->
     <PrimaryActionBar

@@ -144,17 +144,33 @@
     });
   }
 
-  /** 全部条目（分组 + 未分组）按筛选与排序组织成节；折叠的分组不渲染。 */
+  /**
+   * V020-R04：筛选谓词（搜索 + 只看已选），与分组折叠正交。
+   * 折叠只影响渲染行，不改变匹配集合定义。
+   */
+  function matchesEntry(entry: ChangelistGroupFileView): boolean {
+    if (
+      onlySelected &&
+      (!entry.selectionKey || !selected.has(entry.selectionKey))
+    ) {
+      return false;
+    }
+    return matchesFileQuery(entry, query);
+  }
+
+  /**
+   * V020-R04：当前匹配集合（忽略折叠与排序，只看筛选）。
+   * 隐藏选择计数、清除隐藏、选择当前筛选均以它为准；
+   * 全量候选刷新求交仍用 allEntries()，两者语义分离。
+   */
+  const matchedEntries = $derived.by(() => [
+    ...snapshot.groups.flatMap((group) => group.files.filter(matchesEntry)),
+    ...snapshot.unassigned.filter(matchesEntry),
+  ]);
+
+  /** 全部条目按筛选与排序组织成节；折叠的分组不渲染，但仍计入匹配集合。 */
   const sections = $derived.by(() => {
-    const filterEntry = (entry: ChangelistGroupFileView): boolean => {
-      if (
-        onlySelected &&
-        (!entry.selectionKey || !selected.has(entry.selectionKey))
-      ) {
-        return false;
-      }
-      return matchesFileQuery(entry, query);
-    };
+    const filterEntry = matchesEntry;
     const result: ListSection[] = [];
     let start = 0;
     for (const group of snapshot.groups) {
@@ -186,9 +202,12 @@
     return result;
   });
 
-  /** 展开节内的扁平行序列（键盘导航的活动行索引空间）。 */
+  /**
+   * 渲染行（匹配集合减去折叠分组，含排序）：键盘导航、活动行索引、
+   * Shift 范围选择的索引空间。筛选定义以 matchedEntries 为准，不随折叠变化。
+   */
   const allRows = $derived(sections.flatMap((section) => section.entries));
-  const matchedCount = $derived(allRows.length);
+  const matchedCount = $derived(matchedEntries.length);
 
   const pathByKey = $derived.by(() => {
     const map = new SvelteMap<SelectionKey, string>();
@@ -198,7 +217,7 @@
     return map;
   });
 
-  /** 不受筛选影响的全量条目（隐藏选择计数与刷新交集使用）。 */
+  /** 不受筛选/折叠影响的全量候选（路径查表与刷新合法交集使用）。 */
   function allEntries(): ChangelistGroupFileView[] {
     return [
       ...snapshot.groups.flatMap((group) => group.files),
@@ -225,10 +244,11 @@
     );
   }
 
-  const filteredSelectable = $derived(toSelectable(allRows));
+  /** V020-R04：当前筛选可操作项基于匹配集合（含折叠但匹配的项），与渲染行分离。 */
+  const filteredSelectable = $derived(toSelectable(matchedEntries));
   const actionableCount = $derived(actionableKeys(filteredSelectable).size);
   const hiddenCount = $derived(
-    hiddenSelectionKeys(toSelectable(allEntries()), selected).size,
+    hiddenSelectionKeys(toSelectable(matchedEntries), selected).size,
   );
 
   /** 已选且属于某个变更集的路径（移出动作的作用范围）。 */
@@ -294,6 +314,8 @@
   const list = useFileList<ChangelistGroupFileView>({
     rows: () => allRows,
     rowHeight: () => 44,
+    // 中文注释：V020-R16 锚点稳定身份；无身份键的行不可选，不参与锚点。
+    keyOf: (entry) => entry.selectionKey,
     onPathDetailRequest: (relativePath) =>
       onAction("file/path-detail", { relativePath }),
     onActivate: (entry) =>
@@ -426,8 +448,63 @@
     if (changelistReceipt) assistanceExpanded = true;
   });
   // v0.0.14 批次 D：变更集应用意向单
-  let changelistIntentOpen = $state(false);
   let changelistTriggerEl = $state<HTMLElement | null>(null);
+  let changelistIntentOpen = $state(false);
+  /*
+   * V020-R08：方案漂移追踪——预览后改名、删应用栏文件、改目标组
+   * 只改变本地状态，旧预览必须立即只读并关闭执行入口。
+   * 移出类预览（remove=true）无编辑器方案，直接以预览路径为准，
+   * 不受名称/应用栏编辑影响，仍由 Host 绑定复验。
+   */
+  const previewPlanChanged = $derived.by(() => {
+    const preview = snapshot.preview;
+    if (!preview || preview.remove) return false;
+    if ((name ?? "").trim() !== (preview.name ?? "").trim()) return true;
+    const current = [...applyPaths].sort();
+    const previewPaths = [...preview.paths].sort();
+    if (current.length !== previewPaths.length) return true;
+    return current.some((path, index) => path !== previewPaths[index]);
+  });
+  /*
+   * V020-R08：旧响应晚到不得恢复旧预览可执行状态——只承认最新到达
+   * 的预览令牌；携带旧令牌的延迟快照一律只读。
+   */
+  let seenPreviewTokens = $state<string[]>([]);
+  $effect(() => {
+    const token = snapshot.preview?.token;
+    if (token && !seenPreviewTokens.includes(token)) {
+      seenPreviewTokens = [...seenPreviewTokens, token];
+    }
+  });
+  const newestPreviewToken = $derived(
+    seenPreviewTokens[seenPreviewTokens.length - 1],
+  );
+  const isLatePreview = $derived(
+    Boolean(snapshot.preview?.token) &&
+      snapshot.preview?.token !== newestPreviewToken,
+  );
+  const previewStale = $derived(previewPlanChanged || isLatePreview);
+
+  /**
+   * V020-R08：按用户当前看到的方案重新预览，新预览产生新令牌。
+   * 应用类用编辑器中的名称/路径；移出类沿用预览自身的路径集合。
+   */
+  function repreviewCurrentPlan(): void {
+    const current = snapshot.preview;
+    if (!current) return;
+    if (current.remove) {
+      onAction("changelist/preview-apply", {
+        remove: true,
+        paths: current.paths,
+      });
+    } else {
+      onAction("changelist/preview-apply", {
+        name,
+        paths: applyPaths,
+        remove: false,
+      });
+    }
+  }
   const changelistIntent = $derived.by(() => {
     const preview = snapshot.preview;
     if (!preview) return undefined;
@@ -450,7 +527,7 @@
       canExecute: preview.canExecute,
       issues: preview.issues,
       commands: [preview.command],
-      stale: false,
+      stale: previewStale,
     };
   });
 
@@ -696,7 +773,7 @@
         onToggleOnlySelected={() => (onlySelected = !onlySelected)}
         onClearHidden={() =>
           (selected = clearHiddenSelection(
-            toSelectable(allEntries()),
+            toSelectable(matchedEntries),
             selected,
           ))}
         onClearAll={() => (selected = emptySelection())}
@@ -998,9 +1075,19 @@
             >
               {issue}
             </div>{/each}
+          {#if previewStale}
+            <div class="notice notice--warning" role="alert">
+              方案已更改，旧预览已只读失效，不能凭旧确认继续执行。请重新生成预览后再确认。
+            </div>
+            <button
+              class="button button--secondary commit-button"
+              onclick={repreviewCurrentPlan}>重新生成预览</button
+            >
+          {/if}
           <button
             class="button button--primary commit-button"
-            disabled={!snapshot.preview.canExecute}
+            disabled={!snapshot.preview.canExecute || previewStale}
+            title={previewStale ? "方案已更改，请重新生成预览" : undefined}
             onclick={(event) => {
               changelistTriggerEl = event.currentTarget as HTMLElement;
               changelistIntentOpen = true;
@@ -1022,18 +1109,31 @@
             {pathDetail}
             onConfirm={(token) => {
               changelistIntentOpen = false;
-              onAction("changelist/execute-apply", { previewToken: token });
+              // V020-R08：确认时回传用户当前看到的最终方案，Host 比对
+              // 保存的方案指纹，不一致则旧 token 不得执行。
+              const current = snapshot.preview;
+              if (!current) return;
+              if (current.remove) {
+                onAction("changelist/execute-apply", {
+                  previewToken: token,
+                  remove: true,
+                  paths: current.paths,
+                });
+              } else {
+                onAction("changelist/execute-apply", {
+                  previewToken: token,
+                  name,
+                  paths: applyPaths,
+                  remove: false,
+                });
+              }
             }}
             onCancel={() => (changelistIntentOpen = false)}
             onRecheck={() => {
               changelistIntentOpen = false;
-              const current = snapshot.preview;
-              if (!current) return;
-              onAction("changelist/preview-apply", {
-                name: current.name,
-                paths: current.paths,
-                remove: current.remove,
-              });
+              // V020-R08：重新检查按当前方案生成新预览（新令牌），
+              // 不沿用已失效的旧预览内容。
+              repreviewCurrentPlan();
             }}
           />
         </div>

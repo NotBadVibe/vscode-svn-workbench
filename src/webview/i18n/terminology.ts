@@ -276,9 +276,14 @@ export function diffHunkPositionLabel(current: number, total: number): string {
 export const whitespaceLabels = {
   showWhitespace: "显示空白字符",
   showWhitespaceHint:
-    "仅改变渲染层呈现（图例与备用视图符号），不改变文件内容与最终文本。",
+    "仅改变渲染层呈现（图例、定位器预览与备用视图符号），不改变文件内容与最终文本；主代码区底座不支持逐字符符号。",
   showWhitespaceLegend:
-    "空白字符图例：空格 · ／制表符 → ／行尾 ↵（仅渲染层标记，最终文本不受影响）。",
+    "空白字符图例：空格 · ／制表符 → ／行尾 ↵（仅渲染层标记，最终文本不受影响；主代码区底座不支持逐字符符号，完整符号见备用视图与定位器预览）。",
+  showWhitespaceMainLimit:
+    "主代码区底座不支持逐字符空白符号；此处仅图例与定位器预览，完整符号见备用视图。",
+  showBlocksPatch:
+    "修订比较（Patch 文本）不支持显示空白字符：符号会破坏 @@/Index 行。",
+  showBlocksBinary: "二进制文件不支持显示空白字符。",
   ignoreWhitespace: "忽略空白差异",
   ignoreWhitespaceHint:
     "只改变比较呈现：归一化文本仅用于差异渲染与块导航，草稿、保存与导出始终使用原始文本。",
@@ -290,6 +295,12 @@ export const whitespaceLabels = {
     "页内编辑期间仅显示原始文本比较，请先回到审阅再切换忽略空白。",
   patchBlocksIgnore: "修订比较暂不支持忽略空白差异。",
   binaryBlocksIgnore: "二进制文件不支持忽略空白差异。",
+  markWhitespaceOnly: "标记纯空白块",
+  markWhitespaceOnlyHint:
+    "仅标注纯空白冲突块（定位器○与计数），不改变冲突标记、行号与内容哈希；纯空白冲突仍需人工处理与 Resolve 确认，不自动解决。",
+  markWhitespaceBanner: "冲突视图：已标记纯空白块",
+  markWhitespaceManualNote:
+    "纯空白冲突仍需人工处理与 Resolve 确认；标记不改变冲突状态。",
 } as const;
 
 /** V018-D 定位器忽略计数（参数化标签，页面不各自拼字符串）。 */
@@ -320,6 +331,26 @@ export const overviewLabels = {
 export function overviewGateHint(count: number, threshold: number): string {
   return `共 ${count} 块，超过 ${threshold} 块阈值，定位器已默认收起；展开后导航可能较慢（实测 100 块约 132ms、500 块约 1340ms）。`;
 }
+
+/**
+ * V020-R09：Diff 比较种类标题与基线文案。
+ * 历史比较双侧只读；本地文件动作仅 working-copy 可用。
+ */
+export const diffCompareLabels = {
+  /** 本地比较基线（含语言后缀由调用方拼接，沿用既有标题格式）。 */
+  workingCopyBaseline: (language: string): string =>
+    `BASE ↔ 工作副本 · ${language}`,
+  /** 历史比较基线（左右修订缺省时退化为只读声明）。 */
+  revisionBaseline: (left?: string, right?: string): string =>
+    left && right ? `r${left} → r${right}（只读）` : "历史修订比较（只读）",
+  readOnlyBaseline: "历史修订比较（只读）",
+  unknownRevisionTitle: "修订比较",
+  /** 修订比较只读声明（页内编辑不支持的中文原因）。 */
+  revisionReadOnlyEditReason:
+    "修订比较为双侧只读，不支持页内编辑；请从工作副本打开差异后编辑。",
+  /** 空修订比较（无文本差异）的中文说明。 */
+  emptyRevisionCompare: "所选修订之间没有文本差异。",
+} as const;
 
 /** 差异渲染组件失败时的中文降级提示。 */
 export const diffFallbackNotices = {
@@ -373,6 +404,19 @@ export function updateConfirmLabel(remoteCount?: number): string {
     ? `确认更新（${remoteCount}）`
     : "确认更新当前范围";
 }
+
+/**
+ * V020-R12：冲突普通文件出口统一命名。VS Code 编辑器出口与真实外部合并
+ * 工具预览/确认链（“在外部合并工具中打开”）区分，不生造同义文案。
+ */
+export const openInVscodeEditorLabel = "在 VS Code 编辑器中打开";
+
+/**
+ * V020-R13：更新结果出口——查看本地修改（进入 Changes）与返回本地修改列表
+ *（范围列表回退；无有效来源编辑器时不承诺“返回编辑”）。
+ */
+export const updateViewLocalChangesLabel = "查看本地修改";
+export const updateBackToScopeListLabel = "返回本地修改列表";
 
 /**
  * v0.1.5 V015-D1：ScopeBar 数量口径——写操作页面（Commit/Update 预览态）

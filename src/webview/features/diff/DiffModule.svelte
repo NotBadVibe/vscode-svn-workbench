@@ -14,7 +14,9 @@
   import DiffView from "./DiffView.svelte";
   import DiffOverview from "./DiffOverview.svelte";
   import FilePathDetail from "../../components/svn/FilePathDetail.svelte";
+  import { resolveDiffCompare } from "./diffCompare";
   import {
+    diffCompareLabels,
     diffFallbackNotices,
     diffHunkPositionLabel,
     diffViewLabels,
@@ -24,6 +26,8 @@
   import { buildDiffOverviewBlocks } from "./diffOverviewModel";
   import {
     canToggleIgnoreWhitespace,
+    canToggleShowWhitespace,
+    expandWhitespaceForPreview,
     normalizeTextForCompare,
     segmentLineWhitespace,
     splitHunksByWhitespace,
@@ -123,8 +127,14 @@
   let diffStyleBeforeEdit = $state<"unified" | "split" | undefined>();
 
   // ---- v0.0.6 编辑态 ----
+  /**
+   * V020-R09：比较身份（标题/基线/动作门控）。
+   * 历史比较双侧只读；无 targetPath 时不得发起路径操作（防虚构路径）。
+   */
+  const compare = $derived(resolveDiffCompare(snapshot));
   const canEdit = $derived(
-    snapshot.edit?.supported === true &&
+    !compare.isReadOnly &&
+      snapshot.edit?.supported === true &&
       snapshot.language !== "diff" &&
       !snapshot.binary &&
       !snapshot.truncated,
@@ -200,6 +210,24 @@
           ? whitespaceLabels.binaryBlocksIgnore
           : undefined,
   );
+  /**
+   * V020-R11：显示空白字符的门控。底座 FileDiff/patch 直渲无逐字符符号 API，
+   * 修订比较与二进制禁用并解释；普通/编辑主视图允许保持（受限：图例+定位器
+   * 预览+备用 pre 符号，不向 pierre 文本注入符号）。
+   */
+  const showToggle = $derived(
+    canToggleShowWhitespace({
+      isPatch: snapshot.language === "diff",
+      binary: snapshot.binary,
+    }),
+  );
+  const showBlockReasonText = $derived(
+    showToggle.reason === "patch"
+      ? whitespaceLabels.showBlocksPatch
+      : showToggle.reason === "binary"
+        ? whitespaceLabels.showBlocksBinary
+        : undefined,
+  );
   /** 展示态差异块：忽略空白时滤除纯空白块（单次 LCS，不过滤即原样）。 */
   const whitespaceSplit = $derived(
     ignoreWhitespace && ignoreToggle.allowed
@@ -228,6 +256,26 @@
   const overviewBlocks = $derived(buildDiffOverviewBlocks(displayHunks));
   const overviewTotalLines = $derived(
     Math.max(1, displayModified.split("\n").length),
+  );
+  /**
+   * V020-R11：主视图可观察的空白预览。底座主代码不支持逐字符号时，开关前后
+   * 仍需可观察：取首个含空格/Tab 的展示行展开为 ·/→（仅提示用，不写回内容）。
+   */
+  const whitespacePreviewLine = $derived(
+    ((): string | undefined => {
+      if (!showWhitespace || !showToggle.allowed || snapshot.binary)
+        return undefined;
+      const candidates =
+        displayHunks.length > 0
+          ? displayHunks.flatMap((hunk) => [...hunk.oldLines, ...hunk.newLines])
+          : snapshot.modified.split("\n");
+      const found = candidates.find(
+        (line) => line.includes(" ") || line.includes("\t"),
+      );
+      return found === undefined
+        ? undefined
+        : expandWhitespaceForPreview(found.slice(0, 80));
+    })(),
   );
   /** v0.1.0：保存进行中与上次保存时间（状态不只靠颜色）。 */
   let saving = $state(false);
@@ -512,9 +560,10 @@
     }
   }
 
-  // 目标切换后从头开始导航并清除首尾提示。
+  // 目标切换后从头开始导航并清除首尾提示（V020-R09：按展示身份，
+  // 同文件不同修订也视为新目标）。
   $effect(() => {
-    void snapshot.relativePath;
+    void compare.heading;
     navIndex = 0;
     navBoundary = undefined;
   });
@@ -525,6 +574,12 @@
     ignoreWhitespace = !ignoreWhitespace;
     navIndex = 0;
     navBoundary = undefined;
+  }
+
+  // V020-R11：显示空白字符仅为渲染层开关（不改变传入 FileDiff 的文本）。
+  function toggleShowWhitespace(): void {
+    if (!showToggle.allowed) return;
+    showWhitespace = !showWhitespace;
   }
 
   /**
@@ -693,14 +748,14 @@
   class:show-whitespace={showWhitespace}
   data-show-whitespace={showWhitespace ? "true" : "false"}
   tabindex="-1"
-  aria-label={`差异：${snapshot.relativePath}`}
+  aria-label={`差异：${compare.heading}`}
 >
   <div class="feature-toolbar">
     <div class="file-title">
       <span class="codicon codicon-diff" aria-hidden="true"></span>
       <div>
-        <strong>{snapshot.relativePath}</strong>
-        <span>BASE ↔ 工作副本 · {snapshot.language}</span>
+        <strong>{compare.heading}</strong>
+        <span>{compare.baseline}</span>
         {#if editing}
           <span class="edit-mode-badge" role="status"
             >{diffViewLabels.editingBadge}</span
@@ -709,33 +764,45 @@
       </div>
     </div>
     <div class="toolbar-actions">
-      <!-- v0.0.10：复用共享路径操作（复制、路径详情、仓库定位）。 -->
-      <button
-        class="icon-button icon-button--small"
-        aria-label={`复制路径 ${snapshot.relativePath}`}
-        title="复制路径"
-        onclick={() => onAction("copy-text", { text: snapshot.relativePath })}
-        ><span class="codicon codicon-copy" aria-hidden="true"></span></button
-      >
-      <button
-        class="icon-button icon-button--small"
-        aria-label={`查看 ${snapshot.relativePath} 路径详情`}
-        title="路径详情"
-        onclick={(event) => {
-          pathDetailTrigger = event.currentTarget;
-          onAction("file/path-detail", { relativePath: snapshot.relativePath });
-        }}><span class="codicon codicon-info" aria-hidden="true"></span></button
-      >
-      <button
-        class="icon-button icon-button--small"
-        aria-label={`在仓库浏览器中显示 ${snapshot.relativePath}`}
-        title="在仓库浏览器中显示"
-        onclick={() =>
-          onAction("changes/show-in-repository", {
-            relativePath: snapshot.relativePath,
-          })}
-        ><span class="codicon codicon-repo" aria-hidden="true"></span></button
-      >
+      <!--
+        v0.0.10 共享路径操作 + V020-R09 身份门控：
+        复制路径需真实单文件身份；路径详情/仓库定位仅本地比较可用。
+        无 targetPath（范围 Patch、空/二进制/截断的历史比较）不渲染，
+        避免把拼接标题当成本地路径发起虚构路径操作。
+      -->
+      {#if compare.showPathCopy && compare.targetPath}
+        <button
+          class="icon-button icon-button--small"
+          aria-label={`复制路径 ${compare.targetPath}`}
+          title="复制路径"
+          onclick={() => onAction("copy-text", { text: compare.targetPath })}
+          ><span class="codicon codicon-copy" aria-hidden="true"></span></button
+        >
+      {/if}
+      {#if compare.showLocalActions && compare.targetPath}
+        <button
+          class="icon-button icon-button--small"
+          aria-label={`查看 ${compare.targetPath} 路径详情`}
+          title="路径详情"
+          onclick={(event) => {
+            pathDetailTrigger = event.currentTarget;
+            onAction("file/path-detail", {
+              relativePath: compare.targetPath,
+            });
+          }}
+          ><span class="codicon codicon-info" aria-hidden="true"></span></button
+        >
+        <button
+          class="icon-button icon-button--small"
+          aria-label={`在仓库浏览器中显示 ${compare.targetPath}`}
+          title="在仓库浏览器中显示"
+          onclick={() =>
+            onAction("changes/show-in-repository", {
+              relativePath: compare.targetPath,
+            })}
+          ><span class="codicon codicon-repo" aria-hidden="true"></span></button
+        >
+      {/if}
       {#if !snapshot.binary}
         <!-- v0.1.0：差异块导航（只读与编辑态一致；首尾给出非阻塞反馈）。 -->
         <div
@@ -839,17 +906,28 @@
                 />
                 {diffViewLabels.expandUnchangedLabel}
               </label>
-              <!-- V018-D：显示空白字符（纯渲染层，可在编辑态保持开启）。 -->
+              <!--
+                V020-R11：显示空白字符（纯渲染层，可在编辑态保持开启）。
+                底座主代码无逐字符号 API：普通视图受限（图例+定位器+备用符号），
+                修订比较/二进制禁用并解释。
+              -->
               <label
                 class="diff-view-settings-option"
-                title={whitespaceLabels.showWhitespaceHint}
+                title={showBlockReasonText ??
+                  whitespaceLabels.showWhitespaceHint}
               >
                 <input
                   type="checkbox"
                   checked={showWhitespace}
-                  onchange={() => (showWhitespace = !showWhitespace)}
+                  disabled={!showToggle.allowed}
+                  onchange={toggleShowWhitespace}
                 />
                 {whitespaceLabels.showWhitespace}
+                {#if showBlockReasonText}
+                  <span class="diff-view-settings-hint"
+                    >{showBlockReasonText}</span
+                  >
+                {/if}
               </label>
               <!--
                 V018-D：忽略空白差异（只改变比较呈现）。只读可直接切换；
@@ -926,37 +1004,39 @@
           >
         {/if}
       {/if}
-      {#if snapshot.language !== "diff"}
+      {#if compare.showLocalActions && compare.targetPath}
+        {#if snapshot.language !== "diff"}
+          <button
+            class="button button--secondary"
+            disabled={snapshot.binary || snapshot.truncated}
+            title={snapshot.binary
+              ? "二进制文件不支持文本对比"
+              : snapshot.truncated
+                ? "超过 5 MB 的文件不支持原生对比"
+                : undefined}
+            onclick={() => onAction("diff/open-in-editor")}
+          >
+            在编辑器中对比
+          </button>
+        {/if}
         <button
           class="button button--secondary"
-          disabled={snapshot.binary || snapshot.truncated}
-          title={snapshot.binary
-            ? "二进制文件不支持文本对比"
-            : snapshot.truncated
-              ? "超过 5 MB 的文件不支持原生对比"
-              : undefined}
-          onclick={() => onAction("diff/open-in-editor")}
+          onclick={() =>
+            onAction("open-file", { relativePath: compare.targetPath })}
         >
-          在编辑器中对比
+          在编辑器中打开
+        </button>
+        <button
+          class="button button--secondary"
+          onclick={() =>
+            onAction("open-module", {
+              moduleId: "commit",
+              selectedPaths: [compare.targetPath],
+            })}
+        >
+          提交此文件
         </button>
       {/if}
-      <button
-        class="button button--secondary"
-        onclick={() =>
-          onAction("open-file", { relativePath: snapshot.relativePath })}
-      >
-        在编辑器中打开
-      </button>
-      <button
-        class="button button--secondary"
-        onclick={() =>
-          onAction("open-module", {
-            moduleId: "commit",
-            selectedPaths: [snapshot.relativePath],
-          })}
-      >
-        提交此文件
-      </button>
       <!--
         V014-C2 · 返回本地修改：回到 Changes 唯一主路径（不新建全局导航
         Rail）；返回后的选择/活动行/滚动恢复由 Changes 消费 continuityRestore
@@ -1018,10 +1098,22 @@
     </div>
   {/if}
 
-  {#if showWhitespace}
+  {#if showWhitespace && showToggle.allowed}
     <div class="notice" role="status" data-testid="show-whitespace-legend">
       <span class="codicon codicon-symbol-misc" aria-hidden="true"></span>
       <span>{whitespaceLabels.showWhitespaceLegend}</span>
+    </div>
+    <div class="notice" role="status" data-testid="show-whitespace-detail">
+      <span class="codicon codicon-symbol-misc" aria-hidden="true"></span>
+      <span>
+        {whitespaceLabels.showWhitespaceMainLimit}
+        {#if whitespacePreviewLine}
+          （示例：<code>{whitespacePreviewLine}</code
+          >，仅提示用，最终文本不受影响）
+        {:else}
+          （当前视图无空格/制表符可展示，最终文本不受影响）
+        {/if}
+      </span>
     </div>
   {/if}
 
@@ -1149,6 +1241,13 @@
           <span class="codicon codicon-file-binary" aria-hidden="true"></span>
           <strong>二进制文件无法进行文本对比</strong>
           <p>可以在编辑器中打开文件，或查看 SVN 属性与历史。</p>
+        </div>
+      {:else if compare.isReadOnly && snapshot.modified.length === 0}
+        <!-- V020-R09：空修订比较（无文本差异），不提供路径操作。 -->
+        <div class="empty-state empty-state--large">
+          <span class="codicon codicon-diff" aria-hidden="true"></span>
+          <strong>{diffCompareLabels.emptyRevisionCompare}</strong>
+          <p>基线：{compare.baseline}。可返回历史重新选择修订。</p>
         </div>
       {:else if snapshot.language === "diff"}
         {#if pierreFailed}

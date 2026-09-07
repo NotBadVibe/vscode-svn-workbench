@@ -331,6 +331,31 @@ export interface ContinuityRestoreView {
   restoredAt: string;
 }
 
+/**
+ * V020-R09：Diff 比较种类。
+ * - working-copy：单文件 Working Copy ↔ BASE（唯一可编辑种类）；
+ * - revision-file：单文件历史 rA → rB（双侧只读，有真实单文件身份）；
+ * - revision-patch：范围 rA → rB patch（双侧只读，无单文件身份）。
+ */
+export type DiffCompareKind =
+  "working-copy" | "revision-file" | "revision-patch";
+
+/**
+ * V020-R09：Diff 展示身份（Host 签发，Webview 只展示不推导可写身份）。
+ * - title：标题行主文本（如真实路径或“修订比较 r41 → r42 · 2 个路径”）；
+ * - targetPath：真实单文件相对路径（仅 working-copy / revision-file 携带，
+ *   revision-patch 与空/二进制/截断/多路径快照必须缺省）；
+ * - leftRevision/rightRevision：左右基线（如 BASE/工作副本、r41/r42）。
+ */
+export interface DiffCompareView {
+  kind: DiffCompareKind;
+  title: string;
+  targetPath?: string;
+  leftRevision?: string;
+  rightRevision?: string;
+  pathCount?: number;
+}
+
 export interface DiffSnapshot {
   kind: "diff";
   relativePath: string;
@@ -340,6 +365,17 @@ export interface DiffSnapshot {
   truncated: boolean;
   binary: boolean;
   message?: string;
+  /**
+   * V020-R09：比较种类与展示身份（可选，向后兼容）。
+   * - working-copy：单文件 Working Copy ↔ BASE，可编辑；
+   * - revision-file：单文件 rA → rB，双侧只读；
+   * - revision-patch：范围 rA → rB patch，双侧只读，无单文件身份。
+   * 缺省的旧快照按保守规则派生（见 resolveDiffCompare）：language 为
+   * diff 视为 revision-patch（只读、无路径操作），其余视为 working-copy。
+   * relativePath 仅为展示文本；本地文件动作必须以 compare.targetPath
+   * 为准，缺省时不得发起路径操作（防虚构路径）。
+   */
+  compare?: DiffCompareView;
   /**
    * v0.0.6 页内编辑能力：supported=true 时 Webview 可切换编辑态并发起
    * diff/save-working；targetId 为 Host 签发的不透明标识，Webview 不接触
@@ -728,6 +764,14 @@ export interface HistorySnapshot {
    */
   hasMore?: boolean;
   fileActionsAvailable: boolean;
+  /**
+   * V020-R10：行右键定位的单文件历史目标（Host 在原 scope 内复验后写入）。
+   * 缺省表示目录范围历史；notice 存在时目标已失效（显示目录历史并提供返回入口）。
+   */
+  fileTarget?: {
+    relativePath: string;
+    notice?: string;
+  };
   blame?: Array<{
     line: number;
     revision: string;
@@ -1317,6 +1361,16 @@ export interface ChangelistsSnapshot {
     command: string;
     canExecute: boolean;
     issues: string[];
+    /**
+     * V020-R08：预览生成时的绑定（Webview 自检 stale 用，向后兼容可选）。
+     * Host 执行前复验仍以会话权威状态与保存的方案指纹为准，
+     * 不信任 Webview 回传。
+     */
+    scopeHash?: string;
+    candidateHash?: string;
+    repositoryUuid?: string;
+    /** 方案指纹（名称 + 方向 + 排序后路径，见 changelistPlan.ts）。 */
+    planHash?: string;
   };
   feedback?: string;
   /**
@@ -1593,6 +1647,7 @@ export type WebviewAction =
   | "history/select"
   | "history/compare"
   | "history/blame"
+  | "history/query"
   | "history/load-more"
   | "history/preview-restore"
   | "history/execute-restore"
@@ -1743,6 +1798,7 @@ export const webviewActions = [
   "history/select",
   "history/compare",
   "history/blame",
+  "history/query",
   "history/load-more",
   "history/preview-restore",
   "history/execute-restore",
@@ -2061,6 +2117,138 @@ export function isExternalMergeView(
     }
   }
   if (value.feedback !== undefined && typeof value.feedback !== "string") {
+    return false;
+  }
+  return true;
+}
+
+export function isDiffCompareView(value: unknown): value is DiffCompareView {
+  if (!isRecord(value)) {
+    return false;
+  }
+  if (
+    (value.kind !== "working-copy" &&
+      value.kind !== "revision-file" &&
+      value.kind !== "revision-patch") ||
+    typeof value.title !== "string" ||
+    value.title.length === 0
+  ) {
+    return false;
+  }
+  if (
+    (value.targetPath !== undefined &&
+      (typeof value.targetPath !== "string" ||
+        value.targetPath.length === 0)) ||
+    (value.leftRevision !== undefined &&
+      typeof value.leftRevision !== "string") ||
+    (value.rightRevision !== undefined &&
+      typeof value.rightRevision !== "string") ||
+    (value.pathCount !== undefined &&
+      (typeof value.pathCount !== "number" ||
+        !Number.isFinite(value.pathCount)))
+  ) {
+    return false;
+  }
+  // revision-patch 无单文件身份：携带 targetPath 视为非法（防虚构路径）。
+  if (value.kind === "revision-patch" && value.targetPath !== undefined) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * V020-R09：DiffSnapshot 类型守卫（Host/Webview/Mock 共用）。
+ * 无 compare 的旧快照继续接受（向后兼容，Webview 按保守规则派生）；
+ * 携带时必须通过 isDiffCompareView，否则整快照拒绝。
+ */
+export function isDiffSnapshot(value: unknown): value is DiffSnapshot {
+  if (!isRecord(value)) {
+    return false;
+  }
+  if (
+    value.kind !== "diff" ||
+    typeof value.relativePath !== "string" ||
+    typeof value.original !== "string" ||
+    typeof value.modified !== "string" ||
+    typeof value.language !== "string" ||
+    typeof value.truncated !== "boolean" ||
+    typeof value.binary !== "boolean"
+  ) {
+    return false;
+  }
+  if (value.compare !== undefined && !isDiffCompareView(value.compare)) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * V020-R05：HistoryQueryView 类型守卫（Host/Webview/Mock 共用）。
+ * 全部字段可选，缺省即合法（空条件/旧载荷兼容）；携带的字段必须为 string，
+ * number/对象/数组/null 等一律拒绝（fail-closed，调用方按无条件处理）。
+ * 语义校验（修订号倒置、日期非法）仍由 normalizeSvnHistoryQuery 负责。
+ */
+export function isHistoryQueryView(value: unknown): value is HistoryQueryView {
+  if (!isRecord(value)) {
+    return false;
+  }
+  return (
+    (value.revisionFrom === undefined ||
+      typeof value.revisionFrom === "string") &&
+    (value.revisionTo === undefined || typeof value.revisionTo === "string") &&
+    (value.author === undefined || typeof value.author === "string") &&
+    (value.dateFrom === undefined || typeof value.dateFrom === "string") &&
+    (value.dateTo === undefined || typeof value.dateTo === "string")
+  );
+}
+
+/**
+ * V020-R10：HistorySnapshot.fileTarget 类型守卫（Host/Webview/Mock 共用）。
+ * relativePath 必填且为非空 string；notice 缺省合法，携带时必须为 string。
+ * 畸形载荷（如 relativePath=42）一律拒绝（fail-closed，调用方按目录历史处理）。
+ */
+export function isFileTargetView(
+  value: unknown,
+): value is NonNullable<HistorySnapshot["fileTarget"]> {
+  if (!isRecord(value)) {
+    return false;
+  }
+  if (
+    typeof value.relativePath !== "string" ||
+    value.relativePath.length === 0
+  ) {
+    return false;
+  }
+  if (value.notice !== undefined && typeof value.notice !== "string") {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * V020-R05/R10：HistorySnapshot 类型守卫（Host/Webview/Mock 共用）。
+ * 无 query/fileTarget 的旧快照继续接受（向后兼容）；携带时必须分别通过
+ * isHistoryQueryView/isFileTargetView，否则整快照拒绝（fail-closed，
+ * 调用方按无条件/目录历史处理，保持现状，不扩大范围）。
+ */
+export function isHistorySnapshot(value: unknown): value is HistorySnapshot {
+  if (!isRecord(value)) {
+    return false;
+  }
+  if (
+    value.kind !== "history" ||
+    !Array.isArray(value.revisions) ||
+    !Array.isArray(value.compareRevisions) ||
+    typeof value.limit !== "number" ||
+    !Number.isFinite(value.limit) ||
+    typeof value.fileActionsAvailable !== "boolean"
+  ) {
+    return false;
+  }
+  if (value.query !== undefined && !isHistoryQueryView(value.query)) {
+    return false;
+  }
+  if (value.fileTarget !== undefined && !isFileTargetView(value.fileTarget)) {
     return false;
   }
   return true;

@@ -502,12 +502,12 @@
     },
     {
       "version": "0.2.0",
-      "status": "draft",
-      "phase": "planned",
+      "status": "released",
+      "phase": "released",
       "baseVersion": "0.1.8",
       "canonicalEntry": "releases/v0.2.0/README.md",
       "manifest": "releases/v0.2.0/manifest.json",
-      "releasedFact": false,
+      "releasedFact": true,
       "topics": [
         "draft-integrity",
         "selection-consistency",
@@ -584,7 +584,11 @@
       "canonicalEntry": "releases/v0.2.5/README.md",
       "manifest": "releases/v0.2.5/manifest.json",
       "releasedFact": false,
-      "topics": ["team-rule-preview", "local-grouping", "ai-input-scope"]
+      "topics": [
+        "team-rule-preview",
+        "local-grouping",
+        "ai-input-scope"
+      ]
     },
     {
       "version": "0.2.6",

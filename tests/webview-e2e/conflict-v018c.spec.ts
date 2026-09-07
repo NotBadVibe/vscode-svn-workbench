@@ -57,7 +57,7 @@ test.describe("V018-C 大冲突降级", () => {
     await expect(page.getByTestId("conflict-perf-mode")).toContainText(
       "简化编辑器",
     );
-    // 页面仍响应：外部工具出口可点击且只发 open-file
+    // 页面仍响应：外部工具出口可点击且只发预览请求（V020-R12 复用真实外部合并工具链）
     await page.getByTestId("open-external-perf").click();
     // 使用简化编辑器：切换后草稿提示保留
     await page.getByTestId("use-simplified-perf").click();

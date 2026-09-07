@@ -100,7 +100,19 @@ export interface WorkbenchSession extends OpenWorkbenchRequest {
     historyLimit?: number;
     /** v0.0.18 C-06：已应用于当前历史列表的只读查询条件。 */
     historyQuery?: HistoryQueryView;
+    /**
+     * V020-R05：历史只读请求单调序号；慢旧响应到达时与当前序号
+     * 不一致则丢弃，不覆盖新查询结果。
+     */
+    historyRequestSeq?: number;
     blame?: HistorySnapshot["blame"];
+    /**
+     * V020-R10：行右键定位的单文件历史目标（Host 在原 scope 内复验后写入）。
+     * scope 本身不变，仅收窄 svn log 查询；失效时改写 fileTargetNotice 并回退目录历史。
+     */
+    fileTarget?: { relativePath: string; absolutePath: string };
+    /** V020-R10：单文件目标失效时的中文原因（随快照下发，不抢焦点）。 */
+    fileTargetNotice?: string;
     restorePreview?: {
       token: string;
       contentHash: string;
@@ -258,6 +270,11 @@ export interface WorkbenchSession extends OpenWorkbenchRequest {
     preview?: {
       token: string;
       candidateHash: string;
+      /** V020-R08：预览生成时的范围/仓库绑定，执行前复验。 */
+      scopeHash: string;
+      repositoryUuid: string;
+      /** V020-R08：方案指纹（名称 + 方向 + 排序后路径），执行前复验最终方案。 */
+      planHash: string;
       name?: string;
       remove: boolean;
       paths: string[];

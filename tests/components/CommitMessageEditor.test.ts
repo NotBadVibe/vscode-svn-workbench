@@ -84,4 +84,24 @@ describe("CommitMessageEditor", () => {
     await fireEvent.keyDown(textarea, { key: "Enter" });
     expect(onPreviewRequest).toHaveBeenCalledTimes(1);
   });
+
+  /*
+   * V020-R02：输入框布局归属组件自身容器 `.commit-message-editor`，
+   * 不再依赖 v0.1.4 重构后已不存在的 `.commit-compose` 祖先类
+   * （global.css 该规则失效曾使 textarea 回退到 UA 默认小尺寸）。
+   * 本用例断言 DOM 归属契约；宽 100%/最小高 150px/纵向可调的像素级
+   * 证明由 tests/webview-e2e/v020r02-commit-editor-size.spec.ts
+   * 以真实视口盒模型断言（jsdom 不注入 Svelte scoped 样式）。
+   */
+  it("输入框挂在组件自身容器下，不依赖已失效的祖先类", () => {
+    const { container } = renderEditor();
+    const textarea = screen.getByLabelText("提交说明");
+    // 组件自身容器存在且直接承载输入框（布局归属本组件）。
+    const editor = textarea.closest(".commit-message-editor");
+    expect(editor).toBeTruthy();
+    // 渲染路径上不再出现已失效的祖先类（失效选择器无匹配）。
+    expect(container.querySelector(".commit-compose")).toBeNull();
+    // textarea 关键行为属性不受影响：2000 字符上限与可访问名称。
+    expect(textarea).toHaveAttribute("maxlength", "2000");
+  });
 });

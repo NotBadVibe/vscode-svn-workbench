@@ -75,14 +75,21 @@ describe("ConflictsModule V018-D 空白与定位器（§4.4）", () => {
       name: /显示空白字符/,
     });
     const ignoreBox = screen.getByRole("checkbox", {
-      name: /忽略空白差异/,
+      name: /标记纯空白块/,
     });
+    // 冲突视图如实说明底座限制与人工处理要求。
+    expect(
+      screen.getByText(/纯空白冲突仍需人工处理与 Resolve 确认/),
+    ).toBeInTheDocument();
     await fireEvent.click(showBox);
     expect(screen.getByTestId("show-whitespace-legend")).toBeInTheDocument();
+    expect(screen.getByTestId("show-whitespace-legend").textContent).toContain(
+      "主代码区底座不支持逐字符空白符号",
+    );
     await fireEvent.click(ignoreBox);
     const banner = screen.getByTestId("ignore-whitespace-banner");
-    expect(banner.textContent).toContain("已忽略空白差异");
-    expect(banner.textContent).toContain("最终文本不受影响");
+    expect(banner.textContent).toContain("已标记纯空白块");
+    expect(banner.textContent).toContain("仍需人工处理与 Resolve 确认");
 
     // 无 Host 写操作：无 save-working / resolve / draft-update 误发
     const actions = onAction.mock.calls.map((c) => String(c[0]));

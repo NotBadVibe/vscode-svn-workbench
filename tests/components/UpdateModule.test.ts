@@ -258,7 +258,7 @@ describe("UpdateModule", () => {
     ).toBeInTheDocument();
   });
 
-  it("V015-B2 结果出口：成功无冲突时查看本地修改与返回编辑透传", async () => {
+  it("V015-B2 结果出口：成功无冲突时查看本地修改与返回本地修改列表透传", async () => {
     const onAction = vi.fn();
     render(UpdateModule, {
       snapshot: updateSnapshot({
@@ -277,17 +277,27 @@ describe("UpdateModule", () => {
     await fireEvent.click(
       within(resultRegion).getByRole("button", { name: "查看本地修改" }),
     );
+    // V020-R13：查看本地修改进入 Changes，不再打开可能无差异的 Diff 页。
     expect(onAction).toHaveBeenCalledWith("open-module", {
-      moduleId: "diff",
-      taskId: "diff/working",
+      moduleId: "changes",
+      taskId: "changes/overview",
     });
     await fireEvent.click(
-      within(resultRegion).getByRole("button", { name: "返回编辑" }),
+      within(resultRegion).getByRole("button", { name: "返回本地修改列表" }),
     );
     expect(onAction).toHaveBeenCalledWith("open-module", {
       moduleId: "changes",
       taskId: "changes/overview",
     });
+    // V020-R13：结果动作只做只读路由，不额外发出写命令。
+    expect(onAction).not.toHaveBeenCalledWith(
+      "update/execute",
+      expect.anything(),
+    );
+    expect(onAction).not.toHaveBeenCalledWith(
+      "conflict/resolve",
+      expect.anything(),
+    );
   });
 
   it("V015-B2 结果出口：成功有冲突时主动作透传处理冲突", async () => {
@@ -397,7 +407,7 @@ describe("UpdateModule", () => {
     ).not.toBeInTheDocument();
     checked.unmount();
 
-    // 已完成（无冲突）：结果区主动作是查看本地修改/返回编辑，无空态、无确认更新。
+    // 已完成（无冲突）：结果区主动作是查看本地修改/返回本地修改列表，无空态、无确认更新。
     render(UpdateModule, {
       snapshot: updateSnapshot({
         result: {
@@ -416,8 +426,9 @@ describe("UpdateModule", () => {
     expect(
       within(resultRegion).getByRole("button", { name: "查看本地修改" }),
     ).toBeInTheDocument();
+    // V020-R13：无有效来源编辑器时不承诺“返回编辑”，以准确任务名称返回范围列表。
     expect(
-      within(resultRegion).getByRole("button", { name: "返回编辑" }),
+      within(resultRegion).getByRole("button", { name: "返回本地修改列表" }),
     ).toBeInTheDocument();
     expect(screen.queryByText("尚未生成更新预览")).not.toBeInTheDocument();
     expect(

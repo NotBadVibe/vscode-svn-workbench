@@ -61,10 +61,10 @@
     onBlockProgress?: (progress: { current: number; total: number }) => void;
     readonly?: boolean;
     /**
-     * V018-D 空白选项（v0.1.8 规划 §4.4）：纯呈现开关。
-     * - showWhitespace：渲染层图例，不改变挂载文本；
-     * - ignoreWhitespace：仅横幅标注 + 定位器状态，挂载文本恒为原始草稿，
-     *   identity/hash/草稿/undo 不受影响（切换不重建结果编辑器）。
+     * V018-D 空白选项（v0.1.8 规划 §4.4）+ V020-R11 准确命名：纯呈现开关。
+     * - showWhitespace：渲染层图例+定位器预览，不改变挂载文本（底座主代码无逐字符号 API）；
+     * - ignoreWhitespace（界面命名「标记纯空白块」）：仅横幅标注 + 定位器状态，挂载文本恒为原始草稿，
+     *   identity/hash/草稿/undo 不受影响（切换不重建结果编辑器），不自动 Resolve。
      */
     showWhitespace?: boolean;
     ignoreWhitespace?: boolean;
@@ -303,9 +303,9 @@
     >
       <span class="codicon codicon-info"></span>
       <span
-        >{whitespaceLabels.ignoreBanner}（{whitespaceIgnoredLabel(
+        >{whitespaceLabels.markWhitespaceBanner}（{whitespaceIgnoredLabel(
           ignoredWhitespaceCount ?? 0,
-        )}，最终文本不受影响）</span
+        )}，{whitespaceLabels.markWhitespaceManualNote}）</span
       >
     </div>
   {/if}
@@ -316,7 +316,10 @@
       data-testid="show-whitespace-legend"
     >
       <span class="codicon codicon-symbol-misc"></span>
-      <span>{whitespaceLabels.showWhitespaceLegend}</span>
+      <span
+        >{whitespaceLabels.showWhitespaceLegend}
+        {whitespaceLabels.showWhitespaceMainLimit}</span
+      >
     </div>
   {/if}
   <div class="conflict-roles" role="note" aria-label="冲突角色说明">

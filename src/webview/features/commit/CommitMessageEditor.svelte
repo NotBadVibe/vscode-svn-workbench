@@ -6,8 +6,14 @@
    *   `message` 由父模块权威持有（`bind:message`），本组件只做受控展示
    *   与事件透传（输入/失焦同步草稿、Ctrl/⌘+Enter 请求预览、模板套用）。
    * - 快捷键复用 `isExplicitSubmitShortcut`（IME 候选阶段 Enter 不触发）。
-   * - 样式沿用全局 `.template-row`/`.compose-meta`/`.issue-list`，
+   * - 样式沿用全局 `.template-row`/`.compose-meta`/`.issue-list`
+   *   （三者均为无祖先依赖选择器，抽组件后仍有效，已复核），
    *   本文件不声明全局 overflow。
+   * - V020-R02：输入框布局归属本组件自身（scoped `.commit-message-editor`
+   *   textarea：铺满可用宽度、最小高度 150px、纵向可调），不再依赖
+   *   v0.1.4 紧凑模式重构后已不存在的 `.commit-compose` 祖先类
+   *   （global.css `.commit-compose textarea` 规则因此失效，
+   *   textarea 回退到 UA 默认小尺寸）。
    */
   import { isExplicitSubmitShortcut } from "../../i18n/keyboard";
   import { commitMessageShortcutHint } from "../../i18n/shortcutHelp";
@@ -88,3 +94,34 @@
     </div>
   {/if}
 </div>
+
+<style>
+  /*
+   * V020-R02：输入框布局归属本组件自身，不依赖已不存在的
+   * `.commit-compose` 祖先类。取值与失效前的全局规则一致
+   * （宽 100%、最小高 150px、纵向可调），小高度时随页面滚动容器协调。
+   */
+  .commit-message-editor {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    width: 100%;
+  }
+  .commit-message-editor textarea {
+    width: 100%;
+    min-height: 150px;
+    box-sizing: border-box;
+    resize: vertical;
+    padding: 9px 10px;
+    border: 1px solid var(--vscode-input-border, var(--border));
+    border-radius: var(--radius-sm);
+    outline: 0;
+    color: var(--vscode-input-foreground, inherit);
+    background: var(--vscode-input-background, var(--surface-0));
+    font-family: var(--vscode-editor-font-family, monospace);
+    line-height: 1.5;
+  }
+  .commit-message-editor textarea:focus {
+    border-color: var(--border-strong);
+  }
+</style>

@@ -52,9 +52,9 @@ function buildSnapshot(
 }
 
 describe("ChangelistsModule", () => {
-  it("仅在预览通过后使用令牌应用", async () => {
+  it("仅在预览通过后使用令牌应用（确认携带最终方案）", async () => {
     const onAction = vi.fn();
-    const snapshot: ChangelistsSnapshot = {
+    const base: ChangelistsSnapshot = {
       kind: "changelists",
       source: "local-rule",
       aiPrivacy: {
@@ -63,21 +63,52 @@ describe("ChangelistsModule", () => {
         data: "metadata",
         historyIncluded: false,
       },
-      groups: [],
+      groups: [
+        {
+          name: "ui",
+          files: [groupFile("src/a.ts")],
+        },
+      ],
       unassigned: [],
       suggestions: [],
       warnings: [],
-      preview: {
-        token: "cl-1",
-        name: "ui",
-        remove: false,
-        paths: ["src/a.ts"],
-        command: 'svn changelist "ui" "src/a.ts"',
-        canExecute: true,
-        issues: [],
-      },
     };
-    render(ChangelistsModule, { snapshot, onAction });
+    const { rerender } = render(ChangelistsModule, {
+      snapshot: base,
+      onAction,
+    });
+    // 真实操作流：选文件→加入应用栏→命名→生成预览。
+    await fireEvent.click(
+      screen.getByRole("checkbox", { name: "选择 src/a.ts" }),
+    );
+    await fireEvent.click(
+      screen.getByRole("button", { name: "加入应用栏（1）" }),
+    );
+    await fireEvent.input(screen.getByRole("textbox", { name: "变更集名称" }), {
+      target: { value: "ui" },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "生成应用预览" }));
+    expect(onAction).toHaveBeenCalledWith("changelist/preview-apply", {
+      name: "ui",
+      paths: ["src/a.ts"],
+      remove: false,
+    });
+    // Host 下发与编辑器一致的新预览后可执行。
+    await rerender({
+      snapshot: {
+        ...base,
+        preview: {
+          token: "cl-1",
+          name: "ui",
+          remove: false,
+          paths: ["src/a.ts"],
+          command: 'svn changelist "ui" "src/a.ts"',
+          canExecute: true,
+          issues: [],
+        },
+      },
+      onAction,
+    });
     await fireEvent.click(
       screen.getByRole("button", { name: "确认应用变更集" }),
     );
@@ -92,8 +123,12 @@ describe("ChangelistsModule", () => {
       (b) => b.textContent?.includes("确认应用变更集"),
     ) as HTMLElement;
     await fireEvent.click(confirmInDialog);
+    // V020-R08：确认回传最终方案（名称/路径/方向），Host 比对方案指纹。
     expect(onAction).toHaveBeenCalledWith("changelist/execute-apply", {
       previewToken: "cl-1",
+      name: "ui",
+      paths: ["src/a.ts"],
+      remove: false,
     });
   });
 

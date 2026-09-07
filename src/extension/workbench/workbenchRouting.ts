@@ -44,13 +44,15 @@ export function assertServedModuleRequest(
   }
 }
 
-/** 跨模块窗口会话请求：保留源窗口的模块、任务、范围与所选路径。 */
+/** 跨模块窗口会话请求：保留源窗口的模块、任务、范围、所选路径与行目标文件。 */
 export function buildCrossModuleWindowRequest(input: {
   moduleId: WorkbenchModuleId;
   taskId: WorkbenchTaskId;
   svnPath: string;
   scope: OperationScope;
   selectedPaths?: string[];
+  /** V020-R10：行右键定位的目标文件绝对路径（目标窗口在原 scope 内复验）。 */
+  targetFile?: string;
 }): OpenWorkbenchRequest {
   return {
     moduleId: input.moduleId,
@@ -58,7 +60,21 @@ export function buildCrossModuleWindowRequest(input: {
     svnPath: input.svnPath,
     scope: input.scope,
     selectedPaths: input.selectedPaths,
+    targetFile: input.targetFile,
   };
+}
+
+/**
+ * V020-R10：行菜单携带的行目标（Webview `open-module` 的 `relativePath`）。
+ * 仅做字符串提取；范围复验由 Host 在原 scope 内完成，伪造路径 fail-closed。
+ */
+export function parseRowTargetRelativePath(
+  data: Record<string, unknown>,
+): string | undefined {
+  const value = data.relativePath ?? data.targetPath;
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }
 
 /** 转发给独立 Diff 窗口的会话请求（工作副本差异或修订比较）。 */
@@ -106,6 +122,7 @@ export function workbenchRevealTarget(
 /**
  * Diff 目标只在 Host 内判等；摘要不进入 Webview、URI 或日志。
  * 同目标再次显式打开时仅 reveal，避免重新初始化破坏阅读位置。
+ * V020-R09：修订对按升序归一后再摘要，r41/r42 与 r42/r41 视为同一目标。
  */
 export function buildDiffTargetKey(request: OpenWorkbenchRequest): string {
   return createHash("sha256")
@@ -118,7 +135,9 @@ export function buildDiffTargetKey(request: OpenWorkbenchRequest): string {
         targetFile: request.targetFile
           ? path.resolve(request.targetFile)
           : undefined,
-        revisions: request.revisionCompare?.revisions,
+        revisions: request.revisionCompare
+          ? orderRevisionPair(request.revisionCompare.revisions)
+          : undefined,
       }),
     )
     .digest("hex");

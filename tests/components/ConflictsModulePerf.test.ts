@@ -101,7 +101,7 @@ describe("ConflictsModule V018-C 降级链", () => {
     );
   }, 30000);
 
-  it("简化档：外部工具出口仅发起 open-file，不触发写操作", async () => {
+  it("简化档：外部工具出口复用真实外部合并工具预览链，不触发写操作", async () => {
     const onAction = vi.fn();
     const blocks = buildBlocks(10);
     const filler = Array.from(
@@ -114,8 +114,9 @@ describe("ConflictsModule V018-C 降级链", () => {
     });
     await screen.findByTestId("conflict-perf-summary");
     await fireEvent.click(screen.getByTestId("open-external-perf"));
+    // V020-R12：降级区与真正的外部合并工具入口走同一预览/确认链。
     expect(onAction).toHaveBeenCalledWith(
-      "open-file",
+      "conflict/preview-external-merge",
       expect.objectContaining({ relativePath: "src/a.ts" }),
     );
     expect(onAction).not.toHaveBeenCalledWith(

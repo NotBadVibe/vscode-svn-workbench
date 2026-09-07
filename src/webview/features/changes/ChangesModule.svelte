@@ -334,6 +334,8 @@
     rows: () => sortedFiles,
     rowHeight: () => rowHeight,
     virtualizeAfter,
+    // 中文注释：V020-R16 锚点稳定身份；筛选/排序后 Shift 范围按可见顺序解析。
+    keyOf: (file) => file.selectionKey,
     onPathDetailRequest: (relativePath) =>
       onAction("file/path-detail", { relativePath }),
     onActivate: (file) =>
@@ -1107,57 +1109,69 @@
                           list.requestPathDetail(file.relativePath, trigger)}
                       />
                     </span>
-                    <span class={`status-badge status-badge--${file.status}`}
-                      >{fileStatusLabels[file.status]}</span
-                    >
-                    <!-- v0.0.18 批次 B（C-05）：状态词键盘可达的就地解释。 -->
-                    <StatusExplanation
-                      term={fileStatusLabels[file.status]}
-                      explanation={statusExplanations[file.status]}
-                    />
-                    <span class="selection-note" title={file.reason}
-                      >{file.reason ??
-                        (file.selection
-                          ? selectionLabels[file.selection]
-                          : "—")}</span
-                    >
-                    {#if file.selection}
+                    <span class="file-row__status">
+                      <span class={`status-badge status-badge--${file.status}`}
+                        >{fileStatusLabels[file.status]}</span
+                      >
+                      <!-- v0.0.18 批次 B（C-05）：状态词键盘可达的就地解释（与状态徽标同列）。 -->
                       <StatusExplanation
-                        term={selectionLabels[file.selection]}
-                        explanation={selectionDecisionExplanations[
-                          file.selection
-                        ]}
+                        term={fileStatusLabels[file.status]}
+                        explanation={statusExplanations[file.status]}
                       />
-                    {/if}
-                    <span class="file-row__ownership"
+                    </span>
+                    <span class="file-row__selection">
+                      <span class="selection-note" title={file.reason}
+                        >{file.reason ??
+                          (file.selection
+                            ? selectionLabels[file.selection]
+                            : "—")}</span
+                      >
+                      {#if file.selection}
+                        <StatusExplanation
+                          term={selectionLabels[file.selection]}
+                          explanation={selectionDecisionExplanations[
+                            file.selection
+                          ]}
+                        />
+                      {/if}
+                    </span>
+                    <span
+                      class="file-row__ownership"
+                      title={file.projectName ?? file.repositoryName ?? ""}
                       >{file.projectName ?? file.repositoryName ?? "—"}</span
                     >
-                    {#if file.status === "conflicted"}
-                      <!-- v0.0.17 批次 B（U-06）：冲突行直达冲突处理（范围不变）。 -->
+                    <!-- V020-R03：冲突动作与差异动作归入固定操作列（与表头空操作列对齐）。 -->
+                    <span class="file-row__actions">
+                      {#if file.status === "conflicted"}
+                        <!-- v0.0.17 批次 B（U-06）：冲突行直达冲突处理（范围不变）。
+                          V020-R10：携带所点文件，Host 在原 scope 内复验后定位；
+                          目标已解决则给出原因并保留列表。 -->
+                        <button
+                          class="icon-button icon-button--small"
+                          aria-label={`处理 ${file.relativePath} 的冲突`}
+                          onclick={() =>
+                            onAction("open-module", {
+                              moduleId: "conflicts",
+                              taskId: "conflicts/resolve",
+                              relativePath: file.relativePath,
+                            })}
+                          ><span
+                            class="codicon codicon-warning"
+                            aria-hidden="true"
+                          ></span></button
+                        >
+                      {/if}
                       <button
                         class="icon-button icon-button--small"
-                        aria-label={`处理 ${file.relativePath} 的冲突`}
+                        aria-label={`查看 ${file.relativePath} 差异`}
                         onclick={() =>
-                          onAction("open-module", {
-                            moduleId: "conflicts",
-                            taskId: "conflicts/resolve",
+                          onAction("open-diff", {
+                            relativePath: file.relativePath,
                           })}
-                        ><span
-                          class="codicon codicon-warning"
-                          aria-hidden="true"
+                        ><span class="codicon codicon-diff" aria-hidden="true"
                         ></span></button
                       >
-                    {/if}
-                    <button
-                      class="icon-button icon-button--small"
-                      aria-label={`查看 ${file.relativePath} 差异`}
-                      onclick={() =>
-                        onAction("open-diff", {
-                          relativePath: file.relativePath,
-                        })}
-                      ><span class="codicon codicon-diff" aria-hidden="true"
-                      ></span></button
-                    >
+                    </span>
                   </div>
                 {/each}
               </div>
@@ -1188,11 +1202,14 @@
               >
               <ContextMenu.Item
                 class="context-menu-item"
+                disabled={contextFile.status === "unversioned"}
                 onSelect={() =>
                   afterContextMenuClose(() =>
                     onAction("open-module", {
                       moduleId: "history",
                       taskId: "history/revisions",
+                      // V020-R10：携带所点文件，Host 在原 scope 内复验后收窄为单文件历史。
+                      relativePath: contextFile?.relativePath,
                     }),
                   )}
                 ><span class="codicon codicon-history" aria-hidden="true"

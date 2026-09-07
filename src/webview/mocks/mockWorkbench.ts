@@ -1,5 +1,7 @@
 import {
   defaultWorkbenchTask,
+  isFileTargetView,
+  isHistoryQueryView,
   isWorkbenchModuleId,
   isWorkbenchTaskForModule,
   WORKBENCH_PROTOCOL_VERSION,
@@ -15,6 +17,7 @@ import {
   type WorkbenchTaskId,
 } from "@protocol/workbenchProtocol";
 import { toDisplayPath } from "../../scope/pathBrands";
+import { hashChangelistPlan } from "../../changelist/changelistPlan";
 import type { PathIdentityKey } from "../../scope/pathBrands";
 import {
   COMMIT_SELECTION_CONFIG_VERSION,
@@ -260,6 +263,8 @@ let mockConflictsOverride:
 /** v0.0.13：mock 待确认的冲突文件切换（脏草稿三选一）。 */
 let mockPendingConflictSwitch:
   { currentRelativePath: string; nextRelativePath: string } | undefined;
+/** V020-R10：mock 单文件历史目标（行右键进入后保持，供加载更早/查询回显）。 */
+let mockHistoryFileTarget: { relativePath: string } | undefined;
 /** 等待三选一决定的 mock 切换目标。 */
 let pendingMockSwitch: string | undefined;
 /** mock Host 的编辑基准（保存轮换；用于校验第二次保存负载）。 */
@@ -409,6 +414,14 @@ function mockDiffSnapshot(
   return {
     kind: "diff",
     relativePath,
+    // V020-R09：mock 本地比较身份（真实路径 + 左右基线）。
+    compare: {
+      kind: "working-copy",
+      title: relativePath,
+      targetPath: relativePath,
+      leftRevision: "BASE",
+      rightRevision: "工作副本",
+    },
     original: overrides.original ?? fixture?.original ?? mockDiffOriginal,
     modified: overrides.modified ?? fixture?.modified ?? mockDiffModified,
     language: parsedSpec
@@ -595,6 +608,25 @@ export function startMockWorkbench(): void {
           changelistsSnapshot({
             preselected: { count: selectedPaths.length, paths: selectedPaths },
           }),
+          taskId,
+        );
+      } else if (
+        moduleId === "history" &&
+        createSnapshot &&
+        typeof data.relativePath === "string"
+      ) {
+        // V020-R10：行右键单文件历史——记录目标并回显横幅（Host 侧复验逻辑由单测覆盖）。
+        mockHistoryFileTarget = { relativePath: data.relativePath };
+        injectSnapshot(moduleId, historySnapshot(), taskId);
+      } else if (
+        moduleId === "conflicts" &&
+        createSnapshot &&
+        typeof data.relativePath === "string"
+      ) {
+        // V020-R10：行右键冲突入口——定位所点文件（未知路径回退首个冲突）。
+        injectSnapshot(
+          moduleId,
+          conflictSnapshotForPath(data.relativePath),
           taskId,
         );
       } else if (createSnapshot) {
@@ -1244,11 +1276,24 @@ export function startMockWorkbench(): void {
       injectSnapshot("diff", {
         kind: "diff",
         relativePath: ". · r41 → r42",
+        // V020-R09：mock 范围 Patch 身份（无单文件身份，只读）。
+        compare: {
+          kind: "revision-patch",
+          title: "修订比较 r41 → r42 · 1 个路径",
+          leftRevision: "41",
+          rightRevision: "42",
+          pathCount: 1,
+        },
         original: "",
         modified: mockRevisionPatch,
         language: "diff",
         truncated: false,
         binary: false,
+        edit: {
+          supported: false,
+          reason:
+            "修订比较为双侧只读，不支持页内编辑；请从工作副本打开差异后编辑。",
+        },
         message: "修订比较 r41 → r42",
       });
     }
@@ -1280,6 +1325,39 @@ export function startMockWorkbench(): void {
             Object.keys(query).length > 0
               ? "已按条件加载更早修订；更早历史已全部加载。"
               : "已加载更早修订；更早历史已全部加载。",
+        }),
+      );
+    }
+    if (action === "history/query") {
+      // V020-R05：按条件查询从首批重新读取；未知作者返回空结果但保留查询条件。
+      const base = historySnapshot() as unknown as {
+        revisions: Array<{ author: string; [key: string]: unknown }>;
+      };
+      const query = Object.fromEntries(
+        ["revisionFrom", "revisionTo", "author", "dateFrom", "dateTo"]
+          .map((key) => [key, data[key]])
+          .filter(([, value]) => typeof value === "string" && value.trim()),
+      );
+      const author = typeof data.author === "string" ? data.author.trim() : "";
+      const revisions = author
+        ? base.revisions.filter((item) =>
+            item.author.toLowerCase().includes(author.toLowerCase()),
+          )
+        : base.revisions;
+      injectSnapshot(
+        "history",
+        historySnapshot({
+          revisions,
+          selectedRevision: revisions[0]?.revision,
+          limit: 100,
+          hasMore: false,
+          query,
+          feedback:
+            revisions.length === 0
+              ? "按条件没有找到修订；已保留查询条件，可调整后再次查询。"
+              : Object.keys(query).length > 0
+                ? `已按条件读取 ${revisions.length} 条修订。`
+                : `已加载最近 ${revisions.length} 条修订。`,
         }),
       );
     }
@@ -1350,7 +1428,8 @@ export function startMockWorkbench(): void {
           nextRelativePath: data.relativePath,
         });
       } else {
-        injectSnapshot("conflicts", conflictSnapshot());
+        // V020-R10：选中所点冲突（未知路径回退首个冲突，与 Host 快照语义一致）。
+        injectSnapshot("conflicts", conflictSnapshotForPath(data.relativePath));
       }
     }
     if (action === "conflict/advise") {
@@ -1686,6 +1765,59 @@ export function startMockWorkbench(): void {
             toolLabel: "meld",
             fileRoles: [],
             feedback: "已将外部合并工具设置为：/usr/bin/meld。",
+          },
+        }),
+      );
+    }
+    if (action === "settings/save-ai") {
+      // 中文注释：V020-R07——Mock 模拟 Host 保存语义：持久化草稿中的已保存
+      // 配置字段并下发保存成功快照；密钥只翻转 hasApiKey 状态，绝不明文回显。
+      const payload = (data ?? {}) as Record<string, unknown>;
+      const asText = (value: unknown): string =>
+        typeof value === "string" ? value : "";
+      const scenarioModels: Record<string, string> = {};
+      const rawModels = payload.scenarioModels;
+      if (rawModels && typeof rawModels === "object") {
+        for (const [key, value] of Object.entries(
+          rawModels as Record<string, unknown>,
+        )) {
+          if (typeof value === "string" && value.trim()) {
+            scenarioModels[key] = value.trim();
+          }
+        }
+      }
+      const enteredKey = asText(payload.apiKey).trim();
+      const preset = asText(payload.providerPreset).trim();
+      settingsSnapshotValue.ai = {
+        ...settingsSnapshotValue.ai,
+        providerPreset: preset
+          ? preset
+          : settingsSnapshotValue.ai.providerPreset,
+        baseUrl: asText(payload.baseUrl).trim(),
+        model: asText(payload.model).trim(),
+        scenarioModels,
+        hasApiKey:
+          payload.clearApiKey === true
+            ? false
+            : enteredKey
+              ? true
+              : settingsSnapshotValue.ai.hasApiKey,
+        includeCommitHistory: payload.includeCommitHistory === true,
+        historyLimit:
+          typeof payload.historyLimit === "number" &&
+          Number.isFinite(payload.historyLimit)
+            ? Math.min(20, Math.max(1, Math.round(payload.historyLimit)))
+            : settingsSnapshotValue.ai.historyLimit,
+      };
+      injectSnapshot(
+        "settings",
+        settingsSnapshot({
+          ai: {
+            ...settingsSnapshotValue.ai,
+            feedback: {
+              tone: "success",
+              message: "AI 模型配置已保存，密钥仍仅存于 SecretStorage。",
+            },
           },
         }),
       );
@@ -2141,13 +2273,14 @@ export function startMockWorkbench(): void {
           )
         : [];
       const remove = data.remove === true;
+      const previewName = typeof data.name === "string" ? data.name : undefined;
       injectSnapshot(
         "changelists",
         changelistsSnapshot({
           suggestions: changelistSuggestions(),
           preview: {
             token: "mock-changelist",
-            name: typeof data.name === "string" ? data.name : undefined,
+            name: previewName,
             remove,
             paths,
             command: remove
@@ -2155,6 +2288,15 @@ export function startMockWorkbench(): void {
               : `svn changelist "${data.name}" …`,
             canExecute: paths.length > 0,
             issues: [],
+            // V020-R08：Mock 同步协议绑定字段（与 Host 快照一致）。
+            scopeHash: "mock-scope-hash",
+            candidateHash: "mock-candidate-hash",
+            repositoryUuid: "mock-repository-uuid",
+            planHash: hashChangelistPlan({
+              name: previewName,
+              remove,
+              paths,
+            }),
           },
         }),
       );
@@ -2575,6 +2717,18 @@ function mockCommitEvaluation(status: string) {
 function historySnapshot(
   overrides: Record<string, unknown> = {},
 ): WorkbenchModuleSnapshot {
+  // V020-R10：行目标进入后保持单文件横幅（加载更早/查询同样回显目标）。
+  if (
+    !mockHistoryFileTarget &&
+    typeof window !== "undefined" &&
+    new URLSearchParams(window.location.search).get("historyFileTarget") === "1"
+  ) {
+    mockHistoryFileTarget = { relativePath: "src/extension.ts" };
+  }
+  const fileTargetOverride =
+    mockHistoryFileTarget && !("fileTarget" in overrides)
+      ? { fileTarget: mockHistoryFileTarget }
+      : {};
   const revisions = isScrollDataset()
     ? Array.from({ length: 48 }, (_, index) => ({
         revision: String(120 - index),
@@ -2604,6 +2758,22 @@ function historySnapshot(
           ],
         },
       ];
+  // V020 终审 P1-1：Mock 外发 query/fileTarget 先经协议守卫，畸形覆盖按缺省处理（fail-closed）。
+  const guardedOverrides: Record<string, unknown> = { ...overrides };
+  if (
+    "query" in guardedOverrides &&
+    guardedOverrides.query !== undefined &&
+    !isHistoryQueryView(guardedOverrides.query)
+  ) {
+    delete guardedOverrides.query;
+  }
+  if (
+    "fileTarget" in guardedOverrides &&
+    guardedOverrides.fileTarget !== undefined &&
+    !isFileTargetView(guardedOverrides.fileTarget)
+  ) {
+    delete guardedOverrides.fileTarget;
+  }
   return {
     kind: "history",
     revisions,
@@ -2613,8 +2783,31 @@ function historySnapshot(
     // v0.0.18 批次 C：mock 演示“可能还有更早修订”与加载更早交互。
     hasMore: true,
     fileActionsAvailable: true,
-    ...overrides,
+    ...fileTargetOverride,
+    ...guardedOverrides,
   } as WorkbenchModuleSnapshot;
+}
+
+/**
+ * V020-R10：按相对路径定位冲突快照选中项（Mock 侧回显）。
+ * 未知路径回退默认首个冲突；与 Host“不存在则回列表”语义一致。
+ */
+function conflictSnapshotForPath(
+  relativePath: string,
+): WorkbenchModuleSnapshot {
+  const base = conflictSnapshot() as Extract<
+    WorkbenchModuleSnapshot,
+    { kind: "conflicts" }
+  >;
+  const known = base.conflicts.some(
+    (item) => item.relativePath === relativePath,
+  );
+  if (!known || !base.selected || base.selected.relativePath === relativePath) {
+    return base;
+  }
+  return conflictSnapshot({
+    selected: { ...base.selected, relativePath },
+  });
 }
 
 function conflictSnapshot(

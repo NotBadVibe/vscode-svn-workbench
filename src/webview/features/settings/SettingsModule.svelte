@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import type {
     SettingsSnapshot,
     WebviewAction,
@@ -38,31 +39,331 @@
   let requiredPrefix = $state(false);
   let allowedPrefixesText = $state("");
 
-  $effect(() => {
-    tab =
-      taskId === "settings/selection"
-        ? "selection"
-        : taskId === "settings/team"
-          ? "team"
-          : taskId === "settings/svn"
-            ? "svn"
-            : "ai";
-    providerPreset = snapshot.ai.providerPreset;
-    baseUrl = snapshot.ai.baseUrl;
-    model = snapshot.ai.model;
-    scenarioModels = { ...snapshot.ai.scenarioModels };
+  // 中文注释：V020-R07——表单草稿与快照反馈分离。baseline 记录上次应用的已保存
+  // 配置；草稿仅在初次装载、保存成功确认或用户放弃修改时重置。测试连接与读取
+  // 模型列表返回的快照只更新反馈与模型列表，不再回填草稿、不清空新密钥。
+  // 密钥只走既有安全输入通道与 SecretStorage：快照仅携带 hasApiKey 布尔状态，
+  // 本页不缓存、不回显密钥明文。
+  interface AiConfigBaseline {
+    providerPreset: string;
+    baseUrl: string;
+    model: string;
+    scenarioModels: Record<string, string>;
+    includeCommitHistory: boolean;
+    historyLimit: number;
+    storedFingerprint: string;
+    draftFingerprint: string;
+  }
+
+  interface TeamConfigBaseline {
+    enabled: boolean;
+    requiredIssueId: boolean;
+    issueIdPattern: string;
+    requiredModule: boolean;
+    allowedModulesText: string;
+    requiredPrefix: boolean;
+    allowedPrefixesText: string;
+    fingerprint: string;
+  }
+
+  let aiBaseline = $state<AiConfigBaseline | null>(null);
+  let aiInitialized = $state(false);
+  let pendingAiSave = $state(false);
+  let lastTestedFingerprint = $state<string | null>(null);
+  let expectedAiFeedback = $state<"save" | "test" | "list" | null>(null);
+  let shownAiFeedbackKind = $state<"save" | "test" | "list" | null>(null);
+  let prevAiFeedbackMessage = $state<string | undefined>(undefined);
+  let teamBaseline = $state<TeamConfigBaseline | null>(null);
+  let teamInitialized = $state(false);
+
+  function sortedRecord(value: Record<string, string>): Record<string, string> {
+    return Object.fromEntries(
+      Object.entries(value ?? {}).sort(([a], [b]) =>
+        a < b ? -1 : a > b ? 1 : 0,
+      ),
+    );
+  }
+
+  function aiDraftFingerprintOf(ai: SettingsSnapshot["ai"]): string {
+    return JSON.stringify([
+      ai.providerPreset,
+      ai.baseUrl,
+      ai.model,
+      sortedRecord(ai.scenarioModels),
+      ai.includeCommitHistory,
+      ai.historyLimit,
+    ]);
+  }
+
+  function aiStoredFingerprintOf(ai: SettingsSnapshot["ai"]): string {
+    return JSON.stringify([
+      ai.providerPreset,
+      ai.baseUrl,
+      ai.model,
+      sortedRecord(ai.scenarioModels),
+      ai.includeCommitHistory,
+      ai.historyLimit,
+      ai.hasApiKey,
+    ]);
+  }
+
+  function teamStoredFingerprintOf(team: SettingsSnapshot["team"]): string {
+    return JSON.stringify([
+      team.enabled,
+      team.requiredIssueId,
+      team.issueIdPattern,
+      team.requiredModule,
+      team.allowedModulesText,
+      team.requiredPrefix,
+      team.allowedPrefixesText,
+    ]);
+  }
+
+  function currentAiFingerprint(): string {
+    return JSON.stringify([
+      providerPreset,
+      baseUrl,
+      model,
+      sortedRecord(scenarioModels),
+      includeCommitHistory,
+      historyLimit,
+    ]);
+  }
+
+  function currentTeamFingerprint(): string {
+    return JSON.stringify([
+      enabled,
+      requiredIssueId,
+      issueIdPattern,
+      requiredModule,
+      allowedModulesText,
+      requiredPrefix,
+      allowedPrefixesText,
+    ]);
+  }
+
+  function isAiDirtyNow(): boolean {
+    return (
+      aiInitialized &&
+      aiBaseline !== null &&
+      (currentAiFingerprint() !== aiBaseline.draftFingerprint ||
+        apiKey !== "" ||
+        clearApiKey)
+    );
+  }
+
+  function isTeamDirtyNow(): boolean {
+    return (
+      teamInitialized &&
+      teamBaseline !== null &&
+      currentTeamFingerprint() !== teamBaseline.fingerprint
+    );
+  }
+
+  let aiDirty = $derived(isAiDirtyNow());
+  let teamDirty = $derived(isTeamDirtyNow());
+  // 异步测试结果绑定发起时的输入指纹：用户继续编辑后旧结果标为过期。
+  let testResultStale = $derived(
+    (shownAiFeedbackKind === "test" || shownAiFeedbackKind === "list") &&
+      lastTestedFingerprint !== null &&
+      currentAiFingerprint() !== lastTestedFingerprint,
+  );
+
+  function applyAiBaseline(
+    ai: SettingsSnapshot["ai"],
+    storedFingerprint: string,
+  ): void {
+    aiBaseline = {
+      providerPreset: ai.providerPreset,
+      baseUrl: ai.baseUrl,
+      model: ai.model,
+      scenarioModels: { ...ai.scenarioModels },
+      includeCommitHistory: ai.includeCommitHistory,
+      historyLimit: ai.historyLimit,
+      storedFingerprint,
+      draftFingerprint: aiDraftFingerprintOf(ai),
+    };
+    applyAiDraftFromBaseline();
+  }
+
+  function refreshAiBaseline(
+    ai: SettingsSnapshot["ai"],
+    storedFingerprint: string,
+  ): void {
+    aiBaseline = {
+      providerPreset: ai.providerPreset,
+      baseUrl: ai.baseUrl,
+      model: ai.model,
+      scenarioModels: { ...ai.scenarioModels },
+      includeCommitHistory: ai.includeCommitHistory,
+      historyLimit: ai.historyLimit,
+      storedFingerprint,
+      draftFingerprint: aiDraftFingerprintOf(ai),
+    };
+  }
+
+  function applyAiDraftFromBaseline(): void {
+    if (!aiBaseline) return;
+    providerPreset = aiBaseline.providerPreset;
+    baseUrl = aiBaseline.baseUrl;
+    model = aiBaseline.model;
+    scenarioModels = { ...aiBaseline.scenarioModels };
     apiKey = "";
     clearApiKey = false;
-    includeCommitHistory = snapshot.ai.includeCommitHistory;
-    historyLimit = snapshot.ai.historyLimit;
-    enabled = snapshot.team.enabled;
-    requiredIssueId = snapshot.team.requiredIssueId;
-    issueIdPattern = snapshot.team.issueIdPattern;
-    requiredModule = snapshot.team.requiredModule;
-    allowedModulesText = snapshot.team.allowedModulesText;
-    requiredPrefix = snapshot.team.requiredPrefix;
-    allowedPrefixesText = snapshot.team.allowedPrefixesText;
+    includeCommitHistory = aiBaseline.includeCommitHistory;
+    historyLimit = aiBaseline.historyLimit;
+  }
+
+  function applyTeamBaseline(
+    team: SettingsSnapshot["team"],
+    fingerprint: string,
+  ): void {
+    teamBaseline = {
+      enabled: team.enabled,
+      requiredIssueId: team.requiredIssueId,
+      issueIdPattern: team.issueIdPattern,
+      requiredModule: team.requiredModule,
+      allowedModulesText: team.allowedModulesText,
+      requiredPrefix: team.requiredPrefix,
+      allowedPrefixesText: team.allowedPrefixesText,
+      fingerprint,
+    };
+    applyTeamDraftFromBaseline();
+  }
+
+  function applyTeamDraftFromBaseline(): void {
+    if (!teamBaseline) return;
+    enabled = teamBaseline.enabled;
+    requiredIssueId = teamBaseline.requiredIssueId;
+    issueIdPattern = teamBaseline.issueIdPattern;
+    requiredModule = teamBaseline.requiredModule;
+    allowedModulesText = teamBaseline.allowedModulesText;
+    requiredPrefix = teamBaseline.requiredPrefix;
+    allowedPrefixesText = teamBaseline.allowedPrefixesText;
+  }
+
+  // 页签仅跟随 taskId，不触碰任何表单草稿；切换页签不再丢失未保存输入。
+  // 注意：effect 内不得读取 tab（否则点击即自触发重置），只订阅 taskId。
+  let lastTaskId = $state<string | undefined>(undefined);
+  $effect(() => {
+    const current = taskId;
+    untrack(() => {
+      if (current !== lastTaskId) {
+        lastTaskId = current;
+        tab =
+          current === "settings/selection"
+            ? "selection"
+            : current === "settings/team"
+              ? "team"
+              : current === "settings/svn"
+                ? "svn"
+                : "ai";
+      }
+    });
   });
+
+  // 已保存 AI 配置变化才动基线：初次装载应用；保存成功确认后清空密钥输入；
+  // 脏草稿一律保留，外部变化不覆盖用户输入；纯反馈/模型列表快照不动草稿。
+  $effect(() => {
+    const ai = snapshot.ai;
+    const storedFingerprint = aiStoredFingerprintOf(ai);
+    const feedbackMessage = ai.feedback?.message;
+    untrack(() => {
+      if (!aiInitialized) {
+        applyAiBaseline(ai, storedFingerprint);
+        aiInitialized = true;
+        prevAiFeedbackMessage = feedbackMessage;
+        shownAiFeedbackKind =
+          feedbackMessage === undefined ? null : expectedAiFeedback;
+        expectedAiFeedback = null;
+        return;
+      }
+      if (
+        aiBaseline !== null &&
+        storedFingerprint !== aiBaseline.storedFingerprint
+      ) {
+        const wasSaving = pendingAiSave;
+        pendingAiSave = false;
+        refreshAiBaseline(ai, storedFingerprint);
+        if (wasSaving) {
+          // 保存成功确认：密钥仍仅存于 SecretStorage，快照不回显，清空输入框。
+          apiKey = "";
+          clearApiKey = false;
+        } else if (!isAiDirtyNow()) {
+          applyAiDraftFromBaseline();
+        }
+      }
+      if (feedbackMessage !== prevAiFeedbackMessage) {
+        if (expectedAiFeedback === "save") {
+          // 保存动作已有回执（成功或失败），不再等待存储变化。
+          pendingAiSave = false;
+        }
+        prevAiFeedbackMessage = feedbackMessage;
+        shownAiFeedbackKind = expectedAiFeedback;
+        expectedAiFeedback = null;
+      }
+    });
+  });
+
+  // 团队规则同理：仅已保存配置变化且草稿干净时同步，推荐/迁移预览不碰草稿。
+  $effect(() => {
+    const team = snapshot.team;
+    const fingerprint = teamStoredFingerprintOf(team);
+    untrack(() => {
+      if (!teamInitialized) {
+        applyTeamBaseline(team, fingerprint);
+        teamInitialized = true;
+        return;
+      }
+      if (teamBaseline !== null && fingerprint !== teamBaseline.fingerprint) {
+        teamBaseline = {
+          enabled: team.enabled,
+          requiredIssueId: team.requiredIssueId,
+          issueIdPattern: team.issueIdPattern,
+          requiredModule: team.requiredModule,
+          allowedModulesText: team.allowedModulesText,
+          requiredPrefix: team.requiredPrefix,
+          allowedPrefixesText: team.allowedPrefixesText,
+          fingerprint,
+        };
+        if (!isTeamDirtyNow()) {
+          applyTeamDraftFromBaseline();
+        }
+      }
+    });
+  });
+
+  function saveAi(): void {
+    pendingAiSave = true;
+    expectedAiFeedback = "save";
+    onAction("settings/save-ai", aiPayload());
+  }
+
+  function testAi(): void {
+    lastTestedFingerprint = currentAiFingerprint();
+    expectedAiFeedback = "test";
+    onAction("settings/test-ai", aiPayload());
+  }
+
+  function listModels(): void {
+    lastTestedFingerprint = currentAiFingerprint();
+    expectedAiFeedback = "list";
+    onAction("settings/list-models", aiPayload());
+  }
+
+  function discardAi(): void {
+    applyAiDraftFromBaseline();
+    lastTestedFingerprint = null;
+    shownAiFeedbackKind = null;
+  }
+
+  function saveTeam(): void {
+    onAction("settings/save-team", teamPayload());
+  }
+
+  function discardTeam(): void {
+    applyTeamDraftFromBaseline();
+  }
 
   function applyPreset(): void {
     const preset = snapshot.ai.presets.find(
@@ -125,7 +426,8 @@
       role="tab"
       aria-selected={tab === "ai"}
       class:active={tab === "ai"}
-      onclick={() => selectTab("ai")}>AI 模型</button
+      onclick={() => selectTab("ai")}
+      >AI 模型{#if aiDirty}（未保存）{/if}</button
     >
     <button
       role="tab"
@@ -137,7 +439,8 @@
       role="tab"
       aria-selected={tab === "team"}
       class:active={tab === "team"}
-      onclick={() => selectTab("team")}>团队提交规范</button
+      onclick={() => selectTab("team")}
+      >团队提交规范{#if teamDirty}（未保存）{/if}</button
     >
     <button
       role="tab"
@@ -235,22 +538,29 @@
           >
             {snapshot.ai.feedback.message}
           </div>{/if}
+        {#if snapshot.ai.feedback && testResultStale}<div
+            class="notice notice--warning"
+            role="status"
+          >
+            连接配置已更改，上次测试或模型列表结果已过期，请重新操作后再保存。
+          </div>{/if}
+        {#if aiDirty}<div class="notice notice--warning" role="status">
+            有未保存的修改，切换页签不会丢失草稿；保存后生效，放弃修改回到已保存值。
+          </div>{/if}
         <div class="toolbar-actions">
-          <button
-            class="button button--primary"
-            onclick={() => onAction("settings/save-ai", aiPayload())}
+          <button class="button button--primary" onclick={saveAi}
             >保存配置</button
           >
-          <button
-            class="button button--secondary"
-            onclick={() => onAction("settings/test-ai", aiPayload())}
+          <button class="button button--secondary" onclick={testAi}
             >测试连接</button
           >
-          <button
-            class="button button--secondary"
-            onclick={() => onAction("settings/list-models", aiPayload())}
+          <button class="button button--secondary" onclick={listModels}
             >读取模型列表</button
           >
+          {#if aiDirty}<button
+              class="button button--secondary"
+              onclick={discardAi}>放弃修改</button
+            >{/if}
         </div>
       </section>
 
@@ -430,10 +740,11 @@
           >
             {warning}
           </div>{/each}
+        {#if teamDirty}<div class="notice notice--warning" role="status">
+            有未保存的修改，切换页签不会丢失草稿；保存后生效，放弃修改回到已保存值。
+          </div>{/if}
         <div class="toolbar-actions">
-          <button
-            class="button button--primary"
-            onclick={() => onAction("settings/save-team", teamPayload())}
+          <button class="button button--primary" onclick={saveTeam}
             >保存团队规则</button
           >
           <button
@@ -443,6 +754,10 @@
             ><span class="codicon codicon-sparkle" aria-hidden="true"></span>AI
             推荐</button
           >
+          {#if teamDirty}<button
+              class="button button--secondary"
+              onclick={discardTeam}>放弃修改</button
+            >{/if}
         </div>
       </section>
 

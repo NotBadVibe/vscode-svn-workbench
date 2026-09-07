@@ -1,6 +1,6 @@
 # SVN Workbench
 
-SVN Workbench 是面向 VS Code 的 AI-first Subversion 工作台。正式业务界面统一使用 Svelte 5，Explorer、编辑器和命令面板中的入口会直接打开对应功能模块，不强制进入一个完整首页。
+SVN Workbench 是面向 VS Code 的 Subversion 日常任务工作台，AI 为可选增强。正式业务界面统一使用 Svelte 5，Explorer、编辑器和命令面板中的入口会直接打开对应功能模块，不强制进入一个完整首页。
 
 本项目采用 [MIT License](LICENSE) 开源；欢迎通过 Issue 和 Pull Request 参与改进，提交前请先阅读 [贡献指南](CONTRIBUTING.md) 与 [安全策略](SECURITY.md)。
 

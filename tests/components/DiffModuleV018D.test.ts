@@ -126,10 +126,16 @@ describe("DiffModule V018-D 空白与定位器（§4.4）", () => {
       screen.getByRole("checkbox", { name: /显示空白字符/ }),
     );
     expect(screen.getByTestId("show-whitespace-legend")).toBeInTheDocument();
-    // 传入 FileDiff 的仍是原始文本（未归一）
+    // V020-R11：主视图可观察的空白预览（定位器预览展开，不写回文本）。
+    const detail = screen.getByTestId("show-whitespace-detail");
+    expect(detail.textContent).toContain("主代码区底座不支持逐字符空白符号");
+    expect(detail.textContent).toContain("·");
+    // 传入 FileDiff 的仍是原始文本（未归一、无展示符号）。
     const last = pierreMocks.records[pierreMocks.records.length - 1];
     const newFile = last.props.newFile as { contents: string };
     expect(newFile.contents).toContain("let x = 2;");
+    expect(newFile.contents).not.toContain("·");
+    expect(newFile.contents).not.toContain("→");
   });
 
   it("定位器选择滚动到正确块（revealLine 行号正确）", async () => {
@@ -162,5 +168,27 @@ describe("DiffModule V018-D 空白与定位器（§4.4）", () => {
     });
     expect(ignoreBox).toBeDisabled();
     expect(screen.getByText(/修订比较暂不支持忽略空白/)).toBeInTheDocument();
+  });
+
+  it("V020-R11：修订比较禁用显示空白并解释 patch 原因", async () => {
+    const patchSnapshot: DiffSnapshot = {
+      kind: "diff",
+      relativePath: ". · r41 → r42",
+      original: "",
+      modified:
+        "Index: a\n===================================================================\n--- a\t(revision 41)\n+++ a\t(revision 42)\n@@ -1 +1 @@\n-old\n+new\n",
+      language: "diff",
+      truncated: false,
+      binary: false,
+    };
+    render(DiffModule, { snapshot: patchSnapshot, onAction: vi.fn() });
+    await fireEvent.click(screen.getByRole("button", { name: "显示设置" }));
+    const showBox = screen.getByRole("checkbox", {
+      name: /显示空白字符/,
+    });
+    expect(showBox).toBeDisabled();
+    expect(
+      screen.getByText(/修订比较（Patch 文本）不支持显示空白字符/),
+    ).toBeInTheDocument();
   });
 });

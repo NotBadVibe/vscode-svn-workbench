@@ -185,4 +185,69 @@ describe("ConflictsModule V018-F 外部合并工具出口", () => {
     // 文本分支下该按钮不存在时不失败（由非文本分支测试覆盖可见性）。
     expect(true).toBe(true);
   });
+
+  it("V020-R12：普通文件出口统一命名为在 VS Code 编辑器中打开", async () => {
+    const onAction = vi.fn();
+    render(ConflictsModule, { snapshot: baseSnapshot, onAction });
+    // 页眉普通文件出口使用统一命名，不再与外部合并工具入口同名异义。
+    const editorButtons = await screen.findAllByRole("button", {
+      name: "在 VS Code 编辑器中打开",
+    });
+    expect(editorButtons.length).toBeGreaterThan(0);
+    await fireEvent.click(editorButtons[0]);
+    expect(onAction).toHaveBeenCalledWith("open-file", {
+      relativePath: "src/a.ts",
+    });
+    expect(
+      screen.queryByRole("button", { name: "打开工作副本文件" }),
+    ).toBeNull();
+    expect(screen.queryByRole("button", { name: "在编辑器中打开" })).toBeNull();
+    expect(screen.queryByText("在外部工具打开")).toBeNull();
+  });
+
+  it("V020-R12：未落盘草稿时确认对话框明示磁盘版本与草稿关系", async () => {
+    const onAction = vi.fn();
+    const snapshotWithDraft: ConflictSnapshot = {
+      ...baseSnapshot,
+      selected: {
+        ...baseSnapshot.selected!,
+        draft: {
+          content: "草稿内容",
+          revision: 3,
+          updatedAt: Date.now(),
+          hasDraft: true,
+          dirty: true,
+        },
+      },
+      externalMerge: {
+        available: true,
+        toolLabel: "meld",
+        fileRoles: [
+          {
+            role: "result",
+            label: "合并结果（工作副本）",
+            relativePath: "src/a.ts",
+          },
+        ],
+        preview: {
+          token: "mock-external-merge-draft",
+          commandPreview: "meld src/a.ts",
+          canOpen: true,
+          issues: [],
+        },
+      },
+    };
+    render(ConflictsModule, { snapshot: snapshotWithDraft, onAction });
+    await fireEvent.click(
+      await screen.findByTestId("external-merge-open-dialog"),
+    );
+    // 未保存草稿不被静默当成工具输入：启动前明确磁盘版本关系
+    //（摘要与问题清单同时明示）。
+    expect(await screen.findAllByText(/未落盘合并草稿/)).not.toHaveLength(0);
+    expect(screen.getAllByText(/磁盘版本/).length).toBeGreaterThan(0);
+    expect(onAction).not.toHaveBeenCalledWith(
+      "conflict/resolve",
+      expect.anything(),
+    );
+  });
 });

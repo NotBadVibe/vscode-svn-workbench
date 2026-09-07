@@ -97,6 +97,78 @@ export function canToggleIgnoreWhitespace(state: WhitespaceToggleState): {
 }
 
 /**
+ * V020-R11 五类视图空白选项支持表（底座 @pierre/diffs 1.3.4 无逐字符空白符号 API
+ * 与忽略空白 API，仅 enableTokenInteractionsOnWhitespace 交互开关）。
+ * - 普通 Working/BASE（FileDiff 全文）：显示=受限（图例+定位器预览+备用 pre 符号，
+ *   主代码不注入符号）；忽略=支持（归一比较呈现+横幅+计数，最终文本不变；编辑态禁用）。
+ * - 历史修订比较（patch 直渲）：显示/忽略均禁用（patch 语法不可归一，符号会破坏 @@/Index 行）。
+ * - 备用/降级（pre/MergeView）：显示=支持（pre 按段渲染符号，文本不变）；忽略=禁用（只读呈现不做比较过滤）。
+ * - 冲突（UnresolvedFile）：显示=受限（图例+定位器，挂载文本恒原始）；忽略准确命名为
+ *   「标记纯空白块」（仅横幅+定位器状态+计数，不过滤块、不改 marker/hash/行号、不自动 Resolve）。
+ * - 编辑（Editor/简化编辑器）：显示=允许保持（仅图例，不改编辑文本，保存字节不含符号）；
+ *   忽略=禁用（进入编辑自动退出并提示，始终原始文本）。
+ */
+export type WhitespaceViewKind =
+  "normal" | "history" | "fallback" | "conflict" | "editing";
+
+export interface WhitespaceViewSupport {
+  kind: WhitespaceViewKind;
+  label: string;
+  show: string;
+  ignore: string;
+}
+
+export const WHITESPACE_VIEW_SUPPORT: readonly WhitespaceViewSupport[] = [
+  {
+    kind: "normal",
+    label: "普通 Working/BASE",
+    show: "受限：图例+定位器预览+备用视图符号，主代码不注入符号",
+    ignore: "支持：归一比较呈现+横幅+计数，最终文本不变；编辑态禁用",
+  },
+  {
+    kind: "history",
+    label: "历史修订比较（Patch 直渲）",
+    show: "禁用：Patch 语法不可逐字符标注",
+    ignore: "禁用：Patch 语法不可归一",
+  },
+  {
+    kind: "fallback",
+    label: "备用/降级（pre/MergeView）",
+    show: "支持：pre 按段渲染符号，文本不变",
+    ignore: "禁用：降级只做只读呈现，不做比较过滤",
+  },
+  {
+    kind: "conflict",
+    label: "冲突（UnresolvedFile）",
+    show: "受限：图例+定位器，挂载文本恒为原始",
+    ignore:
+      "标记纯空白块：仅横幅+定位器状态+计数，不改 marker/hash/行号，不自动 Resolve",
+  },
+  {
+    kind: "editing",
+    label: "编辑（Editor/简化编辑器）",
+    show: "允许保持：仅图例，不改编辑文本，保存字节不含符号",
+    ignore: "禁用：进入编辑自动退出并提示，始终原始文本",
+  },
+] as const;
+
+export type ShowWhitespaceBlockReason = "patch" | "binary";
+
+/**
+ * V020-R11：显示空白字符的只读门控。底座 FileDiff/patch 直渲无逐字符符号 API，
+ * 修订比较（patch）与二进制禁用并解释；普通/冲突/编辑主视图允许保持（受限：
+ * 仅图例+定位器+备用 pre 符号，不向 pierre 文本注入符号）。
+ */
+export function canToggleShowWhitespace(state: {
+  isPatch: boolean;
+  binary: boolean;
+}): { allowed: boolean; reason?: ShowWhitespaceBlockReason } {
+  if (state.binary) return { allowed: false, reason: "binary" };
+  if (state.isPatch) return { allowed: false, reason: "patch" };
+  return { allowed: true };
+}
+
+/**
  * 显示空白字符的行预览展开（仅用于图例/定位器提示/备用视图符号，永不写回内容）：
  * 空格→·，制表符→→，行尾标记由调用方追加 ↵。
  */

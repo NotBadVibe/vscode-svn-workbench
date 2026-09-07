@@ -479,4 +479,87 @@ describe("HistoryModule", () => {
       screen.getByText(/条件只限制本次只读历史请求，不改变当前范围/),
     ).toBeInTheDocument();
   });
+
+  // V020-R05：按条件查询与加载下一批分离，始终可用。
+  it("hasMore=false 后按条件查询仍可用并发送 history/query", async () => {
+    const onAction = vi.fn();
+    render(HistoryModule, {
+      snapshot: { ...snapshot, hasMore: false },
+      onAction,
+    });
+    // 加载下一批入口已消失，但按条件查询入口始终可用。
+    expect(screen.queryByRole("button", { name: /加载更早修订/ })).toBeNull();
+    await fireEvent.click(screen.getByText("按条件加载更早修订"));
+    const queryButton = screen.getByRole("button", {
+      name: "按条件查询",
+    });
+    await fireEvent.input(screen.getByLabelText("历史作者"), {
+      target: { value: "alice" },
+    });
+    await fireEvent.input(screen.getByLabelText("历史开始日期"), {
+      target: { value: "2026-07-01" },
+    });
+    await fireEvent.click(queryButton);
+    expect(onAction).toHaveBeenCalledWith(
+      "history/query",
+      expect.objectContaining({ author: "alice", dateFrom: "2026-07-01" }),
+    );
+    // 查询不清空输入与已有结果。
+    expect((screen.getByLabelText("历史作者") as HTMLInputElement).value).toBe(
+      "alice",
+    );
+    expect(screen.getByText("2 条修订")).toBeInTheDocument();
+  });
+
+  // V020-R05：空结果后改成有效作者可直接查询。
+  it("空结果快照仍可修改作者并按条件查询", async () => {
+    const onAction = vi.fn();
+    render(HistoryModule, {
+      snapshot: {
+        ...snapshot,
+        revisions: [],
+        hasMore: false,
+        query: { author: "nobody-xyz" },
+      },
+      onAction,
+    });
+    await fireEvent.click(screen.getByText("按条件加载更早修订"));
+    // Host 成功条件已回填到输入框。
+    expect((screen.getByLabelText("历史作者") as HTMLInputElement).value).toBe(
+      "nobody-xyz",
+    );
+    await fireEvent.input(screen.getByLabelText("历史作者"), {
+      target: { value: "alice" },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "按条件查询" }));
+    expect(onAction).toHaveBeenCalledWith(
+      "history/query",
+      expect.objectContaining({ author: "alice" }),
+    );
+  });
+
+  // V020-R05：非法范围就地提示，不发送请求、不清空输入与结果。
+  it("非法修订范围就地提示且不发送查询", async () => {
+    const onAction = vi.fn();
+    render(HistoryModule, {
+      snapshot: { ...snapshot, hasMore: false },
+      onAction,
+    });
+    await fireEvent.click(screen.getByText("按条件加载更早修订"));
+    await fireEvent.input(screen.getByLabelText("较早修订号"), {
+      target: { value: "20" },
+    });
+    await fireEvent.input(screen.getByLabelText("较晚修订号"), {
+      target: { value: "10" },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "按条件查询" }));
+    expect(onAction).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "较早修订号不能大于较晚修订号",
+    );
+    expect(
+      (screen.getByLabelText("较早修订号") as HTMLInputElement).value,
+    ).toBe("20");
+    expect(screen.getByText("2 条修订")).toBeInTheDocument();
+  });
 });
