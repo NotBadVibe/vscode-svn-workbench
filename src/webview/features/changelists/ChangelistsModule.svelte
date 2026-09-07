@@ -144,17 +144,33 @@
     });
   }
 
-  /** 全部条目（分组 + 未分组）按筛选与排序组织成节；折叠的分组不渲染。 */
+  /**
+   * V020-R04：筛选谓词（搜索 + 只看已选），与分组折叠正交。
+   * 折叠只影响渲染行，不改变匹配集合定义。
+   */
+  function matchesEntry(entry: ChangelistGroupFileView): boolean {
+    if (
+      onlySelected &&
+      (!entry.selectionKey || !selected.has(entry.selectionKey))
+    ) {
+      return false;
+    }
+    return matchesFileQuery(entry, query);
+  }
+
+  /**
+   * V020-R04：当前匹配集合（忽略折叠与排序，只看筛选）。
+   * 隐藏选择计数、清除隐藏、选择当前筛选均以它为准；
+   * 全量候选刷新求交仍用 allEntries()，两者语义分离。
+   */
+  const matchedEntries = $derived.by(() => [
+    ...snapshot.groups.flatMap((group) => group.files.filter(matchesEntry)),
+    ...snapshot.unassigned.filter(matchesEntry),
+  ]);
+
+  /** 全部条目按筛选与排序组织成节；折叠的分组不渲染，但仍计入匹配集合。 */
   const sections = $derived.by(() => {
-    const filterEntry = (entry: ChangelistGroupFileView): boolean => {
-      if (
-        onlySelected &&
-        (!entry.selectionKey || !selected.has(entry.selectionKey))
-      ) {
-        return false;
-      }
-      return matchesFileQuery(entry, query);
-    };
+    const filterEntry = matchesEntry;
     const result: ListSection[] = [];
     let start = 0;
     for (const group of snapshot.groups) {
@@ -186,9 +202,12 @@
     return result;
   });
 
-  /** 展开节内的扁平行序列（键盘导航的活动行索引空间）。 */
+  /**
+   * 渲染行（匹配集合减去折叠分组，含排序）：键盘导航、活动行索引、
+   * Shift 范围选择的索引空间。筛选定义以 matchedEntries 为准，不随折叠变化。
+   */
   const allRows = $derived(sections.flatMap((section) => section.entries));
-  const matchedCount = $derived(allRows.length);
+  const matchedCount = $derived(matchedEntries.length);
 
   const pathByKey = $derived.by(() => {
     const map = new SvelteMap<SelectionKey, string>();
@@ -198,7 +217,7 @@
     return map;
   });
 
-  /** 不受筛选影响的全量条目（隐藏选择计数与刷新交集使用）。 */
+  /** 不受筛选/折叠影响的全量候选（路径查表与刷新合法交集使用）。 */
   function allEntries(): ChangelistGroupFileView[] {
     return [
       ...snapshot.groups.flatMap((group) => group.files),
@@ -225,10 +244,11 @@
     );
   }
 
-  const filteredSelectable = $derived(toSelectable(allRows));
+  /** V020-R04：当前筛选可操作项基于匹配集合（含折叠但匹配的项），与渲染行分离。 */
+  const filteredSelectable = $derived(toSelectable(matchedEntries));
   const actionableCount = $derived(actionableKeys(filteredSelectable).size);
   const hiddenCount = $derived(
-    hiddenSelectionKeys(toSelectable(allEntries()), selected).size,
+    hiddenSelectionKeys(toSelectable(matchedEntries), selected).size,
   );
 
   /** 已选且属于某个变更集的路径（移出动作的作用范围）。 */
@@ -696,7 +716,7 @@
         onToggleOnlySelected={() => (onlySelected = !onlySelected)}
         onClearHidden={() =>
           (selected = clearHiddenSelection(
-            toSelectable(allEntries()),
+            toSelectable(matchedEntries),
             selected,
           ))}
         onClearAll={() => (selected = emptySelection())}
