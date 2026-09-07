@@ -314,6 +314,8 @@
   const list = useFileList<ChangelistGroupFileView>({
     rows: () => allRows,
     rowHeight: () => 44,
+    // 中文注释：V020-R16 锚点稳定身份；无身份键的行不可选，不参与锚点。
+    keyOf: (entry) => entry.selectionKey,
     onPathDetailRequest: (relativePath) =>
       onAction("file/path-detail", { relativePath }),
     onActivate: (entry) =>

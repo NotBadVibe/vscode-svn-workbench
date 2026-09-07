@@ -8,6 +8,7 @@ import {
   moveActiveIndex,
   edgeActiveIndex,
   rangeItems,
+  resolveAnchorIndex,
   shouldHandleListKeydown,
   splitPathForCell,
 } from "../../src/webview/components/list/listModel";
@@ -74,6 +75,48 @@ describe("列表底座纯逻辑（v0.0.8）", () => {
     expect(rangeItems(items, 1, 3)).toEqual(["b", "c", "d"]);
     expect(rangeItems(items, 3, 1)).toEqual(["b", "c", "d"]);
     expect(rangeItems(items, -1, 2)).toEqual([]);
+  });
+
+  it("V020-R16 稳定身份锚点解析：跟随/清除/越界回退", () => {
+    // 身份命中跟随新位置（排序/折叠/追加刷新后符合可见顺序）。
+    expect(
+      resolveAnchorIndex({
+        orderedKeys: ["e", "d", "c"],
+        anchorKey: "c",
+        anchorIndex: 0,
+      }),
+    ).toBe(2);
+    // 目标不在新集合（筛选剔除）时清除，调用方建立新锚点。
+    expect(
+      resolveAnchorIndex({
+        orderedKeys: ["a", "b"],
+        anchorKey: "z",
+        anchorIndex: 79,
+      }),
+    ).toBe(-1);
+    // 无稳定身份时越界即清除（80 行锚点筛至 5 行不再沿用旧位置）。
+    expect(
+      resolveAnchorIndex({
+        orderedKeys: ["a", "b", "c", "d", "e"],
+        anchorKey: undefined,
+        anchorIndex: 79,
+      }),
+    ).toBe(-1);
+    expect(
+      resolveAnchorIndex({
+        orderedKeys: ["a", "b", "c"],
+        anchorKey: undefined,
+        anchorIndex: 1,
+      }),
+    ).toBe(1);
+    // 从未建立锚点时保持无锚点。
+    expect(
+      resolveAnchorIndex({
+        orderedKeys: ["a"],
+        anchorKey: "a",
+        anchorIndex: -1,
+      }),
+    ).toBe(-1);
   });
 
   it("IME 候选与文本输入不触发列表快捷键", () => {

@@ -186,6 +186,8 @@
     rows: () => sortedFiles,
     rowHeight: () => rowHeight,
     virtualizeAfter,
+    // 中文注释：V020-R16 锚点稳定身份；筛选/排序后 Shift 范围按可见顺序解析。
+    keyOf: (file) => file.selectionKey,
     onPathDetailRequest: (relativePath) =>
       onAction("file/path-detail", { relativePath }),
     onActivate: (file) =>

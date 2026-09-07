@@ -18,6 +18,7 @@ import {
   moveActiveIndex,
   pageSizeOf,
   rangeItems,
+  resolveAnchorIndex,
   shouldHandleListKeydown,
   windowedRows,
 } from "./listModel";
@@ -31,6 +32,13 @@ export interface UseFileListOptions<T> {
   virtualizeAfter?: number;
   /** 窗口化前后额外渲染的行数。 */
   overscan?: number;
+  /**
+   * V020-R16 · 行稳定身份（Shift 锚点跟随用，如 selectionKey）。
+   * 提供后锚点按身份在可见顺序中解析：排序/折叠/追加刷新后仍指向同一行；
+   * 目标不在新集合（筛选剔除/刷新消失）时锚点视为清除，下一次点击建立新锚点。
+   * 未提供时锚点退化为位置语义，越界即视为清除。
+   */
+  keyOf?: (row: T) => string | undefined;
   /** 请求 Host 计算路径详情（file/path-detail）；结果由模块标记到达。 */
   onPathDetailRequest?: (relativePath: string) => void;
   /** 路径详情未打开时的 Escape 扩展行为；返回 true 表示已处理。 */
@@ -56,7 +64,7 @@ export interface FileListController<T> {
   /** 列表滚动容器（bind:this 绑定）。 */
   element: HTMLDivElement | undefined;
   readonly activeIndex: number;
-  /** Shift 连续选择的锚点（行点击与非 Shift 导航时更新）。 */
+  /** Shift 连续选择的锚点（行点击与非 Shift 导航时更新，读取时按稳定身份解析）。 */
   readonly anchorIndex: number;
   readonly detailOpen: boolean;
   readonly isVirtualized: boolean;
@@ -68,7 +76,10 @@ export interface FileListController<T> {
   setActiveRow(index: number): void;
   /** 行点击：记录活动行与选择锚点，不移动焦点。 */
   markActive(index: number): void;
-  /** 筛选/排序变化：回到顶部并清除活动行。 */
+  /**
+   * V020-R16 · 筛选/排序/刷新变化：回到顶部并清除活动行与选择锚点。
+   * 旧锚点不得带入新集合（80 行锚点筛至 5 行后不再沿用越界位置）。
+   */
   resetNavigation(): void;
   requestPathDetail(
     relativePath: string,
@@ -88,6 +99,8 @@ export function useFileList<T>(
   let element = $state<HTMLDivElement | undefined>();
   let activeIndex = $state(-1);
   let anchorIndex = $state(-1);
+  // 中文注释：V020-R16 锚点稳定身份；markActive/非 Shift 导航时与位置同步写入。
+  let anchorKey = $state<string | undefined>(undefined);
   let scrollTop = $state(0);
   let viewportHeight = $state(500);
   let detailOpen = $state(false);
@@ -143,14 +156,46 @@ export function useFileList<T>(
     });
   }
 
+  /** 当前行稳定身份（无 keyOf 接线时为 undefined，走位置回退）。 */
+  function keyOfIndex(rows: readonly T[], index: number): string | undefined {
+    if (index < 0 || index >= rows.length) return undefined;
+    try {
+      return options.keyOf?.(rows[index]);
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * 中文注释：V020-R16 锚点解析——身份命中跟随可见顺序，目标不在新集合
+   * 或旧位置越界时返回 -1（清除）。调用方（键盘 Shift/鼠标 Shift+Click 经
+   * anchorIndex 读取）将其视为无锚点，下一次普通点击建立新锚点。
+   */
+  function resolvedAnchorIndex(rows: readonly T[]): number {
+    return resolveAnchorIndex({
+      orderedKeys: rows.map((row) => {
+        try {
+          return options.keyOf?.(row);
+        } catch {
+          return undefined;
+        }
+      }),
+      anchorKey,
+      anchorIndex,
+    });
+  }
+
   function markActive(index: number): void {
     activeIndex = index;
     anchorIndex = index;
+    anchorKey = keyOfIndex(options.rows(), index);
   }
 
   function resetNavigation(): void {
     scrollTop = 0;
     activeIndex = -1;
+    anchorIndex = -1;
+    anchorKey = undefined;
     if (element) element.scrollTop = 0;
   }
 
@@ -218,11 +263,13 @@ export function useFileList<T>(
       event.preventDefault();
       if (event.shiftKey) {
         if (options.onSelectRange) {
-          const anchor = anchorIndex < 0 ? activeIndex : anchorIndex;
+          const resolved = resolvedAnchorIndex(rows);
+          const anchor = resolved < 0 ? activeIndex : resolved;
           options.onSelectRange(rangeItems(rows, anchor, nextIndex), nextIndex);
         }
       } else {
         anchorIndex = nextIndex;
+        anchorKey = keyOfIndex(rows, nextIndex);
       }
       setActiveRow(nextIndex);
       return;
@@ -267,7 +314,7 @@ export function useFileList<T>(
       return activeIndex;
     },
     get anchorIndex() {
-      return anchorIndex;
+      return resolvedAnchorIndex(options.rows());
     },
     get detailOpen() {
       return detailOpen;

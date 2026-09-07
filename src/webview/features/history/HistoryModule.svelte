@@ -153,6 +153,8 @@
   const list = useFileList<(typeof orderedRevisions)[number]>({
     rows: () => orderedRevisions,
     rowHeight: () => 64,
+    // 中文注释：V020-R16 锚点稳定身份；升降序后 Shift 范围按可见顺序解析。
+    keyOf: (revision) => String(revision.revision),
     onPathDetailRequest: (relativePath) =>
       onAction("file/path-detail", { relativePath }),
     onActivate: (revision) =>

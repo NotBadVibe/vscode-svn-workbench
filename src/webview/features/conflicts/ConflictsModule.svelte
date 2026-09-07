@@ -1034,6 +1034,8 @@
   const list = useFileList<(typeof snapshot.conflicts)[number]>({
     rows: () => orderedConflicts,
     rowHeight: () => 56,
+    // 中文注释：V020-R16 锚点稳定身份；筛选/排序后导航锚点按可见顺序解析。
+    keyOf: (conflict) => conflict.relativePath,
     onPathDetailRequest: (relativePath) =>
       onAction("file/path-detail", { relativePath }),
     onActivate: (conflict) => selectConflict(conflict.relativePath),
