@@ -120,6 +120,152 @@ export async function collectSvnHistoryPage(
   };
 }
 
+export interface SvnHistoryRangeResult {
+  revisions: SvnRevision[];
+  /** 去重后已读取修订数（重试合并时不重复计数）。 */
+  revisionsRead: number;
+  /** 请求分页次数。 */
+  pagesRead: number;
+  complete: boolean;
+  cancelled: boolean;
+  /** 部分结果原因（取消/分页失败，展示用中文）。 */
+  partialReason?: string;
+  /** 失败页的修订上界（续查入口用）。 */
+  failedUpperBound?: string;
+}
+
+/**
+ * V021-R14：在请求开始把 HEAD 固定为数字修订（rN），避免分页期间 HEAD
+ * 漂移导致范围不一致。优先 `svn info -r HEAD --xml`，失败时回退
+ * `svn log --limit 1` 首条；均失败返回 undefined（调用方按“未填”处理
+ * 并如实提示，不得虚构 HEAD）。
+ */
+export async function resolveHeadRevision(
+  svnPath: string,
+  scope: OperationScope,
+): Promise<string | undefined> {
+  try {
+    const info = await runSvnCommand(
+      svnPath,
+      ["info", "--xml", "-r", "HEAD", scope.repositoryRoot],
+      scope.repositoryRoot,
+    );
+    if (info.exitCode === 0) {
+      const revision = /revision="(\d+)"/.exec(info.stdout)?.[1];
+      if (revision) return revision;
+    }
+  } catch {
+    // 忽略并尝试 log 回退。
+  }
+  try {
+    const log = await runSvnCommand(
+      svnPath,
+      ["log", "--xml", "--limit", "1", scope.repositoryRoot],
+      scope.repositoryRoot,
+    );
+    if (log.exitCode === 0) {
+      const revision = /logentry\s+revision="(\d+)"/.exec(log.stdout)?.[1];
+      if (revision) return revision;
+    }
+  } catch {
+    // 忽略，调用方如实提示。
+  }
+  return undefined;
+}
+
+/**
+ * V021-R14：按用户指定修订范围只读分页采集（端点包含）。
+ * - 按窗口从新到旧倒序拉取（每页 pageSize，缺省 200），窗口上界逐页下移；
+ * - 以 Map 按修订去重合并，重试/续查不重复计数；
+ * - 取消（AbortSignal）或分页失败时返回已采集部分并标记 complete=false；
+ * - 空范围（from>to 不可能出现，调用方已归一化；from/to 缺省表示开端）
+ *   与反向范围由调用方归一化后传入，本函数只处理包含语义。
+ */
+export async function collectSvnHistoryRange(
+  svnPath: string,
+  scope: OperationScope,
+  range: { fromRevision?: string; toRevision?: string },
+  options: {
+    pageSize?: number;
+    signal?: AbortSignal;
+    onPage?: (read: number, upperBound: string) => void;
+  } = {},
+): Promise<SvnHistoryRangeResult> {
+  const pageSize = options.pageSize ?? 200;
+  const lower = range.fromRevision;
+  const upper = range.toRevision;
+  const byRevision = new Map<string, SvnRevision>();
+  let pagesRead = 0;
+  let currentUpper = upper;
+  let cancelled = false;
+  let partialReason: string | undefined;
+  let failedUpperBound: string | undefined;
+  // 无上界时先取一次最新页以确定上界（仍走分页语义，首轮即定界）。
+  for (;;) {
+    if (options.signal?.aborted) {
+      cancelled = true;
+      partialReason = "已取消";
+      break;
+    }
+    let page: SvnHistoryPage;
+    try {
+      page = await collectSvnHistoryPage(
+        svnPath,
+        scope,
+        pageSize,
+        currentUpper || lower
+          ? {
+              revisionFrom: lower,
+              revisionTo: currentUpper,
+            }
+          : {},
+        options.signal,
+      );
+    } catch (error) {
+      if (
+        options.signal?.aborted ||
+        (error instanceof Error && /abort|cancel/i.test(error.message))
+      ) {
+        cancelled = true;
+        partialReason = "已取消";
+      } else {
+        partialReason = error instanceof Error ? error.message : "分页读取失败";
+        failedUpperBound = currentUpper;
+      }
+      break;
+    }
+    pagesRead += 1;
+    for (const revision of page.revisions) {
+      if (!byRevision.has(revision.revision))
+        byRevision.set(revision.revision, revision);
+    }
+    options.onPage?.(byRevision.size, currentUpper ?? "HEAD");
+    const numbers = [...byRevision.keys()].map(Number).filter(Number.isFinite);
+    const minRead = numbers.length > 0 ? Math.min(...numbers) : undefined;
+    const reachedLower =
+      lower !== undefined && minRead !== undefined && minRead <= Number(lower);
+    // 本页未填满 → 该窗口内无更多记录；已触及下界 → 完整。
+    if (page.revisions.length < pageSize || reachedLower) break;
+    if (minRead === undefined) break;
+    if (lower !== undefined && minRead - 1 < Number(lower)) break;
+    currentUpper = String(minRead - 1);
+    // 无下界的全量采集同样分页直到填不满为止。
+  }
+  const revisions = [...byRevision.values()].sort(
+    (left, right) => Number(right.revision) - Number(left.revision),
+  );
+  const complete = !cancelled && partialReason === undefined;
+  return {
+    revisions,
+    revisionsRead: revisions.length,
+    pagesRead,
+    complete,
+    cancelled,
+    partialReason,
+    failedUpperBound,
+  };
+}
+
 export async function collectSvnHistory(
   svnPath: string,
   scope: OperationScope,

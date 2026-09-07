@@ -459,4 +459,88 @@ describe("UpdateModule", () => {
       taskId: "repository/recovery",
     });
   });
+
+  it("V021-R15：无本地重叠仍能查看远端全清单", () => {
+    render(UpdateModule, {
+      snapshot: updateSnapshot({
+        preview: {
+          token: "update-remote-only",
+          canExecute: true,
+          localCount: 0,
+          remoteCount: 2,
+          checkedRevision: "42",
+          risk: "low",
+          overlapPaths: [],
+          remotePaths: ["src/remote-a.ts", "src/remote-b.ts"],
+          remoteItems: [
+            { relativePath: "src/remote-a.ts", repositoryStatus: "modified" },
+            { relativePath: "src/remote-b.ts", repositoryStatus: "added" },
+          ],
+          remoteByStatus: { modified: 1, added: 1 },
+          remoteIncomplete: false,
+          previewedAt: "2026-09-07T00:00:00.000Z",
+          messages: ["没有明显风险。"],
+          commands: ['svn update --accept postpone "."'],
+        },
+      }),
+      onAction: vi.fn(),
+    });
+    expect(screen.getByText(/远端变更清单（2）/)).toBeInTheDocument();
+    expect(screen.getByLabelText("远端变更清单（2）")).toBeInTheDocument();
+    expect(screen.getByText("src/remote-a.ts")).toBeInTheDocument();
+    expect(screen.getByText("src/remote-b.ts")).toBeInTheDocument();
+    expect(screen.getByText(/与本地无同路径重叠/)).toBeInTheDocument();
+  });
+
+  it("V021-R15：读取失败不展示空清单冒充无变化", () => {
+    render(UpdateModule, {
+      snapshot: updateSnapshot({
+        preview: {
+          token: "update-incomplete",
+          canExecute: false,
+          localCount: 1,
+          risk: "medium",
+          overlapPaths: [],
+          remotePaths: [],
+          remoteIncomplete: true,
+          messages: ["远端更新检查失败：connection refused"],
+          commands: ['svn update --accept postpone "."'],
+          error: "connection refused",
+        },
+      }),
+      onAction: vi.fn(),
+    });
+    expect(screen.getByText(/远端变更未能完整读取/)).toBeInTheDocument();
+    expect(screen.queryByText("远端变更清单（0）")).toBeNull();
+  });
+
+  it("V021-R15：远端状态与预览时间如实展示", () => {
+    render(UpdateModule, {
+      snapshot: updateSnapshot({
+        preview: {
+          token: "update-honest-meta",
+          canExecute: true,
+          localCount: 1,
+          remoteCount: 2,
+          checkedRevision: "42",
+          risk: "medium",
+          overlapPaths: ["src/overlap.ts"],
+          remotePaths: ["src/overlap.ts", "src/new.ts"],
+          remoteByStatus: { modified: 1, added: 1 },
+          remoteIncomplete: false,
+          previewedAt: "2026-09-07T00:00:00.000Z",
+          messages: ["远端与本地存在 1 个同路径重叠。"],
+          commands: ['svn update --accept postpone "."'],
+        },
+      }),
+      onAction: vi.fn(),
+    });
+    expect(screen.getByText(/modified 1/)).toBeInTheDocument();
+    expect(screen.getByText(/预览时间：/)).toBeInTheDocument();
+    expect(screen.getByText(/HEAD 可变化/)).toBeInTheDocument();
+    expect(screen.getByLabelText("本地重叠（1）")).toBeInTheDocument();
+    expect(screen.getAllByText("src/overlap.ts").length).toBeGreaterThanOrEqual(
+      2,
+    );
+  });
 });

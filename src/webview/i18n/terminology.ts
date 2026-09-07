@@ -406,6 +406,37 @@ export function updateConfirmLabel(remoteCount?: number): string {
 }
 
 /**
+ * V021-R15：更新预览两类清单标签（远端全部变化 N 项 / 本地重叠 M 项）。
+ * 页面复用以下函数，不各自拼字符串。
+ */
+export function updateRemoteAllLabel(count: number): string {
+  return `远端变更清单（${count}）`;
+}
+
+export function updateRemoteOverlapLabel(count: number): string {
+  return `本地重叠（${count}）`;
+}
+
+export const updateRemoteIncompleteNotice =
+  "远端变更未能完整读取：以下不展示远端清单，请重新检查后再确认；不得把读取失败当作无变化。";
+
+/**
+ * V021-R14：发布说明完整性标签。页面复用，不各自拼字符串。
+ */
+export function releaseNotesIntegrityLabel(
+  revisionsRead: number,
+  complete?: boolean,
+): string {
+  return complete === false
+    ? `已读取 ${revisionsRead} 条（部分结果）`
+    : `已读取 ${revisionsRead} 条（完整）`;
+}
+
+export function releaseNotesOmittedLabel(omitted: number): string {
+  return `摘要省略 ${omitted} 个路径`;
+}
+
+/**
  * V020-R12：冲突普通文件出口统一命名。VS Code 编辑器出口与真实外部合并
  * 工具预览/确认链（“在外部合并工具中打开”）区分，不生造同义文案。
  */

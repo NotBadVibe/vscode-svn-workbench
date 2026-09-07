@@ -31,6 +31,56 @@ export interface UpdateScopeRemoteChangeSummary {
   items: RemoteUpdateItem[];
 }
 
+export interface UpdateScopeRemoteLists {
+  /** 全部远端变更相对路径（排序去重，含与本地无重叠项）。 */
+  remotePaths: string[];
+  /** 路径 + 远端状态明细（排序去重）。 */
+  remoteItems: Array<{ relativePath: string; repositoryStatus: string }>;
+  /** 与本地未提交候选同路径重叠的子集。 */
+  overlapPaths: string[];
+  /** 仅远端有变化、本地无候选的子集。 */
+  remoteOnlyPaths: string[];
+}
+
+/**
+ * V021-R15：从远端摘要与本地候选构建两类清单（纯函数，可单元测试）。
+ * 远端 N 项与本地重叠 M 项分别返回；两类清单均排序去重，调用方据此
+ * 渲染搜索/复制/状态查看。ownership 归属由调用方按候选表补充。
+ */
+export function buildUpdateScopeRemoteLists(
+  remoteChanges: UpdateScopeRemoteChangeSummary | undefined,
+  candidates: CommitCandidate[] = [],
+  scope?: OperationScope,
+): UpdateScopeRemoteLists {
+  const items = remoteChanges?.items ?? [];
+  const seen = new Map<string, string>();
+  for (const item of items) {
+    const key = item.relativePath;
+    if (!seen.has(key)) seen.set(key, item.repositoryStatus);
+  }
+  const remotePaths = [...seen.keys()].sort((a, b) => a.localeCompare(b));
+  const remoteItems = remotePaths.map((relativePath) => ({
+    relativePath,
+    repositoryStatus: seen.get(relativePath) ?? "unknown",
+  }));
+  const inScopeCandidates = scope
+    ? candidates.filter((item) => isPathInUpdateScope(scope, item.absolutePath))
+    : candidates;
+  const localByRelativePath = new Set(
+    inScopeCandidates.map((candidate) =>
+      normalizeRelative(candidate.relativePath),
+    ),
+  );
+  const overlapPaths = remotePaths.filter((item) =>
+    localByRelativePath.has(normalizeRelative(item)),
+  );
+  const overlapSet = new Set(overlapPaths.map(normalizeRelative));
+  const remoteOnlyPaths = remotePaths.filter(
+    (item) => !overlapSet.has(normalizeRelative(item)),
+  );
+  return { remotePaths, remoteItems, overlapPaths, remoteOnlyPaths };
+}
+
 export type UpdateScopeRiskLevel = "low" | "medium" | "high";
 
 export interface UpdateScopeRiskSummary {
@@ -249,6 +299,19 @@ export function summarizeUpdateScopeRisk(
     overlapPaths,
     messages,
   };
+}
+
+/**
+ * V021-R15：预览诚实说明（纯函数）。目录更新的实际影响在执行时才能
+ * 确定：预览只反映生成时刻的远端状态，执行期间 HEAD 可能变化，实际
+ * 更新数量可能多于或少于预览；枚举清单不承诺覆盖一切动态影响。
+ */
+export function buildUpdatePreviewHonestyNote(
+  previewedAt: string,
+  checkedRevision?: string,
+): string {
+  const checked = checkedRevision ? `远端检查基线 r${checkedRevision}；` : "";
+  return `预览时间为 ${previewedAt}，${checked}执行时将更新到最新远端，期间 HEAD 可能变化，实际数量可能多于或少于预览；以下清单为预览时刻的枚举，不承诺覆盖目录更新的一切动态影响。`;
 }
 
 export function buildUpdateScopeRiskConfirmationMessage(

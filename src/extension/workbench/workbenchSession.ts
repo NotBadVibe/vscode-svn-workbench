@@ -29,11 +29,28 @@ import type {
 import type { SvnCertificateDetails } from "../../svn/svnErrorClassifier";
 
 /**
+ * V021-R17：单文件该次修改请求（history/view-path-diff，经 svn log 真值
+ * 复验后由 Host 填入；Webview 只发修订 + 仓库路径，不直接携带内容）。
+ */
+export interface ChangedPathDiffRequest {
+  /** 该次修订（如 "12"）。 */
+  revision: string;
+  /** 仓库根相对路径（如 "/trunk/a.ts"，禁止把标签当路径）。 */
+  reposPath: string;
+  /** SVN 真值动作（A/D/M/R）。 */
+  action: string;
+  copyFromPath?: string;
+  copyFromRevision?: string;
+}
+
+/**
  * 修订比较（history/compare）会话负载：
  * 打开 diff 模块后直接展示 rA → rB 的 patch 差异，不走 Working/BASE 快照。
+ * V021-R17：携带 pathDiff 时改为展示单文件该次修改（revision-file）。
  */
 export interface RevisionCompareRequest {
   revisions: [string, string];
+  pathDiff?: ChangedPathDiffRequest;
 }
 
 export interface OpenWorkbenchRequest {

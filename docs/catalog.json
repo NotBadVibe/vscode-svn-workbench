@@ -517,12 +517,12 @@
     },
     {
       "version": "0.2.1",
-      "status": "draft",
-      "phase": "planned",
+      "status": "released",
+      "phase": "released",
       "baseVersion": "0.2.0",
       "canonicalEntry": "releases/v0.2.1/README.md",
       "manifest": "releases/v0.2.1/manifest.json",
-      "releasedFact": false,
+      "releasedFact": true,
       "topics": [
         "history-query",
         "history-pagination",

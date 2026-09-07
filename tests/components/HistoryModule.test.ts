@@ -562,4 +562,180 @@ describe("HistoryModule", () => {
     ).toBe("20");
     expect(screen.getByText("2 条修订")).toBeInTheDocument();
   });
+
+  // V021-R19：比较两端芯片可见可调整，第三次选择明确替换对象。
+  it("V021-R19：两端芯片显示作者日期，移除交换设为起点终点可用", async () => {
+    const onAction = vi.fn();
+    const three: HistorySnapshot = {
+      ...snapshot,
+      revisions: [
+        ...snapshot.revisions,
+        {
+          revision: "10",
+          author: "cara",
+          date: "2026-07-28T08:00:00Z",
+          message: "更早",
+          changedPaths: [],
+        },
+      ],
+    };
+    render(HistoryModule, { snapshot: three, onAction });
+    await fireEvent.click(screen.getByLabelText("选择修订 12 进行比较"));
+    await fireEvent.click(screen.getByLabelText("选择修订 11 进行比较"));
+    const endpoints = screen.getByTestId("compare-endpoints");
+    expect(endpoints).toHaveTextContent("起点");
+    expect(endpoints).toHaveTextContent("终点");
+    expect(endpoints).toHaveTextContent("r12");
+    expect(endpoints).toHaveTextContent("alice");
+    expect(endpoints).toHaveTextContent("r11");
+    expect(endpoints).toHaveTextContent("bob");
+    // 移除起点。
+    await fireEvent.click(
+      screen.getByRole("button", { name: "移除比较起点 r12" }),
+    );
+    expect(screen.getByTestId("compare-endpoints")).not.toHaveTextContent(
+      "r12",
+    );
+    // 设为起点/终点：把 r10 设为起点，再把 r11 设为终点。
+    await fireEvent.click(
+      screen.getByRole("button", { name: "将修订 10 设为比较起点" }),
+    );
+    expect(screen.getByTestId("compare-endpoints")).toHaveTextContent("r10");
+    await fireEvent.click(
+      screen.getByRole("button", { name: "将修订 11 设为比较终点" }),
+    );
+    expect(screen.getByTestId("compare-endpoints")).toHaveTextContent("r11");
+    // 交换起点与终点。
+    await fireEvent.click(
+      screen.getByRole("button", { name: "交换起点与终点" }),
+    );
+    expect(screen.getByTestId("compare-notice")).toHaveTextContent(
+      "已交换起点与终点",
+    );
+    expect(screen.getByTestId("compare-notice")).toHaveTextContent("从旧到新");
+  });
+
+  it("V021-R19：第三次勾选明确说明替换最早选择且跨搜索仍可见", async () => {
+    const onAction = vi.fn();
+    const three: HistorySnapshot = {
+      ...snapshot,
+      revisions: [
+        ...snapshot.revisions,
+        {
+          revision: "10",
+          author: "cara",
+          date: "2026-07-28T08:00:00Z",
+          message: "更早",
+          changedPaths: [],
+        },
+      ],
+    };
+    render(HistoryModule, { snapshot: three, onAction });
+    await fireEvent.click(screen.getByLabelText("选择修订 12 进行比较"));
+    await fireEvent.click(screen.getByLabelText("选择修订 11 进行比较"));
+    await fireEvent.click(screen.getByLabelText("选择修订 10 进行比较"));
+    expect(screen.getByTestId("compare-notice")).toHaveTextContent(
+      "r12 替换为 r10",
+    );
+    expect(screen.getByTestId("compare-endpoints")).toHaveTextContent("r11");
+    expect(screen.getByTestId("compare-endpoints")).toHaveTextContent("r10");
+    // 跨搜索过滤掉 r11/r10 行，两端芯片仍可见。
+    await fireEvent.input(screen.getByLabelText("筛选历史"), {
+      target: { value: "调整工作台" },
+    });
+    expect(screen.queryByLabelText("选择修订 11 进行比较")).toBeNull();
+    expect(screen.getByTestId("compare-endpoints")).toHaveTextContent("r11");
+    expect(screen.getByTestId("compare-endpoints")).toHaveTextContent("r10");
+    // 比较发送后 Host 排序契约由单测锁定，这里只断言发送了两条。
+    await fireEvent.click(screen.getByRole("button", { name: "比较所选修订" }));
+    expect(onAction).toHaveBeenCalledWith(
+      "history/compare",
+      expect.objectContaining({
+        revisions: expect.arrayContaining(["11", "10"]),
+      }),
+    );
+  });
+
+  // V021-R20：切换修订时失效筛选自动清除并说明，空态区分且一键恢复不丢比较。
+  it("V021-R20：删除筛选切到只有修改的修订自动清除并说明", async () => {
+    const onAction = vi.fn();
+    const { rerender } = render(HistoryModule, { snapshot, onAction });
+    // 在 r12（有删除）上设置删除筛选。
+    await fireEvent.click(screen.getByRole("button", { name: /删除 1/ }));
+    expect(screen.getByText("1 条路径")).toBeInTheDocument();
+    // 切到只有修改的新修订：旧删除条件自动清除并轻量说明。
+    const onlyModified: HistorySnapshot = {
+      ...snapshot,
+      selectedRevision: "13",
+      revisions: [
+        {
+          revision: "13",
+          author: "dave",
+          date: "2026-07-31T08:00:00Z",
+          message: "只有修改",
+          changedPaths: [{ action: "M", path: "/trunk/a.ts" }],
+        },
+      ],
+    };
+    await rerender({ snapshot: onlyModified, onAction });
+    expect(screen.getByTestId("path-filter-notice")).toHaveTextContent(
+      "已自动清除操作类型筛选",
+    );
+    expect(screen.getByText("1 条路径")).toBeInTheDocument();
+    expect(screen.getByText("/trunk/a.ts")).toBeInTheDocument();
+  });
+
+  // V021-R17：行主动作查看此修订修改，次级动作查看文件历史。
+  it("V021-R17：查看此修订修改发送修订与仓库路径", async () => {
+    const onAction = vi.fn();
+    render(HistoryModule, { snapshot, onAction });
+    const primary = screen.getByRole("button", {
+      name: "查看 r12 对 /trunk/a.ts 的修改",
+    });
+    expect(primary).toHaveTextContent("查看此修订修改");
+    await fireEvent.click(primary);
+    expect(onAction).toHaveBeenCalledWith("history/view-path-diff", {
+      revision: "12",
+      path: "/trunk/a.ts",
+    });
+  });
+
+  it("V021-R17：查看文件历史发送仓库路径", async () => {
+    const onAction = vi.fn();
+    render(HistoryModule, { snapshot, onAction });
+    const secondary = screen.getByRole("button", {
+      name: "查看 /trunk/new/b.ts 的文件历史",
+    });
+    expect(secondary).toHaveAttribute("title", "查看文件历史");
+    await fireEvent.click(secondary);
+    expect(onAction).toHaveBeenCalledWith("history/view-path-history", {
+      path: "/trunk/new/b.ts",
+    });
+  });
+
+  it("V021-R20：无变更与被筛选隐藏空态不同，一键清除不丢比较", async () => {
+    const onAction = vi.fn();
+    render(HistoryModule, { snapshot, onAction });
+    // 先选两条比较。
+    await fireEvent.click(screen.getByLabelText("选择修订 12 进行比较"));
+    await fireEvent.click(screen.getByLabelText("选择修订 11 进行比较"));
+    expect(screen.getByTestId("compare-endpoints")).toHaveTextContent("r12");
+    // 路径搜索无匹配：被筛选隐藏空态 + 一键清除。
+    await fireEvent.input(screen.getByLabelText("筛选变更路径"), {
+      target: { value: "不存在的路径zzz" },
+    });
+    expect(screen.getByText(/当前筛选隐藏了全部路径/)).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "清除路径筛选" }));
+    expect(screen.getByText("3 条路径")).toBeInTheDocument();
+    // 比较选择不受影响。
+    expect(screen.getByTestId("compare-endpoints")).toHaveTextContent("r12");
+    expect(screen.getByTestId("compare-endpoints")).toHaveTextContent("r11");
+    // 修订搜索无匹配可一键恢复且不改变比较选择。
+    await fireEvent.input(screen.getByLabelText("筛选历史"), {
+      target: { value: "不存在的修订xyz" },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "清除修订搜索" }));
+    expect(screen.getByText("2 条修订")).toBeInTheDocument();
+    expect(screen.getByTestId("compare-endpoints")).toHaveTextContent("r12");
+  });
 });
