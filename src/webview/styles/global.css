@@ -771,11 +771,137 @@ button.path-detail__value:hover {
   background: var(--surface-2);
   border-bottom: 1px solid var(--border);
 }
-/* V017-D P2-6 现状：vh 估算在推荐条/进度条出现时偏大，页面级 workbench-content 滚动兜底保证无永久裁切；改 flex 链需重排模块骨架，留后续版本。 */
-.file-list {
-  max-height: calc(100vh - 230px);
-  overflow: auto;
+/* V022-R27：Changes 高度链——`.changes-layout` 接管 `.feature-layout` 的块级流，
+ * 形成“内容区定高 → 表格卡片 flex:1 → 列表 flex:1 内部滚动”链，列表获得剩余空间，
+ * 不再主要靠 `100vh` 减常数估算（旧 `.file-list{max-height:calc(100vh-230px)}` 在推荐条/
+ * 进度条出现时偏大，曾使 720×480 下列表跌出首屏）。列表保底两整行（`min-height:96px`），
+ * 铬区超高时由页面级 `workbench-content` 滚动兜底，无永久裁切；范围栏在滚动容器之外，
+ * 滚动不带走范围；阻止警告与恢复入口不参与隐藏。 */
+.feature-layout.changes-layout {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
+.changes-layout .table-card {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.changes-layout .table-head-wrap {
+  flex: 0 0 auto;
+}
+.changes-layout .file-list {
+  flex: 1 1 auto;
+  min-height: 96px;
+  max-height: none;
+}
+/* V022-R27：纵向 flex 链中只有表格卡片参与伸缩，其余铬区不被压缩
+ *（可滚动铬区的自动最小尺寸为 0，会被压扁；卡片以 min-height:0 吸收余量）。 */
+.changes-layout > * {
+  flex: 0 0 auto;
+}
+.changes-layout > .table-card {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+/* V022-R27：组件自带 display 会覆盖 UA 对 closed-details 内容的隐藏，
+ * 此处以作者样式恢复（小高度帮助折叠才真正让出首屏）。 */
+details.changes-help:not([open]) > :not(summary) {
+  display: none;
+}
+/* V022-R27：小高度（<600px）铬区压缩——只收敛补充说明与留白，范围、真实阻止警告、
+ * 主操作与恢复入口不受影响；折叠均保留一键展开（草稿/帮助为 details/展开按钮）。 */
+@media (max-height: 599px) {
+  .feature-layout.changes-layout,
+  .feature-layout {
+    padding: 10px;
+  }
+  .feature-toolbar {
+    margin-bottom: 8px;
+  }
+  .status-filters {
+    margin-bottom: 6px;
+  }
+  .selection-summary {
+    padding: 4px 8px;
+  }
+  .filter-preset-row {
+    gap: 4px;
+  }
+  /* 共享草稿收起态只保留眉题 + 标题 + 展开按钮，描述段落让出首屏。 */
+  .shared-draft {
+    padding: 8px 10px;
+    margin-bottom: 8px;
+    gap: 8px;
+  }
+  .shared-draft > div:first-child > p,
+  .shared-draft > div:first-child > .eyebrow {
+    display: none;
+  }
+  /* 收起态标题行单行：标题与展开按钮并排，不再纵向堆叠。 */
+  .shared-draft > div:first-child {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .shared-draft > div:first-child > h2 {
+    margin: 0;
+    font-size: 13px;
+    flex: 1 1 auto;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .shared-draft > div:first-child > .button {
+    flex: 0 0 auto;
+    min-height: 26px;
+    padding: 3px 10px;
+  }
+  /* 推荐条压为单行：理由保留并省略，完整值经 title 查看，主按钮与忽略保留。 */
+  .recommendation-strip {
+    padding: 6px 10px;
+    margin-bottom: 8px;
+  }
+  .recommendation-strip .button {
+    min-height: 26px;
+    padding: 3px 10px;
+  }
+  .recommendation-strip__body {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    min-width: 0;
+  }
+  .recommendation-strip__body strong {
+    display: inline;
+    white-space: nowrap;
+  }
+  .recommendation-strip__body span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /* 小高度帮助折叠卡只保留 summary 一行。 */
+  .changes-help {
+    margin-bottom: 4px;
+  }
+  .changes-help > summary {
+    cursor: pointer;
+  }
+  /* V022-R27：历史页小高度首屏——静态解释段落（工具栏后紧随的那段）默认隐藏，
+   * 条件表单 summary 与比较操作栏保留；行级“设为起点/终点”快捷按钮隐藏，
+   * 两端设置仍可经复选框 + 两端芯片 + 交换完成（DOM 保留，无障碍树可达）。 */
+  .history-list-pane > .feature-toolbar--compact + .history-filter-hint {
+    display: none;
+  }
+  /* 特异性 0,2,0：晚于文件后部的行内格定义（同 R55 附带问题），小高度才隐藏。 */
+  .revision-row > .revision-endpoint-actions {
+    display: none;
+  }
+}
+/* V022-R27：窄宽 + 小高度工具栏横向规则已移至窄宽大块之后（后来者居上），此处不再重复。 */
 .file-list--virtual {
   min-height: 340px;
   contain: strict;
@@ -897,6 +1023,30 @@ button.path-detail__value:hover {
   justify-content: flex-end;
   gap: 4px;
   min-width: 0;
+}
+/* V022-R27（附带 R55 真问题修复）：窄屏隐藏列重申。文件上部 `@media (max-width: 720px)`
+ * 的 `.file-row__selection/.file-row__ownership{display:none}`（0,1,0）被后部同优先级
+ * `.file-row__status/.file-row__selection{display:flex}` 后来者居上覆盖，导致选择建议列仍参与
+ * 排版（六个子项挤进四列 grid）。此处以更高特异性（0,2,0）重申隐藏并重申四列模板；
+ * DOM 保留，读屏名称与路径详情仍可达，排序菜单保留同等能力。 */
+@media (max-width: 720px) {
+  .table-header,
+  .file-row {
+    grid-template-columns: 26px minmax(0, 1fr) auto 64px;
+  }
+  .table-header--grid {
+    display: none;
+  }
+  .file-row > .file-row__selection,
+  .file-row > .file-row__ownership {
+    display: none;
+  }
+  /* V022-R27：窄屏纵向工具栏内搜索框的 `flex: 0 1 260px` 在列方向会被解释为 260px 高；
+   * 此处恢复自动高度 + 占满行宽（仅 ≤720px 纵向工具栏内，宽屏横向工具栏不动）。 */
+  .feature-toolbar--compact .search-field--compact {
+    flex: none;
+    width: 100%;
+  }
 }
 .feature-footer {
   display: flex;
@@ -4324,6 +4474,17 @@ button.path-detail__value:hover {
   }
   .changelist-column {
     max-height: 420px;
+  }
+}
+/* V022-R27：窄宽 + 小高度时工具栏恢复横向 wrap（一行能放下搜索 + 计数 + 排序/密度），
+ * 不再沿用纯窄宽的纵向三行。位于窄宽大块之后，同优先级以后来者居上；
+ * 仅窄宽且小高度时横向，其余窄宽纵向、宽屏横向均不变。 */
+@media (max-width: 720px) and (max-height: 599px) {
+  .feature-toolbar {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
   }
 }
 @media (min-width: 721px) and (max-height: 700px) {

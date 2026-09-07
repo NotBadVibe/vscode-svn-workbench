@@ -1012,11 +1012,10 @@
             {snapshot.feedback.message}
           </div>
         {/if}
+        <!-- V022-R29：展开态推荐按钮去重——“选择推荐项”与下方选择摘要入口重复，
+          此处只保留“应用本地规则”；数量摘要以紧凑摘要条（待提交/阻止项）与
+          选择摘要（已选/可操作/隐藏）为准，不再重复推荐计数。 -->
         <div class="commit-action-row">
-          <button class="button button--secondary" onclick={selectRecommended}
-            ><span class="codicon codicon-checklist" aria-hidden="true"
-            ></span>选择推荐项</button
-          >
           <button
             class="button button--secondary"
             onclick={() => onAction("commit/apply-local-rules")}

@@ -4,6 +4,7 @@
   import ScopeBar from "../svn/ScopeBar.svelte";
   import OnboardingStrip from "./OnboardingStrip.svelte";
   import { onboarding } from "../../app/onboarding.svelte";
+  import { shouldShowRecommendation } from "../../app/recommendationVisibility";
 
   let {
     state: workbenchState,
@@ -27,10 +28,32 @@
    * 不替用户执行、不扩大右键范围、不自动开始写操作。
    */
   let dismissedRecommendationKeys = $state<ReadonlySet<string>>(new Set());
+  /*
+   * V022-R28：推荐结合当前任务过滤（只读已有 moduleId/taskId，不改写操作协议）。
+   * 脏状态取自既有快照/编辑会话：提交说明非空、冲突合并草稿脏、差异编辑会话进行中。
+   */
+  const recommendationDirty = $derived.by(() => {
+    if (workbenchState.editSession) return true;
+    const snapshot = workbenchState.snapshot;
+    if (!snapshot) return false;
+    if (snapshot.kind === "commit") return snapshot.message.trim().length > 0;
+    if (snapshot.kind === "conflicts")
+      return snapshot.selected?.draft?.dirty === true;
+    return false;
+  });
   const visibleRecommendation = $derived.by(() => {
     const recommendation = workbenchState.scope?.recommendation;
     if (!recommendation) return undefined;
     if (dismissedRecommendationKeys.has(recommendation.key)) return undefined;
+    if (
+      !shouldShowRecommendation(recommendation, {
+        moduleId: workbenchState.moduleId,
+        taskId: workbenchState.taskId,
+        dirty: recommendationDirty,
+      })
+    ) {
+      return undefined;
+    }
     return recommendation;
   });
 
@@ -81,7 +104,9 @@
         ></span>
         <div class="recommendation-strip__body">
           <strong>{visibleRecommendation.title}</strong>
-          <span>{visibleRecommendation.reason}</span>
+          <span title={visibleRecommendation.reason}
+            >{visibleRecommendation.reason}</span
+          >
         </div>
         <button
           class="button button--primary"

@@ -123,6 +123,13 @@
   let commitDraft = $state("");
   let synchronizedCommitDraft = $state("");
   let draftExpanded = $state(false);
+  /*
+   * V022-R27：小高度（<600px）默认收起共享草稿与长帮助，保留一键展开。
+   * 脏草稿内容保留在状态中，展开即回；该阈值只影响初始展开态，不改变保存语义。
+   * 正常高度行为不变（HELP-01 与往返恢复断言不受影响）。
+   */
+  const smallViewportHeight =
+    typeof window !== "undefined" && window.innerHeight < 600;
   let operationPreviewToken = $state<string | undefined>();
   // v0.0.14 批次 D：文件操作意向单（还原/删除等）
   let fileOpIntentOpen = $state(false);
@@ -442,7 +449,8 @@
     // ⑤ 草稿第二道保守：本地已有输入时丢弃载荷草稿。
     if (restore.commitDraft !== undefined && commitDraft.trim().length === 0) {
       commitDraft = restore.commitDraft;
-      if (restore.commitDraft.trim().length > 0) draftExpanded = true;
+      if (restore.commitDraft.trim().length > 0 && !smallViewportHeight)
+        draftExpanded = true;
     }
     // ⑥ 播报：移除原因逐条 + 恢复提示（SelectionSummary 经 role=status 播报）。
     const restoreMessages = [
@@ -492,8 +500,8 @@
     const next = snapshot.commitDraft;
     if (commitDraft === synchronizedCommitDraft) commitDraft = next;
     synchronizedCommitDraft = next;
-    // 脏草稿始终可见。
-    if (next.trim().length > 0) draftExpanded = true;
+    // 脏草稿始终可见（小高度首屏除外：默认收起，展开按钮保留，内容不丢）。
+    if (next.trim().length > 0 && !smallViewportHeight) draftExpanded = true;
   });
 
   $effect(() => {
@@ -710,7 +718,7 @@
   }
 </script>
 
-<section class="feature-layout" use:focusOnMount tabindex="-1">
+<section class="feature-layout changes-layout" use:focusOnMount tabindex="-1">
   <div class="feature-toolbar">
     <SearchInput
       bind:this={searchInputRef}
@@ -908,8 +916,20 @@
   />
 
   <div class="table-card">
-    <!-- V017-B 列表紧凑提示条（按区域实际绑定生成，可忽略、可关闭）。 -->
-    <ListShortcutHint region="list" hintKey="changes-list" searchAvailable />
+    <!-- V017-B 列表紧凑提示条（按区域实际绑定生成，可忽略、可关闭）。
+      V022-R27：小高度默认收起为一行摘要（details），一键展开；正常高度保持原样。 -->
+    {#if smallViewportHeight}
+      <details class="changes-help" open={false}>
+        <summary>键盘与列表操作说明</summary>
+        <ListShortcutHint
+          region="list"
+          hintKey="changes-list"
+          searchAvailable
+        />
+      </details>
+    {:else}
+      <ListShortcutHint region="list" hintKey="changes-list" searchAvailable />
+    {/if}
     {#if pathDetail && list.detailOpen}
       <div class="path-detail-host">
         <div class="path-detail-host__bar">

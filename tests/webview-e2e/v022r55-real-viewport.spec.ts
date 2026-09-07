@@ -31,8 +31,8 @@ import path from "node:path";
  * - R02（V020-R02）：提交说明输入框最小高 150px、铺满宽度、纵向可调。
  * - R03（V020-R03）：Changes 表头与数据行共用六列定义、左右边对齐；
  *   ≤720px 宽走简化列（表头隐藏，选择建议/归属隐藏但保留 DOM）。
- * - R27（V022-R27）：720×480 首屏至少 2 个完整文件/修订行——R27 业务未实施，
- *   下方 `test.fail` 记录为预期失败，通过即代表 R27 落地时必须同步更新本断言。
+ * - R27（V022-R27）：720×480 首屏至少 2 个完整文件/修订行——R27/R28/R03 附带修复
+ *   已落地（高度链 + 推荐降级 + 窄屏列特异性），下方为正式断言，铬区回退即失败。
  *
  * 全程确定性：只用 expect 轮询，不用 waitForTimeout；断言平台无关（只比较
  * 同页盒模型与角色，不做操作系统假设）。
@@ -66,7 +66,10 @@ function artifactName(name: string): string {
 const smallViewport = { width: 720, height: 480 };
 const wideViewport = { width: 1280, height: 800 };
 
-/** 主题变量只含颜色（与 visual-accessibility.spec.ts 同源），零布局规则。 */
+/** 主题变量与 visual-accessibility.spec.ts 同源（含语义色），零布局规则。
+ * V022-R27 附带补齐：首屏修复把状态筛选按钮与状态徽标带入小视口，
+ * 此前缺失的 list-activeSelection/warning/passed/error 变量曾 fallback 到深色值
+ * 造成 light 主题对比度误报；与同源集对齐后断言的是真实主题语义色。 */
 const themes = {
   light: {
     "--vscode-foreground": "#242424",
@@ -79,6 +82,15 @@ const themes = {
     "--vscode-focusBorder": "#005fb8",
     "--vscode-button-background": "#0067b8",
     "--vscode-button-foreground": "#ffffff",
+    "--vscode-list-activeSelectionBackground": "#005fb8",
+    "--vscode-list-activeSelectionForeground": "#ffffff",
+    "--vscode-editorWarning-foreground": "#6c4b00",
+    "--vscode-testing-iconPassed": "#116329",
+    "--vscode-errorForeground": "#a1260d",
+    "--vscode-gitDecoration-addedResourceForeground": "#587c0c",
+    "--vscode-gitDecoration-deletedResourceForeground": "#ad0707",
+    "--vscode-diffEditor-insertedTextBackground": "rgba(172, 206, 247, 0.55)",
+    "--vscode-diffEditor-removedTextBackground": "rgba(255, 0, 0, 0.3)",
   },
   dark: {
     "--vscode-foreground": "#cccccc",
@@ -91,6 +103,10 @@ const themes = {
     "--vscode-focusBorder": "#007fd4",
     "--vscode-button-background": "#0e639c",
     "--vscode-button-foreground": "#ffffff",
+    "--vscode-gitDecoration-addedResourceForeground": "#81b88b",
+    "--vscode-gitDecoration-deletedResourceForeground": "#c74e39",
+    "--vscode-diffEditor-insertedTextBackground": "rgba(156, 204, 44, 0.2)",
+    "--vscode-diffEditor-removedTextBackground": "rgba(255, 0, 0, 0.3)",
   },
   highContrast: {
     "--vscode-foreground": "#ffffff",
@@ -103,6 +119,10 @@ const themes = {
     "--vscode-focusBorder": "#f38518",
     "--vscode-button-background": "#000000",
     "--vscode-button-foreground": "#ffffff",
+    "--vscode-gitDecoration-addedResourceForeground": "#9bbb55",
+    "--vscode-gitDecoration-deletedResourceForeground": "#f14c4c",
+    "--vscode-diffEditor-insertedTextBackground": "rgba(155, 185, 85, 0.55)",
+    "--vscode-diffEditor-removedTextBackground": "rgba(255, 0, 0, 0.5)",
     "--vscode-contrastBorder": "#6fc3df",
   },
 } as const;
@@ -276,95 +296,87 @@ test("V022-R55(R03)：口径A真实视口 720×480 窄屏表头隐藏与隐藏�
   await assertNoPageHorizontalOverflow(page);
 });
 
-test.fail(
-  "V022-R55(R03)：口径A真实视口 720×480 窄屏简化四列排版",
-  async ({ page }) => {
-    // V020-R03 窄屏简化列未完全实施：`@media (max-width: 720px)` 内的
-    // `.file-row__selection/.file-row__ownership { display: none }` 被文件后部
-    // 同优先级 `.file-row__status, .file-row__selection { display: flex }`
-    // 覆盖，选择建议列仍参与排版（六个子项挤进四列 grid）。本断言记录为预期
-    // 失败；V020-R03 落地使之通过时 Playwright 报“意外通过”，强制同步更新。
-    await page.setViewportSize(smallViewport);
-    await gotoReady(page, "/");
-    const firstRow = page.locator(".file-row").first();
-    await expect(firstRow).toBeVisible();
-    await expect(
-      firstRow.locator(".file-row__selection"),
-      "选择建议列应不参与窄屏排版",
-    ).toBeHidden();
-    await expect(
-      firstRow.locator(".file-row__ownership"),
-      "归属列应不参与窄屏排版",
-    ).toBeHidden();
-    // 行退化为选择/文件/状态/操作四列，可见单元格横向互不重叠（允许 1px 舍入）。
-    const intervals = await firstRow
-      .locator(
-        ":scope > input, :scope > .file-path, :scope > .file-row__status, :scope > .file-row__actions",
-      )
-      .evaluateAll((elements) =>
-        elements.map((element) => {
-          const rect = element.getBoundingClientRect();
-          return { x: rect.x, right: rect.x + rect.width };
-        }),
-      );
-    expect(intervals.length).toBe(4);
-    const sorted = [...intervals].sort((a, b) => a.x - b.x);
-    for (let index = 1; index < sorted.length; index += 1) {
-      expect(
-        sorted[index].x,
-        `可见列 ${index} 与前一列重叠`,
-      ).toBeGreaterThanOrEqual(sorted[index - 1].right - 1);
-    }
-  },
-);
-
-test.fail(
-  "V022-R55(R27)：口径A真实视口 720×480 首屏至少 2 个完整文件/修订行",
-  async ({ page }) => {
-    // R27（小窗口首屏先看到文件与历史）业务未实施：当前 720×480 下 Changes 列表
-    // 约从 y=699 开始，首屏无完整行。本断言记录为预期失败；R27 落地使之通过时，
-    // Playwright 会报“意外通过”，强制同步更新本断言（不得无理由改回现状断言）。
-    await page.setViewportSize(smallViewport);
-
-    await gotoReady(page, "/");
-    await expect(
-      page.getByRole("heading", { name: "工作副本修改" }),
-    ).toBeVisible();
-    const changesComplete = await page
-      .getByRole("list", { name: "SVN 变更文件" })
-      .getByRole("listitem")
-      .evaluateAll((elements, viewportHeight) => {
-        const inViewport = (rect: DOMRect) =>
-          rect.height > 0 &&
-          rect.y >= 0 &&
-          rect.y + rect.height <= viewportHeight;
-        return elements.filter((element) =>
-          inViewport(element.getBoundingClientRect()),
-        ).length;
-      }, smallViewport.height);
-    expect(changesComplete, "Changes 首屏完整文件行数").toBeGreaterThanOrEqual(
-      2,
+test("V022-R55(R03)：口径A真实视口 720×480 窄屏简化四列排版", async ({
+  page,
+}) => {
+  // V022-R27 附带修复已落地：窄屏隐藏列以更高特异性重申，不再被后部同优先级
+  // `.file-row__selection{display:flex}` 覆盖；本断言由 test.fail 翻绿为正式断言。
+  // 若隐藏规则再次被覆盖，本断言按原反证逻辑失败（选择建议列参与排版/列重叠）。
+  await page.setViewportSize(smallViewport);
+  await gotoReady(page, "/");
+  const firstRow = page.locator(".file-row").first();
+  await expect(firstRow).toBeVisible();
+  await expect(
+    firstRow.locator(".file-row__selection"),
+    "选择建议列应不参与窄屏排版",
+  ).toBeHidden();
+  await expect(
+    firstRow.locator(".file-row__ownership"),
+    "归属列应不参与窄屏排版",
+  ).toBeHidden();
+  // 行退化为选择/文件/状态/操作四列，可见单元格横向互不重叠（允许 1px 舍入）。
+  const intervals = await firstRow
+    .locator(
+      ":scope > input, :scope > .file-path, :scope > .file-row__status, :scope > .file-row__actions",
+    )
+    .evaluateAll((elements) =>
+      elements.map((element) => {
+        const rect = element.getBoundingClientRect();
+        return { x: rect.x, right: rect.x + rect.width };
+      }),
     );
+  expect(intervals.length).toBe(4);
+  const sorted = [...intervals].sort((a, b) => a.x - b.x);
+  for (let index = 1; index < sorted.length; index += 1) {
+    expect(
+      sorted[index].x,
+      `可见列 ${index} 与前一列重叠`,
+    ).toBeGreaterThanOrEqual(sorted[index - 1].right - 1);
+  }
+});
 
-    await gotoReady(page, "/?module=history");
-    await expect(page.getByRole("heading", { name: "修订历史" })).toBeVisible();
-    const historyComplete = await page
-      .getByRole("list", { name: "SVN 修订列表" })
-      .getByRole("listitem")
-      .evaluateAll((elements, viewportHeight) => {
-        const inViewport = (rect: DOMRect) =>
-          rect.height > 0 &&
-          rect.y >= 0 &&
-          rect.y + rect.height <= viewportHeight;
-        return elements.filter((element) =>
-          inViewport(element.getBoundingClientRect()),
-        ).length;
-      }, smallViewport.height);
-    expect(historyComplete, "History 首屏完整修订行数").toBeGreaterThanOrEqual(
-      2,
-    );
-  },
-);
+test("V022-R55(R27)：口径A真实视口 720×480 首屏至少 2 个完整文件/修订行", async ({
+  page,
+}) => {
+  // V022-R27 已落地：Changes 高度链（flex 剩余空间）+ 小高度默认收起
+  // （共享草稿/长帮助）+ 历史等只读页推荐降级 + 窄屏搜索框高度修复；
+  // 本断言由 test.fail 翻绿为正式断言，铬区回退即失败。
+  await page.setViewportSize(smallViewport);
+
+  await gotoReady(page, "/");
+  await expect(
+    page.getByRole("heading", { name: "工作副本修改" }),
+  ).toBeVisible();
+  const changesComplete = await page
+    .getByRole("list", { name: "SVN 变更文件" })
+    .getByRole("listitem")
+    .evaluateAll((elements, viewportHeight) => {
+      const inViewport = (rect: DOMRect) =>
+        rect.height > 0 &&
+        rect.y >= 0 &&
+        rect.y + rect.height <= viewportHeight;
+      return elements.filter((element) =>
+        inViewport(element.getBoundingClientRect()),
+      ).length;
+    }, smallViewport.height);
+  expect(changesComplete, "Changes 首屏完整文件行数").toBeGreaterThanOrEqual(2);
+
+  await gotoReady(page, "/?module=history");
+  await expect(page.getByRole("heading", { name: "修订历史" })).toBeVisible();
+  const historyComplete = await page
+    .getByRole("list", { name: "SVN 修订列表" })
+    .getByRole("listitem")
+    .evaluateAll((elements, viewportHeight) => {
+      const inViewport = (rect: DOMRect) =>
+        rect.height > 0 &&
+        rect.y >= 0 &&
+        rect.y + rect.height <= viewportHeight;
+      return elements.filter((element) =>
+        inViewport(element.getBoundingClientRect()),
+      ).length;
+    }, smallViewport.height);
+  expect(historyComplete, "History 首屏完整修订行数").toBeGreaterThanOrEqual(2);
+});
 
 test("V022-R55(主操作)：口径B等效缩放代理 720×480 核心主操作可达不遮挡", async ({
   page,
