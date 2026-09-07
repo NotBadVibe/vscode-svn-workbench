@@ -153,4 +153,29 @@ describe("统一模块窗口路由", () => {
     expect(orderRevisionPair(["9", "3"])).toEqual(["3", "9"]);
     expect(orderRevisionPair(["3", "9"])).toEqual(["3", "9"]);
   });
+
+  it("V020-R09：修订顺序不同视为同一 Diff 目标（重复打开保持阅读位置）", () => {
+    const forward = buildDiffTargetKey({
+      moduleId: "diff",
+      svnPath: "svn",
+      scope,
+      revisionCompare: { revisions: ["41", "42"] },
+    });
+    expect(
+      buildDiffTargetKey({
+        moduleId: "diff",
+        svnPath: "svn",
+        scope,
+        revisionCompare: { revisions: ["42", "41"] },
+      }),
+    ).toBe(forward);
+    expect(
+      buildDiffTargetKey({
+        moduleId: "diff",
+        svnPath: "svn",
+        scope,
+        revisionCompare: { revisions: ["41", "43"] },
+      }),
+    ).not.toBe(forward);
+  });
 });

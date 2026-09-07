@@ -410,6 +410,14 @@ function mockDiffSnapshot(
   return {
     kind: "diff",
     relativePath,
+    // V020-R09：mock 本地比较身份（真实路径 + 左右基线）。
+    compare: {
+      kind: "working-copy",
+      title: relativePath,
+      targetPath: relativePath,
+      leftRevision: "BASE",
+      rightRevision: "工作副本",
+    },
     original: overrides.original ?? fixture?.original ?? mockDiffOriginal,
     modified: overrides.modified ?? fixture?.modified ?? mockDiffModified,
     language: parsedSpec
@@ -1245,11 +1253,24 @@ export function startMockWorkbench(): void {
       injectSnapshot("diff", {
         kind: "diff",
         relativePath: ". · r41 → r42",
+        // V020-R09：mock 范围 Patch 身份（无单文件身份，只读）。
+        compare: {
+          kind: "revision-patch",
+          title: "修订比较 r41 → r42 · 1 个路径",
+          leftRevision: "41",
+          rightRevision: "42",
+          pathCount: 1,
+        },
         original: "",
         modified: mockRevisionPatch,
         language: "diff",
         truncated: false,
         binary: false,
+        edit: {
+          supported: false,
+          reason:
+            "修订比较为双侧只读，不支持页内编辑；请从工作副本打开差异后编辑。",
+        },
         message: "修订比较 r41 → r42",
       });
     }

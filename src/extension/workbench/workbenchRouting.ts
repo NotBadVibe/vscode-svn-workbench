@@ -106,6 +106,7 @@ export function workbenchRevealTarget(
 /**
  * Diff 目标只在 Host 内判等；摘要不进入 Webview、URI 或日志。
  * 同目标再次显式打开时仅 reveal，避免重新初始化破坏阅读位置。
+ * V020-R09：修订对按升序归一后再摘要，r41/r42 与 r42/r41 视为同一目标。
  */
 export function buildDiffTargetKey(request: OpenWorkbenchRequest): string {
   return createHash("sha256")
@@ -118,7 +119,9 @@ export function buildDiffTargetKey(request: OpenWorkbenchRequest): string {
         targetFile: request.targetFile
           ? path.resolve(request.targetFile)
           : undefined,
-        revisions: request.revisionCompare?.revisions,
+        revisions: request.revisionCompare
+          ? orderRevisionPair(request.revisionCompare.revisions)
+          : undefined,
       }),
     )
     .digest("hex");

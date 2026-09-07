@@ -321,6 +321,26 @@ export function overviewGateHint(count: number, threshold: number): string {
   return `共 ${count} 块，超过 ${threshold} 块阈值，定位器已默认收起；展开后导航可能较慢（实测 100 块约 132ms、500 块约 1340ms）。`;
 }
 
+/**
+ * V020-R09：Diff 比较种类标题与基线文案。
+ * 历史比较双侧只读；本地文件动作仅 working-copy 可用。
+ */
+export const diffCompareLabels = {
+  /** 本地比较基线（含语言后缀由调用方拼接，沿用既有标题格式）。 */
+  workingCopyBaseline: (language: string): string =>
+    `BASE ↔ 工作副本 · ${language}`,
+  /** 历史比较基线（左右修订缺省时退化为只读声明）。 */
+  revisionBaseline: (left?: string, right?: string): string =>
+    left && right ? `r${left} → r${right}（只读）` : "历史修订比较（只读）",
+  readOnlyBaseline: "历史修订比较（只读）",
+  unknownRevisionTitle: "修订比较",
+  /** 修订比较只读声明（页内编辑不支持的中文原因）。 */
+  revisionReadOnlyEditReason:
+    "修订比较为双侧只读，不支持页内编辑；请从工作副本打开差异后编辑。",
+  /** 空修订比较（无文本差异）的中文说明。 */
+  emptyRevisionCompare: "所选修订之间没有文本差异。",
+} as const;
+
 /** 差异渲染组件失败时的中文降级提示。 */
 export const diffFallbackNotices = {
   mergeView:

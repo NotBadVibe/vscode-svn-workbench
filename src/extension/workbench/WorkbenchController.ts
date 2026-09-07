@@ -5672,16 +5672,45 @@ export class WorkbenchController implements vscode.Disposable {
       return;
     }
     const diffBuffer = Buffer.from(result.stdout, "utf8");
+    const truncatedDiff =
+      Boolean(result.truncated) || diffBuffer.byteLength >= MAX_DIFF_BYTES;
+    // V020-R09：单文件历史比较保留真实单文件身份；范围比较为 patch，
+    // 不携带单文件身份（Webview 据此隐藏本地路径操作，防虚构路径）。
+    const fileRoot = getSingleFileScopeRoot(session.scope);
+    const fileRelative = fileRoot
+      ? normalizeRelative(fileRoot.relativePath)
+      : undefined;
     const snapshot: DiffSnapshot = {
       kind: "diff",
-      relativePath: `${session.scope.roots.map((root) => root.relativePath).join(", ")} · r${ordered[0]} → r${ordered[1]}`,
+      relativePath:
+        fileRelative ??
+        `${session.scope.roots.map((root) => root.relativePath).join(", ")} · r${ordered[0]} → r${ordered[1]}`,
+      compare: fileRelative
+        ? {
+            kind: "revision-file",
+            title: `r${ordered[0]} → r${ordered[1]} · ${fileRelative}`,
+            targetPath: fileRelative,
+            leftRevision: ordered[0],
+            rightRevision: ordered[1],
+          }
+        : {
+            kind: "revision-patch",
+            title: `修订比较 r${ordered[0]} → r${ordered[1]} · ${session.scope.roots.length} 个路径`,
+            leftRevision: ordered[0],
+            rightRevision: ordered[1],
+            pathCount: session.scope.roots.length,
+          },
       original: "",
       modified: truncateUtf8(diffBuffer),
       language: "diff",
-      truncated:
-        Boolean(result.truncated) || diffBuffer.byteLength >= MAX_DIFF_BYTES,
+      truncated: truncatedDiff,
       binary: false,
-      message: result.truncated
+      edit: {
+        supported: false,
+        reason:
+          "修订比较为双侧只读，不支持页内编辑；请从工作副本打开差异后编辑。",
+      },
+      message: truncatedDiff
         ? `修订比较 r${ordered[0]} → r${ordered[1]}（超过 5 MB，已截断）`
         : `修订比较 r${ordered[0]} → r${ordered[1]}`,
     };
@@ -5931,6 +5960,18 @@ export class WorkbenchController implements vscode.Disposable {
       relativePath: normalizeRelative(
         path.relative(session.scope.repositoryRoot, absolutePath),
       ),
+      // V020-R09：本地单文件比较身份（真实路径 + 左右基线）。
+      compare: {
+        kind: "working-copy",
+        title: normalizeRelative(
+          path.relative(session.scope.repositoryRoot, absolutePath),
+        ),
+        targetPath: normalizeRelative(
+          path.relative(session.scope.repositoryRoot, absolutePath),
+        ),
+        leftRevision: "BASE",
+        rightRevision: "工作副本",
+      },
       original,
       modified,
       language: inferLanguage(absolutePath),

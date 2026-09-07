@@ -431,7 +431,14 @@ test("compares two revisions inside the unified workbench", async ({
   await page.getByLabel("选择修订 42 进行比较").click();
   await page.getByLabel("选择修订 41 进行比较").click();
   await page.getByRole("button", { name: "比较所选修订" }).click();
-  await expect(page.getByText("修订比较 r41 → r42")).toBeVisible();
+  // V020-R09：范围 Patch 标题含路径数且双侧只读，无本地文件动作。
+  await expect(
+    page.getByText("修订比较 r41 → r42 · 1 个路径", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText("r41 → r42（只读）")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "提交此文件" }),
+  ).not.toBeVisible();
 });
 
 test("keeps conflict advice separate from explicit resolve", async ({

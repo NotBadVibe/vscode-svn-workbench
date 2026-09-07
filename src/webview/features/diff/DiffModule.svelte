@@ -14,7 +14,9 @@
   import DiffView from "./DiffView.svelte";
   import DiffOverview from "./DiffOverview.svelte";
   import FilePathDetail from "../../components/svn/FilePathDetail.svelte";
+  import { resolveDiffCompare } from "./diffCompare";
   import {
+    diffCompareLabels,
     diffFallbackNotices,
     diffHunkPositionLabel,
     diffViewLabels,
@@ -123,8 +125,14 @@
   let diffStyleBeforeEdit = $state<"unified" | "split" | undefined>();
 
   // ---- v0.0.6 编辑态 ----
+  /**
+   * V020-R09：比较身份（标题/基线/动作门控）。
+   * 历史比较双侧只读；无 targetPath 时不得发起路径操作（防虚构路径）。
+   */
+  const compare = $derived(resolveDiffCompare(snapshot));
   const canEdit = $derived(
-    snapshot.edit?.supported === true &&
+    !compare.isReadOnly &&
+      snapshot.edit?.supported === true &&
       snapshot.language !== "diff" &&
       !snapshot.binary &&
       !snapshot.truncated,
@@ -512,9 +520,10 @@
     }
   }
 
-  // 目标切换后从头开始导航并清除首尾提示。
+  // 目标切换后从头开始导航并清除首尾提示（V020-R09：按展示身份，
+  // 同文件不同修订也视为新目标）。
   $effect(() => {
-    void snapshot.relativePath;
+    void compare.heading;
     navIndex = 0;
     navBoundary = undefined;
   });
@@ -693,14 +702,14 @@
   class:show-whitespace={showWhitespace}
   data-show-whitespace={showWhitespace ? "true" : "false"}
   tabindex="-1"
-  aria-label={`差异：${snapshot.relativePath}`}
+  aria-label={`差异：${compare.heading}`}
 >
   <div class="feature-toolbar">
     <div class="file-title">
       <span class="codicon codicon-diff" aria-hidden="true"></span>
       <div>
-        <strong>{snapshot.relativePath}</strong>
-        <span>BASE ↔ 工作副本 · {snapshot.language}</span>
+        <strong>{compare.heading}</strong>
+        <span>{compare.baseline}</span>
         {#if editing}
           <span class="edit-mode-badge" role="status"
             >{diffViewLabels.editingBadge}</span
@@ -709,33 +718,45 @@
       </div>
     </div>
     <div class="toolbar-actions">
-      <!-- v0.0.10：复用共享路径操作（复制、路径详情、仓库定位）。 -->
-      <button
-        class="icon-button icon-button--small"
-        aria-label={`复制路径 ${snapshot.relativePath}`}
-        title="复制路径"
-        onclick={() => onAction("copy-text", { text: snapshot.relativePath })}
-        ><span class="codicon codicon-copy" aria-hidden="true"></span></button
-      >
-      <button
-        class="icon-button icon-button--small"
-        aria-label={`查看 ${snapshot.relativePath} 路径详情`}
-        title="路径详情"
-        onclick={(event) => {
-          pathDetailTrigger = event.currentTarget;
-          onAction("file/path-detail", { relativePath: snapshot.relativePath });
-        }}><span class="codicon codicon-info" aria-hidden="true"></span></button
-      >
-      <button
-        class="icon-button icon-button--small"
-        aria-label={`在仓库浏览器中显示 ${snapshot.relativePath}`}
-        title="在仓库浏览器中显示"
-        onclick={() =>
-          onAction("changes/show-in-repository", {
-            relativePath: snapshot.relativePath,
-          })}
-        ><span class="codicon codicon-repo" aria-hidden="true"></span></button
-      >
+      <!--
+        v0.0.10 共享路径操作 + V020-R09 身份门控：
+        复制路径需真实单文件身份；路径详情/仓库定位仅本地比较可用。
+        无 targetPath（范围 Patch、空/二进制/截断的历史比较）不渲染，
+        避免把拼接标题当成本地路径发起虚构路径操作。
+      -->
+      {#if compare.showPathCopy && compare.targetPath}
+        <button
+          class="icon-button icon-button--small"
+          aria-label={`复制路径 ${compare.targetPath}`}
+          title="复制路径"
+          onclick={() => onAction("copy-text", { text: compare.targetPath })}
+          ><span class="codicon codicon-copy" aria-hidden="true"></span></button
+        >
+      {/if}
+      {#if compare.showLocalActions && compare.targetPath}
+        <button
+          class="icon-button icon-button--small"
+          aria-label={`查看 ${compare.targetPath} 路径详情`}
+          title="路径详情"
+          onclick={(event) => {
+            pathDetailTrigger = event.currentTarget;
+            onAction("file/path-detail", {
+              relativePath: compare.targetPath,
+            });
+          }}
+          ><span class="codicon codicon-info" aria-hidden="true"></span></button
+        >
+        <button
+          class="icon-button icon-button--small"
+          aria-label={`在仓库浏览器中显示 ${compare.targetPath}`}
+          title="在仓库浏览器中显示"
+          onclick={() =>
+            onAction("changes/show-in-repository", {
+              relativePath: compare.targetPath,
+            })}
+          ><span class="codicon codicon-repo" aria-hidden="true"></span></button
+        >
+      {/if}
       {#if !snapshot.binary}
         <!-- v0.1.0：差异块导航（只读与编辑态一致；首尾给出非阻塞反馈）。 -->
         <div
@@ -926,37 +947,39 @@
           >
         {/if}
       {/if}
-      {#if snapshot.language !== "diff"}
+      {#if compare.showLocalActions && compare.targetPath}
+        {#if snapshot.language !== "diff"}
+          <button
+            class="button button--secondary"
+            disabled={snapshot.binary || snapshot.truncated}
+            title={snapshot.binary
+              ? "二进制文件不支持文本对比"
+              : snapshot.truncated
+                ? "超过 5 MB 的文件不支持原生对比"
+                : undefined}
+            onclick={() => onAction("diff/open-in-editor")}
+          >
+            在编辑器中对比
+          </button>
+        {/if}
         <button
           class="button button--secondary"
-          disabled={snapshot.binary || snapshot.truncated}
-          title={snapshot.binary
-            ? "二进制文件不支持文本对比"
-            : snapshot.truncated
-              ? "超过 5 MB 的文件不支持原生对比"
-              : undefined}
-          onclick={() => onAction("diff/open-in-editor")}
+          onclick={() =>
+            onAction("open-file", { relativePath: compare.targetPath })}
         >
-          在编辑器中对比
+          在编辑器中打开
+        </button>
+        <button
+          class="button button--secondary"
+          onclick={() =>
+            onAction("open-module", {
+              moduleId: "commit",
+              selectedPaths: [compare.targetPath],
+            })}
+        >
+          提交此文件
         </button>
       {/if}
-      <button
-        class="button button--secondary"
-        onclick={() =>
-          onAction("open-file", { relativePath: snapshot.relativePath })}
-      >
-        在编辑器中打开
-      </button>
-      <button
-        class="button button--secondary"
-        onclick={() =>
-          onAction("open-module", {
-            moduleId: "commit",
-            selectedPaths: [snapshot.relativePath],
-          })}
-      >
-        提交此文件
-      </button>
       <!--
         V014-C2 · 返回本地修改：回到 Changes 唯一主路径（不新建全局导航
         Rail）；返回后的选择/活动行/滚动恢复由 Changes 消费 continuityRestore
@@ -1149,6 +1172,13 @@
           <span class="codicon codicon-file-binary" aria-hidden="true"></span>
           <strong>二进制文件无法进行文本对比</strong>
           <p>可以在编辑器中打开文件，或查看 SVN 属性与历史。</p>
+        </div>
+      {:else if compare.isReadOnly && snapshot.modified.length === 0}
+        <!-- V020-R09：空修订比较（无文本差异），不提供路径操作。 -->
+        <div class="empty-state empty-state--large">
+          <span class="codicon codicon-diff" aria-hidden="true"></span>
+          <strong>{diffCompareLabels.emptyRevisionCompare}</strong>
+          <p>基线：{compare.baseline}。可返回历史重新选择修订。</p>
         </div>
       {:else if snapshot.language === "diff"}
         {#if pierreFailed}
