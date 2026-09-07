@@ -155,9 +155,12 @@
     });
   });
 
+  // 中文注释：V021-R06 修订行高与 CSS `.revision-row`/`.revision-select`
+  // 最小 68 对齐；窗口占位与键盘定位共用该值，不另建窗口化算法。
+  const historyRowHeight = 68;
   const list = useFileList<(typeof orderedRevisions)[number]>({
     rows: () => orderedRevisions,
-    rowHeight: () => 64,
+    rowHeight: () => historyRowHeight,
     // 中文注释：V020-R16 锚点稳定身份；升降序后 Shift 范围按可见顺序解析。
     keyOf: (revision) => String(revision.revision),
     onPathDetailRequest: (relativePath) =>
@@ -618,6 +621,11 @@
               : "没有匹配的修订；调整搜索词或清除筛选后重试。"}
         </div>
       {/if}
+      <!-- 中文注释：V021-R06 复用 Commit 首尾占位模式：窗口化后容器全高恒为总数×行高，末项可滚达。 -->
+      {#if list.visibleWindow.start > 0}<div
+          style:height={`${list.visibleWindow.start * historyRowHeight}px`}
+          aria-hidden="true"
+        ></div>{/if}
       {#each list.visibleRows as { row: revision, index } (revision.revision)}
         <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -- 行点击只设置活动行；键盘操作由列表容器统一处理。 -->
         <div
@@ -654,6 +662,10 @@
           />
         </div>
       {/each}
+      {#if list.visibleWindow.end < orderedRevisions.length}<div
+          style:height={`${(orderedRevisions.length - list.visibleWindow.end) * historyRowHeight}px`}
+          aria-hidden="true"
+        ></div>{/if}
     </ScrollArea>
   </div>
   <ScrollArea class="revision-detail" label="修订详情">
