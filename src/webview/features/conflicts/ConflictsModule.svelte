@@ -250,6 +250,8 @@
         void _e;
       }
       onAction("conflict/draft-checkpoint", { relativePath: rp, content });
+      // 中文注释：V020-R01 记录已发送内容，供 Host 回声识别（旧回执不覆盖本地）。
+      lastSentSimplifiedContent = content;
     }, AUTO_CHECKPOINT_DELAY);
   }
   function flushCheckpoint(): void {
@@ -282,6 +284,8 @@
       relativePath: rp,
       content: mergeDraft,
     });
+    // 中文注释：V020-R01 记录已发送内容，供 Host 回声识别（旧回执不覆盖本地）。
+    lastSentSimplifiedContent = mergeDraft;
     checkpointStatus = "unsaved";
   }
   // v0.0.14 通用操作意向单：Resolve 确认对话框（批次 C）
@@ -535,6 +539,11 @@
   );
   let editorHost = $state<HTMLDivElement>();
   let editorView = $state<EditorView>();
+  let simplifiedMountedParent = $state<HTMLDivElement | undefined>(undefined);
+  let simplifiedMountedFor = $state("");
+  let lastSentSimplifiedContent = $state<string | undefined>(undefined);
+  // 中文注释：V020-R01 程序化同步抑制标记（非响应式，dispatch 同步触发监听）。
+  let suppressSimplifiedListener = false;
   // v0.1.1 V011-E 修复：初始值直接取首个快照（优先 Host 内存草稿），
   // 避免首帧空文本导致 ConflictDiffView 对无标记内容 fail-closed 误报降级。
   let editorToken = $state(
@@ -637,6 +646,11 @@
   // V011-E 安全降级：fail-closed 保留草稿
   let diffErrorInfo = $state<DiffErrorInfo | null>(null);
   let useSimplified = $state(false);
+  // 中文注释：V020-R01 简化编辑器身份派生——字符串值相等即稳定，Host 回执
+  // 替换快照对象但路径/可编辑/token 值不变时不通知下游，挂载 effect 不重跑。
+  const simplifiedIdentity = $derived(
+    `${editorToken}|${snapshot.selected?.relativePath ?? ""}|${snapshot.selected?.mergeEditor.editable ? "w" : "r"}|${useSimplified ? "s" : "f"}`,
+  );
   // V012-B2：Pierre 可编辑合并结果实例（单实例，与 CodeMirror 互斥）
   let resultEditor = $state<ConflictResultEditor>();
   /** 文件身份：路径 + 来源 revision，用于过期拒绝（revision 变化即失效）。 */
@@ -1151,6 +1165,8 @@
       }
       editorToken = token;
       prevEditorPath = selectedPath;
+      // 中文注释：V020-R01 切换文件/重建令牌时清空已发送记录，新文件回声重新识别。
+      lastSentSimplifiedContent = undefined;
       // 中文注释：切换文件时若新文件已有草稿（重开恢复），优先使用草稿；否则用工作副本，避免跨文件污染但保留重开恢复
       let nextDraft: string;
       if (pathChanged) {
@@ -1255,27 +1271,51 @@
 
   $effect(() => {
     const parent = editorHost;
+    // 中文注释：V020-R01 只订阅派生身份字符串与稳定本地状态——Host 回执替换
+    // 快照对象但身份值不变时本 effect 不重跑，实例保持则焦点/选区/undo 保留。
+    const identity = simplifiedIdentity;
     const token = editorToken;
-    const editable = snapshot.selected?.mergeEditor.editable ?? false;
     const simplified = useSimplified;
     if (!parent || !token || !simplified) return;
+    const mounted = untrack(() => ({
+      for: simplifiedMountedFor,
+      parent: simplifiedMountedParent,
+      view: editorView,
+    }));
+    // 中文注释：同一文件同一身份且容器未变时保持实例，直接返回。
+    if (mounted.for === identity && mounted.parent === parent && mounted.view) {
+      return;
+    }
+    // 中文注释：快照其余字段一律经 untrack 读取，不订阅回执对象替换。
+    const initialDoc = untrack(() => mergeDraft);
+    const ariaName = untrack(() => snapshot.selected?.relativePath ?? "");
+    const editableFlag = untrack(
+      () => snapshot.selected?.mergeEditor.editable ?? false,
+    );
     const view = new EditorView({
       state: EditorState.create({
-        doc: untrack(() => mergeDraft),
+        doc: initialDoc,
         extensions: [
           lineNumbers(),
-          EditorState.readOnly.of(!editable),
-          EditorView.editable.of(editable),
+          EditorState.readOnly.of(!editableFlag),
+          EditorView.editable.of(editableFlag),
           EditorView.contentAttributes.of({
-            "aria-label": `${snapshot.selected?.relativePath ?? ""} 可编辑工作副本合并结果`,
+            "aria-label": `${ariaName} 可编辑工作副本合并结果`,
           }),
           EditorView.updateListener.of((update) => {
             if (update.docChanged) {
               mergeDraft = update.state.doc.toString();
+              // 中文注释：V020-R01 程序化同步（回显/外部新内容）不回写，避免回声放大。
+              if (suppressSimplifiedListener) {
+                suppressSimplifiedListener = false;
+                return;
+              }
               // 恢复：CodeMirror 编辑仍需回写 draft-update（尊重 IME），同时保留自动检查点
               if (!isComposing && !(resultEditor?.isComposing?.() ?? false)) {
+                // 中文注释：V020-R01 先记录已发送内容，再发出动作，回声到达可识别。
+                lastSentSimplifiedContent = mergeDraft;
                 onAction("conflict/draft-update", {
-                  relativePath: snapshot.selected?.relativePath,
+                  relativePath: untrack(() => snapshot.selected?.relativePath),
                   content: mergeDraft,
                 });
                 scheduleAutoCheckpoint(mergeDraft);
@@ -1307,11 +1347,56 @@
       }),
       parent,
     });
-    editorView = view;
+    untrack(() => {
+      editorView = view;
+      simplifiedMountedFor = identity;
+      simplifiedMountedParent = parent;
+    });
     return () => {
-      if (editorView === view) editorView = undefined;
+      const cur = untrack(() => editorView);
+      if (cur === view) {
+        untrack(() => {
+          editorView = undefined;
+        });
+      }
+      if (untrack(() => simplifiedMountedFor) === identity) {
+        untrack(() => {
+          simplifiedMountedFor = "";
+          simplifiedMountedParent = undefined;
+        });
+      }
       view.destroy();
     };
+  });
+
+  // 中文注释：V020-R01 Host 草稿回显同步——仅当 Host 带来本地没有的外部新内容
+  // 才单步 dispatch 到视图（保留光标/选区/undo，不抢焦点）；与已发送内容相同
+  // 的回声、IME 组合期间一律不碰编辑器，旧回执不得覆盖较新本地文本。
+  $effect(() => {
+    const view = editorView;
+    const hostContent = snapshot.selected?.draft?.content;
+    const hostPath = snapshot.selected?.relativePath ?? "";
+    const simplified = useSimplified;
+    if (!view || !simplified || typeof hostContent !== "string") return;
+    // 中文注释：非当前挂载文件的回显由切换逻辑负责，此处不处理，避免跨文件污染。
+    const currentPath = untrack(() => prevEditorPath);
+    if (!currentPath || hostPath !== currentPath) return;
+    const local = untrack(() => mergeDraft);
+    if (hostContent === local) return;
+    const sent = untrack(() => lastSentSimplifiedContent);
+    if (sent !== undefined && hostContent === sent) return;
+    if (isComposing || untrack(() => resultEditor?.isComposing?.() ?? false))
+      return;
+    const sel = view.state.selection.main;
+    const len = hostContent.length;
+    suppressSimplifiedListener = true;
+    view.dispatch({
+      changes: { from: 0, to: view.state.doc.length, insert: hostContent },
+      selection: {
+        anchor: Math.min(sel.anchor, len),
+        head: Math.min(sel.head, len),
+      },
+    });
   });
 
   function applyBlock(
@@ -1330,6 +1415,8 @@
       });
     if (snapshot.selected) {
       // 恢复：块级操作仍回写 draft-update，同时保留检查点 debounce
+      // 中文注释：V020-R01 先记录已发送内容，回声到达可识别。
+      lastSentSimplifiedContent = next;
       onAction("conflict/draft-update", {
         relativePath: snapshot.selected.relativePath,
         content: next,
@@ -1376,6 +1463,8 @@
       editorView.dispatch({
         changes: { from: 0, to: editorView.state.doc.length, insert: next },
       });
+    // 中文注释：V020-R01 先记录已发送内容，回声到达可识别。
+    lastSentSimplifiedContent = next;
     onAction("conflict/draft-update", {
       relativePath: snapshot.selected.relativePath,
       content: next,
@@ -1401,6 +1490,8 @@
       }
       if (snapshot.selected) {
         // 恢复：差异视图动作仍回写 draft-update，同时保留检查点
+        // 中文注释：V020-R01 先记录已发送内容，回声到达可识别。
+        lastSentSimplifiedContent = newest;
         onAction("conflict/draft-update", {
           relativePath: snapshot.selected.relativePath,
           content: newest,
@@ -1430,6 +1521,8 @@
     if (composing) return;
     if (snapshot.selected) {
       // 恢复：编辑变化经 onDraftChange 回写 mergeDraft 并发 draft-update（尊重 isComposing），同时保留自动检查点
+      // 中文注释：V020-R01 先记录已发送内容，回声到达可识别。
+      lastSentSimplifiedContent = text;
       onAction("conflict/draft-update", {
         relativePath: snapshot.selected.relativePath,
         content: text,
