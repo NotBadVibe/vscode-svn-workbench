@@ -2114,6 +2114,18 @@ export function startMockWorkbench(): void {
             checkedRevision: "42",
             risk: "medium",
             overlapPaths: ["src/extension.ts"],
+            // V021-R15：Mock 同步远端全清单（远端 2 项/重叠 1 项）。
+            remotePaths: ["src/extension.ts", "src/remote-only.ts"],
+            remoteItems: [
+              {
+                relativePath: "src/extension.ts",
+                repositoryStatus: "modified",
+              },
+              { relativePath: "src/remote-only.ts", repositoryStatus: "added" },
+            ],
+            remoteByStatus: { modified: 1, added: 1 },
+            remoteIncomplete: false,
+            previewedAt: "2026-09-07T00:00:00.000Z",
             messages: ["远端与本地存在 1 个同路径重叠，请确认后再更新。"],
             commands: ['svn update --accept postpone "."'],
           },
@@ -2326,18 +2338,37 @@ export function startMockWorkbench(): void {
         }),
       );
     }
+    if (action === "repository/export-release-notes") {
+      injectSnapshot(
+        "repository",
+        repositorySnapshot({
+          advanced: {
+            feedback: "完整版发布说明已导出：/tmp/svn-release-notes.md",
+          },
+        }),
+      );
+    }
     if (action === "repository/generate-release-notes") {
       injectSnapshot(
         "repository",
         repositorySnapshot({
           advanced: {
-            feedback: "已从 42 条历史中生成 3 条发布记录。",
+            feedback:
+              "已按范围 r40→r42（含两端）读取 3 条修订（完整），生成 3 条发布记录。",
             releaseNotes: {
               count: 3,
               fromRevision: "40",
               toRevision: "42",
+              revisionsRead: 3,
+              complete: true,
+              omittedPathCount: 0,
+              truncatedRevisions: [],
+              requestedFrom: "40",
+              requestedTo: "42",
+              fullMarkdown:
+                "# SVN 发布说明\n\n修订范围（含两端）：r40 → r42\n\n## r42 · yangnan\n\n完成统一 Svelte 工作台与安全预检。",
               markdown:
-                "# SVN 发布说明\n\n修订范围：r40 → r42\n\n## r42 · yangnan\n\n完成统一 Svelte 工作台与安全预检。",
+                "# SVN 发布说明\n\n修订范围（含两端）：r40 → r42\n\n## r42 · yangnan\n\n完成统一 Svelte 工作台与安全预检。",
             },
           },
         }),

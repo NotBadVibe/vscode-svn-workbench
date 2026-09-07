@@ -22,6 +22,9 @@
     updateConflictFilesSummary,
     updateConflictPrimaryLabel,
     updateConflictStatus,
+    updateRemoteAllLabel,
+    updateRemoteIncompleteNotice,
+    updateRemoteOverlapLabel,
     updateViewLocalChangesLabel,
   } from "../../i18n/terminology";
 
@@ -145,6 +148,25 @@
   const conflictVariant = $derived(
     snapshot.recovery ? ("compact" as const) : ("full" as const),
   );
+
+  // V021-R15：远端全部变化与本地重叠两类清单（Host 下发，失败时不展示空清单）。
+  const remotePaths = $derived(snapshot.preview?.remotePaths ?? []);
+  const remoteIncomplete = $derived(
+    snapshot.preview?.remoteIncomplete === true,
+  );
+  const remoteReadable = $derived(
+    !snapshot.preview?.error && !remoteIncomplete,
+  );
+  const remoteStatusSummary = $derived.by(() => {
+    const byStatus = snapshot.preview?.remoteByStatus;
+    if (!byStatus) return undefined;
+    const entries = Object.entries(byStatus).sort((a, b) =>
+      a[0].localeCompare(b[0]),
+    );
+    return entries.length > 0
+      ? entries.map(([status, count]) => `${status} ${count}`).join("、")
+      : undefined;
+  });
 
   // v0.1.5 V015-B2：风险等级→TaskSummary tone（low=info/medium=warning/high=error）。
   const riskTone = $derived.by((): TaskSummaryTone => {
@@ -386,14 +408,51 @@
       {#if snapshot.preview.error}<div class="notice notice--error">
           {snapshot.preview.error}
         </div>{/if}
-      {#if snapshot.preview.overlapPaths.length}
-        <!-- v0.0.10：重叠路径可搜索、复制清单与查看路径详情。 -->
-        <PreviewPathList
-          paths={snapshot.preview.overlapPaths}
-          label="重叠路径清单"
-          {onAction}
-          {pathDetail}
-        />
+      {#if remoteIncomplete || snapshot.preview.error}
+        <!-- V021-R15：读取失败不得展示空清单冒充无变化。 -->
+        <div class="notice notice--warning">{updateRemoteIncompleteNotice}</div>
+      {:else}
+        {#if typeof snapshot.preview.remoteCount === "number"}
+          <p class="task-hint">
+            {updateRemoteAllLabel(
+              snapshot.preview.remoteCount,
+            )}{#if remoteStatusSummary}：{remoteStatusSummary}{/if}{#if snapshot.preview.checkedRevision}（检查基线
+              r{snapshot.preview.checkedRevision}）{/if}
+          </p>
+          {#if remotePaths.length}
+            <PreviewPathList
+              paths={remotePaths}
+              label={updateRemoteAllLabel(snapshot.preview.remoteCount)}
+              {onAction}
+              {pathDetail}
+            />
+          {:else}
+            <p class="task-hint">
+              远端暂无超出本地的变更；以下重叠清单为空是正常状态。
+            </p>
+          {/if}
+        {/if}
+        {#if snapshot.preview.overlapPaths.length}
+          <!-- v0.0.10：重叠路径可搜索、复制清单与查看路径详情。 -->
+          <PreviewPathList
+            paths={snapshot.preview.overlapPaths}
+            label={updateRemoteOverlapLabel(
+              snapshot.preview.overlapPaths.length,
+            )}
+            {onAction}
+            {pathDetail}
+          />
+        {:else if remoteReadable && typeof snapshot.preview.remoteCount === "number" && snapshot.preview.remoteCount > 0}
+          <p class="task-hint">
+            远端 {snapshot.preview.remoteCount} 项与本地无同路径重叠，可直接检查上面的远端清单。
+          </p>
+        {/if}
+      {/if}
+      {#if snapshot.preview.previewedAt}
+        <p class="task-hint">
+          预览时间：{snapshot.preview.previewedAt}；执行时更新到最新远端，期间
+          HEAD 可变化，实际数量以执行结果为准。
+        </p>
       {/if}
       <details class="command-preview">
         <summary>查看命令预览</summary

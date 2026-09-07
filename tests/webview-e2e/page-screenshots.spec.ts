@@ -211,7 +211,7 @@ test("保存每个 Svelte 功能页面的验收截图", async ({ page }) => {
     await capture(page, "10-repository-recovery");
     await page.getByRole("button", { name: "发布说明", exact: true }).click();
     await page.getByRole("button", { name: "从 SVN 历史生成" }).click();
-    await expect(page.getByText("3 条修订")).toBeVisible();
+    await expect(page.getByText("3 条修订", { exact: true })).toBeVisible();
     await capture(page, "10a-repository-browser-release-notes");
   });
 

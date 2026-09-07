@@ -1255,9 +1255,31 @@ export interface RepositorySnapshot {
     };
     releaseNotes?: {
       markdown: string;
+      /** 含全部路径的完整版（导出/复制完整版用，不截断）。 */
+      fullMarkdown?: string;
       count: number;
       fromRevision?: string;
       toRevision?: string;
+      /**
+       * V021-R14：范围采集完整性（可选，向后兼容）。
+       * - revisionsRead：去重后已读取修订数；
+       * - complete=false 必须配 partialReason/cancelled，不把部分结果冒充完整；
+       * - omittedPathCount/truncatedRevisions：摘要省略路径数与分修订明细；
+       * - resolvedHeadRevision：请求开始固定到的 HEAD（rN）；
+       * - requestedFrom/requestedTo：用户原始输入（含 HEAD/空）；
+       * - rangeNote：反向归一化等备注。
+       */
+      revisionsRead?: number;
+      complete?: boolean;
+      partialReason?: string;
+      cancelled?: boolean;
+      failedUpperBound?: string;
+      omittedPathCount?: number;
+      truncatedRevisions?: Array<{ revision: string; omitted: number }>;
+      resolvedHeadRevision?: string;
+      requestedFrom?: string;
+      requestedTo?: string;
+      rangeNote?: string;
     };
     feedback?: string;
   };
@@ -1274,6 +1296,19 @@ export interface UpdatePreviewView {
   checkedRevision?: string;
   risk: "low" | "medium" | "high";
   overlapPaths: string[];
+  /**
+   * V021-R15：远端变更明细（可选，向后兼容）。
+   * - remotePaths：全部远端变更相对路径（含与本地无重叠项）；
+   * - remoteItems：路径 + 远端状态（新增/删除/修改等）；
+   * - remoteByStatus：按远端状态计数；
+   * - remoteIncomplete=true 表示未能完整读取，此时不得把空清单当作“无变化”。
+   */
+  remotePaths?: string[];
+  remoteItems?: Array<{ relativePath: string; repositoryStatus: string }>;
+  remoteByStatus?: Record<string, number>;
+  remoteIncomplete?: boolean;
+  /** 预览生成时间（ISO）；执行期间 HEAD 可变化，实际数量以执行为准。 */
+  previewedAt?: string;
   messages: string[];
   commands: string[];
   error?: string;
@@ -1698,6 +1733,7 @@ export type WebviewAction =
   | "repository/export-patch"
   | "repository/select-patch"
   | "repository/generate-release-notes"
+  | "repository/export-release-notes"
   | "changelist/suggest"
   | "changelist/preview-receipt"
   | "changelist/receipt-dismiss"
@@ -1851,6 +1887,7 @@ export const webviewActions = [
   "repository/export-patch",
   "repository/select-patch",
   "repository/generate-release-notes",
+  "repository/export-release-notes",
   "changelist/suggest",
   "changelist/preview-receipt",
   "changelist/receipt-dismiss",

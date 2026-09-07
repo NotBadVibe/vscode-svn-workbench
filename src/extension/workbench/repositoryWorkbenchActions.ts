@@ -3,7 +3,10 @@ import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import * as vscode from "vscode";
 import type { CommitCandidate } from "../../commit/commitCandidateCollector";
-import { collectSvnHistory } from "../../history/svnHistory";
+import {
+  collectSvnHistoryRange,
+  resolveHeadRevision,
+} from "../../history/svnHistory";
 import { collectSvnProperties } from "../../properties/svnProperties";
 import {
   WORKBENCH_PROTOCOL_VERSION,
@@ -13,6 +16,7 @@ import {
 } from "../../protocol/workbenchProtocol";
 import {
   buildReleaseNotes,
+  normalizeReleaseNotesRange,
   parseSvnListXml,
   validatePatchText,
   validateRepositoryUrl,
@@ -801,45 +805,320 @@ export class RepositoryWorkbenchActions {
     await this.host.sendRepositorySnapshot(session, requestId);
   }
 
+  /**
+   * V021-R14：按用户指定修订范围只读分页采集发布说明（端点包含）。
+   * - HEAD 在请求开始固定解析为 rN（展示中注明），解析失败如实拒绝；
+   * - 反向范围归一化并备注；空范围（均未填）仅读最近一页并诚实标注；
+   * - 取消/分页失败保留已采集部分并标记 partial，重试重新采集去重计数；
+   * - 每修订摘要最多展示 20 路径并注明省略数，完整版随快照下发供导出。
+   */
   async generateReleaseNotes(
     session: WorkbenchSession,
     fromRevision: string | undefined,
     toRevision: string | undefined,
     requestId?: string,
   ): Promise<void> {
-    if (
-      (fromRevision && !/^\d+$/.test(fromRevision)) ||
-      (toRevision && !/^\d+$/.test(toRevision))
-    ) {
+    const rawFrom = fromRevision?.trim() ?? "";
+    const rawTo = toRevision?.trim() ?? "";
+    const normalized = normalizeReleaseNotesRange(fromRevision, toRevision);
+    if (normalized.issues.length > 0) {
       await this.host.sendError(
         "repository",
         "修订范围无效",
-        "起止修订号只能填写正整数。",
+        `${normalized.issues.join(" ")}（起止修订号填写正整数，结束可用 HEAD；范围含两端。）`,
         true,
         requestId,
       );
       return;
     }
-    const [revisions, infoResult] = await Promise.all([
-      collectSvnHistory(session.svnPath, session.scope, 200),
-      runSvnCommand(
+    const advanced = this.host.ensureAdvancedRepositoryState(session);
+    const previous = advanced.releaseNotes;
+    let resolvedHead: string | undefined;
+    let effectiveTo = normalized.to;
+    if (normalized.headRequested) {
+      resolvedHead = await resolveHeadRevision(session.svnPath, session.scope);
+      if (!resolvedHead) {
+        advanced.feedback =
+          "未能解析 HEAD（网络或仓库不可达），已保留上次发布说明；请检查连接后重试，或改填数字修订号。";
+        await this.host.sendRepositorySnapshot(session, requestId);
+        return;
+      }
+      effectiveTo = resolvedHead;
+    }
+    // 反向归一化（含 HEAD 解析后）：小→大。
+    let effectiveFrom = normalized.from;
+    let rangeNote: string | undefined = normalized.normalized
+      ? `输入为反向范围，已按含端点语义归一化为 r${normalized.from}→r${normalized.to}`
+      : undefined;
+    if (
+      effectiveFrom !== undefined &&
+      effectiveTo !== undefined &&
+      BigInt(effectiveFrom) > BigInt(effectiveTo)
+    ) {
+      const swapped = effectiveFrom;
+      effectiveFrom = effectiveTo;
+      effectiveTo = swapped;
+      rangeNote = `输入为反向范围，已按含端点语义归一化为 r${effectiveFrom}→r${effectiveTo}`;
+    }
+    const controller = new AbortController();
+    session.activeOperation = { moduleId: "repository", controller };
+    await this.host.post({
+      protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+      type: "operation/progress",
+      requestId,
+      moduleId: "repository",
+      payload: {
+        title: "正在按范围采集发布说明",
+        message: `范围 r${effectiveFrom ?? "1"} → r${effectiveTo ?? "HEAD"}（含两端），只读分页读取中…`,
+        cancellable: true,
+      },
+    });
+    try {
+      const infoResult = await runSvnCommand(
         session.svnPath,
         ["info", "--xml", session.scope.repositoryRoot],
         session.scope.repositoryRoot,
+        { signal: controller.signal },
+      );
+      const info =
+        infoResult.exitCode === 0
+          ? parseInfoXml(infoResult.stdout, session.scope.repositoryRoot)
+          : undefined;
+      // 空范围：仅读最近一页（200 条），有更多时诚实标注而非冒充完整。
+      if (effectiveFrom === undefined && effectiveTo === undefined) {
+        const { collectSvnHistoryPage } =
+          await import("../../history/svnHistory");
+        const page = await collectSvnHistoryPage(
+          session.svnPath,
+          session.scope,
+          200,
+          {},
+          controller.signal,
+        );
+        const notes = buildReleaseNotes(
+          page.revisions,
+          undefined,
+          undefined,
+          info?.url,
+          {
+            revisionsRead: page.revisions.length,
+            complete: !page.hasMore,
+            partialReason: page.hasMore
+              ? "目标范围未限定，仅展示最近 200 条；如需更早区间请填写起止修订（含两端）后重新生成"
+              : undefined,
+            resolvedHeadRevision: resolvedHead,
+            rangeNote: "未填写范围",
+          },
+        );
+        advanced.releaseNotes = {
+          ...notes,
+          requestedFrom: rawFrom || undefined,
+          requestedTo: rawTo || undefined,
+        };
+        advanced.feedback = notes.complete
+          ? `已读取最近 ${notes.revisionsRead} 条修订（已是全部历史），生成 ${notes.count} 条发布记录。`
+          : `仅读取到最近 ${notes.revisionsRead} 条（部分结果：可能还有更早修订），已生成 ${notes.count} 条；请填写起止修订后续查。`;
+        await this.host.sendRepositorySnapshot(session, requestId);
+        return;
+      }
+      const range = await collectSvnHistoryRange(
+        session.svnPath,
+        session.scope,
+        { fromRevision: effectiveFrom, toRevision: effectiveTo },
+        {
+          pageSize: 200,
+          signal: controller.signal,
+          onPage: (read) => {
+            void this.host
+              .post({
+                protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+                type: "operation/progress",
+                requestId,
+                moduleId: "repository",
+                payload: {
+                  title: "正在按范围采集发布说明",
+                  message: `已读取 ${read} 条修订…`,
+                  cancellable: true,
+                },
+              })
+              .catch(() => undefined);
+          },
+        },
+      );
+      if (range.revisions.length === 0 && !range.complete) {
+        // 首轮即失败/取消且无任何采集：保留上次结果（如有），不展示空清单冒充。
+        if (previous) {
+          advanced.feedback = range.cancelled
+            ? "采集已取消，已保留上次发布说明；请用相同范围重新生成以续查。"
+            : `采集失败（${range.partialReason ?? "未知错误"}），已保留上次发布说明；请检查连接后用相同范围重试，重试不会重复计数。`;
+          if (range.cancelled) {
+            await this.host.post({
+              protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+              type: "operation/cancelled",
+              requestId,
+              moduleId: "repository",
+              payload: {
+                title: "采集已取消",
+                message: advanced.feedback,
+              },
+            });
+          } else {
+            await this.host.post({
+              protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+              type: "operation/progress",
+              requestId,
+              moduleId: "repository",
+              payload: {
+                title: "采集失败",
+                message: advanced.feedback,
+                cancellable: false,
+              },
+            });
+          }
+          await this.host.sendRepositorySnapshot(session, requestId);
+          return;
+        }
+      }
+      const notes = buildReleaseNotes(
+        range.revisions,
+        effectiveFrom,
+        effectiveTo,
+        info?.url,
+        {
+          revisionsRead: range.revisionsRead,
+          complete: range.complete,
+          partialReason: range.cancelled ? "已取消" : range.partialReason,
+          resolvedHeadRevision: resolvedHead,
+          rangeNote,
+        },
+      );
+      advanced.releaseNotes = {
+        ...notes,
+        cancelled: range.cancelled || undefined,
+        failedUpperBound: range.failedUpperBound,
+        requestedFrom: rawFrom || undefined,
+        requestedTo: rawTo || undefined,
+      };
+      if (range.complete) {
+        advanced.feedback =
+          `已按范围 r${notes.fromRevision ?? "1"}→r${notes.toRevision ?? resolvedHead ?? "最新"}（含两端）读取 ${notes.revisionsRead} 条修订（完整），生成 ${notes.count} 条发布记录。` +
+          (notes.omittedPathCount > 0
+            ? `其中 ${notes.omittedPathCount} 个路径未在摘要中显示，完整版可复制/导出查看。`
+            : "");
+      } else if (range.cancelled) {
+        advanced.feedback = `采集已取消：已读取 ${notes.revisionsRead} 条（部分结果），生成 ${notes.count} 条；已保留已采集内容，请用相同范围重新生成以续查，重试不会重复计数。`;
+        await this.host.post({
+          protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+          type: "operation/cancelled",
+          requestId,
+          moduleId: "repository",
+          payload: {
+            title: "采集已取消",
+            message: advanced.feedback,
+          },
+        });
+      } else {
+        advanced.feedback = `采集未完成（${range.partialReason ?? "分页失败"}）：已读取 ${notes.revisionsRead} 条（部分结果），生成 ${notes.count} 条；已保留已采集内容，请检查连接后用相同范围重试，重试不会重复计数。`;
+      }
+      await this.host.sendRepositorySnapshot(session, requestId);
+    } catch (error) {
+      if (
+        controller.signal.aborted ||
+        (error instanceof Error && /abort|cancel/i.test(error.message))
+      ) {
+        if (previous) {
+          advanced.feedback =
+            "采集已取消，已保留上次发布说明；请用相同范围重新生成以续查。";
+        } else {
+          advanced.releaseNotes = {
+            markdown: "_采集已取消，暂无已采集修订。_",
+            fullMarkdown: "_采集已取消，暂无已采集修订。_",
+            count: 0,
+            revisionsRead: 0,
+            complete: false,
+            partialReason: "已取消",
+            cancelled: true,
+            omittedPathCount: 0,
+            truncatedRevisions: [],
+            requestedFrom: rawFrom || undefined,
+            requestedTo: rawTo || undefined,
+          };
+          advanced.feedback =
+            "采集已取消（部分结果：暂无已采集修订）；请用相同范围重新生成。";
+        }
+        await this.host.post({
+          protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+          type: "operation/cancelled",
+          requestId,
+          moduleId: "repository",
+          payload: {
+            title: "采集已取消",
+            message: advanced.feedback,
+          },
+        });
+        await this.host.sendRepositorySnapshot(session, requestId);
+        return;
+      }
+      if (previous) {
+        advanced.feedback = `采集失败（${errorMessage(error)}），已保留上次发布说明；请检查连接后用相同范围重试。`;
+        await this.host.sendRepositorySnapshot(session, requestId);
+        return;
+      }
+      advanced.releaseNotes = {
+        markdown: "_采集失败，暂无已采集修订。_",
+        fullMarkdown: "_采集失败，暂无已采集修订。_",
+        count: 0,
+        revisionsRead: 0,
+        complete: false,
+        partialReason: error instanceof Error ? error.message : "采集失败",
+        omittedPathCount: 0,
+        truncatedRevisions: [],
+        requestedFrom: rawFrom || undefined,
+        requestedTo: rawTo || undefined,
+      };
+      advanced.feedback = `采集失败（${errorMessage(error)}）；请检查连接后重试。`;
+      await this.host.sendRepositorySnapshot(session, requestId);
+    } finally {
+      if (session.activeOperation?.controller === controller)
+        session.activeOperation = undefined;
+    }
+  }
+
+  /**
+   * V021-R14：导出完整版发布说明（含全部路径，不截断）。只读导出：
+   * 将快照中的 fullMarkdown 写入用户选择的文件，不修改工作副本。
+   */
+  async exportReleaseNotes(
+    session: WorkbenchSession,
+    requestId?: string,
+  ): Promise<void> {
+    const notes = this.host.ensureAdvancedRepositoryState(session).releaseNotes;
+    const content = notes?.fullMarkdown ?? notes?.markdown;
+    if (!content) {
+      await this.host.sendError(
+        "repository",
+        "没有可导出的发布说明",
+        "请先按修订范围生成发布说明，再导出完整版。",
+        true,
+        requestId,
+      );
+      return;
+    }
+    const destination = await vscode.window.showSaveDialog({
+      title: "导出完整版发布说明",
+      defaultUri: vscode.Uri.file(
+        path.join(session.scope.repositoryRoot, "svn-release-notes.md"),
       ),
-    ]);
-    const info =
-      infoResult.exitCode === 0
-        ? parseInfoXml(infoResult.stdout, session.scope.repositoryRoot)
-        : undefined;
-    const advanced = this.host.ensureAdvancedRepositoryState(session);
-    advanced.releaseNotes = buildReleaseNotes(
-      revisions,
-      fromRevision,
-      toRevision,
-      info?.url,
+      filters: { Markdown: ["md", "markdown"] },
+      saveLabel: "导出发布说明",
+    });
+    if (!destination) return;
+    await vscode.workspace.fs.writeFile(
+      destination,
+      Buffer.from(content, "utf8"),
     );
-    advanced.feedback = `已从 ${revisions.length} 条已加载历史中生成 ${advanced.releaseNotes.count} 条发布记录。`;
+    this.host.ensureAdvancedRepositoryState(session).feedback =
+      `完整版发布说明已导出：${destination.fsPath}`;
     await this.host.sendRepositorySnapshot(session, requestId);
   }
 

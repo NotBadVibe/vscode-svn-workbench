@@ -603,4 +603,81 @@ describe("RepositoryModule", () => {
       .filter((button) => !button.closest('[data-task-group="dangerous"]'));
     expect(outsideDangerous).toHaveLength(0);
   });
+
+  it("V021-R14：发布说明展示完整性、省略数与完整导出入口", async () => {
+    const onAction = vi.fn();
+    render(RepositoryModule, {
+      snapshot: {
+        kind: "repository",
+        info: { name: "repo", revision: "42" },
+        properties: { available: true, target: ".", items: [] },
+        cleanup: { available: true, target: "." },
+        advanced: {
+          feedback: "已按范围 r40→r42（含两端）读取 3 条修订（完整）。",
+          releaseNotes: {
+            markdown: "# SVN 发布说明",
+            fullMarkdown: "# SVN 发布说明完整版",
+            count: 3,
+            fromRevision: "40",
+            toRevision: "42",
+            revisionsRead: 3,
+            complete: true,
+            omittedPathCount: 5,
+            truncatedRevisions: [{ revision: "41", omitted: 5 }],
+            resolvedHeadRevision: "42",
+          },
+        },
+      },
+      taskId: "repository/release-notes",
+      onAction,
+    });
+    expect(await screen.findByText(/3 条修订/)).toBeInTheDocument();
+    expect(await screen.findByText(/已读取 3 条（完整）/)).toBeInTheDocument();
+    expect(await screen.findByText(/摘要省略 5 个路径/)).toBeInTheDocument();
+    expect(await screen.findByText(/HEAD 已固定为 r42/)).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: "导出完整版" }),
+    ).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "导出完整版" }));
+    expect(onAction).toHaveBeenCalledWith("repository/export-release-notes");
+    await fireEvent.click(screen.getByRole("button", { name: "复制完整版" }));
+    expect(onAction).toHaveBeenCalledWith("copy-text", {
+      text: "# SVN 发布说明完整版",
+    });
+  });
+
+  it("V021-R14：部分结果显式标记并提供续查入口", async () => {
+    const onAction = vi.fn();
+    render(RepositoryModule, {
+      snapshot: {
+        kind: "repository",
+        info: { name: "repo", revision: "42" },
+        properties: { available: true, target: ".", items: [] },
+        cleanup: { available: true, target: "." },
+        advanced: {
+          feedback: "采集未完成，已保留已采集内容。",
+          releaseNotes: {
+            markdown: "# SVN 发布说明",
+            count: 2,
+            revisionsRead: 2,
+            complete: false,
+            partialReason: "已取消",
+            cancelled: true,
+            omittedPathCount: 0,
+            requestedFrom: "40",
+            requestedTo: "HEAD",
+          },
+        },
+      },
+      taskId: "repository/release-notes",
+      onAction,
+    });
+    expect(
+      await screen.findByText(/已读取 2 条（部分结果）/),
+    ).toBeInTheDocument();
+    expect(await screen.findByText(/部分原因：已取消/)).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: /用相同范围重新生成/ }),
+    ).toBeInTheDocument();
+  });
 });

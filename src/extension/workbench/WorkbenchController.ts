@@ -4850,6 +4850,9 @@ export class WorkbenchController implements vscode.Disposable {
           message.requestId,
         );
         return;
+      case "repository/export-release-notes":
+        await this.exportReleaseNotes(session, message.requestId);
+        return;
       case "changelist/suggest": {
         // v0.0.12 批次 B：semantic 模式先走受限差异回执（不调用模型），
         // 确认后再经 changelist/run-semantic 语义拆分；默认 metadata 分组。
@@ -9579,6 +9582,13 @@ export class WorkbenchController implements vscode.Disposable {
       toRevision,
       requestId,
     );
+  }
+
+  private async exportReleaseNotes(
+    session: WorkbenchSession,
+    requestId?: string,
+  ): Promise<void> {
+    await this.repositoryActions.exportReleaseNotes(session, requestId);
   }
 
   private async sendRepositorySnapshot(

@@ -13,6 +13,8 @@ import { parseInfoXml } from "../../svn/parsers/infoXmlParser";
 import { runSvnCommand } from "../../svn/svnCommandRunner";
 import {
   buildUpdateScopePreview,
+  buildUpdatePreviewHonestyNote,
+  buildUpdateScopeRemoteLists,
   checkUpdateScopeRemoteChanges,
   runUpdateScope,
   summarizeUpdateScopeRisk,
@@ -137,6 +139,22 @@ export class UpdateWorkbenchActions {
       remoteChanges,
       remoteCheckError,
     );
+    // V021-R15：Host 保留远端变更明细，区分远端 N 项与本地重叠 M 项。
+    // 读取失败时 remoteIncomplete=true，remotePaths 为空但不得展示为空清单
+    // 冒充“无变化”（Webview 按 error + incomplete 分支渲染）。
+    const lists = buildUpdateScopeRemoteLists(
+      remoteChanges,
+      candidates,
+      session.scope,
+    );
+    const previewedAt = new Date().toISOString();
+    const honestyNote = buildUpdatePreviewHonestyNote(
+      previewedAt,
+      remoteChanges?.checkedRevision,
+    );
+    const messages = remoteCheckError
+      ? [...risk.messages]
+      : [...risk.messages, honestyNote];
     // v0.1.6 V016-F1：预览携带生成时绑定，Webview 意向单据此自检 stale
     //（Host 执行前仍以会话权威状态复验，不信任 Webview 回传）。
     const candidateHash = hashCandidateState(candidates, "", []);
@@ -148,8 +166,18 @@ export class UpdateWorkbenchActions {
         remoteCount: remoteChanges?.total,
         checkedRevision: remoteChanges?.checkedRevision,
         risk: risk.level,
-        overlapPaths: risk.overlapPaths,
-        messages: risk.messages,
+        overlapPaths: lists.overlapPaths,
+        remotePaths: remoteCheckError ? [] : lists.remotePaths,
+        remoteItems: remoteCheckError
+          ? []
+          : lists.remoteItems.map((item) => ({
+              relativePath: item.relativePath,
+              repositoryStatus: item.repositoryStatus,
+            })),
+        remoteByStatus: remoteChanges?.byRepositoryStatus,
+        remoteIncomplete: Boolean(remoteCheckError),
+        previewedAt,
+        messages,
         commands: [
           `svn update --accept postpone ${session.scope.roots.map((root) => quoteRelative(root.relativePath)).join(" ")}`,
         ],
@@ -301,10 +329,16 @@ export class UpdateWorkbenchActions {
       return;
     }
     const isUpdateSuccess = result.result.exitCode === 0;
+    // V021-R15：结果再呈现预览时的实际数量（远端 N 项/重叠 M 项），执行
+    // 期间 HEAD 可变化，实际以工作副本为准，不把预览数当执行保证。
+    const previewCounts =
+      typeof update.remoteCount === "number"
+        ? `（预览时远端 ${update.remoteCount} 项、本地重叠 ${update.overlapPaths.length} 项）`
+        : "";
     const updateMsg = isUpdateSuccess
       ? result.revision
-        ? `已更新到 r${result.revision}`
-        : "当前范围更新完成。"
+        ? `已更新到 r${result.revision}${previewCounts}`
+        : `当前范围更新完成。${previewCounts}`
       : result.result.stderr || result.result.stdout || "SVN 更新失败。";
     session.updateState = {
       preview: undefined,
