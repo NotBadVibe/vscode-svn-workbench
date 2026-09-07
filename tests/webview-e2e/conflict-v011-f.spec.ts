@@ -350,7 +350,7 @@ test.describe("V011-F 冲突 Webview E2E 自动化验收", () => {
       await expect(page.getByText(/二进制文件不支持内嵌合并/)).toBeVisible();
       await expect(page.getByTestId("use-simple-editor-content")).toBeVisible();
       await expect(
-        page.getByRole("button", { name: "在编辑器中打开" }).first(),
+        page.getByRole("button", { name: "在 VS Code 编辑器中打开" }).first(),
       ).toBeVisible();
       await expect(page.getByText(/草稿/).first()).toBeVisible();
       await page.getByTestId("use-simple-editor-content").click();

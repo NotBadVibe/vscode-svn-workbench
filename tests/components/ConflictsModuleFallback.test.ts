@@ -65,7 +65,7 @@ describe("ConflictsModule V011-E 降级", () => {
       expect.anything(),
     );
   });
-  it("二进制/截断内容显示真实原因并提供在编辑器中打开", async () => {
+  it("二进制/截断内容显示真实原因并提供在 VS Code 编辑器中打开", async () => {
     const onAction = vi.fn();
     const binarySnapshot: ConflictSnapshot = {
       ...baseSnapshot,
@@ -85,7 +85,9 @@ describe("ConflictsModule V011-E 降级", () => {
       await screen.findByTestId("content-fallback-warning"),
     ).toBeInTheDocument();
     expect(screen.getByText(/二进制文件不支持内嵌合并/)).toBeInTheDocument();
-    expect(screen.getAllByText("在编辑器中打开").length).toBeGreaterThan(0);
+    expect(
+      screen.getAllByText("在 VS Code 编辑器中打开").length,
+    ).toBeGreaterThan(0);
   });
   it("草稿存在时失败不丢弃，仍可导出", async () => {
     const onAction = vi.fn();

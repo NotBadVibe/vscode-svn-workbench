@@ -406,6 +406,19 @@ export function updateConfirmLabel(remoteCount?: number): string {
 }
 
 /**
+ * V020-R12：冲突普通文件出口统一命名。VS Code 编辑器出口与真实外部合并
+ * 工具预览/确认链（“在外部合并工具中打开”）区分，不生造同义文案。
+ */
+export const openInVscodeEditorLabel = "在 VS Code 编辑器中打开";
+
+/**
+ * V020-R13：更新结果出口——查看本地修改（进入 Changes）与返回本地修改列表
+ *（范围列表回退；无有效来源编辑器时不承诺“返回编辑”）。
+ */
+export const updateViewLocalChangesLabel = "查看本地修改";
+export const updateBackToScopeListLabel = "返回本地修改列表";
+
+/**
  * v0.1.5 V015-D1：ScopeBar 数量口径——写操作页面（Commit/Update 预览态）
  * 显示「最终候选数」，普通浏览页显示「范围数」，两者文案不混用。
  */

@@ -17,10 +17,12 @@
   import {
     riskExplanations,
     riskLabels,
+    updateBackToScopeListLabel,
     updateConfirmLabel,
     updateConflictFilesSummary,
     updateConflictPrimaryLabel,
     updateConflictStatus,
+    updateViewLocalChangesLabel,
   } from "../../i18n/terminology";
 
   let {
@@ -178,16 +180,19 @@
       return {
         tone: "success" as const,
         result: result.message,
-        nextStep: "更新完成，下一步可查看本地修改，或返回编辑继续工作。",
+        nextStep:
+          "更新完成，下一步可查看本地修改，或返回本地修改列表继续工作。",
         recoveryHint: "如需回退，请使用历史记录恢复到更新前的修订。",
         actions: [
           {
-            label: "查看本地修改",
+            label: updateViewLocalChangesLabel,
             action: "update-view-changes",
             kind: "primary" as const,
           },
           {
-            label: "返回编辑",
+            // V020-R13：无有效来源编辑器可恢复时不承诺“返回编辑”，
+            // 以准确任务名称返回范围列表（路由失败同样停留在列表，不重执行更新）。
+            label: updateBackToScopeListLabel,
             action: "update-back-changes",
             kind: "secondary" as const,
           },
@@ -242,9 +247,10 @@
       return;
     }
     if (action === "update-view-changes") {
+      // V020-R13：查看本地修改进入 Changes（干净工作副本不再打开无差异的 Diff 页）。
       onAction("open-module", {
-        moduleId: "diff",
-        taskId: "diff/working",
+        moduleId: "changes",
+        taskId: "changes/overview",
       });
       return;
     }

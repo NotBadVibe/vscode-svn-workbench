@@ -45,7 +45,10 @@
     buildConflictOverviewBlocks,
     countWhitespaceOnlyConflictBlocks,
   } from "../diff/diffOverviewModel";
-  import { whitespaceLabels } from "../../i18n/terminology";
+  import {
+    openInVscodeEditorLabel,
+    whitespaceLabels,
+  } from "../../i18n/terminology";
   import ConflictResultEditor from "./ConflictResultEditor.svelte";
   import MergeActionToolbar from "./MergeActionToolbar.svelte";
   import ShortcutHelp from "../../components/help/ShortcutHelp.svelte";
@@ -339,11 +342,19 @@
             .map((item) => `${item.label}：${item.relativePath}`)
             .join("；")
         : "合并结果路径";
+    // V020-R12：未落盘草稿（Host 检查点或本地未保存修改）不是工具输入——
+    // 外部工具打开的是磁盘版本，启动前必须明示，避免静默覆盖。
+    const hasUnsavedDraft = Boolean(
+      snapshot.selected?.draft?.hasDraft || mergeDraft !== savedWorking,
+    );
+    const draftNote = hasUnsavedDraft
+      ? "存在未落盘合并草稿：外部工具打开的是磁盘版本，未落盘草稿不会作为工具输入；退出后请先重新打开/比较，确认后再保存。"
+      : undefined;
     return {
       token: preview.token,
       kind: "file-operation" as const,
       title: `在外部合并工具中打开 1 个文件`,
-      summary: `在外部合并工具（${external.toolLabel}）中打开 ${snapshot.selected.relativePath}。将传递${roles}。外部工具可能修改工作副本，退出后请重新打开/比较，不会自动标记解决。`,
+      summary: `在外部合并工具（${external.toolLabel}）中打开 ${snapshot.selected.relativePath}。将传递${roles}。外部工具可能修改工作副本，退出后请重新打开/比较，不会自动标记解决。${draftNote ?? ""}`,
       // 四角色可能指向同一相对路径展示名：去重后才进入影响清单（PreviewPathList 按路径设键）。
       paths: [...new Set(external.fileRoles.map((item) => item.relativePath))],
       scopeText: snapshot.selected.relativePath,
@@ -351,7 +362,7 @@
         "外部工具可能修改工作副本；退出后状态将重新采集，未自动标记解决，旧确认将失效。",
       createdAt: new Date().toISOString(),
       canExecute: preview.canOpen && !preview.stale,
-      issues: preview.issues,
+      issues: draftNote ? [...preview.issues, draftNote] : preview.issues,
       commands: [preview.commandPreview],
       stale: preview.stale,
     };
@@ -1926,7 +1937,7 @@
             onclick={() =>
               onAction("open-file", {
                 relativePath: snapshot.selected?.relativePath,
-              })}>打开工作副本文件</button
+              })}>{openInVscodeEditorLabel}</button
           >
         </div>
       </div>
@@ -2352,7 +2363,7 @@
                 onclick={() =>
                   onAction("open-file", {
                     relativePath: snapshot.selected?.relativePath,
-                  })}>在编辑器中打开</button
+                  })}>{openInVscodeEditorLabel}</button
               >
               <button
                 class="button button--secondary"
@@ -2360,7 +2371,7 @@
                 onclick={() =>
                   onAction("conflict/preview-external-merge", {
                     relativePath: snapshot.selected?.relativePath,
-                  })}>在外部工具打开</button
+                  })}>在外部合并工具中打开</button
               >
             </div>
           </div>
@@ -2499,7 +2510,7 @@
                 status={`大文件降级：当前为${perfModeLabel}（${conflictBlocks.length} 块 / ${perfActualLines} 行）`}
                 reason={`降级原因：${perfReasonText}`}
                 nextStep={conflictPerf.mode === "simplified"
-                  ? "草稿已保留，可使用简化编辑器、在外部工具打开，或恢复完整视图"
+                  ? "草稿已保留，可使用简化编辑器、在外部合并工具中打开，或恢复完整视图"
                   : "已关闭非必要高亮并隐藏未激活只读来源，可恢复完整视图"}
                 tone="warning"
                 variant="compact"
@@ -2528,9 +2539,9 @@
                   class="button button--secondary"
                   data-testid="open-external-perf"
                   onclick={() =>
-                    onAction("open-file", {
+                    onAction("conflict/preview-external-merge", {
                       relativePath: snapshot.selected?.relativePath,
-                    })}>在外部工具打开</button
+                    })}>在外部合并工具中打开</button
                 >
                 {#if !perfForceFull}
                   <button
@@ -2662,7 +2673,7 @@
                   onclick={() =>
                     onAction("open-file", {
                       relativePath: snapshot.selected?.relativePath,
-                    })}>在编辑器中打开</button
+                    })}>{openInVscodeEditorLabel}</button
                 >
                 {#if snapshot.selected?.draft?.hasDraft}<button
                     class="button button--secondary"
@@ -2706,7 +2717,7 @@
                   onclick={() =>
                     onAction("open-file", {
                       relativePath: snapshot.selected?.relativePath,
-                    })}>在编辑器中打开</button
+                    })}>{openInVscodeEditorLabel}</button
                 >
               </div>
             </div>
@@ -3164,7 +3175,7 @@
               </div>
             {:else}
               <p class="muted">
-                使用已配置的外部合并工具打开当前冲突，打开前会显示将传递的文件角色、路径与外部修改影响确认。
+                使用已配置的外部合并工具打开当前冲突，打开前会显示将传递的文件角色、路径与外部修改影响确认。外部工具打开的是磁盘版本，未落盘草稿不会作为工具输入；退出后状态将重新采集，不会自动标记解决。
               </p>
               <button
                 class="button button--secondary"
