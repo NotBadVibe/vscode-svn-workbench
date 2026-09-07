@@ -2826,92 +2826,21 @@ export class WorkbenchController implements vscode.Disposable {
         await this.sendHistorySnapshot(session, message.requestId);
         return;
       }
+      case "history/query": {
+        // V020-R05：始终可用的按条件查询入口，与加载下一批分离；
+        // 新查询从首批重新读取（清理旧游标），输入由 Webview 保留。
+        await this.runHistoryRead(session, data, message.requestId, {
+          fresh: true,
+        });
+        return;
+      }
       case "history/load-more": {
         // v0.0.18 批次 C（C-06）：每次加载前都重新校验 Webview 的只读
         // 查询条件；条件变化时从首批开始，未变化时才继续扩大上限。
-        const normalizedQuery = normalizeSvnHistoryQuery(data);
-        if (normalizedQuery.issues.length > 0) {
-          await this.sendError(
-            "history",
-            "历史条件无效",
-            normalizedQuery.issues.join(" "),
-            true,
-            message.requestId,
-          );
-          return;
-        }
-        const previousQuery = session.historyState?.historyQuery ?? {};
-        const queryChanged = !sameHistoryQuery(
-          previousQuery,
-          normalizedQuery.query,
-        );
-        const previousLimit = queryChanged
-          ? 0
-          : (session.historyState?.historyLimit ?? 100);
-        const nextLimit = previousLimit === 0 ? 100 : previousLimit + 200;
-        const controller = new AbortController();
-        session.activeOperation = { moduleId: "history", controller };
-        await this.post({
-          protocolVersion: WORKBENCH_PROTOCOL_VERSION,
-          type: "operation/progress",
-          requestId: message.requestId,
-          moduleId: "history",
-          payload: {
-            title: `正在加载更早修订（最多 ${nextLimit} 条）`,
-            message: "svn log --limit",
-            cancellable: true,
-          },
+        // V020-R05：慢旧响应由序号守卫丢弃，不覆盖新查询。
+        await this.runHistoryRead(session, data, message.requestId, {
+          fresh: false,
         });
-        let page: SvnHistoryPage;
-        try {
-          page = await collectSvnHistoryPage(
-            session.svnPath,
-            session.scope,
-            nextLimit,
-            normalizedQuery.query,
-            controller.signal,
-          );
-          const state = session.historyState ?? { compareRevisions: [] };
-          state.historyLimit = nextLimit;
-          state.historyQuery = normalizedQuery.query;
-          // v0.1.5 V015-D2：加载更多携带本地比较选择时一并保留，快照刷新不丢选中；
-          // 未携带该键时保持既有选择不变。
-          if (data.compareRevisions !== undefined) {
-            state.compareRevisions = asRevisionArray(data.compareRevisions);
-          }
-          const condition = describeHistoryQuery(normalizedQuery.query);
-          state.feedback = condition
-            ? `已按${condition}读取 ${page.revisions.length} 条修订。`
-            : `已加载最近 ${page.revisions.length} 条修订。`;
-          session.historyState = state;
-        } catch (error) {
-          if (controller.signal.aborted) {
-            await this.post({
-              protocolVersion: WORKBENCH_PROTOCOL_VERSION,
-              type: "operation/cancelled",
-              requestId: message.requestId,
-              moduleId: "history",
-              payload: {
-                title: "已取消加载更早修订",
-                message: "已保留当前列表；可再次点击“加载更早”重试。",
-              },
-            });
-            return;
-          }
-          await this.sendError(
-            "history",
-            "加载更早修订失败",
-            errorMessage(error),
-            true,
-            message.requestId,
-          );
-          return;
-        } finally {
-          if (session.activeOperation?.controller === controller)
-            session.activeOperation = undefined;
-        }
-        // 将同一可取消请求的结果直接下发，避免完成后无提示地再次 svn log。
-        await this.sendHistorySnapshot(session, message.requestId, page);
         return;
       }
       case "history/preview-restore": {
@@ -6719,6 +6648,127 @@ export class WorkbenchController implements vscode.Disposable {
         ? "此操作不能在工作台中一键撤销"
         : undefined,
     });
+  }
+
+  /**
+   * V020-R05：历史只读请求统一入口（按条件查询 / 加载更早）。
+   * fresh=true 时从首批重新读取并清理旧游标；fresh=false 且条件未变
+   * 时才扩大上限。取消或失败不改动上一成功结果；慢旧响应按序号丢弃。
+   */
+  private async runHistoryRead(
+    session: WorkbenchSession,
+    data: Record<string, unknown>,
+    requestId?: string,
+    options: { fresh: boolean } = { fresh: false },
+  ): Promise<void> {
+    const normalizedQuery = normalizeSvnHistoryQuery(data);
+    if (normalizedQuery.issues.length > 0) {
+      await this.sendError(
+        "history",
+        "历史条件无效",
+        normalizedQuery.issues.join(" "),
+        true,
+        requestId,
+      );
+      return;
+    }
+    const previousQuery = session.historyState?.historyQuery ?? {};
+    const queryChanged = !sameHistoryQuery(
+      previousQuery,
+      normalizedQuery.query,
+    );
+    const previousLimit =
+      queryChanged || options.fresh
+        ? 0
+        : (session.historyState?.historyLimit ?? 100);
+    const nextLimit = previousLimit === 0 ? 100 : previousLimit + 200;
+    // 新查询先中断上一历史请求，并以单调序号绑定本次查询身份。
+    session.activeOperation?.controller.abort();
+    const nextSeq = (session.historyState?.historyRequestSeq ?? 0) + 1;
+    const state = session.historyState ?? { compareRevisions: [] };
+    state.historyRequestSeq = nextSeq;
+    session.historyState = state;
+    const sessionId = session.sessionId;
+    const controller = new AbortController();
+    session.activeOperation = { moduleId: "history", controller };
+    await this.post({
+      protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+      type: "operation/progress",
+      requestId,
+      moduleId: "history",
+      payload: {
+        title: `正在加载更早修订（最多 ${nextLimit} 条）`,
+        message: "svn log --limit",
+        cancellable: true,
+      },
+    });
+    let page: SvnHistoryPage;
+    try {
+      page = await collectSvnHistoryPage(
+        session.svnPath,
+        session.scope,
+        nextLimit,
+        normalizedQuery.query,
+        controller.signal,
+      );
+    } catch (error) {
+      if (controller.signal.aborted) {
+        await this.post({
+          protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+          type: "operation/cancelled",
+          requestId,
+          moduleId: "history",
+          payload: {
+            title: "已取消历史查询",
+            message: "已保留当前列表与输入；可调整条件后再次查询。",
+          },
+        });
+        return;
+      }
+      await this.sendError(
+        "history",
+        options.fresh ? "按条件查询失败" : "加载更早修订失败",
+        `${errorMessage(error)}已保留上一成功结果。`,
+        true,
+        requestId,
+      );
+      return;
+    } finally {
+      if (session.activeOperation?.controller === controller)
+        session.activeOperation = undefined;
+    }
+    // 慢旧响应守卫：会话替换或已有更新查询时丢弃本次结果。
+    if (
+      this.session !== session ||
+      session.sessionId !== sessionId ||
+      session.historyState?.historyRequestSeq !== nextSeq
+    ) {
+      return;
+    }
+    const current = session.historyState ?? { compareRevisions: [] };
+    current.historyLimit = nextLimit;
+    current.historyQuery = normalizedQuery.query;
+    if (options.fresh || queryChanged) {
+      // 新查询清理旧游标：Blame 绑定旧修订集合，不再有效。
+      current.blame = undefined;
+    }
+    // v0.1.5 V015-D2：携带本地比较选择时一并保留，快照刷新不丢选中；
+    // 未携带该键时保持既有选择不变。
+    if (data.compareRevisions !== undefined) {
+      current.compareRevisions = asRevisionArray(data.compareRevisions);
+    }
+    const condition = describeHistoryQuery(normalizedQuery.query);
+    current.feedback =
+      page.revisions.length === 0
+        ? condition
+          ? `按${condition}没有找到修订；已保留查询条件，可调整后再次查询。`
+          : "当前范围没有可显示的修订记录。"
+        : condition
+          ? `已按${condition}读取 ${page.revisions.length} 条修订。`
+          : `已加载最近 ${page.revisions.length} 条修订。`;
+    session.historyState = current;
+    // 将同一可取消请求的结果直接下发，避免完成后无提示地再次 svn log。
+    await this.sendHistorySnapshot(session, requestId, page);
   }
 
   private async sendHistorySnapshot(

@@ -100,6 +100,11 @@ export interface WorkbenchSession extends OpenWorkbenchRequest {
     historyLimit?: number;
     /** v0.0.18 C-06：已应用于当前历史列表的只读查询条件。 */
     historyQuery?: HistoryQueryView;
+    /**
+     * V020-R05：历史只读请求单调序号；慢旧响应到达时与当前序号
+     * 不一致则丢弃，不覆盖新查询结果。
+     */
+    historyRequestSeq?: number;
     blame?: HistorySnapshot["blame"];
     restorePreview?: {
       token: string;

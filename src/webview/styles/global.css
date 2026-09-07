@@ -2180,7 +2180,20 @@ button.path-detail__value:hover {
   margin: 7px 0 0;
   line-height: 1.45;
 }
-/* v0.1.5 V015-D2：本地筛选与仓库查询的语义边界说明（搜索框只过滤已加载结果）。 */
+/* V020-R05：按条件查询入口与就地校验提示（状态不只靠颜色）。 */
+.history-load-conditions__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+.history-load-conditions__hint {
+  flex: 1 1 180px;
+}
+.history-query-error {
+  color: var(--vscode-errorForeground);
+}
 .history-filter-hint {
   margin: 0 0 8px;
   color: var(--muted);

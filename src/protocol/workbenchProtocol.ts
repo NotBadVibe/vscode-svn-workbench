@@ -1603,6 +1603,7 @@ export type WebviewAction =
   | "history/select"
   | "history/compare"
   | "history/blame"
+  | "history/query"
   | "history/load-more"
   | "history/preview-restore"
   | "history/execute-restore"
@@ -1753,6 +1754,7 @@ export const webviewActions = [
   "history/select",
   "history/compare",
   "history/blame",
+  "history/query",
   "history/load-more",
   "history/preview-restore",
   "history/execute-restore",

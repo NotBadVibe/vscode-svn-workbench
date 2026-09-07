@@ -1284,6 +1284,39 @@ export function startMockWorkbench(): void {
         }),
       );
     }
+    if (action === "history/query") {
+      // V020-R05：按条件查询从首批重新读取；未知作者返回空结果但保留查询条件。
+      const base = historySnapshot() as unknown as {
+        revisions: Array<{ author: string; [key: string]: unknown }>;
+      };
+      const query = Object.fromEntries(
+        ["revisionFrom", "revisionTo", "author", "dateFrom", "dateTo"]
+          .map((key) => [key, data[key]])
+          .filter(([, value]) => typeof value === "string" && value.trim()),
+      );
+      const author = typeof data.author === "string" ? data.author.trim() : "";
+      const revisions = author
+        ? base.revisions.filter((item) =>
+            item.author.toLowerCase().includes(author.toLowerCase()),
+          )
+        : base.revisions;
+      injectSnapshot(
+        "history",
+        historySnapshot({
+          revisions,
+          selectedRevision: revisions[0]?.revision,
+          limit: 100,
+          hasMore: false,
+          query,
+          feedback:
+            revisions.length === 0
+              ? "按条件没有找到修订；已保留查询条件，可调整后再次查询。"
+              : Object.keys(query).length > 0
+                ? `已按条件读取 ${revisions.length} 条修订。`
+                : `已加载最近 ${revisions.length} 条修订。`,
+        }),
+      );
+    }
     if (action === "history/blame") {
       const blame = isScrollDataset()
         ? Array.from({ length: 80 }, (_, index) => ({

@@ -194,6 +194,38 @@
 
   function updateLoadQuery(key: keyof HistoryQueryView, value: string): void {
     loadQuery = { ...loadQuery, [key]: value };
+    queryError = undefined;
+  }
+
+  // V020-R05：始终可用的按条件查询入口（与加载下一批分离）。
+  // 新查询从首批重新读取；输入保留，快照回填只发生在 Host 成功后。
+  let queryError = $state<string | undefined>(undefined);
+
+  function validateLoadQuery(target: HistoryQueryView): string | undefined {
+    if (
+      target.revisionFrom &&
+      target.revisionTo &&
+      BigInt(target.revisionFrom) > BigInt(target.revisionTo)
+    ) {
+      return "较早修订号不能大于较晚修订号，请调整后再查询。";
+    }
+    if (target.dateFrom && target.dateTo && target.dateFrom > target.dateTo) {
+      return "开始日期不能晚于结束日期，请调整后再查询。";
+    }
+    return undefined;
+  }
+
+  function requestHistoryQuery(): void {
+    const invalid = validateLoadQuery(loadQuery);
+    queryError = invalid;
+    if (invalid) return;
+    const selection = [...compare];
+    onAction(
+      "history/query",
+      selection.length > 0
+        ? { ...loadQuery, compareRevisions: selection }
+        : { ...loadQuery },
+    );
   }
 
   // v0.1.5 V015-D2：加载更多携带本地比较选择，Host 回显后快照刷新不丢选中；
@@ -495,6 +527,20 @@
       <p>
         条件只限制本次只读历史请求，不改变当前范围；条件变化后会从首批重新读取。加载期间可使用页面顶部的“取消”。
       </p>
+      {#if queryError}
+        <p class="history-query-error" role="alert">{queryError}</p>
+      {/if}
+      <div class="history-load-conditions__actions">
+        <button
+          type="button"
+          class="button button--primary"
+          data-history-query
+          onclick={requestHistoryQuery}>按条件查询</button
+        >
+        <span class="history-load-conditions__hint"
+          >新查询从首批重新读取；取消或失败保留上一成功结果与输入。</span
+        >
+      </div>
     </details>
     <!-- v0.1.5 V015-B2：比较栏→PrimaryActionBar（唯一 primary + 数量口径一致；修订不可变，不接 stale）。 -->
     <PrimaryActionBar
