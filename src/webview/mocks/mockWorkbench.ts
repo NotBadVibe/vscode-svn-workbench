@@ -15,6 +15,7 @@ import {
   type WorkbenchTaskId,
 } from "@protocol/workbenchProtocol";
 import { toDisplayPath } from "../../scope/pathBrands";
+import { hashChangelistPlan } from "../../changelist/changelistPlan";
 import type { PathIdentityKey } from "../../scope/pathBrands";
 import {
   COMMIT_SELECTION_CONFIG_VERSION,
@@ -2194,13 +2195,14 @@ export function startMockWorkbench(): void {
           )
         : [];
       const remove = data.remove === true;
+      const previewName = typeof data.name === "string" ? data.name : undefined;
       injectSnapshot(
         "changelists",
         changelistsSnapshot({
           suggestions: changelistSuggestions(),
           preview: {
             token: "mock-changelist",
-            name: typeof data.name === "string" ? data.name : undefined,
+            name: previewName,
             remove,
             paths,
             command: remove
@@ -2208,6 +2210,15 @@ export function startMockWorkbench(): void {
               : `svn changelist "${data.name}" …`,
             canExecute: paths.length > 0,
             issues: [],
+            // V020-R08：Mock 同步协议绑定字段（与 Host 快照一致）。
+            scopeHash: "mock-scope-hash",
+            candidateHash: "mock-candidate-hash",
+            repositoryUuid: "mock-repository-uuid",
+            planHash: hashChangelistPlan({
+              name: previewName,
+              remove,
+              paths,
+            }),
           },
         }),
       );

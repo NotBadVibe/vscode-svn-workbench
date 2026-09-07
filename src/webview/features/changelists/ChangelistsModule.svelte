@@ -446,8 +446,63 @@
     if (changelistReceipt) assistanceExpanded = true;
   });
   // v0.0.14 批次 D：变更集应用意向单
-  let changelistIntentOpen = $state(false);
   let changelistTriggerEl = $state<HTMLElement | null>(null);
+  let changelistIntentOpen = $state(false);
+  /*
+   * V020-R08：方案漂移追踪——预览后改名、删应用栏文件、改目标组
+   * 只改变本地状态，旧预览必须立即只读并关闭执行入口。
+   * 移出类预览（remove=true）无编辑器方案，直接以预览路径为准，
+   * 不受名称/应用栏编辑影响，仍由 Host 绑定复验。
+   */
+  const previewPlanChanged = $derived.by(() => {
+    const preview = snapshot.preview;
+    if (!preview || preview.remove) return false;
+    if ((name ?? "").trim() !== (preview.name ?? "").trim()) return true;
+    const current = [...applyPaths].sort();
+    const previewPaths = [...preview.paths].sort();
+    if (current.length !== previewPaths.length) return true;
+    return current.some((path, index) => path !== previewPaths[index]);
+  });
+  /*
+   * V020-R08：旧响应晚到不得恢复旧预览可执行状态——只承认最新到达
+   * 的预览令牌；携带旧令牌的延迟快照一律只读。
+   */
+  let seenPreviewTokens = $state<string[]>([]);
+  $effect(() => {
+    const token = snapshot.preview?.token;
+    if (token && !seenPreviewTokens.includes(token)) {
+      seenPreviewTokens = [...seenPreviewTokens, token];
+    }
+  });
+  const newestPreviewToken = $derived(
+    seenPreviewTokens[seenPreviewTokens.length - 1],
+  );
+  const isLatePreview = $derived(
+    Boolean(snapshot.preview?.token) &&
+      snapshot.preview?.token !== newestPreviewToken,
+  );
+  const previewStale = $derived(previewPlanChanged || isLatePreview);
+
+  /**
+   * V020-R08：按用户当前看到的方案重新预览，新预览产生新令牌。
+   * 应用类用编辑器中的名称/路径；移出类沿用预览自身的路径集合。
+   */
+  function repreviewCurrentPlan(): void {
+    const current = snapshot.preview;
+    if (!current) return;
+    if (current.remove) {
+      onAction("changelist/preview-apply", {
+        remove: true,
+        paths: current.paths,
+      });
+    } else {
+      onAction("changelist/preview-apply", {
+        name,
+        paths: applyPaths,
+        remove: false,
+      });
+    }
+  }
   const changelistIntent = $derived.by(() => {
     const preview = snapshot.preview;
     if (!preview) return undefined;
@@ -470,7 +525,7 @@
       canExecute: preview.canExecute,
       issues: preview.issues,
       commands: [preview.command],
-      stale: false,
+      stale: previewStale,
     };
   });
 
@@ -1018,9 +1073,19 @@
             >
               {issue}
             </div>{/each}
+          {#if previewStale}
+            <div class="notice notice--warning" role="alert">
+              方案已更改，旧预览已只读失效，不能凭旧确认继续执行。请重新生成预览后再确认。
+            </div>
+            <button
+              class="button button--secondary commit-button"
+              onclick={repreviewCurrentPlan}>重新生成预览</button
+            >
+          {/if}
           <button
             class="button button--primary commit-button"
-            disabled={!snapshot.preview.canExecute}
+            disabled={!snapshot.preview.canExecute || previewStale}
+            title={previewStale ? "方案已更改，请重新生成预览" : undefined}
             onclick={(event) => {
               changelistTriggerEl = event.currentTarget as HTMLElement;
               changelistIntentOpen = true;
@@ -1042,18 +1107,31 @@
             {pathDetail}
             onConfirm={(token) => {
               changelistIntentOpen = false;
-              onAction("changelist/execute-apply", { previewToken: token });
+              // V020-R08：确认时回传用户当前看到的最终方案，Host 比对
+              // 保存的方案指纹，不一致则旧 token 不得执行。
+              const current = snapshot.preview;
+              if (!current) return;
+              if (current.remove) {
+                onAction("changelist/execute-apply", {
+                  previewToken: token,
+                  remove: true,
+                  paths: current.paths,
+                });
+              } else {
+                onAction("changelist/execute-apply", {
+                  previewToken: token,
+                  name,
+                  paths: applyPaths,
+                  remove: false,
+                });
+              }
             }}
             onCancel={() => (changelistIntentOpen = false)}
             onRecheck={() => {
               changelistIntentOpen = false;
-              const current = snapshot.preview;
-              if (!current) return;
-              onAction("changelist/preview-apply", {
-                name: current.name,
-                paths: current.paths,
-                remove: current.remove,
-              });
+              // V020-R08：重新检查按当前方案生成新预览（新令牌），
+              // 不沿用已失效的旧预览内容。
+              repreviewCurrentPlan();
             }}
           />
         </div>

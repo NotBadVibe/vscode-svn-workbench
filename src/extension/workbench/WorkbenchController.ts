@@ -56,6 +56,10 @@ import {
   validateCommitSplitResult,
 } from "../../ai/commitSplitAi";
 import {
+  hashChangelistPlan,
+  isSameChangelistPlan,
+} from "../../changelist/changelistPlan";
+import {
   applySvnChangelist,
   collectSvnChangelists,
 } from "../../changelist/svnChangelists";
@@ -4863,6 +4867,14 @@ export class WorkbenchController implements vscode.Disposable {
         state.preview = {
           token,
           candidateHash: hashCandidateState(candidates, "", []),
+          // V020-R08：保存范围/仓库绑定与方案指纹，执行前复验最终方案。
+          scopeHash: session.scopeHash,
+          repositoryUuid: session.repositoryUuid,
+          planHash: hashChangelistPlan({
+            name: remove ? undefined : name,
+            remove,
+            paths,
+          }),
           name: remove ? undefined : name,
           remove,
           paths,
@@ -4881,6 +4893,58 @@ export class WorkbenchController implements vscode.Disposable {
       case "changelist/execute-apply": {
         const token = asString(data.previewToken);
         const preview = session.changelistState?.preview;
+        // V020-R08：Host 方案指纹防线——执行请求携带用户当前看到的最终方案
+        // （Webview 确认时回传编辑器中的名称/路径/方向）；与保存的方案指纹
+        // 不一致说明预览后方案已更改，旧 token 不得执行（fail-closed）。
+        const carriesFinalPlan =
+          data.name !== undefined ||
+          data.paths !== undefined ||
+          data.remove !== undefined;
+        if (preview && carriesFinalPlan) {
+          const finalPaths = asStringArray(data.paths) ?? [];
+          const finalPlan = {
+            name: typeof data.name === "string" ? data.name : undefined,
+            remove: data.remove === true,
+            paths: finalPaths,
+          };
+          if (
+            !isSameChangelistPlan(finalPlan, {
+              name: preview.name,
+              remove: preview.remove,
+              paths: preview.paths,
+            })
+          ) {
+            session.changelistState!.preview = undefined;
+            await this.sendError(
+              "changelists",
+              "Changelist 方案已更改",
+              "预览后变更集名称或文件已变化，旧预览已只读失效，不能凭旧确认继续执行。请重新生成预览。",
+              true,
+              message.requestId,
+            );
+            await this.sendChangelistsSnapshot(session, message.requestId);
+            return;
+          }
+        }
+        // V020-R08：范围/仓库绑定复验——预览生成后范围或仓库变化，旧 token 失效。
+        if (
+          preview &&
+          ((preview.scopeHash !== undefined &&
+            preview.scopeHash !== session.scopeHash) ||
+            (preview.repositoryUuid !== undefined &&
+              preview.repositoryUuid !== session.repositoryUuid))
+        ) {
+          session.changelistState!.preview = undefined;
+          await this.sendError(
+            "changelists",
+            "Changelist 预览已失效",
+            "操作范围或仓库已变化，旧预览已只读失效。请重新生成预览。",
+            true,
+            message.requestId,
+          );
+          await this.sendChangelistsSnapshot(session, message.requestId);
+          return;
+        }
         // v0.0.12 批次 B：执行前再次复验重复归属（fail-closed，防止
         // 预览后工作副本变化导致同文件进入两个真实 Changelist）。
         if (preview && !preview.remove && preview.issues.length === 0) {
@@ -4923,6 +4987,38 @@ export class WorkbenchController implements vscode.Disposable {
           return;
         }
         const candidates = await this.collectScopeCandidates(session);
+        // V020-R08：保存的方案仍须是当前候选的子集——预览后删文件、文件失效
+        // 或改组导致旧方案不再精确成立时，旧 token 不得执行。
+        const candidatePaths = new Set(
+          candidates.map((item) => item.relativePath),
+        );
+        const missingPaths = preview.paths.filter(
+          (item) => !candidatePaths.has(item),
+        );
+        if (missingPaths.length > 0) {
+          session.changelistState!.preview = undefined;
+          await this.sendError(
+            "changelists",
+            "工作副本已变化",
+            `预览中的 ${missingPaths.length} 个文件已不在当前范围，请刷新后重新生成 Changelist 预览。`,
+            true,
+            message.requestId,
+          );
+          await this.sendChangelistsSnapshot(session, message.requestId);
+          return;
+        }
+        if (!preview.remove && !(preview.name ?? "").trim()) {
+          session.changelistState!.preview = undefined;
+          await this.sendError(
+            "changelists",
+            "Changelist 方案已更改",
+            "预览中的变更集名称已失效。请填写名称后重新生成预览。",
+            true,
+            message.requestId,
+          );
+          await this.sendChangelistsSnapshot(session, message.requestId);
+          return;
+        }
         // v0.0.14 批次 B：Changelist 通用意向单校验
         const candidateHashForChangelist = hashCandidateState(
           candidates,
@@ -4963,6 +5059,7 @@ export class WorkbenchController implements vscode.Disposable {
             true,
             message.requestId,
           );
+          await this.sendChangelistsSnapshot(session, message.requestId);
           return;
         }
         if (candidateHashForChangelist !== preview.candidateHash) {
@@ -4974,6 +5071,7 @@ export class WorkbenchController implements vscode.Disposable {
             true,
             message.requestId,
           );
+          await this.sendChangelistsSnapshot(session, message.requestId);
           return;
         }
         const result = await applySvnChangelist(
@@ -4984,6 +5082,8 @@ export class WorkbenchController implements vscode.Disposable {
         );
         if (result.exitCode !== 0) {
           const errMsg = result.stderr || result.stdout || "未知错误";
+          // V020-R08：执行失败后旧预览不再可确认，恢复必须走新预览。
+          session.changelistState!.preview = undefined;
           await this.sendError(
             "changelists",
             "Changelist 更新失败",
@@ -4991,6 +5091,7 @@ export class WorkbenchController implements vscode.Disposable {
             true,
             message.requestId,
           );
+          await this.sendChangelistsSnapshot(session, message.requestId);
           this.appendActivityRecord({
             kind: "operation-execution",
             moduleId: "changelists",
@@ -8760,6 +8861,11 @@ export class WorkbenchController implements vscode.Disposable {
                 `svn changelist "${(preview.name ?? "").replace(/\\/g, "\\\\").replace(/"/g, '\\"')}" ${preview.paths.map(quoteRelative).join(" ")}`,
             canExecute: (previewIssues ?? preview.issues).length === 0,
             issues: previewIssues ?? preview.issues,
+            // V020-R08：预览生成时的绑定，随快照下发供 Webview 自检 stale。
+            scopeHash: preview.scopeHash,
+            candidateHash: preview.candidateHash,
+            repositoryUuid: preview.repositoryUuid,
+            planHash: preview.planHash,
           }
         : undefined,
       feedback: state.feedback,

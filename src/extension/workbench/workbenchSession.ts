@@ -258,6 +258,11 @@ export interface WorkbenchSession extends OpenWorkbenchRequest {
     preview?: {
       token: string;
       candidateHash: string;
+      /** V020-R08：预览生成时的范围/仓库绑定，执行前复验。 */
+      scopeHash: string;
+      repositoryUuid: string;
+      /** V020-R08：方案指纹（名称 + 方向 + 排序后路径），执行前复验最终方案。 */
+      planHash: string;
       name?: string;
       remove: boolean;
       paths: string[];

@@ -1317,6 +1317,16 @@ export interface ChangelistsSnapshot {
     command: string;
     canExecute: boolean;
     issues: string[];
+    /**
+     * V020-R08：预览生成时的绑定（Webview 自检 stale 用，向后兼容可选）。
+     * Host 执行前复验仍以会话权威状态与保存的方案指纹为准，
+     * 不信任 Webview 回传。
+     */
+    scopeHash?: string;
+    candidateHash?: string;
+    repositoryUuid?: string;
+    /** 方案指纹（名称 + 方向 + 排序后路径，见 changelistPlan.ts）。 */
+    planHash?: string;
   };
   feedback?: string;
   /**
