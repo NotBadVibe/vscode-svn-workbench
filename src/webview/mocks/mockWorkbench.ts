@@ -1690,6 +1690,59 @@ export function startMockWorkbench(): void {
         }),
       );
     }
+    if (action === "settings/save-ai") {
+      // 中文注释：V020-R07——Mock 模拟 Host 保存语义：持久化草稿中的已保存
+      // 配置字段并下发保存成功快照；密钥只翻转 hasApiKey 状态，绝不明文回显。
+      const payload = (data ?? {}) as Record<string, unknown>;
+      const asText = (value: unknown): string =>
+        typeof value === "string" ? value : "";
+      const scenarioModels: Record<string, string> = {};
+      const rawModels = payload.scenarioModels;
+      if (rawModels && typeof rawModels === "object") {
+        for (const [key, value] of Object.entries(
+          rawModels as Record<string, unknown>,
+        )) {
+          if (typeof value === "string" && value.trim()) {
+            scenarioModels[key] = value.trim();
+          }
+        }
+      }
+      const enteredKey = asText(payload.apiKey).trim();
+      const preset = asText(payload.providerPreset).trim();
+      settingsSnapshotValue.ai = {
+        ...settingsSnapshotValue.ai,
+        providerPreset: preset
+          ? preset
+          : settingsSnapshotValue.ai.providerPreset,
+        baseUrl: asText(payload.baseUrl).trim(),
+        model: asText(payload.model).trim(),
+        scenarioModels,
+        hasApiKey:
+          payload.clearApiKey === true
+            ? false
+            : enteredKey
+              ? true
+              : settingsSnapshotValue.ai.hasApiKey,
+        includeCommitHistory: payload.includeCommitHistory === true,
+        historyLimit:
+          typeof payload.historyLimit === "number" &&
+          Number.isFinite(payload.historyLimit)
+            ? Math.min(20, Math.max(1, Math.round(payload.historyLimit)))
+            : settingsSnapshotValue.ai.historyLimit,
+      };
+      injectSnapshot(
+        "settings",
+        settingsSnapshot({
+          ai: {
+            ...settingsSnapshotValue.ai,
+            feedback: {
+              tone: "success",
+              message: "AI 模型配置已保存，密钥仍仅存于 SecretStorage。",
+            },
+          },
+        }),
+      );
+    }
     if (action === "settings/test-ai") {
       injectSnapshot(
         "settings",

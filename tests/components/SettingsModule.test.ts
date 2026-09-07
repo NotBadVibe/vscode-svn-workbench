@@ -630,3 +630,210 @@ describe("SettingsModule 提交选择规则", () => {
     ).not.toBeInTheDocument();
   });
 });
+
+describe("SettingsModule V020-R07 配置草稿与测试反馈分离", () => {
+  const baseUrlInput = () =>
+    screen.getByLabelText("接口地址（Base URL）") as HTMLInputElement;
+  const modelInput = () =>
+    screen.getByLabelText("默认模型") as HTMLInputElement;
+  const keyInput = () => screen.getByLabelText("API 密钥") as HTMLInputElement;
+
+  function aiSuccessSnapshot(
+    message = "连接成功，模型返回了有效响应。",
+  ): SettingsSnapshot {
+    return {
+      ...snapshot,
+      ai: {
+        ...snapshot.ai,
+        models: [{ id: "model-a", owner: "example" }],
+        feedback: { tone: "success", message },
+      },
+    };
+  }
+
+  it("测试连接与模型列表快照不覆盖已编辑草稿，不清空新密钥", async () => {
+    const onAction = vi.fn();
+    const { rerender } = render(SettingsModule, { snapshot, onAction });
+    await fireEvent.input(baseUrlInput(), {
+      target: { value: "https://new.example/v1" },
+    });
+    await fireEvent.input(modelInput(), { target: { value: "model-b" } });
+    await fireEvent.input(keyInput(), { target: { value: "new-secret" } });
+    await fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
+    expect(onAction).toHaveBeenCalledWith(
+      "settings/test-ai",
+      expect.objectContaining({
+        baseUrl: "https://new.example/v1",
+        model: "model-b",
+        apiKey: "new-secret",
+      }),
+    );
+
+    // Host 返回的快照携带已保存旧值与成功反馈：草稿必须保持不动。
+    await rerender({ snapshot: aiSuccessSnapshot(), onAction });
+    await waitFor(() => {
+      expect(
+        screen.getByText("连接成功，模型返回了有效响应。"),
+      ).toBeInTheDocument();
+    });
+    expect(baseUrlInput()).toHaveValue("https://new.example/v1");
+    expect(modelInput()).toHaveValue("model-b");
+    expect(keyInput()).toHaveValue("new-secret");
+    expect(screen.getByText(/有未保存的修改/)).toBeInTheDocument();
+
+    // 模型列表返回同样不覆盖后续输入。
+    await fireEvent.click(screen.getByRole("button", { name: "读取模型列表" }));
+    await rerender({
+      snapshot: aiSuccessSnapshot("读取到 1 个可用模型。"),
+      onAction,
+    });
+    await waitFor(() => {
+      expect(screen.getByText("读取到 1 个可用模型。")).toBeInTheDocument();
+    });
+    expect(baseUrlInput()).toHaveValue("https://new.example/v1");
+    expect(modelInput()).toHaveValue("model-b");
+    expect(keyInput()).toHaveValue("new-secret");
+  });
+
+  it("修改地址与模型后测试成功再保存，发送的持久化值为新值", async () => {
+    const onAction = vi.fn();
+    const { rerender } = render(SettingsModule, { snapshot, onAction });
+    await fireEvent.input(baseUrlInput(), {
+      target: { value: "https://new.example/v1" },
+    });
+    await fireEvent.input(modelInput(), { target: { value: "model-b" } });
+    await fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
+    await rerender({ snapshot: aiSuccessSnapshot(), onAction });
+    await waitFor(() => {
+      expect(baseUrlInput()).toHaveValue("https://new.example/v1");
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "保存配置" }));
+    expect(onAction).toHaveBeenCalledWith(
+      "settings/save-ai",
+      expect.objectContaining({
+        baseUrl: "https://new.example/v1",
+        model: "model-b",
+      }),
+    );
+
+    // 保存成功快照确认新值：草稿收敛为已保存值并清空密钥输入。
+    await rerender({
+      snapshot: {
+        ...snapshot,
+        ai: {
+          ...snapshot.ai,
+          baseUrl: "https://new.example/v1",
+          model: "model-b",
+          feedback: {
+            tone: "success",
+            message: "AI 模型配置已保存，密钥仍仅存于 SecretStorage。",
+          },
+        },
+      },
+      onAction,
+    });
+    await waitFor(() => {
+      expect(
+        screen.getByText("AI 模型配置已保存，密钥仍仅存于 SecretStorage。"),
+      ).toBeInTheDocument();
+    });
+    expect(baseUrlInput()).toHaveValue("https://new.example/v1");
+    expect(modelInput()).toHaveValue("model-b");
+    expect(keyInput()).toHaveValue("");
+    expect(screen.queryByText(/有未保存的修改/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "放弃修改" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("用户继续编辑后旧测试结果标为过期", async () => {
+    const onAction = vi.fn();
+    const { rerender } = render(SettingsModule, { snapshot, onAction });
+    await fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
+    await rerender({ snapshot: aiSuccessSnapshot(), onAction });
+    await waitFor(() => {
+      expect(
+        screen.getByText("连接成功，模型返回了有效响应。"),
+      ).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/已过期/)).not.toBeInTheDocument();
+
+    await fireEvent.input(modelInput(), { target: { value: "model-changed" } });
+    await waitFor(() => {
+      expect(screen.getByText(/已过期/)).toBeInTheDocument();
+    });
+  });
+
+  it("只有放弃修改才回到已保存值", async () => {
+    const onAction = vi.fn();
+    render(SettingsModule, { snapshot, onAction });
+    await fireEvent.input(baseUrlInput(), {
+      target: { value: "https://dirty.example/v1" },
+    });
+    await fireEvent.input(keyInput(), { target: { value: "typed-secret" } });
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: "放弃修改" }),
+      ).toBeInTheDocument();
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "放弃修改" }));
+    await waitFor(() => {
+      expect(baseUrlInput()).toHaveValue("https://ai.example/v1");
+    });
+    expect(modelInput()).toHaveValue("model-a");
+    expect(keyInput()).toHaveValue("");
+    expect(screen.queryByText(/有未保存的修改/)).not.toBeInTheDocument();
+  });
+
+  it("切换页签保留未保存草稿并在页签上明确状态", async () => {
+    const onAction = vi.fn();
+    render(SettingsModule, { snapshot, onAction });
+    await fireEvent.input(baseUrlInput(), {
+      target: { value: "https://dirty.example/v1" },
+    });
+    await waitFor(() => {
+      expect(screen.getByText(/有未保存的修改/)).toBeInTheDocument();
+    });
+
+    await fireEvent.click(screen.getByRole("tab", { name: "团队提交规范" }));
+    expect(screen.getByRole("tab", { name: /AI 模型/ }).textContent).toContain(
+      "未保存",
+    );
+
+    await fireEvent.click(screen.getByRole("tab", { name: /AI 模型/ }));
+    await waitFor(() => {
+      expect(baseUrlInput()).toHaveValue("https://dirty.example/v1");
+    });
+  });
+
+  it("密钥不在快照中回显，保存成功也不把密钥写回输入框", async () => {
+    const onAction = vi.fn();
+    const { rerender } = render(SettingsModule, { snapshot, onAction });
+    expect("apiKey" in snapshot.ai).toBe(false);
+    expect(keyInput()).toHaveValue("");
+
+    await rerender({
+      snapshot: {
+        ...snapshot,
+        ai: {
+          ...snapshot.ai,
+          hasApiKey: true,
+          feedback: {
+            tone: "success",
+            message: "AI 模型配置已保存，密钥仍仅存于 SecretStorage。",
+          },
+        },
+      },
+      onAction,
+    });
+    await waitFor(() => {
+      expect(
+        screen.getByText("AI 模型配置已保存，密钥仍仅存于 SecretStorage。"),
+      ).toBeInTheDocument();
+    });
+    expect(keyInput()).toHaveValue("");
+    expect("apiKey" in snapshot.ai).toBe(false);
+  });
+});
