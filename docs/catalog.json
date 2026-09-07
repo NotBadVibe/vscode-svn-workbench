@@ -499,6 +499,120 @@
         "tortoise-merge",
         "external-merge-tool"
       ]
+    },
+    {
+      "version": "0.2.0",
+      "status": "draft",
+      "phase": "planned",
+      "baseVersion": "0.1.8",
+      "canonicalEntry": "releases/v0.2.0/README.md",
+      "manifest": "releases/v0.2.0/manifest.json",
+      "releasedFact": false,
+      "topics": [
+        "draft-integrity",
+        "selection-consistency",
+        "preview-invalidation",
+        "routing-correctness"
+      ]
+    },
+    {
+      "version": "0.2.1",
+      "status": "draft",
+      "phase": "planned",
+      "baseVersion": "0.2.0",
+      "canonicalEntry": "releases/v0.2.1/README.md",
+      "manifest": "releases/v0.2.1/manifest.json",
+      "releasedFact": false,
+      "topics": [
+        "history-query",
+        "history-pagination",
+        "revision-comparison",
+        "update-preview",
+        "release-notes"
+      ]
+    },
+    {
+      "version": "0.2.2",
+      "status": "draft",
+      "phase": "planned",
+      "baseVersion": "0.2.1",
+      "canonicalEntry": "releases/v0.2.2/README.md",
+      "manifest": "releases/v0.2.2/manifest.json",
+      "releasedFact": false,
+      "topics": [
+        "responsive-layout",
+        "information-hierarchy",
+        "chinese-copy",
+        "visual-acceptance"
+      ]
+    },
+    {
+      "version": "0.2.3",
+      "status": "draft",
+      "phase": "planned",
+      "baseVersion": "0.2.2",
+      "canonicalEntry": "releases/v0.2.3/README.md",
+      "manifest": "releases/v0.2.3/manifest.json",
+      "releasedFact": false,
+      "topics": [
+        "review-queue",
+        "bulk-actions",
+        "list-consistency",
+        "changelists"
+      ]
+    },
+    {
+      "version": "0.2.4",
+      "status": "draft",
+      "phase": "planned",
+      "baseVersion": "0.2.3",
+      "canonicalEntry": "releases/v0.2.4/README.md",
+      "manifest": "releases/v0.2.4/manifest.json",
+      "releasedFact": false,
+      "topics": [
+        "shelf-recovery",
+        "project-status",
+        "onboarding",
+        "state-lifetime"
+      ]
+    },
+    {
+      "version": "0.2.5",
+      "status": "draft",
+      "phase": "planned",
+      "baseVersion": "0.2.4",
+      "canonicalEntry": "releases/v0.2.5/README.md",
+      "manifest": "releases/v0.2.5/manifest.json",
+      "releasedFact": false,
+      "topics": ["team-rule-preview", "local-grouping", "ai-input-scope"]
+    },
+    {
+      "version": "0.2.6",
+      "status": "draft",
+      "phase": "planned",
+      "baseVersion": "0.2.5",
+      "canonicalEntry": "releases/v0.2.6/README.md",
+      "manifest": "releases/v0.2.6/manifest.json",
+      "releasedFact": false,
+      "topics": [
+        "repository-browser",
+        "revision-pinned-copy",
+        "selective-merge"
+      ]
+    },
+    {
+      "version": "0.2.7",
+      "status": "draft",
+      "phase": "planned",
+      "baseVersion": "0.2.6",
+      "canonicalEntry": "releases/v0.2.7/README.md",
+      "manifest": "releases/v0.2.7/manifest.json",
+      "releasedFact": false,
+      "topics": [
+        "large-file-performance",
+        "keyboard-save-flow",
+        "real-user-validation"
+      ]
     }
   ],
   "archive": [
