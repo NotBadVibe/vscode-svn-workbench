@@ -661,9 +661,10 @@
   );
   const diffWorkingText = $derived(mergeDraft);
   /**
-   * V018-D 空白选项与定位器（v0.1.8 规划 §4.4）：纯呈现开关。
+   * V018-D 空白选项与定位器（v0.1.8 规划 §4.4）+ V020-R11 准确命名：纯呈现开关。
    * 挂载文本恒为原始 mergeDraft（不归一、不重建结果编辑器），
    * 因此 identity/hash/草稿/undo 不丢失，无需只读限制；横幅明确标注。
+   * 第二项界面命名为「标记纯空白块」，不改变 marker/hash/行号，不自动 Resolve。
    */
   let conflictShowWhitespace = $state(false);
   let conflictIgnoreWhitespace = $state(false);
@@ -2553,8 +2554,9 @@
             </div>
           {/if}
           <!--
-            V018-D 空白选项（纯呈现，不重建结果编辑器，草稿/identity 不丢）：
-            显示空白字符走渲染层图例；忽略空白仅标注横幅 + 定位器状态。
+            V018-D 空白选项 + V020-R11 准确命名（纯呈现，不重建结果编辑器，草稿/identity 不丢）：
+            显示空白字符走渲染层图例+定位器（底座主代码无逐字符号 API）；
+            第二项准确命名为「标记纯空白块」，仅标注横幅 + 定位器状态，不自动 Resolve。
           -->
           <div
             class="conflict-whitespace-settings"
@@ -2575,7 +2577,7 @@
             </label>
             <label
               class="conflict-whitespace-option"
-              title={whitespaceLabels.ignoreWhitespaceHint}
+              title={whitespaceLabels.markWhitespaceOnlyHint}
             >
               <input
                 type="checkbox"
@@ -2583,8 +2585,11 @@
                 onchange={() =>
                   (conflictIgnoreWhitespace = !conflictIgnoreWhitespace)}
               />
-              {whitespaceLabels.ignoreWhitespace}
+              {whitespaceLabels.markWhitespaceOnly}
             </label>
+            <span class="muted" role="note"
+              >{whitespaceLabels.markWhitespaceManualNote}</span
+            >
           </div>
           {#if !useSimplified}
             <div class="conflict-diff-row">

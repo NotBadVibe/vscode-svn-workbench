@@ -77,12 +77,12 @@ test.describe("V018-D 空白与定位器", () => {
     // 未处理块双通道（文字，不只颜色）
     await expect(page.getByText("◆ 未处理冲突").first()).toBeVisible();
 
-    // 空白切换：横幅标注，且无 save/resolve 误发
+    // 空白切换：横幅标注，且无 save/resolve 误发（V020-R11：冲突第二项准确命名为标记纯空白块）
     await page.getByRole("checkbox", { name: /显示空白字符/ }).click();
     await expect(page.getByTestId("show-whitespace-legend")).toBeVisible();
-    await page.getByRole("checkbox", { name: /忽略空白差异/ }).click();
+    await page.getByRole("checkbox", { name: /标记纯空白块/ }).click();
     await expect(page.getByTestId("ignore-whitespace-banner")).toContainText(
-      "最终文本不受影响",
+      "仍需人工处理与 Resolve 确认",
     );
     const actions = await page.evaluate(
       () => (window as unknown as { __captured: string[] }).__captured ?? [],

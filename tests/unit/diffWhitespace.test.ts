@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   canToggleIgnoreWhitespace,
+  canToggleShowWhitespace,
   expandWhitespaceForPreview,
   hasWhitespaceOnlyDifferences,
   isWhitespaceOnlyConflictBlock,
@@ -10,6 +11,7 @@ import {
   normalizeTextForCompare,
   segmentLineWhitespace,
   splitHunksByWhitespace,
+  WHITESPACE_VIEW_SUPPORT,
 } from "../../src/webview/features/diff/diffWhitespace";
 import type { DiffHunk } from "../../src/webview/features/diff/diffHunks";
 
@@ -110,5 +112,53 @@ describe("diffWhitespace 空白选项纯逻辑（V018-D §4.4）", () => {
       "text",
     ]);
     expect(segs.map((s) => s.text).join("")).toBe("a b\tc");
+  });
+
+  it("V020-R11：空格/Tab/CRLF/尾随空白归一且展示符号不写回原文", () => {
+    // CRLF 行尾与尾随空白归一后相等，但原文保留 CRLF/尾随空格。
+    expect(linesEqualIgnoringWhitespace("trailing  \r\n", "trailing\r\n")).toBe(
+      true,
+    );
+    expect(
+      normalizeTextForCompare("a  b\r\n  c\t d \r\n").split("\n"),
+    ).toHaveLength(3);
+    // 展示符号仅用于预览：原文不含 ·/→，展开后可观察。
+    const raw = "let\tx  =  2;  \n";
+    expect(raw).not.toContain("·");
+    expect(raw).not.toContain("→");
+    expect(expandWhitespaceForPreview(raw)).toContain("·");
+    expect(expandWhitespaceForPreview(raw)).toContain("→");
+    expect(
+      segmentLineWhitespace(raw)
+        .map((s) => s.text)
+        .join(""),
+    ).toBe(raw);
+  });
+
+  it("V020-R11：显示空白门控 patch/二进制禁用并解释", () => {
+    expect(
+      canToggleShowWhitespace({ isPatch: false, binary: false }).allowed,
+    ).toBe(true);
+    expect(
+      canToggleShowWhitespace({ isPatch: true, binary: false }).reason,
+    ).toBe("patch");
+    expect(
+      canToggleShowWhitespace({ isPatch: false, binary: true }).reason,
+    ).toBe("binary");
+  });
+
+  it("V020-R11：五类视图支持表齐全且冲突为标记语义", () => {
+    expect(WHITESPACE_VIEW_SUPPORT.map((row) => row.kind)).toEqual([
+      "normal",
+      "history",
+      "fallback",
+      "conflict",
+      "editing",
+    ]);
+    const conflict = WHITESPACE_VIEW_SUPPORT.find(
+      (row) => row.kind === "conflict",
+    );
+    expect(conflict?.ignore).toContain("标记纯空白块");
+    expect(conflict?.ignore).toContain("不自动 Resolve");
   });
 });

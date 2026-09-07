@@ -276,9 +276,14 @@ export function diffHunkPositionLabel(current: number, total: number): string {
 export const whitespaceLabels = {
   showWhitespace: "显示空白字符",
   showWhitespaceHint:
-    "仅改变渲染层呈现（图例与备用视图符号），不改变文件内容与最终文本。",
+    "仅改变渲染层呈现（图例、定位器预览与备用视图符号），不改变文件内容与最终文本；主代码区底座不支持逐字符符号。",
   showWhitespaceLegend:
-    "空白字符图例：空格 · ／制表符 → ／行尾 ↵（仅渲染层标记，最终文本不受影响）。",
+    "空白字符图例：空格 · ／制表符 → ／行尾 ↵（仅渲染层标记，最终文本不受影响；主代码区底座不支持逐字符符号，完整符号见备用视图与定位器预览）。",
+  showWhitespaceMainLimit:
+    "主代码区底座不支持逐字符空白符号；此处仅图例与定位器预览，完整符号见备用视图。",
+  showBlocksPatch:
+    "修订比较（Patch 文本）不支持显示空白字符：符号会破坏 @@/Index 行。",
+  showBlocksBinary: "二进制文件不支持显示空白字符。",
   ignoreWhitespace: "忽略空白差异",
   ignoreWhitespaceHint:
     "只改变比较呈现：归一化文本仅用于差异渲染与块导航，草稿、保存与导出始终使用原始文本。",
@@ -290,6 +295,12 @@ export const whitespaceLabels = {
     "页内编辑期间仅显示原始文本比较，请先回到审阅再切换忽略空白。",
   patchBlocksIgnore: "修订比较暂不支持忽略空白差异。",
   binaryBlocksIgnore: "二进制文件不支持忽略空白差异。",
+  markWhitespaceOnly: "标记纯空白块",
+  markWhitespaceOnlyHint:
+    "仅标注纯空白冲突块（定位器○与计数），不改变冲突标记、行号与内容哈希；纯空白冲突仍需人工处理与 Resolve 确认，不自动解决。",
+  markWhitespaceBanner: "冲突视图：已标记纯空白块",
+  markWhitespaceManualNote:
+    "纯空白冲突仍需人工处理与 Resolve 确认；标记不改变冲突状态。",
 } as const;
 
 /** V018-D 定位器忽略计数（参数化标签，页面不各自拼字符串）。 */

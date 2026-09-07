@@ -26,6 +26,8 @@
   import { buildDiffOverviewBlocks } from "./diffOverviewModel";
   import {
     canToggleIgnoreWhitespace,
+    canToggleShowWhitespace,
+    expandWhitespaceForPreview,
     normalizeTextForCompare,
     segmentLineWhitespace,
     splitHunksByWhitespace,
@@ -208,6 +210,24 @@
           ? whitespaceLabels.binaryBlocksIgnore
           : undefined,
   );
+  /**
+   * V020-R11：显示空白字符的门控。底座 FileDiff/patch 直渲无逐字符符号 API，
+   * 修订比较与二进制禁用并解释；普通/编辑主视图允许保持（受限：图例+定位器
+   * 预览+备用 pre 符号，不向 pierre 文本注入符号）。
+   */
+  const showToggle = $derived(
+    canToggleShowWhitespace({
+      isPatch: snapshot.language === "diff",
+      binary: snapshot.binary,
+    }),
+  );
+  const showBlockReasonText = $derived(
+    showToggle.reason === "patch"
+      ? whitespaceLabels.showBlocksPatch
+      : showToggle.reason === "binary"
+        ? whitespaceLabels.showBlocksBinary
+        : undefined,
+  );
   /** 展示态差异块：忽略空白时滤除纯空白块（单次 LCS，不过滤即原样）。 */
   const whitespaceSplit = $derived(
     ignoreWhitespace && ignoreToggle.allowed
@@ -236,6 +256,26 @@
   const overviewBlocks = $derived(buildDiffOverviewBlocks(displayHunks));
   const overviewTotalLines = $derived(
     Math.max(1, displayModified.split("\n").length),
+  );
+  /**
+   * V020-R11：主视图可观察的空白预览。底座主代码不支持逐字符号时，开关前后
+   * 仍需可观察：取首个含空格/Tab 的展示行展开为 ·/→（仅提示用，不写回内容）。
+   */
+  const whitespacePreviewLine = $derived(
+    ((): string | undefined => {
+      if (!showWhitespace || !showToggle.allowed || snapshot.binary)
+        return undefined;
+      const candidates =
+        displayHunks.length > 0
+          ? displayHunks.flatMap((hunk) => [...hunk.oldLines, ...hunk.newLines])
+          : snapshot.modified.split("\n");
+      const found = candidates.find(
+        (line) => line.includes(" ") || line.includes("\t"),
+      );
+      return found === undefined
+        ? undefined
+        : expandWhitespaceForPreview(found.slice(0, 80));
+    })(),
   );
   /** v0.1.0：保存进行中与上次保存时间（状态不只靠颜色）。 */
   let saving = $state(false);
@@ -534,6 +574,12 @@
     ignoreWhitespace = !ignoreWhitespace;
     navIndex = 0;
     navBoundary = undefined;
+  }
+
+  // V020-R11：显示空白字符仅为渲染层开关（不改变传入 FileDiff 的文本）。
+  function toggleShowWhitespace(): void {
+    if (!showToggle.allowed) return;
+    showWhitespace = !showWhitespace;
   }
 
   /**
@@ -860,17 +906,28 @@
                 />
                 {diffViewLabels.expandUnchangedLabel}
               </label>
-              <!-- V018-D：显示空白字符（纯渲染层，可在编辑态保持开启）。 -->
+              <!--
+                V020-R11：显示空白字符（纯渲染层，可在编辑态保持开启）。
+                底座主代码无逐字符号 API：普通视图受限（图例+定位器+备用符号），
+                修订比较/二进制禁用并解释。
+              -->
               <label
                 class="diff-view-settings-option"
-                title={whitespaceLabels.showWhitespaceHint}
+                title={showBlockReasonText ??
+                  whitespaceLabels.showWhitespaceHint}
               >
                 <input
                   type="checkbox"
                   checked={showWhitespace}
-                  onchange={() => (showWhitespace = !showWhitespace)}
+                  disabled={!showToggle.allowed}
+                  onchange={toggleShowWhitespace}
                 />
                 {whitespaceLabels.showWhitespace}
+                {#if showBlockReasonText}
+                  <span class="diff-view-settings-hint"
+                    >{showBlockReasonText}</span
+                  >
+                {/if}
               </label>
               <!--
                 V018-D：忽略空白差异（只改变比较呈现）。只读可直接切换；
@@ -1041,10 +1098,22 @@
     </div>
   {/if}
 
-  {#if showWhitespace}
+  {#if showWhitespace && showToggle.allowed}
     <div class="notice" role="status" data-testid="show-whitespace-legend">
       <span class="codicon codicon-symbol-misc" aria-hidden="true"></span>
       <span>{whitespaceLabels.showWhitespaceLegend}</span>
+    </div>
+    <div class="notice" role="status" data-testid="show-whitespace-detail">
+      <span class="codicon codicon-symbol-misc" aria-hidden="true"></span>
+      <span>
+        {whitespaceLabels.showWhitespaceMainLimit}
+        {#if whitespacePreviewLine}
+          （示例：<code>{whitespacePreviewLine}</code
+          >，仅提示用，最终文本不受影响）
+        {:else}
+          （当前视图无空格/制表符可展示，最终文本不受影响）
+        {/if}
+      </span>
     </div>
   {/if}
 
