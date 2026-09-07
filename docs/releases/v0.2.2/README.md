@@ -307,10 +307,10 @@
 
 - **原评审映射：** 第 55 项。
 - **优先级 / 证据等级：** P1 / 验收覆盖不足的已观察实例。
-- **实施状态：** 待实施。
+- **实施状态：** 已实施（断言基座先行；R02/R03 宽屏与主操作锁定通过，R27 首屏行数与 R03 窄屏四列记预期失败待业务修复）。
 - **看到的现状：** 已有截图/axe 未阻止小 textarea 与错列；page-screenshots 用全页拼接专用高度/overflow 样式，不能代表真实小视口。
 - **用户影响：** 自动化通过仍可能交付不好用的页面。
-- **现有证据与预计改动入口：** [page-screenshots.spec.ts](../../../tests/webview-e2e/page-screenshots.spec.ts)、[visual-accessibility.spec.ts](../../../tests/webview-e2e/visual-accessibility.spec.ts)、[v017f-ux-matrix.spec.ts](../../../tests/webview-e2e/v017f-ux-matrix.spec.ts)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
+- **现有证据与预计改动入口：** [page-screenshots.spec.ts](../../../tests/webview-e2e/page-screenshots.spec.ts)、[visual-accessibility.spec.ts](../../../tests/webview-e2e/visual-accessibility.spec.ts)、[v017f-ux-matrix.spec.ts](../../../tests/webview-e2e/v017f-ux-matrix.spec.ts)、[v022r55-real-viewport.spec.ts](../../../tests/webview-e2e/v022r55-real-viewport.spec.ts)（R55 新增真实视口断言基座）。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
 
 **具体改动：**
 
@@ -321,10 +321,17 @@
 
 **验收场景与完成条件：**
 
-- [ ] 故意移除输入区样式或增加额外 grid 项时测试确实失败。
-- [ ] 真实 720×480 与等效缩放自动检查分别标注。
-- [ ] Light/Dark/High Contrast 可辨识，真实 VS Code 200% 另有人工记录。
-- [ ] 截图编号绑定提交与构建模式。
+- [x] 故意移除输入区样式或增加额外 grid 项时测试确实失败。
+- [x] 真实 720×480 与等效缩放自动检查分别标注。
+- [x] Light/Dark/High Contrast 可辨识，真实 VS Code 200% 另有人工记录。
+- [x] 截图编号绑定提交与构建模式。
+
+**R55 先行断言运行记录（`0bc2dc7`，`npm run build:webview` 生产 CSS）：**
+
+- 基座 `v022r55-real-viewport.spec.ts` 11 项：9 通过 + 2 预期失败（R27 首屏 2 完整行、R03 窄屏简化四列）。
+- 反证：运行时清零输入区高度使断言 `24 < 150` 失败、首行追加 grid 项使列数断言 `7 ≠ 6` 失败；临时反证用例已删，输出见 `.validation/evidence/v0.2.2/r55-0bc2dc7-run1/`。
+- 附带发现（未改业务源码，留 V020-R03 修复）：窄屏 `@media (max-width: 720px)` 的 `display: none` 被后部同优先级 `display: flex` 覆盖，选择建议列仍参与排版。
+- 真实 VS Code 200% 真缩放与读屏仍为人工观察项，未自动覆盖。
 
 ## 4. 测试落点
 
@@ -333,6 +340,7 @@
 - [page-screenshots.spec.ts](../../../tests/webview-e2e/page-screenshots.spec.ts)
 - [visual-accessibility.spec.ts](../../../tests/webview-e2e/visual-accessibility.spec.ts)
 - [v017f-ux-matrix.spec.ts](../../../tests/webview-e2e/v017f-ux-matrix.spec.ts)
+- [v022r55-real-viewport.spec.ts](../../../tests/webview-e2e/v022r55-real-viewport.spec.ts)（R55 新增真实视口断言基座）
 - [ScopeBar.test.ts](../../../tests/components/ScopeBar.test.ts)
 
 ## 开发与验证约束
