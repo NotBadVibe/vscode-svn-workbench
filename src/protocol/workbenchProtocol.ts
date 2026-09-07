@@ -2182,6 +2182,78 @@ export function isDiffSnapshot(value: unknown): value is DiffSnapshot {
   return true;
 }
 
+/**
+ * V020-R05：HistoryQueryView 类型守卫（Host/Webview/Mock 共用）。
+ * 全部字段可选，缺省即合法（空条件/旧载荷兼容）；携带的字段必须为 string，
+ * number/对象/数组/null 等一律拒绝（fail-closed，调用方按无条件处理）。
+ * 语义校验（修订号倒置、日期非法）仍由 normalizeSvnHistoryQuery 负责。
+ */
+export function isHistoryQueryView(value: unknown): value is HistoryQueryView {
+  if (!isRecord(value)) {
+    return false;
+  }
+  return (
+    (value.revisionFrom === undefined ||
+      typeof value.revisionFrom === "string") &&
+    (value.revisionTo === undefined || typeof value.revisionTo === "string") &&
+    (value.author === undefined || typeof value.author === "string") &&
+    (value.dateFrom === undefined || typeof value.dateFrom === "string") &&
+    (value.dateTo === undefined || typeof value.dateTo === "string")
+  );
+}
+
+/**
+ * V020-R10：HistorySnapshot.fileTarget 类型守卫（Host/Webview/Mock 共用）。
+ * relativePath 必填且为非空 string；notice 缺省合法，携带时必须为 string。
+ * 畸形载荷（如 relativePath=42）一律拒绝（fail-closed，调用方按目录历史处理）。
+ */
+export function isFileTargetView(
+  value: unknown,
+): value is NonNullable<HistorySnapshot["fileTarget"]> {
+  if (!isRecord(value)) {
+    return false;
+  }
+  if (
+    typeof value.relativePath !== "string" ||
+    value.relativePath.length === 0
+  ) {
+    return false;
+  }
+  if (value.notice !== undefined && typeof value.notice !== "string") {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * V020-R05/R10：HistorySnapshot 类型守卫（Host/Webview/Mock 共用）。
+ * 无 query/fileTarget 的旧快照继续接受（向后兼容）；携带时必须分别通过
+ * isHistoryQueryView/isFileTargetView，否则整快照拒绝（fail-closed，
+ * 调用方按无条件/目录历史处理，保持现状，不扩大范围）。
+ */
+export function isHistorySnapshot(value: unknown): value is HistorySnapshot {
+  if (!isRecord(value)) {
+    return false;
+  }
+  if (
+    value.kind !== "history" ||
+    !Array.isArray(value.revisions) ||
+    !Array.isArray(value.compareRevisions) ||
+    typeof value.limit !== "number" ||
+    !Number.isFinite(value.limit) ||
+    typeof value.fileActionsAvailable !== "boolean"
+  ) {
+    return false;
+  }
+  if (value.query !== undefined && !isHistoryQueryView(value.query)) {
+    return false;
+  }
+  if (value.fileTarget !== undefined && !isFileTargetView(value.fileTarget)) {
+    return false;
+  }
+  return true;
+}
+
 export function isWebviewToHostMessage(
   value: unknown,
 ): value is WebviewToHostMessage {

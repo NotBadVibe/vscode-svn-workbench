@@ -1,5 +1,7 @@
 import {
   defaultWorkbenchTask,
+  isFileTargetView,
+  isHistoryQueryView,
   isWorkbenchModuleId,
   isWorkbenchTaskForModule,
   WORKBENCH_PROTOCOL_VERSION,
@@ -2756,6 +2758,22 @@ function historySnapshot(
           ],
         },
       ];
+  // V020 终审 P1-1：Mock 外发 query/fileTarget 先经协议守卫，畸形覆盖按缺省处理（fail-closed）。
+  const guardedOverrides: Record<string, unknown> = { ...overrides };
+  if (
+    "query" in guardedOverrides &&
+    guardedOverrides.query !== undefined &&
+    !isHistoryQueryView(guardedOverrides.query)
+  ) {
+    delete guardedOverrides.query;
+  }
+  if (
+    "fileTarget" in guardedOverrides &&
+    guardedOverrides.fileTarget !== undefined &&
+    !isFileTargetView(guardedOverrides.fileTarget)
+  ) {
+    delete guardedOverrides.fileTarget;
+  }
   return {
     kind: "history",
     revisions,
@@ -2766,7 +2784,7 @@ function historySnapshot(
     hasMore: true,
     fileActionsAvailable: true,
     ...fileTargetOverride,
-    ...overrides,
+    ...guardedOverrides,
   } as WorkbenchModuleSnapshot;
 }
 

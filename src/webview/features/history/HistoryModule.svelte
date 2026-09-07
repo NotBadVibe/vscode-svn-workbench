@@ -8,6 +8,10 @@
     HostToWebviewMessage,
     WebviewAction,
   } from "@protocol/workbenchProtocol";
+  import {
+    isFileTargetView,
+    isHistoryQueryView,
+  } from "@protocol/workbenchProtocol";
   import ScrollArea from "../../components/ui/ScrollArea.svelte";
   import SearchInput from "../../components/list/SearchInput.svelte";
   import ResultCount from "../../components/list/ResultCount.svelte";
@@ -74,8 +78,9 @@
   });
 
   // Host 成功应用条件后，以快照中的实际条件回填；未成功请求不会覆盖用户输入。
+  // V020 终审 P1-1：快照 query 先经协议守卫，畸形载荷按无条件处理（不抛错、不扩大范围）。
   $effect(() => {
-    loadQuery = { ...(snapshot.query ?? {}) };
+    loadQuery = isHistoryQueryView(snapshot.query) ? { ...snapshot.query } : {};
   });
 
   const visible = $derived(
@@ -257,8 +262,20 @@
     return parts.join("、");
   }
 
+  /*
+   * V020 终审 P1-1：快照 fileTarget 先经协议守卫，畸形载荷按目录历史处理
+   * （横幅不渲染，不抛错，不扩大范围）。
+   */
+  const safeFileTarget = $derived(
+    snapshot.fileTarget && isFileTargetView(snapshot.fileTarget)
+      ? snapshot.fileTarget
+      : undefined,
+  );
+
   const appliedQueryDescription = $derived(
-    describeHistoryQuery(snapshot.query),
+    describeHistoryQuery(
+      isHistoryQueryView(snapshot.query) ? snapshot.query : undefined,
+    ),
   );
 
   // v0.1.5 V015-B2：已加载数量 + 只读条件 + 快照新鲜度收敛进一条 TaskSummary compact（计算逻辑不动）。
@@ -459,17 +476,16 @@
     </p>
     <!-- V020-R10：行右键单文件历史横幅——目标文件、失效原因与返回来源列表入口；
       快照刷新只更新文本，不移动焦点。 -->
-    {#if snapshot.fileTarget}
+    {#if safeFileTarget}
       <div
-        class={snapshot.fileTarget.notice ? "notice notice--warning" : "notice"}
+        class={safeFileTarget.notice ? "notice notice--warning" : "notice"}
         role="status"
         data-testid="history-file-target"
       >
         <span class="codicon codicon-history" aria-hidden="true"></span>
         <span
-          >{#if snapshot.fileTarget.notice}{snapshot.fileTarget
-              .notice}{:else}当前为单文件历史：{snapshot.fileTarget
-              .relativePath}；文件级 blame 与恢复可用。{/if}</span
+          >{#if safeFileTarget.notice}{safeFileTarget.notice}{:else}当前为单文件历史：{safeFileTarget.relativePath}；文件级
+            blame 与恢复可用。{/if}</span
         >
         <button
           type="button"

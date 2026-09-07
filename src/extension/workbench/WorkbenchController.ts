@@ -154,6 +154,8 @@ import {
 import {
   WORKBENCH_PROTOCOL_VERSION,
   defaultWorkbenchTask,
+  isFileTargetView,
+  isHistoryQueryView,
   isWebviewToHostMessage,
   isWorkbenchModuleId,
   isWorkbenchTaskForModule,
@@ -6882,7 +6884,11 @@ export class WorkbenchController implements vscode.Disposable {
     // v0.0.18 批次 C（C-06）：limit 来自会话状态（“加载更早”逐步增大），
     // 不再硬编码；hasMore 区分“没有更多”与“尚未加载”。
     const historyLimit = session.historyState?.historyLimit ?? 100;
-    const historyQuery = session.historyState?.historyQuery ?? {};
+    // V020 终审 P1-1：外发 query 先经协议守卫，畸形按无条件处理（fail-closed，不抛错）。
+    const rawHistoryQuery = session.historyState?.historyQuery ?? {};
+    const historyQuery = isHistoryQueryView(rawHistoryQuery)
+      ? rawHistoryQuery
+      : {};
     // V020-R10：行目标先复验（范围/存在性），有效才做单文件查询；
     // 失效回退目录历史，原因随 fileTarget 下发（不抢焦点）。
     const rowTarget = session.historyState?.fileTarget;
@@ -6952,12 +6958,18 @@ export class WorkbenchController implements vscode.Disposable {
         Boolean(rowTargetValid) ||
         Boolean(getSingleFileScopeRoot(session.scope)),
       // V020-R10：行目标横幅（单文件历史/失效原因 + 返回本地修改入口）。
-      fileTarget: rowTarget
-        ? {
-            relativePath: rowTarget.relativePath,
-            notice: session.historyState?.fileTargetNotice,
-          }
-        : undefined,
+      // V020 终审 P1-1：外发 fileTarget 先经协议守卫，畸形按目录历史处理（fail-closed）。
+      fileTarget:
+        rowTarget &&
+        isFileTargetView({
+          relativePath: rowTarget.relativePath,
+          notice: session.historyState?.fileTargetNotice,
+        })
+          ? {
+              relativePath: rowTarget.relativePath,
+              notice: session.historyState?.fileTargetNotice,
+            }
+          : undefined,
       blame: session.historyState.blame,
       restorePreview: session.historyState.restorePreview
         ? {
@@ -7071,6 +7083,17 @@ export class WorkbenchController implements vscode.Disposable {
         "history",
         "历史条件无效",
         normalizedQuery.issues.join(" "),
+        true,
+        requestId,
+      );
+      return;
+    }
+    // V020 终审 P1-1：协议守卫纵深——归一化结果仍须通过独立 payload 守卫，否则拒绝。
+    if (!isHistoryQueryView(normalizedQuery.query)) {
+      await this.sendError(
+        "history",
+        "历史条件无效",
+        "查询条件结构异常，已保留上一成功结果；可调整条件后再次查询。",
         true,
         requestId,
       );
