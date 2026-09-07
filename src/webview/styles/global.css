@@ -444,18 +444,19 @@ button.path-detail__value:hover {
   font-size: 11px;
 }
 /* 小屏：列头隐藏，排序菜单保留同等能力；行退化为两行卡片。 */
+/* V020-R03 窄屏简化列（≤720px）：选择/文件/状态/操作四列；选择建议与归属
+   隐藏但保留 DOM（读屏名称与路径详情仍可达，排序菜单保留同等能力）。 */
 @media (max-width: 720px) {
   .table-header--grid {
     display: none;
   }
   .table-header,
   .file-row {
-    grid-template-columns: 28px minmax(0, 1fr) auto 34px;
-    row-gap: 2px;
+    grid-template-columns: 26px minmax(0, 1fr) auto 64px;
   }
-  .file-row .selection-note,
-  .file-row .file-row__ownership {
-    grid-column: 2;
+  .file-row__selection,
+  .file-row__ownership {
+    display: none;
   }
 }
 .preview-project-group {
@@ -755,9 +756,11 @@ button.path-detail__value:hover {
 .table-header,
 .file-row {
   display: grid;
+  /* V020-R03：表头与行共用同一列定义（选择/文件/状态/选择建议/归属/操作）。 */
   grid-template-columns:
-    28px minmax(180px, 1fr) 92px minmax(110px, 0.5fr)
-    minmax(90px, 0.4fr) 34px;
+    28px minmax(0, 1fr) minmax(96px, 0.55fr) minmax(110px, 0.55fr)
+    minmax(90px, 0.4fr) 64px;
+  column-gap: 8px;
   align-items: center;
 }
 .table-header {
@@ -782,16 +785,24 @@ button.path-detail__value:hover {
   width: 100%;
 }
 .file-row {
-  min-height: 34px;
+  /* V020-R03：与虚拟列表 rowHeight 一致（宽松 48/紧凑 36），保留两行路径展示。 */
+  min-height: 48px;
   padding: 0 8px;
   border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+}
+.file-list--compact .file-row {
+  min-height: 36px;
 }
 .file-row--virtual {
   position: absolute;
   top: 0;
   left: 0;
   width: 100%;
-  height: 34px;
+  height: 48px;
+  overflow: visible;
+}
+.file-list--compact .file-row--virtual {
+  height: 36px;
 }
 .file-row:last-child {
   border-bottom: 0;
@@ -868,6 +879,24 @@ button.path-detail__value:hover {
   white-space: nowrap;
   color: var(--muted);
   font-size: 12px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+/* V020-R03：行内列单元格（状态/选择建议/归属/操作各占一列，与表头对齐）。 */
+.file-row__status,
+.file-row__selection {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+}
+.file-row__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  min-width: 0;
 }
 .feature-footer {
   display: flex;
@@ -3225,8 +3254,11 @@ button.path-detail__value:hover {
   padding: 2px 8px;
 }
 /* v0.0.18 批次 B（C-05）：状态词就地解释。 */
+/* V020-R03：解释浮层绝对定位，不撑高行（虚拟列表固定行高下不错位）。 */
 .status-explanation {
+  position: relative;
   display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
   gap: 4px;
 }
@@ -3235,16 +3267,24 @@ button.path-detail__value:hover {
   min-height: 20px;
 }
 .status-explanation__note {
-  display: inline-flex;
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 6;
+  display: flex;
   flex-direction: column;
   gap: 2px;
+  width: max-content;
   max-width: 320px;
   padding: 6px 9px;
   font-size: 11px;
+  white-space: normal;
+  text-align: left;
   color: var(--vscode-foreground);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--surface-2);
+  box-shadow: var(--shadow);
 }
 .status-explanation__note strong {
   color: var(--accent);
@@ -4097,12 +4137,7 @@ button.path-detail__value:hover {
   .table-header {
     display: none;
   }
-  .file-row {
-    grid-template-columns: 26px minmax(120px, 1fr) 70px 28px;
-  }
-  .selection-note {
-    display: none;
-  }
+  /* V020-R03：Changes 窄屏列方案由上方的 .table-header--grid 统一规则承担，此处不再覆盖行列。 */
   .commit-layout {
     height: auto;
     min-height: 100%;
