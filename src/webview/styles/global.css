@@ -2148,6 +2148,35 @@ button.path-detail__value:hover {
   color: var(--muted);
   font-size: 11px;
 }
+/* V021-R19：比较两端芯片（起点/终点 + 修订/作者/日期，不只靠颜色区分）。 */
+.history-compare-endpoints {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.compare-chip {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+  font-size: 11px;
+}
+.compare-chip__slot {
+  font-weight: 600;
+}
+.compare-chip--empty {
+  color: var(--muted);
+}
+.revision-endpoint-actions {
+  display: inline-flex;
+  gap: 4px;
+}
 .history-load-conditions {
   margin: 0 0 8px;
   padding: 7px 9px;

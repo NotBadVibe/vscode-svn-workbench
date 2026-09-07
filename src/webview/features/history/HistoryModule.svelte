@@ -69,6 +69,10 @@
   /** v0.0.18 C-06：仅用于下一次“加载更早”的只读请求，不影响本地搜索。 */
   let loadQuery = $state<HistoryQueryView>({});
   const compare = new SvelteSet<string>();
+  /** V021-R19：第三次选择的替换说明（避免静默淘汰，role=status 播报）。 */
+  let compareNotice = $state<string | undefined>(undefined);
+  /** V021-R20：切换修订时自动清除失效操作筛选的轻量说明。 */
+  let pathFilterNotice = $state<string | undefined>(undefined);
 
   $effect(() => {
     compare.clear();
@@ -134,6 +138,53 @@
     ].sort(),
   );
 
+  /*
+   * V021-R19：比较两端派生（选择顺序即起点→终点，跨分页/搜索仍可见）。
+   * 缺详情时保留修订号并注明未加载，不虚构作者/日期；实际比较 Host 按升序排序。
+   */
+  const compareList = $derived([...compare]);
+  const compareSortedPair = $derived(
+    [...compare].sort(
+      (left, right) =>
+        Number(left) - Number(right) || naturalCompare(left, right),
+    ),
+  );
+  function describeCompareRevision(revision: string): {
+    revision: string;
+    author?: string;
+    date?: string;
+    loaded: boolean;
+  } {
+    const found = snapshot.revisions.find((item) => item.revision === revision);
+    if (!found) return { revision, loaded: false };
+    return {
+      revision,
+      author: found.author,
+      date: found.date,
+      loaded: true,
+    };
+  }
+
+  /*
+   * V021-R20：新修订不支持旧操作类型时清除该条件并轻量说明。
+   * 文本筛选跨修订保留（下行 hint 明示），清除筛选不触碰比较选择。
+   */
+  $effect(() => {
+    const current = selected?.revision;
+    const filter = pathActionFilter;
+    const supported = availableActions;
+    if (
+      current &&
+      filter !== "all" &&
+      supported.length >= 0 &&
+      !supported.includes(filter)
+    ) {
+      const label = changeActionLabels[filter] ?? filter;
+      pathActionFilter = "all";
+      pathFilterNotice = `当前修订 r${current} 不含“${label}”变更，已自动清除操作类型筛选；文本筛选已保留。`;
+    }
+  });
+
   const filteredChangedPaths = $derived.by(() => {
     const paths = selected?.changedPaths ?? [];
     const needle = pathQuery.trim().toLowerCase();
@@ -187,17 +238,109 @@
   function toggleCompare(revision: string): void {
     if (compare.has(revision)) {
       compare.delete(revision);
+      if (compare.size < 2) compareNotice = undefined;
     } else {
       if (compare.size >= 2) {
-        // 固定两条：加入第三条时淘汰最早选择，不提供全选。
-        compare.delete([...compare][0]);
+        // V021-R19：固定两条，第三次选择明确说明替换对象，避免静默淘汰。
+        const evicted = [...compare][0];
+        compare.delete(evicted);
+        compare.add(revision);
+        const pair = [...compare].sort(
+          (left, right) =>
+            Number(left) - Number(right) || naturalCompare(left, right),
+        );
+        compareNotice = `已将最早选择的 r${evicted} 替换为 r${revision}，当前比较 r${pair[0]} → r${pair[1]}。实际比较将按从旧到新排序发送。`;
+      } else {
+        compare.add(revision);
+        if (compare.size < 2) compareNotice = undefined;
       }
+    }
+  }
+
+  function removeCompare(revision: string): void {
+    compare.delete(revision);
+    if (compare.size < 2) compareNotice = undefined;
+  }
+
+  function swapCompare(): void {
+    const items = [...compare];
+    if (items.length !== 2) return;
+    compare.clear();
+    compare.add(items[1]);
+    compare.add(items[0]);
+    compareNotice = `已交换起点与终点，当前起点 r${items[1]}、终点 r${items[0]}。实际比较仍按从旧到新排序发送。`;
+  }
+
+  /*
+   * V021-R19：设为起点/终点。已在两端内则调整顺序；未在两端内且已满则替换
+   * 对应槽位并明确说明替换对象；未满则按槽位插入。
+   */
+  function setCompareEndpoint(revision: string, slot: "start" | "end"): void {
+    const items = [...compare];
+    if (items.includes(revision)) {
+      if (items.length === 2) {
+        const wantFirst =
+          slot === "start"
+            ? revision
+            : (items.find((item) => item !== revision) ?? revision);
+        const wantSecond =
+          slot === "start"
+            ? (items.find((item) => item !== revision) ?? revision)
+            : revision;
+        if (items[0] !== wantFirst || items[1] !== wantSecond) {
+          compare.clear();
+          compare.add(wantFirst);
+          compare.add(wantSecond);
+        }
+      } else if (
+        items.length === 1 &&
+        slot === "start" &&
+        items[0] !== revision
+      ) {
+        compare.clear();
+        compare.add(revision);
+      }
+      return;
+    }
+    if (items.length < 2) {
+      if (slot === "start" && items.length === 1) {
+        compare.clear();
+        compare.add(revision);
+        compare.add(items[0]);
+      } else {
+        compare.add(revision);
+      }
+      compareNotice = undefined;
+      return;
+    }
+    const evicted = slot === "start" ? items[0] : items[1];
+    const kept = slot === "start" ? items[1] : items[0];
+    compare.clear();
+    if (slot === "start") {
+      compare.add(revision);
+      compare.add(kept);
+    } else {
+      compare.add(kept);
       compare.add(revision);
     }
+    compareNotice = `已将${slot === "start" ? "起点" : "终点"} r${evicted} 替换为 r${revision}，当前比较 r${slot === "start" ? revision : kept} → r${slot === "start" ? kept : revision}。`;
   }
 
   function clearCompare(): void {
     compare.clear();
+    compareNotice = undefined;
+  }
+
+  /** V021-R20：清除路径筛选（一键恢复），不改变比较选择。 */
+  function clearPathFilters(): void {
+    pathQuery = "";
+    pathActionFilter = "all";
+    pathFilterNotice = undefined;
+  }
+
+  /** V021-R20：清除修订搜索（一键恢复），不改变比较选择。 */
+  function clearRevisionSearch(): void {
+    query = "";
   }
 
   function updateLoadQuery(key: keyof HistoryQueryView, value: string): void {
@@ -604,6 +747,58 @@
       ]}
       ariaLabel="修订比较操作栏"
     />
+    <!-- V021-R19：比较两端可见可调整（起点/终点芯片 + 移除/交换/设为起点终点；跨分页搜索仍可见；Host 按升序排序）。 -->
+    {#if compare.size > 0}
+      <div
+        class="history-compare-endpoints"
+        data-testid="compare-endpoints"
+        role="status"
+        aria-label="比较两端"
+      >
+        {#each compareList as revisionId, position (revisionId)}
+          {@const detail = describeCompareRevision(revisionId)}
+          <span class="compare-chip">
+            <span class="compare-chip__slot"
+              >{position === 0 ? "起点" : "终点"}</span
+            >
+            <strong>r{detail.revision}</strong>
+            {#if detail.loaded}
+              <span
+                >{detail.author} · {formatZhDateTime(detail.date ?? "")}</span
+              >
+            {:else}
+              <span>未加载详情，仍保留比较</span>
+            {/if}
+            <button
+              type="button"
+              class="button button--secondary"
+              aria-label={`移除比较${position === 0 ? "起点" : "终点"} r${detail.revision}`}
+              onclick={() => removeCompare(revisionId)}>移除</button
+            >
+          </span>
+        {/each}
+        {#if compare.size === 1}<span class="compare-chip compare-chip--empty"
+            >终点未选择，请再勾选一条修订。</span
+          >{/if}
+        {#if compare.size === 2}
+          <button
+            type="button"
+            class="button button--secondary"
+            onclick={swapCompare}>交换起点与终点</button
+          >
+          <span class="history-filter-hint"
+            >实际比较将按从旧到新（r{compareSortedPair[0]} → r{compareSortedPair[1]}）排序发送。</span
+          >
+        {/if}
+      </div>
+    {/if}
+    {#if compareNotice}<p
+        class="history-filter-hint"
+        role="status"
+        data-testid="compare-notice"
+      >
+        {compareNotice}
+      </p>{/if}
     <ScrollArea
       class="revision-list"
       role="list"
@@ -619,6 +814,16 @@
             : snapshot.hasMore
               ? "已加载的最近修订中没有匹配；更早的修订尚未加载，可点击“加载更早修订”后再搜索。"
               : "没有匹配的修订；调整搜索词或清除筛选后重试。"}
+          {#if snapshot.revisions.length > 0}
+            <button
+              type="button"
+              class="button button--secondary"
+              onclick={clearRevisionSearch}>清除修订搜索</button
+            >
+            <span class="history-filter-hint"
+              >清除搜索只恢复列表显示，不改变比较选择。</span
+            >
+          {/if}
         </div>
       {/if}
       <!-- 中文注释：V021-R06 复用 Commit 首尾占位模式：窗口化后容器全高恒为总数×行高，末项可滚达。 -->
@@ -660,6 +865,24 @@
             checked={compare.has(revision.revision)}
             onchange={() => toggleCompare(revision.revision)}
           />
+          <span class="revision-endpoint-actions">
+            <button
+              type="button"
+              class="button button--secondary"
+              aria-label={`将修订 ${revision.revision} 设为比较起点`}
+              title="设为比较起点"
+              onclick={() => setCompareEndpoint(revision.revision, "start")}
+              >设为起点</button
+            >
+            <button
+              type="button"
+              class="button button--secondary"
+              aria-label={`将修订 ${revision.revision} 设为比较终点`}
+              title="设为比较终点"
+              onclick={() => setCompareEndpoint(revision.revision, "end")}
+              >设为终点</button
+            >
+          </span>
         </div>
       {/each}
       {#if list.visibleWindow.end < orderedRevisions.length}<div
@@ -720,6 +943,16 @@
         >
       </div>
       <h3>变更路径</h3>
+      <p class="history-filter-hint">
+        路径文本筛选在切换修订时保留，操作类型筛选仅在新修订支持时保留，否则自动清除并说明；清除筛选不影响比较选择。
+      </p>
+      {#if pathFilterNotice}<p
+          class="history-filter-hint"
+          role="status"
+          data-testid="path-filter-notice"
+        >
+          {pathFilterNotice}
+        </p>{/if}
       <div class="changed-paths-toolbar">
         <SearchInput
           bind:value={pathQuery}
@@ -784,8 +1017,18 @@
         {#if filteredChangedPaths.length === 0}
           <div class="mini-empty">
             {selected.changedPaths.length === 0
-              ? "该修订没有变更路径。"
-              : "没有匹配的变更路径；调整搜索词或操作类型筛选。"}
+              ? "该修订没有变更路径，无需筛选。"
+              : "没有匹配的变更路径，当前筛选隐藏了全部路径。"}
+            {#if selected.changedPaths.length > 0}
+              <button
+                type="button"
+                class="button button--secondary"
+                onclick={clearPathFilters}>清除路径筛选</button
+              >
+              <span class="history-filter-hint"
+                >清除后恢复全部路径显示，不改变比较选择。</span
+              >
+            {/if}
           </div>
         {/if}
         {#each filteredChangedPaths as item (`${item.action}:${item.path}`)}
