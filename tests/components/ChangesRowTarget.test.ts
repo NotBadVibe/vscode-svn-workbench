@@ -73,6 +73,10 @@ describe("V020-R10 Changes 行右键携带目标文件", () => {
         relativePath: "src/second.ts",
       }),
     );
+    // 等待菜单关闭落定（bits-ui body-scroll-lock 定时器，防 jsdom 拆毁后访问 document）。
+    await vi.waitFor(() =>
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument(),
+    );
   });
 
   it("冲突行处理按钮定位所点冲突文件", async () => {
@@ -101,6 +105,12 @@ describe("V020-R10 Changes 行右键携带目标文件", () => {
     expect(onAction).not.toHaveBeenCalledWith(
       "open-module",
       expect.objectContaining({ moduleId: "history" }),
+    );
+    // 关闭行菜单并让 bits-ui body-scroll-lock 定时器落定，避免 jsdom 拆毁后
+    // 访问 document 产生 unhandled error（CI ubuntu 曾因此失败）。
+    await fireEvent.keyDown(document.body, { key: "Escape" });
+    await vi.waitFor(() =>
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument(),
     );
   });
 });
