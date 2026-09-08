@@ -22,6 +22,11 @@
     matchesFileQuery,
     rangeItems,
   } from "../../components/list/listModel";
+  import {
+    buildPathListText,
+    buildStatusPathListText,
+    orderSelectedForCopy,
+  } from "../../components/list/copySelectionList";
   import { naturalCompare } from "../../../selection/selectionSort";
   import type {
     SortDirection,
@@ -89,6 +94,12 @@
 
   let name = $state("");
   let applyPaths = $state<string[]>([]);
+  /** V023-R26：移动目标（已有组名或新建入口）；空表示未选择。 */
+  const NEW_CHANGESET_OPTION = "__new__";
+  let moveTarget = $state("");
+  let moveFeedback = $state("");
+  /** V023-R24：复制就地反馈，不改选择、不发起写操作。 */
+  let copyFeedback = $state("");
   let query = $state("");
   /** V023-R23：`/` 聚焦搜索目标（集中 keymap `list/searchFocus`）。 */
   let searchInputRef = $state<{ focusInput: () => void } | undefined>();
@@ -623,7 +634,64 @@
 
   function copySelectedPaths(): void {
     if (selectedPaths.length === 0) return;
-    onAction("copy-text", { text: selectedPaths.join("\n") });
+    // V023-R24：按当前列表顺序输出，隐藏选择稳定追加；只含相对路径。
+    try {
+      const pathSet = new Set(selectedPaths);
+      const ordered = orderSelectedForCopy(allRows, allEntries(), pathSet);
+      onAction("copy-text", { text: buildPathListText(ordered) });
+      copyFeedback =
+        hiddenCount > 0
+          ? `已复制 ${selectedPaths.length} 个已选路径（含 ${hiddenCount} 个隐藏选择）。`
+          : `已复制 ${selectedPaths.length} 个已选路径。`;
+    } catch {
+      copyFeedback = "复制失败，请重试；选择未改动，未发起写操作。";
+    }
+  }
+
+  /** V023-R24：复制状态+路径清单（顺序与当前列表一致，失败就地反馈）。 */
+  function copySelectedStatusPaths(): void {
+    if (selectedPaths.length === 0) return;
+    try {
+      const pathSet = new Set(selectedPaths);
+      const ordered = orderSelectedForCopy(allRows, allEntries(), pathSet);
+      onAction("copy-text", { text: buildStatusPathListText(ordered) });
+      copyFeedback =
+        hiddenCount > 0
+          ? `已复制 ${selectedPaths.length} 个状态+路径（含 ${hiddenCount} 个隐藏选择）。`
+          : `已复制 ${selectedPaths.length} 个状态+路径。`;
+    } catch {
+      copyFeedback = "复制失败，请重试；选择未改动，未发起写操作。";
+    }
+  }
+
+  /*
+   * V023-R26：移动到变更集选择器。选中已有组后把当前已选填入目标并
+   * 直接走既有预览/令牌执行链（changelist/preview-apply）；选“新建”时只
+   * 填入应用栏，由用户命名后再预览。取消只清本地草稿，不触发写操作。
+   */
+  function moveToSelectedTarget(): void {
+    if (selectedPaths.length === 0 || !moveTarget) return;
+    if (moveTarget === NEW_CHANGESET_OPTION) {
+      applyPaths = [...selectedPaths];
+      name = "";
+      moveFeedback = `已把 ${applyPaths.length} 个已选文件加入应用栏，请填写新变更集名称后生成预览。`;
+      return;
+    }
+    name = moveTarget;
+    applyPaths = [...selectedPaths];
+    moveFeedback = "";
+    onAction("changelist/preview-apply", {
+      name,
+      paths: applyPaths,
+      remove: false,
+    });
+  }
+
+  /** V023-R26：取消只清本地名称与应用栏，不发 Host 动作、不写操作。 */
+  function cancelMoveDraft(): void {
+    name = "";
+    applyPaths = [];
+    moveFeedback = "已取消，未发起写操作。";
   }
 
   function sendSelectionToEditor(): void {
@@ -1078,8 +1146,30 @@
         <button
           class="button button--secondary"
           disabled={selectedPaths.length === 0}
-          onclick={copySelectedPaths}>复制已选路径</button
+          title={selectedPaths.length === 0
+            ? "先选择至少 1 个文件再复制"
+            : hiddenCount > 0
+              ? `复制 ${selectedPaths.length} 个已选相对路径（含 ${hiddenCount} 个隐藏选择），只含相对路径`
+              : "复制已选相对路径，只含相对路径"}
+          onclick={copySelectedPaths}
+          >复制已选路径（{selectedPaths.length}{hiddenCount > 0
+            ? `，含隐藏 ${hiddenCount}`
+            : ""}）</button
         >
+        <button
+          class="button button--secondary"
+          disabled={selectedPaths.length === 0}
+          title={selectedPaths.length === 0
+            ? "先选择至少 1 个文件再复制"
+            : hiddenCount > 0
+              ? `复制 ${selectedPaths.length} 个状态+路径（含 ${hiddenCount} 个隐藏选择），只含相对路径`
+              : "复制状态与相对路径，只含相对路径"}
+          onclick={copySelectedStatusPaths}
+          >复制状态+路径（{selectedPaths.length}{hiddenCount > 0
+            ? `，含隐藏 ${hiddenCount}`
+            : ""}）</button
+        >
+        {#if copyFeedback}<span role="status">{copyFeedback}</span>{/if}
         <button
           class="button button--secondary"
           disabled={selectedPaths.length !== 1}
@@ -1099,8 +1189,12 @@
     >
       <div class="section-heading">
         <div>
-          <span class="eyebrow">按目录和文件类型分组</span>
-          <h2>分组候选</h2>
+          <span class="eyebrow">按目录和文件类型生成</span>
+          <h2>分组建议（仅建议，不直接移动）</h2>
+          <p role="note">
+            此处为本地规则或模型生成的分组建议，仅供参考；人工移动文件请走右侧“应用到
+            SVN”，无需先理解建议栏。
+          </p>
         </div>
       </div>
       {#if snapshot.suggestions.length === 0}<div class="preview-empty">
@@ -1145,9 +1239,45 @@
     >
       <div class="section-heading">
         <div>
-          <span class="eyebrow">应用分组</span>
+          <span class="eyebrow">人工移动到变更集</span>
           <h2>应用到 SVN</h2>
+          <p role="note">
+            人工操作入口：选择目标后走预览确认执行；分组建议仅在左侧展示，不直接移动文件。
+          </p>
         </div>
+      </div>
+      <!-- V023-R26：移动到变更集选择器（已有组 + 新建入口），确认后复用既有预览/令牌执行链。 -->
+      <div class="move-target-row" role="group" aria-label="移动到变更集">
+        <label class="field"
+          ><span>目标变更集</span><select
+            aria-label="目标变更集"
+            bind:value={moveTarget}
+          >
+            <option value="">请选择目标…</option>
+            {#each snapshot.groups as group (group.name)}
+              <option value={group.name}
+                >{group.name}（{group.files.length} 个文件）</option
+              >
+            {/each}
+            <option value={NEW_CHANGESET_OPTION}>新建变更集…</option>
+          </select></label
+        >
+        <button
+          class="button button--secondary"
+          disabled={selectedPaths.length === 0 || !moveTarget}
+          title={selectedPaths.length === 0
+            ? "先在左侧选择至少 1 个文件"
+            : !moveTarget
+              ? "先选择目标变更集"
+              : moveTarget === NEW_CHANGESET_OPTION
+                ? "把已选填入应用栏，命名后生成预览"
+                : `把 ${selectedPaths.length} 个已选文件移入“${moveTarget}”并生成预览`}
+          onclick={moveToSelectedTarget}
+          >{moveTarget === NEW_CHANGESET_OPTION
+            ? `填入应用栏（${selectedPaths.length}）`
+            : `移动到所选变更集（${selectedPaths.length}）`}</button
+        >
+        {#if moveFeedback}<span role="status">{moveFeedback}</span>{/if}
       </div>
       <label class="field"
         ><span>变更集名称</span><input
@@ -1177,6 +1307,13 @@
             paths: applyPaths,
             remove: false,
           })}>生成应用预览</button
+      >
+      <!-- V023-R26：取消只清本地草稿，不发 Host 动作、不触发写操作。 -->
+      <button
+        class="button button--secondary commit-button"
+        disabled={!name && applyPaths.length === 0}
+        title="清空名称与应用栏，不发起写操作"
+        onclick={cancelMoveDraft}>取消</button
       >
       {#if snapshot.preview}
         <div class="changelist-preview">

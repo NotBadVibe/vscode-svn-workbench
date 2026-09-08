@@ -36,16 +36,16 @@ test("UX08-SEL-01/02/03/07：三态、筛选排序不改变选择、隐藏选择
   // blocked 永不加入。
   await expect(page.getByLabel("选择 src/conflict/example.ts")).toBeDisabled();
 
-  // SEL-02：筛选与排序不静默改变选择。
-  await page.getByRole("button", { name: /状态/ }).click();
+  // SEL-02：筛选与排序不静默改变选择（点状态列头排序；V023-R24 新增的复制按钮不参与）。
+  await page.getByRole("button", { name: "状态 未排序" }).click();
   await expect(page.getByLabel("选择 src/extension.ts")).toBeChecked();
   await page.getByLabel("筛选变更文件").fill("App.svelte");
-  // 隐藏选择保留并可见（SEL-03）。
-  await expect(page.getByText(/隐藏 2/)).toBeVisible();
+  // 隐藏选择保留并可见（SEL-03；摘要计数，V023-R24 复制按钮文案不参与）。
+  await expect(page.getByRole("status", { name: /隐藏 2/ })).toBeVisible();
   await expect(page.getByLabel("选择 src/webview/App.svelte")).toBeChecked();
   // 清除隐藏选择只移除筛选外部分。
   await page.getByRole("button", { name: "清除隐藏选择" }).click();
-  await expect(page.getByText(/隐藏 0/)).toBeVisible();
+  await expect(page.getByRole("status", { name: /隐藏 0/ })).toBeVisible();
   await expect(
     page.getByRole("button", { name: /检查并提交所选（1）/ }),
   ).toBeVisible();
@@ -194,4 +194,47 @@ test("UX08-SEL-06/PERF-01：5,000 文件全选覆盖完整数据集且挂载行�
   ).toBeVisible();
   // 挂载行仍不超过预算。
   expect(await list.getByRole("listitem").count()).toBeLessThan(100);
+});
+
+test("V023-R24/R25/R26：复制清单、类型组合说明、移动到变更集选择器", async ({
+  page,
+}) => {
+  await page.goto("/");
+  // R24：多选后复制出口收进更多菜单（R27 回归收敛，不占底栏高度），数量准确；点击后就地反馈且选择保留。
+  await page.getByLabel("选择 src/extension.ts").check();
+  await page.getByLabel("选择 src/webview/App.svelte").check();
+  await page.getByRole("button", { name: "更多批量操作" }).click();
+  await expect(
+    page.getByRole("menuitem", { name: /复制已选路径（2）/ }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("menuitem", { name: /复制状态\+路径（2）/ }),
+  ).toBeVisible();
+  await page.getByRole("menuitem", { name: /复制已选路径（2）/ }).click();
+  await expect(page.getByText("已复制 2 个已选路径。")).toBeVisible();
+  await expect(page.getByLabel("选择 src/extension.ts")).toBeChecked();
+
+  // R25：保存入口改名并列出保存内容；表单按需展开。
+  await expect(
+    page.getByRole("button", { name: "保存文件类型组合" }),
+  ).toBeVisible();
+  await expect(page.getByText(/只保存文件类型组合/)).toBeVisible();
+  await expect(
+    page.getByText(/完整视图预设为后续候选，本版暂不支持/),
+  ).toBeVisible();
+  await expect(page.getByLabel("文件类型组合名称")).toHaveCount(0);
+  await page.getByLabel("文件类型筛选").selectOption(".ts");
+  await page.getByRole("button", { name: "保存文件类型组合" }).click();
+  await expect(page.getByLabel("文件类型组合名称")).toBeVisible();
+
+  // R26：多选→选已有组→准确预览（复用既有预览链，不直接写操作）。
+  await page.goto("/?module=changelists&dataset=scroll");
+  await page.getByLabel("选择 项目资料/未分组-1.ts").check();
+  await page.getByLabel("目标变更集").selectOption("变更集-1");
+  await page.getByRole("button", { name: /移动到所选变更集（1）/ }).click();
+  await expect(
+    page.getByRole("button", { name: "确认应用变更集" }),
+  ).toBeVisible();
+  // 人工目标与 AI 建议分区文案可见。
+  await expect(page.getByText("人工移动到变更集")).toBeVisible();
 });

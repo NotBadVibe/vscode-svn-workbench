@@ -72,7 +72,7 @@ describe("V020-R16 Shift 选择锚点", () => {
       target: { value: "keep-" },
     });
     expect(screen.getAllByRole("listitem")).toHaveLength(5);
-    expect(screen.getByText(/隐藏 1/)).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: /隐藏 1/ })).toBeInTheDocument();
     // Shift 点击首行：越界锚点已清除，应只选中该行（+ 隐藏 1，共 2）。
     const firstBox = screen.getByLabelText("选择 src/keep-0.ts");
     await fireEvent.click(firstBox, { shiftKey: true });
