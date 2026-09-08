@@ -20,6 +20,11 @@ import {
 } from "@protocol/workbenchProtocol";
 import { toDisplayPath } from "../../scope/pathBrands";
 import { hashChangelistPlan } from "../../changelist/changelistPlan";
+import {
+  establishReviewQueue,
+  hashReviewContent,
+  toReviewQueueView,
+} from "../../diff/reviewQueue";
 import type { PathIdentityKey } from "../../scope/pathBrands";
 import {
   COMMIT_SELECTION_CONFIG_VERSION,
@@ -302,6 +307,16 @@ let mockEditRevision = 1;
 /** 目标切换后的 mock 会话序号（模拟 Host 会话替换）。 */
 let mockSessionCounter = 0;
 /**
+ * V023-R18：mock 审阅队列（只读，只存相对路径与已看指纹）。
+ * open-diff 携带 reviewQueue 时建立（保序去重，不静默新增）；
+ * ?reviewQueue=a,b 预置（e2e/组件测试入口）；单文件 open-diff 且目标不在
+ * 队列中时清空（单文件模式）。已看指纹按展示正文计算，内容变化即待审阅。
+ */
+let mockReviewQueue: string[] = [];
+const mockReviewedHashes: Record<string, string> = {};
+/** mock 各路径的展示正文（保存/草稿后更新，供指纹计算）。 */
+const mockModifiedByPath = new Map<string, string>();
+/**
  * v0.1.0：当前 mock 会话 ID。目标切换（injectDiffTargetSwitch）后递增，
  * 后续 injectHostMessage/injectSnapshot 必须使用当前会话，否则新会话的
  * Webview 会按协议守卫丢弃旧会话消息。
@@ -432,6 +447,7 @@ const DIFF_FIXTURE_LANGUAGES: Record<DiffFixtureLanguage, string> = {
 
 /**
  * mock 的 diff 快照（v0.0.6 编辑能力）：默认支持页内编辑并签发 mock targetId。
+ * V023-R18：队列非空且目标在队列中时装配 review 视图（只读，指纹绑定展示正文）。
  */
 function mockDiffSnapshot(
   relativePath: string,
@@ -448,6 +464,34 @@ function mockDiffSnapshot(
     "diffFixture",
   );
   const parsedSpec = fixtureSpec ? parseDiffFixtureId(fixtureSpec) : undefined;
+  const original = overrides.original ?? fixture?.original ?? mockDiffOriginal;
+  const modified =
+    overrides.modified ??
+    mockModifiedByPath.get(relativePath) ??
+    fixture?.modified ??
+    mockDiffModified;
+  // V023-R18：URL 预置队列（?reviewQueue=a,b，仅测试入口）。
+  ensureMockReviewQueueFromUrl();
+  let reviewView:
+    import("@protocol/workbenchProtocol").DiffReviewQueueView | undefined;
+  if (mockReviewQueue.length > 0 && mockReviewQueue.includes(relativePath)) {
+    const currentHash = hashReviewContent(modified);
+    const stored = mockReviewedHashes[relativePath];
+    let notice: string | undefined;
+    if (stored !== undefined && stored !== currentHash) {
+      delete mockReviewedHashes[relativePath];
+      notice = `“${relativePath}”的内容已变化，已重新标记为待审阅。`;
+    }
+    reviewView = toReviewQueueView({
+      queue: mockReviewQueue,
+      currentRelativePath: relativePath,
+      currentContentHash: currentHash,
+      reviewedHashes: mockReviewedHashes,
+      scopeHash: "mock-scope-hash",
+      repositoryUuid: "mock-repository-uuid",
+      ...(notice !== undefined ? { notice } : {}),
+    });
+  }
   return {
     kind: "diff",
     relativePath,
@@ -459,8 +503,8 @@ function mockDiffSnapshot(
       leftRevision: "BASE",
       rightRevision: "工作副本",
     },
-    original: overrides.original ?? fixture?.original ?? mockDiffOriginal,
-    modified: overrides.modified ?? fixture?.modified ?? mockDiffModified,
+    original,
+    modified,
     language: parsedSpec
       ? DIFF_FIXTURE_LANGUAGES[parsedSpec.language]
       : "typescript",
@@ -473,7 +517,30 @@ function mockDiffSnapshot(
           reason: "mock：该文件不支持页内编辑。",
         },
     draft: overrides.draft ?? mockDiffDraft(relativePath),
+    ...(reviewView !== undefined ? { review: reviewView } : {}),
   };
+}
+
+/** V023-R18：从 ?reviewQueue=a,b 预置 mock 队列（只读测试入口，保序去重）。 */
+function ensureMockReviewQueueFromUrl(): void {
+  if (mockReviewQueue.length > 0) return;
+  if (typeof window === "undefined") return;
+  const raw = new URLSearchParams(window.location.search).get("reviewQueue");
+  if (!raw) return;
+  const { queue } = establishReviewQueue(
+    raw
+      .split(",")
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0),
+  );
+  mockReviewQueue = queue;
+}
+
+/** V023-R18：队列变化后裁剪已看指纹（移除项的进度不保留）。 */
+function pruneMockReviewed(): void {
+  for (const key of Object.keys(mockReviewedHashes)) {
+    if (!mockReviewQueue.includes(key)) delete mockReviewedHashes[key];
+  }
 }
 
 /** 与 Host 行为一致：只有脏草稿才在快照中携带 draft 摘要。 */
@@ -734,23 +801,65 @@ export function startMockWorkbench(): void {
       if (entry) injectSnapshot(entry[0], entry[1]());
     }
     if (action === "open-diff" && typeof data.relativePath === "string") {
+      const target = data.relativePath;
+      // V023-R18：mock 审阅队列（与 Host 一致：明确选择建立，无选择且目标
+      // 不在队列中时回到单文件模式，不静默扩大）。
+      if (Array.isArray(data.reviewQueue)) {
+        const { queue } = establishReviewQueue(data.reviewQueue);
+        mockReviewQueue = queue;
+        pruneMockReviewed();
+      } else if (!mockReviewQueue.includes(target)) {
+        mockReviewQueue = [];
+        pruneMockReviewed();
+      }
       // 当前目标有草稿时模拟 Host 的三选一拦截：先确认，不直接切换。
-      if (
-        mockDrafts.has(activeMockDiffPath) &&
-        data.relativePath !== activeMockDiffPath
-      ) {
-        pendingMockSwitch = data.relativePath;
+      if (mockDrafts.has(activeMockDiffPath) && target !== activeMockDiffPath) {
+        pendingMockSwitch = target;
         injectHostMessage("diff/target-switch-confirm", {
           currentTargetId: `mock-diff-${activeMockDiffPath}`,
-          nextRelativePath: data.relativePath,
+          nextRelativePath: target,
         });
         return;
       }
-      if (data.relativePath !== activeMockDiffPath) {
-        injectDiffTargetSwitch(data.relativePath);
+      if (target !== activeMockDiffPath) {
+        injectDiffTargetSwitch(target);
       } else {
-        injectSnapshot("diff", mockDiffSnapshot(data.relativePath));
+        injectSnapshot("diff", mockDiffSnapshot(target));
       }
+    }
+    // V023-R18：mock 标已看（与 Host 一致：队列内当前文件 + 指纹一致才生效）。
+    if (
+      action === "diff/mark-reviewed" &&
+      typeof data.relativePath === "string"
+    ) {
+      const target = data.relativePath;
+      if (!mockReviewQueue.includes(target) || target !== activeMockDiffPath) {
+        injectMockError({
+          title: "无法标记已看",
+          message: "该文件不在当前审阅队列中（队列可能已刷新或失效）。",
+          recoverable: true,
+        });
+        return;
+      }
+      const current = mockDiffSnapshot(target);
+      const currentHash = hashReviewContent(
+        (current as { modified: string }).modified,
+      );
+      const claimed =
+        typeof data.contentHash === "string" ? data.contentHash : undefined;
+      if (claimed !== undefined && claimed !== currentHash) {
+        delete mockReviewedHashes[target];
+        injectMockError({
+          title: "标记已过期",
+          message:
+            "文件内容已变化，刚才的已看标记未生效；请查看最新差异后重新标记。",
+          recoverable: true,
+        });
+        injectSnapshot("diff", mockDiffSnapshot(target));
+        return;
+      }
+      mockReviewedHashes[target] = currentHash;
+      injectSnapshot("diff", mockDiffSnapshot(target));
     }
     if (action === "diff/target-switch-decision") {
       const pending = pendingMockSwitch;
@@ -831,14 +940,17 @@ export function startMockWorkbench(): void {
         snapshotVersion: Date.now(),
       });
       if (ok) {
+        const savedContent = data.content as string;
         // 保存成功：草稿保留但回到干净状态（内容已落盘）。
         mockDrafts.set(activeMockDiffPath, { dirty: false });
+        // V023-R18：落盘内容即新的指纹基准，旧已看失效（内容已变化）。
+        mockModifiedByPath.set(activeMockDiffPath, savedContent);
+        delete mockReviewedHashes[activeMockDiffPath];
         // 模拟生产 loadModule：先 module/loading，快照在下一个事件循环到达
         // （真实 Host 需要重新读取 SVN）。编辑器重建由 DiffView 编辑态
         // 挂载键保持（手动生命周期：编辑态同键快照刷新不重建实例）避免；
         // App 保持模块挂载。
         injectHostMessage("module/loading", { moduleId: "diff" });
-        const savedContent = data.content as string;
         window.setTimeout(() => {
           injectSnapshot(
             "diff",
@@ -851,6 +963,8 @@ export function startMockWorkbench(): void {
     }
     if (action === "diff/draft-checkpoint") {
       mockDrafts.set(activeMockDiffPath, { dirty: true });
+      // V023-R18：草稿变化视为内容变化（Host 按草稿正文计算指纹），旧已看失效。
+      delete mockReviewedHashes[activeMockDiffPath];
       injectHostMessage("diff/draft-checkpointed", {
         targetId: data.targetId,
         draftRevision: (Number(data.draftRevision) || 1) + 1,

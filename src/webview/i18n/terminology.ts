@@ -417,6 +417,40 @@ export const diffBottomLabels = {
   noResults: "无结果",
 } as const;
 
+/**
+ * V023-R18：连续审阅队列文案（集中收口，页面不各自拼字符串）。
+ * 只读语义：队列只表达顺序与进度；标已看不代表提交授权或质量通过。
+ */
+export const diffReviewLabels = {
+  region: "文件审阅队列",
+  prevFile: "上一个文件",
+  nextFile: "下一个文件",
+  markReviewed: "标为已看",
+  reviewedBadge: "已看",
+  unreviewedBadge: "未看",
+  firstFileReached: "已经是队列中第一个文件",
+  lastFileReached: "已经是队列中最后一个文件",
+  progressDisclaimer:
+    "标记已看仅为个人审阅进度，不代表提交授权或质量通过；提交仍需走提交页预览与确认。",
+  removedNoticeTitle: "队列变化说明",
+} as const;
+
+/** V023-R18：审阅队列当前位置指示（第 N/M 个）。 */
+export function diffReviewPositionLabel(
+  current: number,
+  total: number,
+): string {
+  return `第 ${current}/${total} 个`;
+}
+
+/** V023-R18：审阅队列进度（已看 X 个，未看 Y 个）。 */
+export function diffReviewProgressLabel(
+  reviewed: number,
+  unreviewed: number,
+): string {
+  return `已看 ${reviewed} 个，未看 ${unreviewed} 个`;
+}
+
 /** V022-R36：折叠行数中文对照（参数化标签，页面不各自拼字符串）。 */
 export function diffUnmodifiedLinesLabel(count: number): string {
   return `共 ${count} 行未修改`;

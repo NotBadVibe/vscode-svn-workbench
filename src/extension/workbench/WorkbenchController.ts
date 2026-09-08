@@ -389,6 +389,13 @@ import { resolveDiffSwitchDecision } from "./diffTargetSwitch";
 import { shouldConfirmTargetSwitch } from "./diffTargetSwitch";
 import { createSvnBindingProbe } from "./diffSvnBinding";
 import { createDiffEditingService, watchDiffEditTargets } from "./diffEditHost";
+import {
+  establishReviewQueue,
+  hashReviewContent,
+  intersectReviewQueue,
+  normalizeReviewPath,
+  toReviewQueueView,
+} from "../../diff/reviewQueue";
 import { DiffEditingService } from "../../diffEdit/diffEditingService";
 import { buildDiffTargetId } from "../../diffEdit/diffEditingService";
 import { analyzeUtf8, MAX_EDITABLE_BYTES } from "../../diffEdit/diffPathGuard";
@@ -793,6 +800,18 @@ export class WorkbenchController implements vscode.Disposable {
       this.session,
       nativePathSemantics,
     );
+    // V023-R18：Diff 审阅队列会话绑定（只读）。仅从本次 open 请求的明确选择
+    // 建立；修订比较与非 diff 目标不保留队列；同仓库同范围时沿用旧已看指纹
+    // （草稿守卫往返经 open 重建，不丢失进度），跨仓库/范围变化即隔离丢弃。
+    if (this.session.moduleId === "diff" && !this.session.revisionCompare) {
+      this.session.diffReview = this.establishDiffReviewForOpen(
+        this.session,
+        previousSession?.diffReview,
+        request.reviewQueue,
+      );
+    } else if (this.session) {
+      this.session.diffReview = undefined;
+    }
     // 项目切换后恢复该项目保留的草稿（仅提交说明与手动选择；旧预览、
     // 确认令牌与 AI 结果永不恢复）。
     await this.restoreProjectDraft(this.session);
@@ -1432,6 +1451,8 @@ export class WorkbenchController implements vscode.Disposable {
         if (session.moduleId === "changes") {
           this.captureContinuityForDiff(session, absolutePath);
         }
+        // V023-R18：审阅队列的明确选择（可选相对路径数组；非法项由 Host 忽略）。
+        const requestedQueue = asStringArray(data.reviewQueue);
         if (this.servedModule !== "diff") {
           if (this.onOpenInOtherWindow) {
             await this.onOpenInOtherWindow(
@@ -1439,12 +1460,80 @@ export class WorkbenchController implements vscode.Disposable {
                 svnPath: session.svnPath,
                 scope: session.scope,
                 targetFile: absolutePath,
+                ...(requestedQueue !== undefined
+                  ? { reviewQueue: requestedQueue }
+                  : {}),
               }),
             );
             return;
           }
           // 未接线（单测/防御）：面板内切换。
         }
+        // V023-R18：Diff 窗口内目标切换先走既有草稿守卫（与 open() 同一契约）。
+        // 脏草稿挂起 pendingDiffOpen 并下发 target-switch-confirm；决定后经
+        // resolveDiffTargetSwitch → open() 重建（队列经 request.reviewQueue 保留）。
+        if (
+          this.isDiffWindow() &&
+          this.diffEdit &&
+          session.targetFile &&
+          path.resolve(session.targetFile) !== absolutePath
+        ) {
+          const currentTargetId = buildDiffTargetId(
+            path.resolve(session.targetFile),
+          );
+          if (
+            shouldConfirmTargetSwitch({
+              hasDraft: this.diffEdit.getDraft(currentTargetId) !== undefined,
+              draftDirty: this.diffEdit.isDraftDirty(currentTargetId),
+              hasActiveSession: this.diffEdit.hasActiveSession(
+                currentTargetId,
+                session.sessionId,
+              ),
+            })
+          ) {
+            const switchRequest: OpenWorkbenchRequest = {
+              moduleId: "diff",
+              svnPath: session.svnPath,
+              scope: session.scope,
+              targetFile: absolutePath,
+              ...(requestedQueue !== undefined
+                ? { reviewQueue: requestedQueue }
+                : session.diffReview
+                  ? { reviewQueue: [...session.diffReview.queue] }
+                  : {}),
+            };
+            this.clearPendingDiffOpen();
+            this.pendingDiffOpen = {
+              request: switchRequest,
+              currentTargetId,
+            };
+            this.pendingDiffOpenTimer = setTimeout(() => {
+              void this.resolveDiffTargetSwitch(
+                "stash",
+                undefined,
+                this.session,
+              );
+            }, 30_000);
+            this.revealPanel();
+            await this.post({
+              protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+              type: "diff/target-switch-confirm",
+              moduleId: "diff",
+              payload: {
+                currentTargetId,
+                nextRelativePath: relativePath,
+              },
+            });
+            return;
+          }
+        }
+        // V023-R18：应用审阅队列——明确选择重建；否则目标在旧队列中则保留，
+        // 否则回到单文件模式（清空，不静默扩大）。
+        this.applyDiffReviewForInWindowNavigate(
+          session,
+          requestedQueue,
+          relativePath,
+        );
         session.moduleId = "diff";
         session.taskId = defaultWorkbenchTask("diff");
         session.targetFile = absolutePath;
@@ -1507,6 +1596,9 @@ export class WorkbenchController implements vscode.Disposable {
           asString(data.targetId),
           session,
         );
+        return;
+      case "diff/mark-reviewed":
+        await this.markDiffFileReviewed(session, message.requestId, data);
         return;
       case "copy-text": {
         const text = asString(data.text);
@@ -6478,12 +6570,24 @@ export class WorkbenchController implements vscode.Disposable {
         : binary
           ? ""
           : working.text;
+    const currentRelative = normalizeRelative(
+      path.relative(session.scope.repositoryRoot, absolutePath),
+    );
+    // V023-R18：审阅队列视图（只读）。文本指纹取展示正文；二进制/截断取
+    // 磁盘字节指纹（展示正文为空无法区分变化）。指纹绑定 scope + 仓库隔离。
+    const reviewContentHash =
+      binary || truncated
+        ? await hashFileContentsOrMissing(absolutePath)
+        : hashReviewContent(modified);
+    const review = this.resolveDiffReviewForSnapshot(
+      session,
+      currentRelative,
+      reviewContentHash,
+    );
 
     return {
       kind: "diff",
-      relativePath: normalizeRelative(
-        path.relative(session.scope.repositoryRoot, absolutePath),
-      ),
+      relativePath: currentRelative,
       // V020-R09：本地单文件比较身份（真实路径 + 左右基线）。
       compare: {
         kind: "working-copy",
@@ -6514,7 +6618,304 @@ export class WorkbenchController implements vscode.Disposable {
             : dirtyDraft
               ? "存在未保存草稿，编辑前请先恢复或放弃。"
               : undefined,
+      ...(review ? { review } : {}),
     };
+  }
+
+  /**
+   * V023-R18：open() 重建会话时的审阅队列绑定（只读，无写 token）。
+   * - requested 缺省：单文件模式，不建立队列（返回 undefined）；
+   * - 明确选择：保序去重 + 范围求交（越界逐项丢弃，不静默加入新文件）；
+   * - 同仓库同范围：沿用旧已看指纹（草稿守卫往返不丢进度）；跨仓库或
+   *   范围变化：隔离丢弃旧指纹（按合法任务边界隔离）。
+   */
+  private establishDiffReviewForOpen(
+    session: WorkbenchSession,
+    previous: WorkbenchSession["diffReview"],
+    requested: unknown,
+  ): WorkbenchSession["diffReview"] {
+    if (!Array.isArray(requested)) return undefined;
+    const { queue } = establishReviewQueue(requested);
+    if (queue.length === 0) return undefined;
+    const absolutePaths = queue.map((relativePath) =>
+      path.resolve(session.scope.repositoryRoot, relativePath),
+    );
+    const validation = validatePathsInScope(
+      session.scope,
+      absolutePaths,
+      nativePathSemantics,
+    );
+    const outOfScope = new Set(validation.outOfScopeItems);
+    const kept = queue.filter(
+      (_, index) => !outOfScope.has(absolutePaths[index] as string),
+    );
+    if (kept.length === 0) return undefined;
+    const reviewedHashes: Record<string, string> = {};
+    if (
+      previous &&
+      previous.repositoryUuid === session.repositoryUuid &&
+      previous.scopeHash === session.scopeHash
+    ) {
+      for (const item of kept) {
+        const stored = previous.reviewedHashes[item];
+        if (stored !== undefined) reviewedHashes[item] = stored;
+      }
+    }
+    return {
+      queue: kept,
+      reviewedHashes,
+      scopeHash: session.scopeHash,
+      repositoryUuid: session.repositoryUuid,
+    };
+  }
+
+  /**
+   * V023-R18：Diff 窗口内导航时的队列应用（同会话，不重建会话）。
+   * - 明确选择：重建（同仓库同范围沿用已看指纹）；
+   * - 无明确选择且目标在旧队列中：保留（求交在快照装配时执行）；
+   * - 否则：回到单文件模式（清空，不扩大）。
+   */
+  private applyDiffReviewForInWindowNavigate(
+    session: WorkbenchSession,
+    requested: string[] | undefined,
+    targetRelativePath: string,
+  ): void {
+    if (requested !== undefined) {
+      session.diffReview = this.establishDiffReviewForOpen(
+        session,
+        session.diffReview,
+        requested,
+      );
+      return;
+    }
+    const existing = session.diffReview;
+    if (!existing) return;
+    if (
+      existing.repositoryUuid !== session.repositoryUuid ||
+      existing.scopeHash !== session.scopeHash
+    ) {
+      session.diffReview = undefined;
+      return;
+    }
+    const normalizedTarget =
+      normalizeReviewPath(targetRelativePath) ?? targetRelativePath;
+    if (!existing.queue.includes(normalizedTarget)) {
+      session.diffReview = undefined;
+    }
+  }
+
+  /**
+   * V023-R18：为 Diff 快照装配审阅队列视图（范围刷新只求交缩小）。
+   * - 队列与当前 scope/仓库不一致：丢弃（隔离），返回 undefined；
+   * - 逐项范围复验：越界/不可用项移除并播报，永不新增；
+   * - 当前文件指纹与已看指纹不一致：清除该项已看并播报“内容已变化”；
+   * - 目标不在队列：清空队列并返回 undefined（单文件模式）。
+   */
+  private resolveDiffReviewForSnapshot(
+    session: WorkbenchSession,
+    currentRelativePath: string,
+    currentContentHash: string,
+  ):
+    import("../../protocol/workbenchProtocol").DiffReviewQueueView | undefined {
+    const state = session.diffReview;
+    if (!state || state.queue.length === 0) return undefined;
+    if (
+      state.repositoryUuid !== session.repositoryUuid ||
+      state.scopeHash !== session.scopeHash
+    ) {
+      session.diffReview = undefined;
+      return undefined;
+    }
+    const { kept, removed } = intersectReviewQueue(
+      state.queue,
+      (relativePath) => {
+        const absolutePath = path.resolve(
+          session.scope.repositoryRoot,
+          relativePath,
+        );
+        return (
+          validatePathsInScope(
+            session.scope,
+            [absolutePath],
+            nativePathSemantics,
+          ).outOfScopeItems.length === 0
+        );
+      },
+    );
+    const notices: string[] = removed.map((entry) => entry.message);
+    if (removed.length > 0) {
+      const prunedHashes: Record<string, string> = {};
+      for (const item of kept) {
+        const stored = state.reviewedHashes[item];
+        if (stored !== undefined) prunedHashes[item] = stored;
+      }
+      state.reviewedHashes = prunedHashes;
+    }
+    state.queue = kept;
+    if (kept.length === 0) {
+      session.diffReview = undefined;
+      return undefined;
+    }
+    if (!kept.includes(currentRelativePath)) {
+      // 目标不在队列：本次快照不展示队列（单文件模式），
+      // 但保留队列供后续队列内导航使用，不静默丢弃进度。
+      return undefined;
+    }
+    const stored = state.reviewedHashes[currentRelativePath];
+    if (stored !== undefined && stored !== currentContentHash) {
+      delete state.reviewedHashes[currentRelativePath];
+      notices.push(
+        `“${currentRelativePath}”的内容已变化，已重新标记为待审阅。`,
+      );
+    }
+    return toReviewQueueView({
+      queue: kept,
+      currentRelativePath,
+      currentContentHash,
+      reviewedHashes: state.reviewedHashes,
+      scopeHash: state.scopeHash,
+      repositoryUuid: state.repositoryUuid,
+      ...(notices.length > 0 ? { notice: notices.join("\n") } : {}),
+    });
+  }
+
+  /**
+   * V023-R18：diff/mark-reviewed（只读进度，不产生写操作、不授权提交）。
+   * Host 复验：diff 会话 + 范围内目标 + 当前指纹一致（Webview 回传的
+   * contentHash 仅用于过期自检，不信任其断言已看）。标记后重发快照。
+   */
+  private async markDiffFileReviewed(
+    session: WorkbenchSession,
+    requestId: string | undefined,
+    data: Record<string, unknown>,
+  ): Promise<void> {
+    const relativePath = asString(data.relativePath);
+    if (session.moduleId !== "diff" || !session.targetFile) {
+      await this.sendError(
+        "diff",
+        "无法标记已看",
+        "当前不在差异审阅中，请先打开一个文件差异。",
+        false,
+        requestId,
+      );
+      return;
+    }
+    if (!relativePath) {
+      await this.sendError(
+        "diff",
+        "无法标记已看",
+        "没有收到文件路径。",
+        true,
+        requestId,
+      );
+      return;
+    }
+    const absolutePath = path.resolve(
+      session.scope.repositoryRoot,
+      relativePath,
+    );
+    if (
+      validatePathsInScope(session.scope, [absolutePath], nativePathSemantics)
+        .outOfScopeItems.length > 0
+    ) {
+      await this.sendError(
+        "diff",
+        "范围校验失败",
+        "该文件不在当前右键操作范围内。",
+        false,
+        requestId,
+      );
+      return;
+    }
+    const state = session.diffReview;
+    const currentRelative = normalizeRelative(
+      path.relative(session.scope.repositoryRoot, absolutePath),
+    );
+    if (!state || !state.queue.includes(currentRelative)) {
+      await this.sendError(
+        "diff",
+        "无法标记已看",
+        "该文件不在当前审阅队列中（队列可能已刷新或失效）。",
+        true,
+        requestId,
+      );
+      return;
+    }
+    const snapshotTarget = session.targetFile
+      ? normalizeRelative(
+          path.relative(
+            session.scope.repositoryRoot,
+            path.resolve(session.targetFile),
+          ),
+        )
+      : undefined;
+    if (snapshotTarget !== currentRelative) {
+      await this.sendError(
+        "diff",
+        "无法标记已看",
+        "只能标记当前正在审阅的文件；请先切换到该文件。",
+        true,
+        requestId,
+      );
+      return;
+    }
+    // 以 Host 重新读取的磁盘/快照内容为准计算权威指纹，不信任 Webview 断言。
+    const authoritative = await this.computeDiffReviewHash(
+      session,
+      absolutePath,
+    );
+    if (authoritative === undefined) {
+      await this.sendError(
+        "diff",
+        "无法标记已看",
+        "当前文件状态已变化（可能已删除或移出范围），请刷新后重试。",
+        true,
+        requestId,
+      );
+      return;
+    }
+    const claimed = asString(data.contentHash);
+    if (claimed !== undefined && claimed !== authoritative) {
+      await this.sendError(
+        "diff",
+        "标记已过期",
+        "文件内容已变化，刚才的已看标记未生效；请查看最新差异后重新标记。",
+        true,
+        requestId,
+      );
+      // 旧指纹失效：清除后重发快照，使界面回到待审阅。
+      delete state.reviewedHashes[currentRelative];
+      await this.loadModule("diff", session.targetFile, requestId);
+      return;
+    }
+    state.reviewedHashes[currentRelative] = authoritative;
+    await this.loadModule("diff", session.targetFile, requestId);
+  }
+
+  /**
+   * V023-R18：审阅指纹的权威计算（与快照装配同一口径）。
+   * 文本取展示正文（草稿存在时为草稿内容，与所见一致）；二进制/截断取
+   * 磁盘字节指纹；读取失败返回 undefined（调用方按过期处理）。
+   */
+  private async computeDiffReviewHash(
+    session: WorkbenchSession,
+    absolutePath: string,
+  ): Promise<string | undefined> {
+    try {
+      const working = await readFileForDiff(absolutePath);
+      if (working.binary || working.truncated) {
+        return await hashFileContentsOrMissing(absolutePath);
+      }
+      const targetId = buildDiffTargetId(path.resolve(absolutePath));
+      const draft = this.diffEdit?.getDraft(targetId);
+      const content =
+        draft && draft.targetPath === path.resolve(absolutePath)
+          ? draft.content
+          : working.text;
+      return hashReviewContent(content);
+    } catch {
+      return undefined;
+    }
   }
 
   /** 轻量能力校验：普通文件、UTF-8、≤5 MB 且在工作副本内。 */

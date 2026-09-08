@@ -841,6 +841,26 @@
       copyFeedback = "复制失败，请重试；选择未改动，未发起写操作。";
     }
   }
+
+  /**
+   * V023-R18：从明确选择建立只读审阅队列（按当前列表顺序）。
+   * 首项作为 Diff 目标，整组选择作为队列经 open-diff 一次下发；Host 按
+   * 范围求交绑定，不静默加入新文件。单文件打开（行按钮/菜单）不带队列，
+   * 仍为单文件模式。
+   */
+  function reviewSelectedPaths(): string[] {
+    const paths = new Set(pathsFromKeys(selected, keyToPath));
+    return orderSelectedForCopy(sortedFiles, snapshot.files, paths).map(
+      (file) => file.relativePath,
+    );
+  }
+
+  function startReviewQueue(): void {
+    const queue = reviewSelectedPaths();
+    if (queue.length === 0) return;
+    const first = queue[0] as string;
+    onAction("open-diff", { relativePath: first, reviewQueue: queue });
+  }
 </script>
 
 <section class="feature-layout changes-layout" use:focusOnMount tabindex="-1">
@@ -1513,6 +1533,17 @@
       状态筛选区与空状态，本栏只保留次级动作（加入变更集 + 更多），不渲染 primary。
     -->
     <BulkActionBar summary={`已选 ${selected.size}`}>
+      <button
+        class="button button--secondary"
+        disabled={selected.size === 0}
+        title={selected.size === 0
+          ? "先选择至少 1 个文件"
+          : "从当前选择建立只读审阅队列，在差异页连续审阅，无须返回列表；只读，不发起写操作"}
+        onclick={startReviewQueue}
+      >
+        <span class="codicon codicon-checklist" aria-hidden="true"></span>
+        审阅所选（{selected.size}）
+      </button>
       <button
         class="button button--secondary"
         disabled={selected.size === 0}

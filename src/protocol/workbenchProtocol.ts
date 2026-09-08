@@ -25,6 +25,16 @@ export type {
 } from "../operation/operationIntent";
 import type { DisplayPath } from "../scope/pathBrands";
 import type { SelectionKey } from "../selection/selectionCore";
+import type { ReviewQueueItemView, ReviewQueueView } from "../diff/reviewQueue";
+
+export type { ReviewQueueItemView, ReviewQueueView } from "../diff/reviewQueue";
+
+/**
+ * V023-R18：Diff 审阅队列视图别名（只读进度，不携带可写操作身份）。
+ * 队列只描述顺序与已看/未看；标已看不代表提交授权或质量通过。
+ */
+export type DiffReviewQueueView = ReviewQueueView;
+export type DiffReviewQueueItemView = ReviewQueueItemView;
 
 export const WORKBENCH_PROTOCOL_VERSION = 2 as const;
 
@@ -391,6 +401,13 @@ export interface DiffSnapshot {
     revision: number;
     updatedAt: number;
   };
+  /**
+   * V023-R18：连续审阅队列视图（可选，向后兼容）。
+   * 缺省表示单文件模式（无队列）；携带时 Webview 只做只读展示与导航，
+   * 上一文件/下一文件经既有 open-diff 切换（脏草稿走既有三选一守卫），
+   * 标已看经 diff/mark-reviewed（Host 按 scope/内容指纹绑定，不缓存可复用写 token）。
+   */
+  review?: DiffReviewQueueView;
 }
 
 /** diff/save-working 的结构化拒绝原因（协议 §7）。 */
@@ -1651,6 +1668,7 @@ export type WebviewAction =
   | "diff/draft-abandon"
   | "diff/draft-export"
   | "diff/target-switch-decision"
+  | "diff/mark-reviewed"
   | "copy-text"
   | "security/configure-authentication"
   | "security/clear-authentication"
@@ -1805,6 +1823,7 @@ export const webviewActions = [
   "diff/draft-abandon",
   "diff/draft-export",
   "diff/target-switch-decision",
+  "diff/mark-reviewed",
   "copy-text",
   "security/configure-authentication",
   "security/clear-authentication",
@@ -2198,9 +2217,67 @@ export function isDiffCompareView(value: unknown): value is DiffCompareView {
 }
 
 /**
+ * V023-R18：DiffReviewQueueView 类型守卫（Host/Webview/Mock 共用）。
+ * 无 review 的旧快照继续接受（向后兼容，单文件模式）；携带时逐项严检，
+ * 畸形载荷一律拒绝（fail-closed，调用方按无队列处理，不扩大范围）。
+ * 只读语义：此处只校验形状，不校验可写身份（队列本就不含 token）。
+ */
+export function isDiffReviewQueueView(
+  value: unknown,
+): value is DiffReviewQueueView {
+  if (!isRecord(value)) {
+    return false;
+  }
+  if (
+    !Array.isArray(value.queue) ||
+    typeof value.index !== "number" ||
+    !Number.isInteger(value.index) ||
+    typeof value.total !== "number" ||
+    !Number.isInteger(value.total) ||
+    typeof value.reviewedCount !== "number" ||
+    !Number.isInteger(value.reviewedCount) ||
+    typeof value.unreviewedCount !== "number" ||
+    !Number.isInteger(value.unreviewedCount) ||
+    typeof value.scopeHash !== "string" ||
+    typeof value.repositoryUuid !== "string"
+  ) {
+    return false;
+  }
+  const queue = value.queue as unknown[];
+  if (value.total !== queue.length) return false;
+  if (queue.length === 0) return false;
+  if (value.index < -1 || value.index >= queue.length) return false;
+  if (
+    value.reviewedCount < 0 ||
+    value.unreviewedCount < 0 ||
+    value.reviewedCount + value.unreviewedCount !== queue.length
+  ) {
+    return false;
+  }
+  for (const entry of queue) {
+    if (!isRecord(entry)) return false;
+    if (
+      typeof entry.relativePath !== "string" ||
+      entry.relativePath.length === 0 ||
+      typeof entry.contentHash !== "string" ||
+      typeof entry.current !== "boolean" ||
+      typeof entry.reviewed !== "boolean"
+    ) {
+      return false;
+    }
+  }
+  if (value.notice !== undefined && typeof value.notice !== "string") {
+    return false;
+  }
+  return true;
+}
+
+/**
  * V020-R09：DiffSnapshot 类型守卫（Host/Webview/Mock 共用）。
  * 无 compare 的旧快照继续接受（向后兼容，Webview 按保守规则派生）；
  * 携带时必须通过 isDiffCompareView，否则整快照拒绝。
+ * V023-R18：无 review 的旧快照继续接受（单文件模式）；携带时必须通过
+ * isDiffReviewQueueView，否则整快照拒绝。
  */
 export function isDiffSnapshot(value: unknown): value is DiffSnapshot {
   if (!isRecord(value)) {
@@ -2218,6 +2295,9 @@ export function isDiffSnapshot(value: unknown): value is DiffSnapshot {
     return false;
   }
   if (value.compare !== undefined && !isDiffCompareView(value.compare)) {
+    return false;
+  }
+  if (value.review !== undefined && !isDiffReviewQueueView(value.review)) {
     return false;
   }
   return true;
