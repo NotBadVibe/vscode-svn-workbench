@@ -32,7 +32,8 @@ import path from "node:path";
  * - R03（V020-R03）：Changes 表头与数据行共用六列定义、左右边对齐；
  *   ≤720px 宽走简化列（表头隐藏，选择建议/归属隐藏但保留 DOM）。
  * - R27（V022-R27）：720×480 首屏至少 2 个完整文件/修订行——R27/R28/R03 附带修复
- *   已落地（高度链 + 推荐降级 + 窄屏列特异性），下方为正式断言，铬区回退即失败。
+ *   已落地（高度链 + 推荐降级 + 窄屏列特异性），下方为正式断言，铬区回退即失败；
+ *   阻止场景（`?dataset=blocked` 全阻止集）另断言阻止警告可见且列表与主操作可达。
  *
  * 全程确定性：只用 expect 轮询，不用 waitForTimeout；断言平台无关（只比较
  * 同页盒模型与角色，不做操作系统假设）。
@@ -392,6 +393,41 @@ test("V022-R55(R27)：口径A真实视口 720×480 首屏至少 2 个完整文�
       ).length;
     }, smallViewport.height);
   expect(historyComplete, "History 首屏完整修订行数").toBeGreaterThanOrEqual(2);
+});
+
+test("V022-R55(R27)：口径A真实视口 720×480 阻止场景警告可见且列表与主操作可达", async ({
+  page,
+}) => {
+  // V022-R27 阻止场景：`?dataset=blocked` 下发全阻止 Changes 数据集
+  // （8 个外部工作副本 blocked + 4 个已排除项，无可提交项，
+  // 唯一主操作进入 blocked 态“查看阻止原因”）。
+  // 小高度收起逻辑只收共享草稿与长帮助（R27 约定第 3 条：
+  // 范围与真实阻止警告不能为增加行数而隐藏），本用例锁定该边界。
+  await page.setViewportSize(smallViewport);
+  await gotoReady(page, "/?dataset=blocked");
+  await expect(
+    page.getByRole("heading", { name: "工作副本修改" }),
+  ).toBeVisible();
+
+  // 阻止警告可见：blocked 态唯一主操作“查看阻止原因（12）”不被收起逻辑隐藏。
+  const blockedAction = page.getByRole("button", { name: /查看阻止原因/ });
+  await expect(blockedAction).toBeVisible();
+  await blockedAction.click();
+  const reasons = page.getByRole("status", { name: "阻止提交原因" });
+  await expect(reasons).toBeVisible();
+  await expect(reasons.getByText(/当前没有可提交项/)).toBeVisible();
+
+  // 列表仍可滚达：12 行超出小高度列表区，末行经内部滚动可达且可见。
+  const rows = page
+    .getByRole("list", { name: "SVN 变更文件" })
+    .getByRole("listitem");
+  expect(await rows.count()).toBe(12);
+  await rows.last().scrollIntoViewIfNeeded();
+  await expect(rows.last()).toBeVisible();
+
+  // 主操作可达不遮挡（滚动回主操作，中心点命中自身）。
+  await assertReachableUnobscured(page, blockedAction, "阻止场景主操作");
+  await assertNoPageHorizontalOverflow(page);
 });
 
 test("V022-R55(主操作)：口径B等效缩放代理 720×480 核心主操作可达不遮挡", async ({

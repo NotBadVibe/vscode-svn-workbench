@@ -110,7 +110,7 @@
 
 - **原评审映射：** 第 30 项。
 - **优先级 / 证据等级：** P2 / 界面已观察。
-- **实施状态：** 待实施。
+- **实施状态：** 已实施（terminology scopeSourceLabels/draftStorageLabels/conflictDraftSyncedLabel 集中收口，ScopeBar/Changes/Changelists/Conflicts/AdvancedTask 引用；诊断代码进可展开详情；诊断可检索性断言待补）。
 - **看到的现状：** 界面可见扩展主机草稿、Host 内存草稿、入口内部跳转、verification-blocked 等术语。
 - **用户影响：** 用户需要理解实现才能判断是否保存、为什么阻止以及下一步怎么做。
 - **现有证据与预计改动入口：** [terminology.ts](../../../src/webview/i18n/terminology.ts)、[ScopeBar.svelte](../../../src/webview/components/svn/ScopeBar.svelte)、[ConflictStepBar.svelte](../../../src/webview/features/conflicts/ConflictStepBar.svelte)、[ActivityModule.svelte](../../../src/webview/features/activity/ActivityModule.svelte)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
@@ -124,10 +124,10 @@
 
 **验收场景与完成条件：**
 
-- [ ] 核心任务正常/失败/过期状态无需阅读 Host/token/hash 才能行动。
-- [ ] 保存位置描述真实。
+- [x] 核心任务正常/失败/过期状态无需阅读 Host/token/hash 才能行动。
+- [x] 保存位置描述真实。
 - [ ] 诊断仍可找到精确代码且不包含凭据。
-- [ ] 读屏名称与可见文案一致。
+- [x] 读屏名称与可见文案一致。
 
 <a id="v022-r31"></a>
 
@@ -135,7 +135,7 @@
 
 - **原评审映射：** 第 31 项。
 - **优先级 / 证据等级：** P2 / 体验建议。
-- **实施状态：** 待实施。
+- **实施状态：** 已实施（selectionSummaryLabel/finalActionLabel/scopeRootsSummary 集中收口；主操作旁最终候选数，选择区匹配 M/已选 N/隐藏 K；目录/文件分开，远端数量标预估；读屏播报去重待补）。
 - **看到的现状：** 范围数、候选数、结果数、可操作数、推荐数与已选数同时出现，同页可能有 4 与 3 等不同数字但解释分散。
 - **用户影响：** 用户不能迅速确认到底会改动多少文件。
 - **现有证据与预计改动入口：** [ScopeBar.svelte](../../../src/webview/components/svn/ScopeBar.svelte)、[SelectionSummary.svelte](../../../src/webview/components/list/SelectionSummary.svelte)、[CommitModule.svelte](../../../src/webview/features/commit/CommitModule.svelte)、[UpdateModule.svelte](../../../src/webview/features/update/UpdateModule.svelte)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
@@ -149,8 +149,8 @@
 
 **验收场景与完成条件：**
 
-- [ ] 混合状态、多目录、外部工作副本、隐藏选择情况下各数字可核算。
-- [ ] 预览后状态变化数量同步且旧确认失效。
+- [x] 混合状态、多目录、外部工作副本、隐藏选择情况下各数字可核算。
+- [x] 预览后状态变化数量同步且旧确认失效。
 - [ ] 读屏不重复播报无变化数字。
 
 <a id="v022-r32"></a>
@@ -159,7 +159,7 @@
 
 - **原评审映射：** 第 32 项。
 - **优先级 / 证据等级：** P2 / 界面已观察。
-- **实施状态：** 待实施。
+- **实施状态：** 已实施（行内解释收敛进行详情同一语义单元，可聚焦展开；阻止行文字与行样式多通道；完整路径出口保留；滚动保持与 axe/读屏记录待补）。
 - **看到的现状：** 状态、选择建议、路径分别增加独立信息按钮，行内控件密集且已发生 grid 排版副作用。
 - **用户影响：** 降低扫描效率，键盘用户需要大量 Tab 才能离开一行。
 - **现有证据与预计改动入口：** [StatusExplanation.svelte](../../../src/webview/components/svn/StatusExplanation.svelte)、[PathCell.svelte](../../../src/webview/components/list/PathCell.svelte)、[FilePathDetail.svelte](../../../src/webview/components/svn/FilePathDetail.svelte)、[ChangesModule.svelte](../../../src/webview/features/changes/ChangesModule.svelte)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
@@ -173,7 +173,7 @@
 
 **验收场景与完成条件：**
 
-- [ ] 键盘可查看完整路径和阻止原因并回到原触发点。
+- [x] 键盘可查看完整路径和阻止原因并回到原触发点。
 - [ ] 关闭详情不跳滚动位置。
 - [ ] 减少解释按钮后信息仍完整，axe 与手动读屏分别记录。
 
@@ -183,7 +183,7 @@
 
 - **原评审映射：** 第 33 项。
 - **优先级 / 证据等级：** P2 / 生产 Webview 已观察。
-- **实施状态：** 待实施。
+- **实施状态：** 已实施（CommitMessageEditor touched 门控：初始中性提示，失焦或请求预览后显字段错误；修正即时更新；composition 保护；修正后错误消除断言待补）。
 - **看到的现状：** 初始未输入提交说明就展示提交说明不能为空的警告色块。
 - **用户影响：** 用户尚未操作就被呈现为失败，界面显得紧张。
 - **现有证据与预计改动入口：** [CommitMessageEditor.svelte](../../../src/webview/features/commit/CommitMessageEditor.svelte)、[CommitModule.svelte](../../../src/webview/features/commit/CommitModule.svelte)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
@@ -197,10 +197,10 @@
 
 **验收场景与完成条件：**
 
-- [ ] 首次进入空表单无错误色误报。
-- [ ] 请求预览仍严格拒绝空说明。
+- [x] 首次进入空表单无错误色误报。
+- [x] 请求预览仍严格拒绝空说明。
 - [ ] 修正后错误消失且已有草稿不被重置。
-- [ ] composition 期间不触发预览或提前错误播报。
+- [x] composition 期间不触发预览或提前错误播报。
 
 <a id="v022-r34"></a>
 
@@ -208,7 +208,7 @@
 
 - **原评审映射：** 第 34 项。
 - **优先级 / 证据等级：** P2 / 生产 Webview 已观察。
-- **实施状态：** 待实施。
+- **实施状态：** 已实施（commitLocalOnlyLabels：未配置模型显示本地生成/不会外发并隐藏预算术语；外部动作才展示模型/范围/预算/回执；回执取消动作断言待补）。
 - **看到的现状：** ai=disabled 的提交样例仍以外发预览标题说明本地规则，不含实际外发动作。
 - **用户影响：** 用户不确定是否需要配模型才能提交，也可能误认为本地动作会上传。
 - **现有证据与预计改动入口：** [CommitModule.svelte](../../../src/webview/features/commit/CommitModule.svelte)、[ReceiptSummary.svelte](../../../src/webview/components/assistance/ReceiptSummary.svelte)、[SuggestionSourceBadge.svelte](../../../src/webview/components/assistance/SuggestionSourceBadge.svelte)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
@@ -222,10 +222,10 @@
 
 **验收场景与完成条件：**
 
-- [ ] 未配置模型可独立写说明、检查并预览提交。
-- [ ] 本地动作不产生模型请求。
+- [x] 未配置模型可独立写说明、检查并预览提交。
+- [x] 本地动作不产生模型请求。
 - [ ] 启用模型后回执要素完整且可取消。
-- [ ] 失败回退保留草稿和选择。
+- [x] 失败回退保留草稿和选择。
 
 <a id="v022-r35"></a>
 

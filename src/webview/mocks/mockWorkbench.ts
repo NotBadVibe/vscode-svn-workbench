@@ -216,6 +216,32 @@ function mockSelectionKey(relativePath: string): PathIdentityKey {
   return `mock-wc::${relativePath}` as PathIdentityKey;
 }
 
+/**
+ * V022-R27 阻止场景：`?dataset=blocked` 下发全阻止 Changes 数据集（无可提交项）。
+ * 8 个外部工作副本 blocked + 4 个已排除 modified；conflicted 为 0，
+ * 使 Changes 唯一主操作进入 blocked 态（“查看阻止原因”），
+ * 供 v022r55-real-viewport 断言阻止警告/列表/主操作可达。不改其他分支语义。
+ */
+function blockedDatasetFiles() {
+  const externals = Array.from({ length: 8 }, (_, index) => ({
+    relativePath: `vendor/external-lib/src/part-${index}.ts`,
+    selectionKey: mockSelectionKey(`vendor/external-lib/src/part-${index}.ts`),
+    status: "external" as const,
+    selection: "blocked" as const,
+    fileType: "TypeScript",
+    repositoryName: "external-lib",
+    ownership: "external" as const,
+  }));
+  const excluded = Array.from({ length: 4 }, (_, index) => ({
+    relativePath: `src/legacy/old-${index}.ts`,
+    selectionKey: mockSelectionKey(`src/legacy/old-${index}.ts`),
+    status: "modified" as const,
+    selection: "excluded" as const,
+    fileType: "TypeScript",
+  }));
+  return [...externals, ...excluded];
+}
+
 /** UX08-FLOW-01：Changes 与 Commit 共用同一组 7+3 候选。 */
 function sevenDatasetFiles() {
   return Array.from({ length: 10 }, (_, index) => ({
@@ -2621,7 +2647,9 @@ function changesSnapshot(
         )
       : dataset === "seven"
         ? sevenDatasetFiles()
-        : files;
+        : dataset === "blocked"
+          ? blockedDatasetFiles()
+          : files;
   return {
     kind: "changes",
     commitDraft: "feat(workbench): 完善统一 Svelte 工作台",
@@ -2640,6 +2668,13 @@ function changesSnapshot(
               ? {
                   conflicted: snapshotFiles.filter(
                     (item) => item.status === "conflicted",
+                  ).length,
+                }
+              : {}),
+            ...(dataset === "blocked"
+              ? {
+                  external: snapshotFiles.filter(
+                    (item) => item.status === "external",
                   ).length,
                 }
               : {}),
