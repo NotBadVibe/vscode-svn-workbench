@@ -117,7 +117,7 @@ test("V016-F2(1b)：AI 关闭 Conflicts 本地建议可用→编辑→保存（�
 
   // 编辑：接受一侧后草稿同步到 Host 内存（无 Host 写操作语义由 mock 保证）。
   await page.getByRole("button", { name: "采用我的修改" }).first().click();
-  await expect(page.getByText("Host 内存草稿已同步")).toBeVisible();
+  await expect(page.getByText("合并草稿仅本次会话保留")).toBeVisible();
 
   // 保存：到核验前止步（保存成功，不进入解决预览确认）。
   const saveButton = page.getByRole("button", {

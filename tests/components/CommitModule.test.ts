@@ -417,9 +417,11 @@ describe("CommitModule", () => {
       },
     });
 
-    expect(screen.getByText(/来源：模型建议/)).toBeInTheDocument();
-    expect(screen.getByText(/模型 deepseek-v4-flash/)).toBeInTheDocument();
-    expect(screen.getByText(/2026-07-30 18:00/)).toBeInTheDocument();
+    // V022-R31：断言收敛到 AI 建议元信息元素内，避免与意向单时间元素歧义。
+    const aiMeta = screen.getByText(/来源：模型建议/);
+    expect(aiMeta).toBeInTheDocument();
+    expect(aiMeta.closest("small")).toHaveTextContent(/模型 deepseek-v4-flash/);
+    expect(aiMeta.closest("small")).toHaveTextContent(/2026-07-30 18:00/);
   });
 
   it("AI 结果过期时标记已过期且不能直接采用", () => {

@@ -1582,7 +1582,7 @@ export function startMockWorkbench(): void {
       if (saveScenario === "fail") {
         injectHostMessage("operation/error", {
           title: "保存失败",
-          message: "模拟保存失败：磁盘写入失败；草稿已保留在 Host 内存。",
+          message: "模拟保存失败：磁盘写入失败；草稿仍保留在本次会话中。",
           recoverable: true,
         });
         // 保留草稿的快照（编辑器与草稿保留）

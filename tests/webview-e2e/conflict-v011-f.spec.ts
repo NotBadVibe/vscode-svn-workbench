@@ -121,7 +121,7 @@ test.describe("V011-F 冲突 Webview E2E 自动化验收", () => {
         : page.getByRole("button", { name: "采用我的修改" }).first();
     await expect(mineButton).toBeVisible();
     await mineButton.click();
-    await expect(page.getByText("Host 内存草稿已同步")).toBeVisible({
+    await expect(page.getByText("合并草稿仅本次会话保留")).toBeVisible({
       timeout: 15000,
     });
     // 文本校验：若 DOM 可直接查到则校验，否则由草稿捕获覆盖（shadow 场景）
@@ -166,7 +166,7 @@ test.describe("V011-F 冲突 Webview E2E 自动化验收", () => {
         : page.getByRole("button", { name: "采用对方修改" }).first();
     await expect(theirsButton).toBeVisible();
     await theirsButton.click();
-    await expect(page.getByText("Host 内存草稿已同步")).toBeVisible({
+    await expect(page.getByText("合并草稿仅本次会话保留")).toBeVisible({
       timeout: 15000,
     });
     const theirsAfterText = await editorContent
@@ -202,7 +202,7 @@ test.describe("V011-F 冲突 Webview E2E 自动化验收", () => {
         : page.getByRole("button", { name: "保留两者" }).first();
     await expect(bothButton).toBeVisible();
     await bothButton.click();
-    await expect(page.getByText("Host 内存草稿已同步")).toBeVisible({
+    await expect(page.getByText("合并草稿仅本次会话保留")).toBeVisible({
       timeout: 15000,
     });
     // both 校验：宽松，仅当 DOM 文本可查时校验，否则由 draft-update 覆盖
@@ -256,7 +256,7 @@ test.describe("V011-F 冲突 Webview E2E 自动化验收", () => {
         ? theirsScoped2
         : page.getByRole("button", { name: "采用对方修改" }).first();
     await theirsButton.click();
-    await expect(page.getByText("Host 内存草稿已同步")).toBeVisible({
+    await expect(page.getByText("合并草稿仅本次会话保留")).toBeVisible({
       timeout: 15000,
     });
     await page.evaluate(() => {
@@ -294,7 +294,7 @@ test.describe("V011-F 冲突 Webview E2E 自动化验收", () => {
     ).toBeVisible();
     await dialog.getByRole("button", { name: "留在当前文件" }).click();
     await expect(dialog).not.toBeVisible();
-    await expect(page.getByText("Host 内存草稿已同步")).toBeVisible();
+    await expect(page.getByText("合并草稿仅本次会话保留")).toBeVisible();
     await expect(
       page.getByRole("button", { name: "保存工作副本合并结果" }),
     ).toBeVisible();
@@ -463,7 +463,7 @@ test.describe("V011-F 冲突 Webview E2E 自动化验收", () => {
     const violations = await collectViolations(page);
     expect(violations, "严格 CSP 下冲突页不应产生违规").toEqual([]);
     await page.getByRole("button", { name: "采用我的修改" }).first().click();
-    await expect(page.getByText("Host 内存草稿已同步")).toBeVisible({
+    await expect(page.getByText("合并草稿仅本次会话保留")).toBeVisible({
       timeout: 15000,
     });
     expect(await collectViolations(page)).toEqual([]);

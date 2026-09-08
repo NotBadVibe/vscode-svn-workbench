@@ -13,6 +13,7 @@
   import { isContinuityRestoreView } from "@protocol/workbenchProtocol";
   import { formatZhTime } from "../../i18n/formatters";
   import {
+    draftStorageLabels,
     fileStatusLabels,
     selectionDecisionExplanations,
     statusExplanations,
@@ -771,7 +772,7 @@
       <span class="eyebrow">当前范围共享草稿</span>
       <h2 id="shared-commit-draft-title">提交草稿</h2>
       <p>
-        与“智能提交”使用同一份扩展主机草稿；切换模块不会生成第二份提交说明。
+        {draftStorageLabels.sharedCommitDraft}
       </p>
       <button
         class="button button--secondary"

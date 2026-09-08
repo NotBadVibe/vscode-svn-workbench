@@ -182,8 +182,8 @@ describe("ConflictsModule 冲突草稿三选一守卫（v0.0.13）", () => {
     render(ConflictsModule, { snapshot: baseSnapshot, onAction });
     // 保存失败的 feedback 应内联展示（mergeEditor.feedback）
     expect(screen.getByText(/保存失败/)).toBeInTheDocument();
-    // 草稿信息仍展示
-    expect(screen.getByText(/Host 内存草稿已同步/)).toBeInTheDocument();
+    // 草稿信息仍展示（用户语言，不含内部实现术语）
+    expect(screen.getByText(/合并草稿仅本次会话保留/)).toBeInTheDocument();
     // 复制/导出按钮可用（hasDraft）
     expect(screen.getByRole("button", { name: "复制草稿" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "导出草稿" })).toBeEnabled();

@@ -1,5 +1,6 @@
 import type {
   WorkbenchFileStatus,
+  WorkbenchScopeView,
   WorkbenchTaskId,
 } from "@protocol/workbenchProtocol";
 import type {
@@ -465,6 +466,90 @@ export function scopeRangeCountLabel(count: number): string {
 export function isScopeFinalCandidateTask(taskId: WorkbenchTaskId): boolean {
   return taskId === "commit/compose" || taskId === "update/preview";
 }
+
+/**
+ * V022-R30：入口来源用户语言（集中收口，页面不各自造词）。
+ * `internal` 指工作台内模块间打开，不暴露“内部跳转”实现词。
+ */
+export const scopeSourceLabels: Record<WorkbenchScopeView["source"], string> = {
+  explorer: "资源管理器右键",
+  editor: "编辑器",
+  scm: "源代码管理",
+  commandPalette: "命令面板",
+  internal: "工作台内打开",
+};
+
+/**
+ * V022-R30：草稿保存位置用户语言（集中收口）。
+ * 普通视图只说“与提交页共享、仅本次会话保留、尚未写入文件、校验未通过”；
+ * 协议名与诊断代码只进可展开的诊断详情，不进主文案。
+ */
+export const draftStorageLabels = {
+  sharedCommitDraft:
+    "与提交页共享同一份草稿，仅本次会话保留，尚未写入文件。切换模块不会生成第二份提交说明。",
+  changelistCheckHint: "应用前会重新检查范围与最新工作副本状态。",
+  advancedGuardHint: "本地有未提交修改时，将阻止执行，请先处理本地修改后再试。",
+  checkpointFailedDetail: "检查点保存失败，草稿仍保留在本次会话中。",
+  validationFailed: "校验未通过",
+} as const;
+
+/** V022-R30：冲突合并草稿已同步（用户语言，诊断代码另进详情）。 */
+export function conflictDraftSyncedLabel(
+  revision: number | string,
+  dirty: boolean,
+): string {
+  return `合并草稿仅本次会话保留、尚未写入文件（修订 ${revision}，${dirty ? "有未保存变更" : "已保存"}），关闭任务前可复制或导出。`;
+}
+
+export const conflictDraftWorkingLabels = {
+  unsaved: "有尚未保存的合并修改（草稿仅本次会话保留）",
+  clean: "工作副本与已保存内容一致",
+} as const;
+
+export const conflictSwitchLabels = {
+  descriptionIntro:
+    "的合并草稿仅本次会话保留（尚未写入工作副本，未标记解决）。请选择：",
+  saveOptionDetail:
+    "将当前草稿保存在本次会话中（不写入工作副本），切换后可在返回时继续编辑，或复制/导出。",
+  discardOption: "放弃本次会话草稿并切换。",
+} as const;
+
+/**
+ * V022-R31：数量口径统一（集中收口，页面不各自拼字符串）。
+ * - 主操作旁突出“最终将操作 N 个文件”（最终候选集合数量）；
+ * - 选择区显示“匹配 M · 已选 N · 隐藏 K”；
+ * - 目录数仅为操作起点，不计为文件数。
+ */
+export function selectionSummaryLabel(
+  selected: number,
+  matched: number,
+  hidden: number,
+): string {
+  return `匹配 ${matched} · 已选 ${selected} · 隐藏 ${hidden}`;
+}
+
+export function finalActionLabel(count: number): string {
+  return `最终将操作 ${count} 个文件`;
+}
+
+export function scopeRootsSummary(
+  dirs: number,
+  files: number,
+  singlePath?: string,
+): string {
+  if (singlePath) return singlePath;
+  return `${dirs + files} 个位置（${dirs} 个目录、${files} 个文件）`;
+}
+
+export const scopeRangeExplanation =
+  "目录数仅为操作起点，不计为文件数；外部工作副本、阻止项与排除项不计入最终候选。";
+
+/** V022-R31：动态远端数量必须标预估或未知，不虚构精确值。 */
+export function remoteEstimateLabel(count: number): string {
+  return `远端预估 ${count} 项`;
+}
+
+export const remoteUnknownLabel = "远端数量未知";
 
 export function historyLoadedStatus(count: number, hasMore?: boolean): string {
   return `已加载最近 ${count} 条修订${hasMore ? "（可能还有更早修订）" : "（已是全部历史）"}`;

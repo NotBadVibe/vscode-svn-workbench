@@ -228,7 +228,7 @@ test("V017-G(PATH-1)：Changes→Diff→返回→Commit→意向单确认前键�
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
   await expect(dialog.getByText("提交 2 个文件").first()).toBeVisible();
-  await expect(dialog.getByText("影响 2 个路径")).toBeVisible();
+  await expect(dialog.getByText("最终将操作 2 个文件")).toBeVisible();
   await expect(dialog.locator(".button--primary")).toHaveCount(1);
   const confirmBtn = dialog.getByRole("button", { name: /确认提交/ });
   await expect(confirmBtn).toBeVisible();

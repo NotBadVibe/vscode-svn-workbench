@@ -25,7 +25,7 @@ test("conflict draft: edit then save failure preserves draft and allows copy/exp
       : page.getByRole("button", { name: "采用对方修改" }).first();
   await targetBtn.click();
   // 等待 mock 的 draft-update 回环完成（草稿同步通知出现）
-  await expect(page.getByText("Host 内存草稿已同步")).toBeVisible({
+  await expect(page.getByText("合并草稿仅本次会话保留")).toBeVisible({
     timeout: 15_000,
   });
   // 点击保存（mock 会根据 ?conflictSave=fail 返回失败并保留草稿）
@@ -34,7 +34,7 @@ test("conflict draft: edit then save failure preserves draft and allows copy/exp
   await expect(
     page.getByText(/保存失败：模拟磁盘写入失败；草稿已保留/),
   ).toBeVisible();
-  await expect(page.getByText("Host 内存草稿已同步")).toBeVisible();
+  await expect(page.getByText("合并草稿仅本次会话保留")).toBeVisible();
   await expect(page.getByRole("button", { name: "复制草稿" })).toBeEnabled();
   await expect(page.getByRole("button", { name: "导出草稿" })).toBeEnabled();
   await page.getByRole("button", { name: "复制草稿" }).click();
@@ -54,7 +54,7 @@ test("conflict draft: edit then save failure preserves draft and allows copy/exp
       ? retryBtn
       : page.getByRole("button", { name: "采用对方修改" }).first();
   await retryTarget.click();
-  await expect(page.getByText("Host 内存草稿已同步")).toBeVisible({
+  await expect(page.getByText("合并草稿仅本次会话保留")).toBeVisible({
     timeout: 15_000,
   });
   await page.getByRole("button", { name: "保存工作副本合并结果" }).click();
@@ -80,7 +80,7 @@ test("conflict draft: switch file with dirty draft shows three-way dialog and 30
       : page.getByRole("button", { name: "采用对方修改" }).first();
   await switchTarget.click();
   // 等待 draft-checkpointed 通知（mock 会注入 draft）
-  await expect(page.getByText("Host 内存草稿已同步")).toBeVisible({
+  await expect(page.getByText("合并草稿仅本次会话保留")).toBeVisible({
     timeout: 15_000,
   });
   // 切换到另一个冲突：mock 检测到当前文件草稿脏，按 Host 行为下发三选一确认

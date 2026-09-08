@@ -51,6 +51,7 @@
   } from "../../components/assistance/assistanceTypes";
   import {
     changelistAssistanceLabels,
+    draftStorageLabels,
     fileStatusLabels,
     sourceLabels,
     taskStateCopy,
@@ -578,7 +579,7 @@
       <span class="eyebrow">SVN 变更集</span>
       <h1>变更集管理</h1>
       <p>
-        建议分组按目录和文件类型生成，不表示语义或依赖关系分析。模型可用时来源为“模型建议”，否则为本地检查；应用前仍由扩展主机校验范围与最新工作副本状态。
+        建议分组按目录和文件类型生成，不表示语义或依赖关系分析。模型可用时来源为“模型建议”，否则为本地检查；{draftStorageLabels.changelistCheckHint}
       </p>
     </div>
     <!-- v0.1.6 V016-D：页头只保留次级「自动整理」（去 sparkle，不弹回执预告）；语义拆分收进下方 AssistancePanel。 -->

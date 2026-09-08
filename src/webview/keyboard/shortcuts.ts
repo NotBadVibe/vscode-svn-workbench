@@ -259,7 +259,7 @@ const CONFLICT_SHORTCUTS = [
     display: "Ctrl/⌘+S",
     title: "保存检查点（Ctrl/⌘+S，不写入工作副本）",
     keys: ["Ctrl+S", "Cmd+S"],
-    note: "仅保存 Host 检查点，不写入工作副本（与 Diff 语义不同）",
+    note: "仅保存在本次会话中，不写入工作副本（与 Diff 语义不同）",
     imeGuarded: true,
   }),
   define({

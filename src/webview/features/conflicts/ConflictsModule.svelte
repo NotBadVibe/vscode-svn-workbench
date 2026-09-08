@@ -46,6 +46,10 @@
     countWhitespaceOnlyConflictBlocks,
   } from "../diff/diffOverviewModel";
   import {
+    conflictDraftSyncedLabel,
+    conflictDraftWorkingLabels,
+    conflictSwitchLabels,
+    draftStorageLabels,
     openInVscodeEditorLabel,
     whitespaceLabels,
   } from "../../i18n/terminology";
@@ -2835,11 +2839,18 @@
               role="status"
             >
               <span class="codicon codicon-save" aria-hidden="true"></span><span
-                >Host 内存草稿已同步（修订 {snapshot.selected.draft
-                  .revision}，{snapshot.selected.draft.dirty
-                  ? "有未保存变更"
-                  : "干净"}），关闭任务前可复制/导出逃生。</span
+                >{conflictDraftSyncedLabel(
+                  snapshot.selected.draft.revision,
+                  snapshot.selected.draft.dirty,
+                )}</span
               >
+              <details class="conflict-diagnostics">
+                <summary>诊断信息</summary>
+                <code
+                  >conflict/draft-update · 修订 {snapshot.selected.draft
+                    .revision}</code
+                >
+              </details>
             </div>{/if}
           {#if conflictDraftFeedback}<div
               class="conflict-inline-feedback"
@@ -2867,7 +2878,7 @@
                 class="status-badge status-badge--error">保存失败</span
               ><small
                 >{checkpointStatusDetail ||
-                  "检查点保存失败，草稿仍保留在内存"}</small
+                  draftStorageLabels.checkpointFailedDetail}</small
               >{/if}
             {#if snapshot.selected?.mergeEditor.feedback?.includes("容量上限")}<div
                 class="notice notice--warning"
@@ -2903,8 +2914,8 @@
           <div class="merge-save-bar">
             <span
               >{workingDirty
-                ? "有尚未保存的合并修改（Host 草稿已同步）"
-                : "工作副本与已保存内容一致"}</span
+                ? conflictDraftWorkingLabels.unsaved
+                : conflictDraftWorkingLabels.clean}</span
             ><button
               bind:this={saveButtonEl}
               class={snapshot.resolvePreview
@@ -3275,21 +3286,23 @@
       <form method="dialog" class="dialog-card">
         <h3>有未保存的合并草稿</h3>
         <p>
-          文件 <strong>{conflictSwitchRequest.currentRelativePath}</strong> 的合并草稿仅保存在
-          Host 内存（未写入工作副本，未标记解决）。请选择：
+          文件 <strong>{conflictSwitchRequest.currentRelativePath}</strong>
+          {conflictSwitchLabels.descriptionIntro}
         </p>
         <p class="dialog-timer-notice">
           <span class="codicon codicon-clock" aria-hidden="true"></span> 30 秒未选择将自动保存检查点并继续（草稿不丢）
         </p>
         <ul class="dialog-options">
           <li>
-            <strong>保存检查点并继续</strong>：将当前草稿保存为 Host
-            检查点（不写盘），切换到
+            <strong>保存检查点并继续</strong
+            >：{conflictSwitchLabels.saveOptionDetail}切换到
             <code>{conflictSwitchRequest.nextRelativePath}</code
             >，可在返回后继续编辑或复制/导出逃生。
           </li>
           <li><strong>留在当前文件</strong>：取消切换，保留编辑器与草稿。</li>
-          <li><strong>放弃草稿</strong>：丢弃 Host 草稿并切换。</li>
+          <li>
+            <strong>放弃草稿</strong>：{conflictSwitchLabels.discardOption}
+          </li>
         </ul>
         <div class="toolbar-actions" role="group" aria-label="草稿处理选项">
           <button

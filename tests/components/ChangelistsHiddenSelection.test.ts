@@ -60,23 +60,17 @@ describe("V020-R04 变更集隐藏选择", () => {
     await fireEvent.click(
       screen.getByRole("checkbox", { name: "选择 src/b.ts" }),
     );
-    expect(
-      screen.getByText("已选 2 · 当前筛选可操作 2 · 隐藏 0"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("匹配 2 · 已选 2 · 隐藏 0")).toBeInTheDocument();
 
     const input = screen.getByRole("textbox", { name: "筛选变更集文件" });
     await fireEvent.input(input, { target: { value: "src/a.ts" } });
 
     // 匹配集合只剩 A：B 成为隐藏选择，但仍保留在已选中。
-    expect(
-      screen.getByText("已选 2 · 当前筛选可操作 1 · 隐藏 1"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("匹配 1 · 已选 2 · 隐藏 1")).toBeInTheDocument();
     expect(screen.getByText("1 个结果")).toBeInTheDocument();
 
     await fireEvent.click(screen.getByRole("button", { name: "清除隐藏选择" }));
-    expect(
-      screen.getByText("已选 1 · 当前筛选可操作 1 · 隐藏 0"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("匹配 1 · 已选 1 · 隐藏 0")).toBeInTheDocument();
 
     // 动作计数与预览路径使用同一合法选择：仅 A 进入应用栏。
     await fireEvent.click(
@@ -111,17 +105,13 @@ describe("V020-R04 变更集隐藏选择", () => {
     );
     const input = screen.getByRole("textbox", { name: "筛选变更集文件" });
     await fireEvent.input(input, { target: { value: "src/" } });
-    expect(
-      screen.getByText("已选 1 · 当前筛选可操作 2 · 隐藏 0"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("匹配 2 · 已选 1 · 隐藏 0")).toBeInTheDocument();
     expect(screen.getByText("2 个结果")).toBeInTheDocument();
 
     // 折叠分组：渲染行收起，但匹配集合不变，隐藏仍为 0，结果数不变。
     await fireEvent.click(screen.getByRole("button", { name: "ui" }));
     expect(screen.queryByText("a.ts")).toBeNull();
-    expect(
-      screen.getByText("已选 1 · 当前筛选可操作 2 · 隐藏 0"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("匹配 2 · 已选 1 · 隐藏 0")).toBeInTheDocument();
     expect(screen.getByText("2 个结果")).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "选择当前筛选（2）" }),
@@ -147,9 +137,7 @@ describe("V020-R04 变更集隐藏选择", () => {
       }),
       onAction,
     });
-    expect(
-      screen.getByText("已选 1 · 当前筛选可操作 1 · 隐藏 0"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("匹配 1 · 已选 1 · 隐藏 0")).toBeInTheDocument();
     expect(screen.getByText(/刷新后移除 1 个失效选择/)).toBeInTheDocument();
   });
 });

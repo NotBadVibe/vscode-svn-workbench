@@ -4,6 +4,7 @@
     WebviewAction,
     WorkbenchTaskId,
   } from "@protocol/workbenchProtocol";
+  import { draftStorageLabels } from "../../../i18n/terminology";
 
   type AdvancedOperation = "branch" | "tag" | "switch" | "relocate" | "merge";
 
@@ -85,7 +86,7 @@
         ? "使用仓库端复制，不会夹带本地未提交修改。"
         : operation === "merge"
           ? "只写入工作副本，不自动提交；冲突保持待处理。"
-          : "本地有未提交修改时，扩展主机会阻止执行。"}
+          : draftStorageLabels.advancedGuardHint}
     </div>
     <button
       class="button button--primary advanced-operation-form__wide"

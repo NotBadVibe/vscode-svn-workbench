@@ -21,7 +21,7 @@ test("V015-C1：历史恢复走意向单全路径（预览→确认→执行反�
 
   // 第 2 步：九要素渲染（动作/数量/范围/修订/清单/命令/可恢复性，无阻止项）。
   await expect(dialog.getByText("历史恢复 1 个文件").first()).toBeVisible();
-  await expect(dialog.getByText("影响 1 个路径")).toBeVisible();
+  await expect(dialog.getByText("最终将操作 1 个文件")).toBeVisible();
   await expect(dialog.getByText("范围：")).toBeVisible();
   await expect(dialog.getByText("src/extension.ts").first()).toBeVisible();
   await expect(dialog.getByText("修订版本：")).toBeVisible();

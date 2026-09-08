@@ -383,6 +383,10 @@
         {conflictStepLabels.nextAction}：{completionState.primaryAction}
       </div>
     {/if}
+    <details class="conflict-step-bar__diagnostics">
+      <summary>诊断信息</summary>
+      <code>{completionState.phase}</code>
+    </details>
   </div>
 
   <!-- 适度播报：仅 phase 变化时更新，不每次输入重复 -->

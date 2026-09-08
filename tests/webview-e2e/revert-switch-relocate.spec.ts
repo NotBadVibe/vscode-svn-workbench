@@ -70,7 +70,7 @@ test("V015-F1：Revert 确认路径（预览→意向单→唯一主操作与数
   const dialog = page.getByRole("dialog", { name: "还原本地修改 2 个文件" });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByText("还原本地修改 2 个文件").first()).toBeVisible();
-  await expect(dialog.getByText("影响 2 个路径")).toBeVisible();
+  await expect(dialog.getByText("最终将操作 2 个文件")).toBeVisible();
   await expect(dialog.getByText("范围：")).toBeVisible();
   await expect(dialog.getByText("可恢复性：")).toBeVisible();
   await expect(dialog.getByText("未提交内容无法从 SVN 恢复。")).toBeVisible();
@@ -140,7 +140,7 @@ test("V015-F1：Switch 确认路径（预览→意向单九要素行→唯一主
   const dialog = page.getByRole("dialog", { name: "切换工作副本" });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByText("切换工作副本").first()).toBeVisible();
-  await expect(dialog.getByText("影响 2 个路径")).toBeVisible();
+  await expect(dialog.getByText("最终将操作 2 个文件")).toBeVisible();
   await expect(dialog.getByText("范围：")).toBeVisible();
   await expect(dialog.getByText("vscode-svn")).toBeVisible();
   await expect(dialog.getByText("修订版本：")).toBeVisible();

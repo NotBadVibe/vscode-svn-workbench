@@ -147,7 +147,7 @@ test("V014-F1：日常主路径 Changes→Diff→返回→Commit→意向单无�
   await expect(dialog).toBeVisible();
   // 意向单标题与数量来自 preview.selectedPaths（mock 为 2 个）。
   await expect(dialog.getByText("提交 2 个文件").first()).toBeVisible();
-  await expect(dialog.getByText("影响 2 个路径")).toBeVisible();
+  await expect(dialog.getByText("最终将操作 2 个文件")).toBeVisible();
   // 意向单内唯一 primary（确认），取消为次级。
   await expect(dialog.locator(".button--primary")).toHaveCount(1);
   const confirmBtn = dialog.getByRole("button", { name: /确认提交/ });

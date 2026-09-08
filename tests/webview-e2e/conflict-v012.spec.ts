@@ -193,7 +193,7 @@ test.describe("V012 冲突连续编辑与可编辑结果区矩阵", () => {
     // 1. 取舍动作：采用我的修改
     await clearCapturedActions(page);
     await page.getByTestId("action-take-mine").click();
-    await expect(page.getByText("Host 内存草稿已同步")).toBeVisible({
+    await expect(page.getByText("合并草稿仅本次会话保留")).toBeVisible({
       timeout: 15_000,
     });
     await expect(announcement).toContainText("已采用我的修改");
@@ -214,7 +214,7 @@ test.describe("V012 冲突连续编辑与可编辑结果区矩阵", () => {
       await page.keyboard.type(" 手工追加-XYZ");
       await page.waitForTimeout(300);
     }
-    await expect(page.getByText("Host 内存草稿已同步")).toBeVisible({
+    await expect(page.getByText("合并草稿仅本次会话保留")).toBeVisible({
       timeout: 15_000,
     });
     await page.waitForTimeout(600);
@@ -228,7 +228,7 @@ test.describe("V012 冲突连续编辑与可编辑结果区矩阵", () => {
       actions = await getCapturedActions(page);
       void getDraftContent(actions);
     }
-    await expect(page.getByText("Host 内存草稿已同步").first()).toBeVisible({
+    await expect(page.getByText("合并草稿仅本次会话保留").first()).toBeVisible({
       timeout: 15_000,
     });
 
@@ -264,7 +264,7 @@ test.describe("V012 冲突连续编辑与可编辑结果区矩阵", () => {
     });
     // 等待 Host 回执
     await expect(
-      page.getByText(/检查点已保存|Host 内存草稿已同步/).first(),
+      page.getByText(/检查点已保存|合并草稿仅本次会话保留/).first(),
     ).toBeVisible({ timeout: 15_000 });
     // 保存检查点不应触发 save-working / resolve
     actions = await getCapturedActions(page);
@@ -327,7 +327,7 @@ test.describe("V012 冲突连续编辑与可编辑结果区矩阵", () => {
       { timeout: 10_000 },
     );
     await expect(page.getByTestId("conflict-result-editor-host")).toBeVisible();
-    await expect(page.getByText("Host 内存草稿已同步")).toBeVisible({
+    await expect(page.getByText("合并草稿仅本次会话保留")).toBeVisible({
       timeout: 15_000,
     });
     await expect(checkpointStatus).toContainText(/已保存|未保存/, {
@@ -369,7 +369,7 @@ test.describe("V012 冲突连续编辑与可编辑结果区矩阵", () => {
     await expect(page.getByTestId("merge-action-toolbar")).toBeVisible();
     await clearCapturedActions(page);
     await page.getByTestId("action-take-both-mine-first").click();
-    await expect(page.getByText("Host 内存草稿已同步")).toBeVisible({
+    await expect(page.getByText("合并草稿仅本次会话保留")).toBeVisible({
       timeout: 15_000,
     });
     await expect(page.getByTestId("merge-action-announcement")).toContainText(
@@ -389,7 +389,7 @@ test.describe("V012 冲突连续编辑与可编辑结果区矩阵", () => {
     await expect(page.getByTestId("merge-action-toolbar")).toBeVisible();
     await clearCapturedActions(page);
     await page.getByTestId("action-take-both-theirs-first").click();
-    await expect(page.getByText("Host 内存草稿已同步")).toBeVisible({
+    await expect(page.getByText("合并草稿仅本次会话保留")).toBeVisible({
       timeout: 15_000,
     });
     await expect(page.getByTestId("merge-action-announcement")).toContainText(
@@ -431,7 +431,7 @@ test.describe("V012 冲突连续编辑与可编辑结果区矩阵", () => {
       );
     });
     await page.getByTestId("action-take-mine").click();
-    await expect(page.getByText("Host 内存草稿已同步")).toBeVisible({
+    await expect(page.getByText("合并草稿仅本次会话保留")).toBeVisible({
       timeout: 15_000,
     });
     const violations = await collectViolations(page);
@@ -574,7 +574,7 @@ test.describe("V012 冲突连续编辑与可编辑结果区矩阵", () => {
       void getDraftContent(pre);
     }
     // 确保手工修改已产生草稿（至少有 draft-update）
-    await expect(page.getByText("Host 内存草稿已同步")).toBeVisible({
+    await expect(page.getByText("合并草稿仅本次会话保留")).toBeVisible({
       timeout: 15_000,
     });
     await page.waitForTimeout(400);
@@ -602,7 +602,7 @@ test.describe("V012 冲突连续编辑与可编辑结果区矩阵", () => {
 
     // 恢复块后应可再次采用（验证恢复路径）
     await page.getByTestId("action-restore-original").click();
-    await expect(page.getByText("Host 内存草稿已同步")).toBeVisible({
+    await expect(page.getByText("合并草稿仅本次会话保留")).toBeVisible({
       timeout: 15_000,
     });
     await expect(announcement).toContainText("已恢复", { timeout: 10_000 });
@@ -610,7 +610,7 @@ test.describe("V012 冲突连续编辑与可编辑结果区矩阵", () => {
     await page.waitForTimeout(600);
     await clearCapturedActions(page);
     await page.getByTestId("action-take-mine").click();
-    await expect(page.getByText("Host 内存草稿已同步")).toBeVisible({
+    await expect(page.getByText("合并草稿仅本次会话保留")).toBeVisible({
       timeout: 15_000,
     });
     await expect(announcement).toContainText("已采用我的修改", {
@@ -686,7 +686,7 @@ test.describe("V012 冲突连续编辑与可编辑结果区矩阵", () => {
       await clearCapturedActions(page);
       const t0 = await page.evaluate(() => performance.now());
       await page.getByTestId("action-take-mine").click();
-      await expect(page.getByText("Host 内存草稿已同步")).toBeVisible({
+      await expect(page.getByText("合并草稿仅本次会话保留")).toBeVisible({
         timeout: 60_000,
       });
       const t1 = await page.evaluate(() => performance.now());
