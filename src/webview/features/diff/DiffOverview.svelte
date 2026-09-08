@@ -45,7 +45,15 @@
   const gate = $derived(
     decideDiffOverviewGate(blocks.length, V018D_OVERVIEW_BLOCK_THRESHOLD),
   );
-  let userExpanded: boolean | undefined = $state(undefined);
+  /*
+   * V022-R35：窄屏（<760px）默认折叠定位器，不占代码宽度；用户可显式展开。
+   * 块规模门控（gate）不变，仍按阈值默认折叠。
+   */
+  let userExpanded: boolean | undefined = $state(
+    typeof window !== "undefined" && window.innerWidth < 760
+      ? false
+      : undefined,
+  );
   let prevGated: boolean | undefined = $state(undefined);
   const expanded = $derived(userExpanded ?? gate.defaultExpanded);
   const gateHint = $derived(

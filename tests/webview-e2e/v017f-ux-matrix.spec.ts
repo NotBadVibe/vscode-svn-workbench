@@ -357,13 +357,15 @@ test("V017-F(ZOOM-01)：200% 等价 Changes→Diff→Commit 到确认前无永�
     .getByRole("button", { name: "查看 src/extension.ts 差异" })
     .click();
   await expect(page.getByText("BASE ↔ 工作副本").first()).toBeVisible();
+  // V022-R35：返回入口收进更多菜单。
+  await page.getByRole("button", { name: "更多操作" }).click();
   await assertInsideContent(
     page,
-    page.getByRole("button", { name: "返回本地修改" }),
+    page.getByRole("menuitem", { name: "返回本地修改" }),
     "200% Diff 返回入口",
   );
   await assertNoPageHorizontalOverflow(page);
-  await page.getByRole("button", { name: "返回本地修改" }).click();
+  await page.getByRole("menuitem", { name: "返回本地修改" }).click();
   await expect(
     page.getByRole("heading", { name: "工作副本修改" }),
   ).toBeVisible();

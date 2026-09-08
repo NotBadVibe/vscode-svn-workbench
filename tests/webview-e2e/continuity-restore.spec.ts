@@ -41,7 +41,9 @@ test("V014-C2：Changes→Diff→返回恢复选择/活动行/视图/草稿/播�
     .getByRole("button", { name: "查看 src/extension.ts 差异" })
     .click();
   await expect(page.getByText("BASE ↔ 工作副本 · typescript")).toBeVisible();
-  const backButton = page.getByRole("button", { name: "返回本地修改" });
+  // V022-R35：返回入口收进更多菜单。
+  await page.getByRole("button", { name: "更多操作" }).click();
+  const backButton = page.getByRole("menuitem", { name: "返回本地修改" });
   await expect(backButton).toBeVisible();
   await expect(backButton).not.toHaveClass(/button--primary/);
 

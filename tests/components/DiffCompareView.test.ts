@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/svelte";
+import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { DiffSnapshot } from "../../src/protocol/workbenchProtocol";
 
@@ -173,18 +173,25 @@ beforeEach(() => {
 });
 
 describe("V020-R09 三类比较标题与动作对照", () => {
-  it("本地比较显示 BASE 基线并提供全部本地动作", () => {
+  it("本地比较显示 BASE 基线并在更多菜单提供全部本地动作", async () => {
     render(DiffModule, { snapshot: workingSnapshot, onAction: vi.fn() });
 
     expect(screen.getByText("src/extension.ts")).toBeVisible();
     expect(screen.getByText("BASE ↔ 工作副本 · typescript")).toBeVisible();
+    // V022-R35：低频出口收进更多菜单，常驻区不再平铺。
+    expect(screen.queryByRole("menuitem", { name: "提交此文件" })).toBeNull();
+    await fireEvent.click(screen.getByRole("button", { name: "更多操作" }));
     expect(
-      screen.getByRole("button", { name: "在编辑器中对比" }),
+      screen.getByRole("menuitem", { name: "在编辑器中对比" }),
     ).toBeVisible();
     expect(
-      screen.getByRole("button", { name: "在编辑器中打开" }),
+      screen.getByRole("menuitem", { name: "在编辑器中打开" }),
     ).toBeVisible();
-    expect(screen.getByRole("button", { name: "提交此文件" })).toBeVisible();
+    expect(screen.getByRole("menuitem", { name: "提交此文件" })).toBeVisible();
+    expect(
+      screen.getByRole("menuitem", { name: /返回本地修改/ }),
+    ).toBeVisible();
+    await fireEvent.keyDown(window, { key: "Escape" });
     expect(
       screen.getByRole("button", { name: "复制路径 src/extension.ts" }),
     ).toBeVisible();
@@ -223,7 +230,7 @@ describe("V020-R09 三类比较标题与动作对照", () => {
     ).toBeVisible();
   });
 
-  it("范围 Patch 不渲染任何路径操作按钮", () => {
+  it("范围 Patch 更多菜单只保留返回，不渲染任何路径操作", async () => {
     render(DiffModule, {
       snapshot: revisionPatchSnapshot,
       onAction: vi.fn(),
@@ -238,8 +245,18 @@ describe("V020-R09 三类比较标题与动作对照", () => {
     expect(screen.queryByRole("button", { name: /复制路径/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /路径详情/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /仓库浏览器/ })).toBeNull();
-    // 返回入口保留。
-    expect(screen.getByRole("button", { name: /返回本地修改/ })).toBeVisible();
+    // 返回入口保留在更多菜单内；本地文件动作不进菜单。
+    await fireEvent.click(screen.getByRole("button", { name: "更多操作" }));
+    expect(screen.queryByRole("menuitem", { name: "提交此文件" })).toBeNull();
+    expect(
+      screen.queryByRole("menuitem", { name: "在编辑器中打开" }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("menuitem", { name: "在编辑器中对比" }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("menuitem", { name: /返回本地修改/ }),
+    ).toBeVisible();
   });
 
   it("空修订比较显示空态且不产生路径操作", () => {

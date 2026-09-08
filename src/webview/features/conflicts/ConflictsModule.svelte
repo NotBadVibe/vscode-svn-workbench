@@ -49,6 +49,7 @@
     conflictDraftSyncedLabel,
     conflictDraftWorkingLabels,
     conflictSwitchLabels,
+    conflictVerifyLabels,
     draftStorageLabels,
     openInVscodeEditorLabel,
     whitespaceLabels,
@@ -1590,6 +1591,16 @@
     diffProgress = { ...diffProgress, current: next };
   }
 
+  /**
+   * V022-R37：marker 残留的就近修复入口——定位到首个冲突块（只改导航，
+   * 不触碰草稿/范围/快照）；完整三段解释只保留 recoveryItems 中的权威摘要。
+   */
+  function focusFirstConflictBlock(): void {
+    if (!diffProgress.total) return;
+    diffView?.focusConflict(0);
+    diffProgress = { ...diffProgress, current: 1 };
+  }
+
   // V012-E：快捷键全局守卫（中文 IME 期间不触发，单一来源）
   function handleModuleKeydown(e: KeyboardEvent): void {
     if (
@@ -2245,6 +2256,15 @@
             <small>{item.recovery}</small>
           </div>
           <div class="toolbar-actions">
+            {#if item.id === "markerRemaining"}
+              <!-- V022-R37：编辑处就近修复入口（只改导航，不触碰草稿/范围）。 -->
+              <button
+                class="button button--secondary"
+                data-testid="{item.testId}-locate"
+                onclick={focusFirstConflictBlock}
+                >{conflictVerifyLabels.locateFirstBlock}</button
+              >
+            {/if}
             {#if item.actions.includes("retry")}
               <button
                 class="button button--secondary"
@@ -2302,27 +2322,14 @@
           </div>
         </div>
       {/each}
-      {#if !isNonTextBranch && recoveryItems.some((i) => i.id === "markerRemaining")}
-        <div
-          class="notice notice--warning"
-          role="alert"
-          data-testid="recovery-marker-remaining"
-        >
-          <span class="codicon codicon-warning" aria-hidden="true"></span>
-          <div>
-            <strong>{RECOVERY_CATALOG.markerRemaining.what}</strong>
-            <p>{RECOVERY_CATALOG.markerRemaining.cause}</p>
-            <small>{RECOVERY_CATALOG.markerRemaining.recovery}</small>
-          </div>
-          <div class="toolbar-actions">
-            <span
-              class="status-badge status-badge--blocked"
-              aria-label="核验未通过">核验未通过</span
-            >
-            <small>继续编辑</small>
-          </div>
-        </div>
-      {/if}
+      <!--
+        V022-R37 去重：marker 残留的完整三段解释只保留上方 recoveryItems
+        的权威摘要（deriveRecoveryItems 按 markerRemaining 单 id 去重，
+        写盘失败 writeFailed 与核验失败分属不同 id 不得合并）；
+        阶段条（ConflictStepBar）仅表达进度与简短阻止原因，不复述整段原因。
+        此处不再渲染第二份完整解释，避免同一核验错误多区域重复。
+        恢复成功（marker 消除/保存成功）后派生项自动清除，不残留旧状态。
+      -->
       <div class="conflict-tabs" role="tablist" aria-label="冲突版本">
         {#each ["working", "mine", "theirs", "base"] as pane (pane)}
           <button

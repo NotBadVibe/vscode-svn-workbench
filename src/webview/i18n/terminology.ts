@@ -368,6 +368,72 @@ export const diffFallbackNotices = {
 } as const;
 
 /**
+ * V022-R35：Diff 工具栏分层文案（集中收口，页面不各自拼字符串）。
+ * 常驻：文件名、左右基线、块导航、当前编辑/保存状态；
+ * 低频出口收进更多菜单（含返回来源任务）。
+ */
+export const diffToolbarLabels = {
+  moreActions: "更多操作",
+  moreActionsRegion: "更多差异操作",
+  primaryGroup: "差异主要操作",
+  lowFrequencyGroup: "低频出口",
+  closeMenu: "关闭更多操作",
+} as const;
+
+/**
+ * V022-R36：底座（@pierre/diffs 1.3.4）公开文案审计结论。
+ *
+ * 可经公开配置/适配层覆盖的项：无。以下底座字串均硬编码在库实现内，
+ * FileDiffOptions/UnresolvedFileOptions 均未暴露 locale/文案覆盖入口：
+ * - `getModifiedLinesString`（DiffHunksRenderer.js）：`${n} unmodified line(s)`
+ *  （Intl.PluralRules("en-US")，无本地化参数）；
+ * - 折叠分隔符 `chunked` 时的 `"Expand all"`（createSeparator.js 硬编码）；
+ * - 查找面板 `"Search"` / `"No results"` / `"N results"` / `"N of M"`
+ *  （editor/searchPanel.js 硬编码，placeholder 同样无覆盖入口）；
+ * - `"More unchanged context may be available"`（DiffHunksRenderer.js 回退文案）。
+ *
+ * 可维护适配出口（不操作私有 Shadow DOM）：
+ * - 折叠按钮仅补中文 `aria-label`（cspCompatObserver.fixExpandButtons），
+ *   可见文本仍为英文原文；
+ * - 外层中文图例（diffBottomLabels/diffBottomHint）解释含义与操作，
+ *   不改写 Shadow DOM 内文本；
+ * - 冲突三动作经 `mergeConflictActionsType` 自定义渲染器已中文化
+ *  （conflictDiffViewAdapter.createChineseActionRenderer），属公开能力。
+ */
+export const diffBottomUntranslatable = [
+  "N unmodified lines（折叠行数）",
+  "Expand all（全部展开）",
+  "Search（查找输入）",
+  "No results（无结果）",
+  "N results / N of M（结果计数）",
+  "More unchanged context may be available（更多上下文提示）",
+] as const;
+
+/** V022-R36：底座折叠/查找的外层中文对照（集中收口，不在单页造同义词）。 */
+export const diffBottomLabels = {
+  legend: "底座提示：折叠行显示英文行数与展开字样，含义对照如下——",
+  expandAll: "全部展开",
+  searchPlaceholder: "查找（底座面板为英文 Search）",
+  noResults: "无结果",
+} as const;
+
+/** V022-R36：折叠行数中文对照（参数化标签，页面不各自拼字符串）。 */
+export function diffUnmodifiedLinesLabel(count: number): string {
+  return `共 ${count} 行未修改`;
+}
+
+/**
+ * V022-R37：冲突核验错误的权威摘要归属（集中收口）。
+ * 同一核验错误（marker 残留）只保留 recoveryItems 中的完整三段解释；
+ * 阶段条仅表达进度与简短阻止原因，不复述整段原因；
+ * 写盘失败与核验失败按不同 id 区分，不得合并。
+ */
+export const conflictVerifyLabels = {
+  stepBlockedShort: "核验未通过",
+  locateFirstBlock: "定位到首个冲突块",
+} as const;
+
+/**
  * 提交页候选决策依据的完整中文描述（规划 4.3）：
  * 最终决策 · 决策原因（命中规则及来源 / 状态默认策略 / 安全规则）· 安全锁定。
  * 文案统一收口在此处，提交页与设置预览不各自拼字符串。

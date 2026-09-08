@@ -760,6 +760,9 @@ button.path-detail__value:hover {
   grid-template-columns:
     28px minmax(0, 1fr) minmax(96px, 0.55fr) minmax(110px, 0.55fr)
     minmax(90px, 0.4fr) 64px;
+  /* 与表头同侧内边距：表头 padding 0 8px 而行无 padding 会让 fr 内容区宽 16px，
+   * 逐列累积漂移（实测 0,0,1.6,2.5,3.4,4.0 递增），行补齐后对齐。 */
+  padding: 0 8px;
   column-gap: 8px;
   align-items: center;
 }
@@ -797,6 +800,9 @@ button.path-detail__value:hover {
    * +gutter 预留，否则表头与首行同列错位（1280×800 实测 4.4px）。 */
   overflow-y: auto;
   scrollbar-gutter: stable;
+  /* 与 .scroll-region 同款 thin：gutter 槽宽按滚动条宽度预留，两侧宽度不同会
+   * 导致右边界错位（实测 4px）。 */
+  scrollbar-width: thin;
 }
 .changes-layout .file-list {
   flex: 1 1 auto;

@@ -295,31 +295,39 @@ describe("DiffModule（@pierre/diffs 适配层）", () => {
     );
   });
 
-  it("Working/BASE 提供原生编辑器对比入口，修订比较不提供", async () => {
+  it("Working/BASE 在更多菜单提供原生编辑器对比入口，修订比较不提供", async () => {
     const onAction = vi.fn();
     const { unmount } = render(DiffModule, {
       snapshot: workingSnapshot,
       onAction,
     });
+    // V022-R35：低频出口收进更多菜单，常驻区不再平铺。
+    expect(
+      screen.queryByRole("menuitem", { name: "在编辑器中对比" }),
+    ).toBeNull();
+    await fireEvent.click(screen.getByRole("button", { name: "更多操作" }));
     await fireEvent.click(
-      screen.getByRole("button", { name: "在编辑器中对比" }),
+      screen.getByRole("menuitem", { name: "在编辑器中对比" }),
     );
     expect(onAction).toHaveBeenCalledWith("diff/open-in-editor");
     unmount();
 
     render(DiffModule, { snapshot: patchSnapshot, onAction: vi.fn() });
+    // 修订比较更多菜单只保留返回，不出现不适用动作。
+    await fireEvent.click(screen.getByRole("button", { name: "更多操作" }));
     expect(
-      screen.queryByRole("button", { name: "在编辑器中对比" }),
+      screen.queryByRole("menuitem", { name: "在编辑器中对比" }),
     ).not.toBeInTheDocument();
   });
 
-  it("截断与二进制快照禁用原生编辑器对比入口", () => {
+  it("截断与二进制快照在更多菜单禁用原生编辑器对比入口", async () => {
     const { unmount } = render(DiffModule, {
       snapshot: { ...workingSnapshot, truncated: true },
       onAction: vi.fn(),
     });
+    await fireEvent.click(screen.getByRole("button", { name: "更多操作" }));
     expect(
-      screen.getByRole("button", { name: "在编辑器中对比" }),
+      screen.getByRole("menuitem", { name: "在编辑器中对比" }),
     ).toBeDisabled();
     unmount();
 
@@ -327,8 +335,9 @@ describe("DiffModule（@pierre/diffs 适配层）", () => {
       snapshot: { ...workingSnapshot, binary: true },
       onAction: vi.fn(),
     });
+    await fireEvent.click(screen.getByRole("button", { name: "更多操作" }));
     expect(
-      screen.getByRole("button", { name: "在编辑器中对比" }),
+      screen.getByRole("menuitem", { name: "在编辑器中对比" }),
     ).toBeDisabled();
   });
 
@@ -360,10 +369,11 @@ describe("DiffModule（@pierre/diffs 适配层）", () => {
     expect(pierreMocks.records).toHaveLength(0);
   });
 
-  it("V014-C2：工具栏提供返回本地修改次级按钮并路由到 Changes", async () => {
+  it("V014-C2 + V022-R35：更多菜单提供返回本地修改并路由到 Changes", async () => {
     const onAction = vi.fn();
     render(DiffModule, { snapshot: workingSnapshot, onAction });
-    const backButton = await screen.findByRole("button", {
+    await fireEvent.click(screen.getByRole("button", { name: "更多操作" }));
+    const backButton = await screen.findByRole("menuitem", {
       name: "返回本地修改",
     });
     expect(backButton).not.toHaveClass("button--primary");
@@ -1335,5 +1345,88 @@ describe("DiffModule 失败降级与可观测性（v0.1.0 V010-E）", () => {
       expect(pierreMocks.records.at(-1)?.options.diffStyle).toBe("unified"),
     );
     expect(screen.queryByText(/已临时切换为分栏视图/)).not.toBeInTheDocument();
+  });
+
+  it("V022-R35：低频出口收进更多菜单，常驻操作保持可见", async () => {
+    render(DiffModule, { snapshot: workingSnapshot, onAction: vi.fn() });
+    await waitFor(() => expect(pierreMocks.records).toHaveLength(1));
+    // 常驻：文件名、基线、块导航、显示设置保持可见。
+    expect(screen.getByText("src/extension.ts")).toBeVisible();
+    expect(screen.getByText("BASE ↔ 工作副本 · typescript")).toBeVisible();
+    expect(screen.getByRole("button", { name: "上一处差异" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "显示设置" })).toBeVisible();
+    // 低频出口默认收起，不挤占文件名空间。
+    expect(
+      screen.queryByRole("menuitem", { name: "在编辑器中打开" }),
+    ).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "提交此文件" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: /返回本地修改/ })).toBeNull();
+    const trigger = screen.getByRole("button", { name: "更多操作" });
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    await fireEvent.click(trigger);
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    const menu = screen.getByRole("menu", { name: "更多差异操作" });
+    expect(menu).toBeVisible();
+    expect(
+      screen.getByRole("menuitem", { name: "在编辑器中对比" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("menuitem", { name: "在编辑器中打开" }),
+    ).toBeVisible();
+    expect(screen.getByRole("menuitem", { name: "提交此文件" })).toBeVisible();
+    // 返回来源任务保留在更多菜单内。
+    expect(
+      screen.getByRole("menuitem", { name: /返回本地修改/ }),
+    ).toBeVisible();
+  });
+
+  it("V022-R35：更多菜单 Esc 关闭并回焦触发按钮", async () => {
+    render(DiffModule, { snapshot: workingSnapshot, onAction: vi.fn() });
+    await waitFor(() => expect(pierreMocks.records).toHaveLength(1));
+    const trigger = screen.getByRole("button", { name: "更多操作" });
+    await fireEvent.click(trigger);
+    expect(screen.getByRole("menu", { name: "更多差异操作" })).toBeVisible();
+    await fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("menu", { name: "更多差异操作" })).toBeNull();
+    expect(document.activeElement).toBe(trigger);
+  });
+
+  it("V022-R35：历史比较更多菜单只保留返回（R09 不适用动作门控）", async () => {
+    render(DiffModule, { snapshot: patchSnapshot, onAction: vi.fn() });
+    await waitFor(() => expect(pierreMocks.records).toHaveLength(1));
+    // 更多菜单常驻（含返回来源任务），本地文件动作不出现。
+    await fireEvent.click(screen.getByRole("button", { name: "更多操作" }));
+    expect(screen.queryByRole("menuitem", { name: "提交此文件" })).toBeNull();
+    expect(
+      screen.queryByRole("menuitem", { name: "在编辑器中对比" }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("menuitem", { name: "在编辑器中打开" }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("menuitem", { name: /返回本地修改/ }),
+    ).toBeVisible();
+    expect(screen.getByText("修订比较 r41 → r42")).toBeVisible();
+  });
+
+  it("V022-R36：底座折叠/查找外层中文对照可见，二进制隐藏", async () => {
+    const { unmount } = render(DiffModule, {
+      snapshot: workingSnapshot,
+      onAction: vi.fn(),
+    });
+    await waitFor(() => expect(pierreMocks.records).toHaveLength(1));
+    const hint = screen.getByTestId("diff-bottom-i18n-hint");
+    expect(hint).toBeVisible();
+    // 参数化中文对照（复用 terminology，不在单页拼字符串）。
+    expect(hint).toHaveTextContent("共 6 行未修改");
+    expect(hint).toHaveTextContent("全部展开");
+    expect(hint).toHaveTextContent("无结果");
+    unmount();
+    pierreMocks.records.length = 0;
+    render(DiffModule, {
+      snapshot: { ...workingSnapshot, binary: true },
+      onAction: vi.fn(),
+    });
+    expect(screen.queryByTestId("diff-bottom-i18n-hint")).toBeNull();
   });
 });

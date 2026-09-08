@@ -233,7 +233,7 @@
 
 - **原评审映射：** 第 35 项。
 - **优先级 / 证据等级：** P2 / 生产 Webview 已观察。
-- **实施状态：** 待实施。
+- **实施状态：** 已实施（常驻文件名/基线/块导航/编辑保存 + 更多菜单 + 窄屏二行紧凑 + 定位器规模/视口折叠 + 工具栏 sticky；单测 + 组件回归）。
 - **看到的现状：** 多项导航、显示、编辑、原生对比、打开、提交和返回并列，文件名被截短，下一处按钮出现换行。
 - **用户影响：** 比较双方和文件身份被挤压，工具多却不好找。
 - **现有证据与预计改动入口：** [DiffModule.svelte](../../../src/webview/features/diff/DiffModule.svelte)、[DiffOverview.svelte](../../../src/webview/features/diff/DiffOverview.svelte)、[global.css](../../../src/webview/styles/global.css)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
@@ -247,10 +247,10 @@
 
 **验收场景与完成条件：**
 
-- [ ] 1280/1024/720 宽按钮文字完整，路径可展开复制。
-- [ ] 更多菜单键盘可达、Esc 回焦。
-- [ ] 差异滚动不带走文件身份/保存动作。
-- [ ] 历史 Diff 不出现 R09 已移除的不适用动作。
+- [x] 1280/1024/720 宽按钮文字完整，路径可展开复制。
+- [x] 更多菜单键盘可达、Esc 回焦。
+- [x] 差异滚动不带走文件身份/保存动作。
+- [x] 历史 Diff 不出现 R09 已移除的不适用动作。
 
 <a id="v022-r36"></a>
 
@@ -258,7 +258,7 @@
 
 - **原评审映射：** 第 36 项。
 - **优先级 / 证据等级：** P2 / 生产 Webview 已观察。
-- **实施状态：** 待实施。
+- **实施状态：** 已实施（底座审计：无公开本地化能力，外层中文对照 + 折叠按钮中文 aria-label，不操作私有 Shadow DOM；限制登记于 `terminology.diffBottomUntranslatable`）。
 - **看到的现状：** 正常 Diff 中仍显示 6 unmodified lines 等英文界面字串，外层任务已中文化。
 - **用户影响：** 用户阅读与导航在中英文任务词之间切换，初学者理解成本增加。
 - **现有证据与预计改动入口：** [DiffView.svelte](../../../src/webview/features/diff/DiffView.svelte)、[diffViewAdapter.ts](../../../src/webview/features/diff/diffViewAdapter.ts)、[ConflictDiffView.svelte](../../../src/webview/features/conflicts/ConflictDiffView.svelte)、[terminology.ts](../../../src/webview/i18n/terminology.ts)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
@@ -272,9 +272,9 @@
 
 **验收场景与完成条件：**
 
-- [ ] 普通/历史/冲突/降级视图核心操作文案中文一致。
-- [ ] 国际化不影响行号/导航/编辑数据。
-- [ ] 无法翻译的底层项逐条登记，不宣称全部完成。
+- [x] 普通/历史/冲突/降级视图核心操作文案中文一致。
+- [x] 国际化不影响行号/导航/编辑数据。
+- [x] 无法翻译的底层项逐条登记，不宣称全部完成。
 
 <a id="v022-r37"></a>
 
@@ -282,7 +282,7 @@
 
 - **原评审映射：** 第 37 项。
 - **优先级 / 证据等级：** P2 / Mock 界面已观察，真实组合需复核。
-- **实施状态：** 待实施。
+- **实施状态：** 已实施（移除 marker 残留重复块，恢复出口唯一权威摘要 + 阶段条仅进度 + 就近定位入口 + 写盘/核验区分 + 恢复后清除；组件回归）。
 - **看到的现状：** 默认冲突样例中仍检测到冲突标记在多个大区域重复出现；需核对真实 Host 各反馈来源组合。
 - **用户影响：** 重复黄色警告挤压编辑区域，也让用户以为发生了多个不同故障。
 - **现有证据与预计改动入口：** [ConflictsModule.svelte](../../../src/webview/features/conflicts/ConflictsModule.svelte)、[ConflictStepBar.svelte](../../../src/webview/features/conflicts/ConflictStepBar.svelte)、[TaskErrorState.svelte](../../../src/webview/components/task/TaskErrorState.svelte)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
@@ -296,10 +296,10 @@
 
 **验收场景与完成条件：**
 
-- [ ] 同一核验错误只保留一个完整解释。
-- [ ] 写盘失败、marker 残留、过期内容各自准确恢复。
-- [ ] 重试成功不残留红黄旧状态。
-- [ ] 普通与低高度编辑区可达。
+- [x] 同一核验错误只保留一个完整解释。
+- [x] 写盘失败、marker 残留、过期内容各自准确恢复。
+- [x] 重试成功不残留红黄旧状态。
+- [x] 普通与低高度编辑区可达。
 
 <a id="v022-r55"></a>
 
