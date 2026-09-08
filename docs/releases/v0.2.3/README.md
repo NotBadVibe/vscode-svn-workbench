@@ -206,7 +206,7 @@
 
 - **原评审映射：** 第 58 项（原清单补充候选）。
 - **优先级 / 证据等级：** P3 / 候选能力，先验证需求。
-- **实施状态：** 待实施；候选项先做验证，不承诺试验通过。
+- **实施状态：** 已验证，no-go（2026-09-08）：现有模板+团队规范+AI 建议草稿+项目隔离草稿已覆盖主张收益；跨 scope 草稿复用与范围失效契约冲突，成本收益比差，不做。
 - **看到的现状：** 上一轮参考 TortoiseSVN 提出路径/关键词补全与常用片段，未认定这是当前缺陷；现有模板与 AI 草稿必须复用。
 - **用户影响：** 经常写文件名、模块名、相同格式说明的用户可减少输入，不需模型等待。
 - **现有证据与预计改动入口：** [CommitMessageEditor.svelte](../../../src/webview/features/commit/CommitMessageEditor.svelte)、[commitConvention.ts](../../../src/commit/commitConvention.ts)、[projectDraftStore.ts](../../../src/extension/workbench/projectDraftStore.ts)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
@@ -231,7 +231,7 @@
 
 - **原评审映射：** 第 59 项（原清单补充候选）。
 - **优先级 / 证据等级：** P3 / 候选能力，先验证需求。
-- **实施状态：** 待实施；候选项先做验证，不承诺试验通过。
+- **实施状态：** 已验证，no-go（2026-09-08）：既有选择规则+手动取消选+原生 Changelist 已覆盖；新增第二套隐藏选择体系会冲击三态选择内核与刷新交集语义，易被误解为绕过 blocked/安全规则，不做。
 - **看到的现状：** 上一轮建议给受控文件的长期本地修改提供易理解排除入口；已有选择规则和 Changelist，不是没有排除机制。
 - **用户影响：** 用户每次手动取消本地配置，容易误提交；但增加另一套规则也会引起冲突。
 - **现有证据与预计改动入口：** [SelectionTask.svelte](../../../src/webview/features/settings/SelectionTask.svelte)、[selectionCore.ts](../../../src/selection/selectionCore.ts)、[ChangelistsModule.svelte](../../../src/webview/features/changelists/ChangelistsModule.svelte)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
