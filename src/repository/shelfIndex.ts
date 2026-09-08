@@ -230,19 +230,29 @@ export function parseShelfIndexFile(content: string): {
  * V024-R38：旧无索引 patch 迁移（纯函数，可单元测试）。
  * 旧文件名形如 `<ascii-name>-<timestamp>.patch`，显示名还原为 ascii 部分；
  * 非安全基名仍可检索（显示名保留，内部文件名保持原样但须通过边界校验）。
+ * P3-2：原 patchFileName 若含控制字符/换行则拒绝迁移并给出中文提示
+ * （fail-closed，不规范化回写，避免清洗后文件名与磁盘真实文件脱钩）。
  */
 export function mergeLegacyPatchFiles(
   indexed: readonly ShelfEntry[],
   patchFileNames: readonly string[],
   options: { repositoryUuid: string; nowIso?: string } = { repositoryUuid: "" },
-): { entries: ShelfEntry[]; migratedCount: number } {
+): { entries: ShelfEntry[]; migratedCount: number; issues: string[] } {
   const known = new Set(indexed.map((entry) => entry.patchFileName));
   const migrated: ShelfEntry[] = [];
+  const issues = new Set<string>();
   for (const fileName of patchFileNames) {
     if (!fileName.endsWith(".patch")) continue;
     if (fileName === SHELF_INDEX_FILE_NAME) continue;
     if (known.has(fileName)) continue;
     if (fileName.includes("/") || fileName.includes("\\")) continue;
+    // eslint-disable-next-line no-control-regex
+    if (/[\u0000-\u001f\u007f]/.test(fileName)) {
+      issues.add(
+        "发现旧搁置文件名包含控制字符或换行，已跳过该文件以保护存储路径。",
+      );
+      continue;
+    }
     const base = fileName.slice(0, -".patch".length);
     const legacyMatch = /^(.*)-(\d{10,})$/.exec(base);
     const displayName = (legacyMatch?.[1] ?? base).trim() || base;
@@ -260,7 +270,11 @@ export function mergeLegacyPatchFiles(
       integrityDetail: "旧搁置已迁移，文件数以预览为准。",
     });
   }
-  return { entries: [...indexed, ...migrated], migratedCount: migrated.length };
+  return {
+    entries: [...indexed, ...migrated],
+    migratedCount: migrated.length,
+    issues: [...issues],
+  };
 }
 
 /**
@@ -335,6 +349,7 @@ export async function loadShelfIndex(
     };
   }
   const merged = mergeLegacyPatchFiles(indexed, patchFiles, { repositoryUuid });
+  issues.push(...merged.issues);
   const scoped = merged.entries.filter(
     (entry) => !entry.repositoryUuid || entry.repositoryUuid === repositoryUuid,
   );

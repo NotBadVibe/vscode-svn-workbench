@@ -94,12 +94,23 @@ export interface RepositoryWorkbenchHost {
 export class RepositoryWorkbenchActions {
   constructor(private readonly host: RepositoryWorkbenchHost) {}
 
-  /** V024-R38：搁置目录（按 repositoryUuid 隔离，同名多项目不串用）。 */
+  /**
+   * V024-R38：搁置目录（按 repositoryUuid 隔离，同名多项目不串用）。
+   * P3-1：repositoryUuid 白名单 fail-closed——仅允许字母/数字/连字符
+   * （SVN 仓库 UUID 形态），畸形直接拒绝，避免目录穿越。
+   */
   getShelfDirectory(session: WorkbenchSession): string {
+    const repositoryUuid = session.repositoryUuid;
+    if (
+      typeof repositoryUuid !== "string" ||
+      !/^[A-Za-z0-9-]+$/.test(repositoryUuid)
+    ) {
+      throw new Error("仓库标识非法，已拒绝访问本地搁置。");
+    }
     return path.join(
       this.host.context.globalStorageUri.fsPath,
       "shelves",
-      session.repositoryUuid,
+      repositoryUuid,
     );
   }
 

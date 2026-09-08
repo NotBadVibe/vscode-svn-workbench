@@ -218,4 +218,30 @@ describe("shelfIndex V024-R38 索引与迁移", () => {
     const loaded = await loadShelfIndex(deps, "/shelves/repo-1", "repo-1");
     expect(loaded.entries.map((e) => e.id)).toEqual(["b"]);
   });
+
+  it("P3-2：含控制字符/换行的旧文件名拒绝迁移并给出中文提示", () => {
+    const merged = mergeLegacyPatchFiles(
+      [],
+      ["good-1700000000000.patch", "bad\nname.patch", "nul\0x.patch"],
+      { repositoryUuid: "repo-1" },
+    );
+    expect(merged.migratedCount).toBe(1);
+    expect(merged.entries).toHaveLength(1);
+    expect(merged.entries[0].patchFileName).toBe("good-1700000000000.patch");
+    expect(merged.issues.join("")).toContain(
+      "控制字符或换行，已跳过该文件以保护存储路径",
+    );
+  });
+
+  it("P3-2：拒绝项经 loadShelfIndex 透出中文提示且不落盘", async () => {
+    const deps = fakeDeps({
+      dirFiles: ["evil\n-1700000000000.patch"],
+    });
+    const loaded = await loadShelfIndex(deps, "/shelves/repo-1", "repo-1");
+    expect(loaded.entries).toEqual([]);
+    expect(loaded.migratedCount).toBe(0);
+    expect(loaded.issues.join("")).toContain(
+      "控制字符或换行，已跳过该文件以保护存储路径",
+    );
+  });
 });
