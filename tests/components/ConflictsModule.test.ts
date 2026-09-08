@@ -627,6 +627,86 @@ describe("ConflictsModule 采用链（v0.1.6 V016-C3b 低危 5）", () => {
     expect(adopt).toHaveAttribute("title", "该建议需要人工合并，无法一键采用");
   });
 
+  it("V022-R37：同一核验错误只保留一个完整解释且带就近修复入口", async () => {
+    const markerSnapshot: ConflictSnapshot = {
+      kind: "conflicts",
+      conflicts: [{ relativePath: "src/a.ts", type: "text" }],
+      selected: {
+        relativePath: "src/a.ts",
+        contents: {
+          working: {
+            content: "<<<<<<< .mine\nlocal\n=======\nremote\n>>>>>>> .r5\n",
+            truncated: false,
+          },
+        },
+        mergeEditor: { token: "edit-9", editable: true, issues: [] },
+      },
+    };
+    render(ConflictsModule, { snapshot: markerSnapshot, onAction: vi.fn() });
+    await tick();
+    // 权威摘要唯一：完整三段解释只出现一次（旧多区域重复块已移除）。
+    expect(
+      screen.getAllByText("发生了什么：核验未通过，仍检测到冲突标记"),
+    ).toHaveLength(1);
+    expect(screen.getAllByTestId("recovery-marker-remaining")).toHaveLength(1);
+    // 编辑处就近修复入口可达（只改导航，不触碰草稿/范围）。
+    expect(
+      screen.getByTestId("recovery-marker-remaining-locate"),
+    ).toBeVisible();
+    // 阶段条仅表达进度与简短阻止原因，不复述整段原因。
+    expect(screen.getByTestId("conflict-step-bar")).toBeInTheDocument();
+  });
+
+  it("V022-R37：写盘失败与核验失败按不同原因区分展示", async () => {
+    const bothSnapshot: ConflictSnapshot = {
+      kind: "conflicts",
+      conflicts: [{ relativePath: "src/a.ts", type: "text" }],
+      selected: {
+        relativePath: "src/a.ts",
+        contents: {
+          working: {
+            content: "<<<<<<< .mine\nlocal\n=======\nremote\n>>>>>>> .r5\n",
+            truncated: false,
+          },
+        },
+        mergeEditor: {
+          token: "edit-10",
+          editable: true,
+          issues: [],
+          feedback: "保存失败：写入失败（磁盘空间不足）",
+        },
+      },
+    };
+    render(ConflictsModule, { snapshot: bothSnapshot, onAction: vi.fn() });
+    await tick();
+    expect(
+      screen.getAllByText("发生了什么：核验未通过，仍检测到冲突标记"),
+    ).toHaveLength(1);
+    expect(screen.getAllByText("发生了什么：保存失败，写入失败")).toHaveLength(
+      1,
+    );
+  });
+
+  it("V022-R37：marker 消除后旧核验错误自动清除", async () => {
+    const cleanSnapshot: ConflictSnapshot = {
+      kind: "conflicts",
+      conflicts: [{ relativePath: "src/a.ts", type: "text" }],
+      selected: {
+        relativePath: "src/a.ts",
+        contents: {
+          working: { content: "merged\n", truncated: false },
+        },
+        mergeEditor: { token: "edit-11", editable: true, issues: [] },
+      },
+    };
+    render(ConflictsModule, { snapshot: cleanSnapshot, onAction: vi.fn() });
+    await tick();
+    expect(
+      screen.queryByText("发生了什么：核验未通过，仍检测到冲突标记"),
+    ).toBeNull();
+    expect(screen.queryByTestId("recovery-marker-remaining-locate")).toBeNull();
+  });
+
   it("页面级 button--primary ≤1（对话框/展开区内除外，v0.1.6 V016-E）", () => {
     const { container } = render(ConflictsModule, {
       snapshot,

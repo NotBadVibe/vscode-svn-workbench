@@ -417,9 +417,11 @@ describe("CommitModule", () => {
       },
     });
 
-    expect(screen.getByText(/来源：模型建议/)).toBeInTheDocument();
-    expect(screen.getByText(/模型 deepseek-v4-flash/)).toBeInTheDocument();
-    expect(screen.getByText(/2026-07-30 18:00/)).toBeInTheDocument();
+    // V022-R31：断言收敛到 AI 建议元信息元素内，避免与意向单时间元素歧义。
+    const aiMeta = screen.getByText(/来源：模型建议/);
+    expect(aiMeta).toBeInTheDocument();
+    expect(aiMeta.closest("small")).toHaveTextContent(/模型 deepseek-v4-flash/);
+    expect(aiMeta.closest("small")).toHaveTextContent(/2026-07-30 18:00/);
   });
 
   it("AI 结果过期时标记已过期且不能直接采用", () => {
@@ -1256,5 +1258,67 @@ describe("CommitModule 紧凑模式（v0.1.4 V014-D）", () => {
     ).toBeInTheDocument();
     // 建议区采用契约不变：插入禁用，复制与放弃可用。
     expect(screen.getByRole("button", { name: "插入空白字段" })).toBeDisabled();
+  });
+});
+
+/*
+ * V022-R33/R34：空表单先提示后校验 + 无模型时准确本地状态。
+ */
+describe("CommitModule V022-R33/R34", () => {
+  it("V022-R33：空表单初始无错误色误报，请求预览后显示字段错误且草稿不重置", async () => {
+    const onAction = renderCommit({
+      message: "",
+      messageIssues: ["提交说明不能为空"],
+      preview: undefined,
+    });
+    // 初始：中性写作提示，无 alert 错误块。
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByText(/先简要说明改动意图/)).toBeInTheDocument();
+
+    // 请求预览：Host 仍收到预览请求（严格拒绝由 Host 判定），字段错误显现。
+    await fireEvent.click(
+      screen.getByRole("button", { name: "预览提交 1 个文件" }),
+    );
+    expect(onAction).toHaveBeenCalledWith(
+      "commit/preview",
+      expect.objectContaining({ message: "" }),
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent("提交说明不能为空");
+    // 草稿不被重置。
+    expect(screen.getByLabelText("提交说明")).toHaveValue("");
+  });
+
+  it("V022-R34：未配置模型时显示本地生成且无外发预算术语", () => {
+    renderCommit({
+      message: "",
+      messageIssues: [],
+      preview: undefined,
+      selectionAi: { configured: false },
+      aiPrivacy: [
+        {
+          scenario: "message",
+          model: "本地规则（未配置外部模型）",
+          fileLimit: 80,
+          data: "statistics",
+          historyIncluded: false,
+        },
+      ],
+    });
+    expect(screen.getByText("本地生成")).toBeInTheDocument();
+    expect(screen.getByText(/不会外发/)).toBeInTheDocument();
+    // 不适用的模型预算术语不得出现。
+    expect(screen.queryByText("外发预览")).toBeNull();
+    expect(screen.queryByText(/最多 80 个文件/)).toBeNull();
+    // 本地流程入口仍可用：提交说明可编辑，预览按钮存在。
+    expect(screen.getByLabelText("提交说明")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "预览提交 1 个文件" }),
+    ).toBeInTheDocument();
+  });
+
+  it("V022-R34：已配置模型时外发预览要素完整", () => {
+    renderCommit();
+    expect(screen.getByText("外发预览")).toBeInTheDocument();
+    expect(screen.getByText(/最多 80 个文件/)).toBeInTheDocument();
   });
 });

@@ -568,6 +568,32 @@ test("recommendation strip can be dismissed and stays dismissed (v0.0.17)", asyn
   await expect(page.locator(".recommendation-strip")).toHaveCount(0);
 });
 
+test("recommendation follows the current task (V022-R28)", async ({ page }) => {
+  // 提交页：目标即自身，同义推荐隐藏（mock 全模块下发 commit:3）。
+  await page.goto("/?module=commit");
+  await expect(
+    page.getByRole("heading", { name: "提交当前范围" }),
+  ).toBeVisible();
+  await expect(page.locator(".recommendation-strip")).toHaveCount(0);
+
+  // 历史页（只读）：非阻止推荐降级隐藏，修订列表仍首屏可达。
+  await page.goto("/?module=history");
+  await expect(page.getByRole("heading", { name: "修订历史" })).toBeVisible();
+  await expect(page.locator(".recommendation-strip")).toHaveCount(0);
+  await expect(page.getByRole("list", { name: "SVN 修订列表" })).toBeVisible();
+
+  // 本地修改页：相关任务直达保留，推荐主按钮只导航不执行写操作。
+  await page.goto("/");
+  const strip = page.locator(".recommendation-strip");
+  await expect(strip).toBeVisible();
+  await strip.getByRole("button", { name: "前往检查并提交" }).click();
+  await expect(
+    page.getByRole("heading", { name: "提交当前范围" }),
+  ).toBeVisible();
+  // 到达目标任务后同义推荐消失（不跳回自身）。
+  await expect(page.locator(".recommendation-strip")).toHaveCount(0);
+});
+
 test("onboarding guide walks the safe loop and stops before commit (v0.0.18)", async ({
   page,
 }) => {

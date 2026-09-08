@@ -62,6 +62,54 @@ describe("CommitMessageEditor", () => {
     expect(onDraftUpdate).toHaveBeenCalledTimes(2);
   });
 
+  /*
+   * V022-R33：空表单先提示再校验 + composition 保护。
+   */
+  it("空表单初始只显示中性写作提示，不展示字段错误", () => {
+    renderEditor({ message: "", messageIssues: ["提交说明不能为空"] });
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(screen.getByText(/先简要说明改动意图/)).toBeInTheDocument();
+  });
+
+  it("空表单失焦后显示字段错误", async () => {
+    renderEditor({ message: "", messageIssues: ["提交说明不能为空"] });
+    expect(screen.queryByRole("alert")).toBeNull();
+    await fireEvent.blur(screen.getByLabelText("提交说明"));
+    expect(screen.getByRole("alert")).toHaveTextContent("提交说明不能为空");
+  });
+
+  it("父模块已请求预览时空表单直接显示字段错误", () => {
+    const onApplyTemplate = vi.fn();
+    const onDraftUpdate = vi.fn();
+    const onPreviewRequest = vi.fn();
+    render(CommitMessageEditor, {
+      message: "",
+      templates: [],
+      messageIssues: ["提交说明不能为空"],
+      conventionHint: undefined,
+      forceShowValidation: true,
+      onApplyTemplate,
+      onDraftUpdate,
+      onPreviewRequest,
+    });
+    expect(screen.getByRole("alert")).toHaveTextContent("提交说明不能为空");
+  });
+
+  it("有内容时规范问题始终立即展示", () => {
+    renderEditor({ message: "wip", messageIssues: ["缺少工单号前缀"] });
+    expect(screen.getByRole("alert")).toHaveTextContent("缺少工单号前缀");
+  });
+
+  it("中文 IME 候选阶段不同步草稿，组合结束后一次性同步", async () => {
+    const { onDraftUpdate } = renderEditor({ message: "" });
+    const textarea = screen.getByLabelText("提交说明");
+    await fireEvent.compositionStart(textarea);
+    await fireEvent.input(textarea, { target: { value: "修复" } });
+    expect(onDraftUpdate).not.toHaveBeenCalled();
+    await fireEvent.compositionEnd(textarea);
+    expect(onDraftUpdate).toHaveBeenLastCalledWith("修复");
+  });
+
   it("Ctrl+Enter 请求预览；IME 候选阶段 Enter 不触发", async () => {
     const { onPreviewRequest } = renderEditor();
     const textarea = screen.getByLabelText("提交说明");

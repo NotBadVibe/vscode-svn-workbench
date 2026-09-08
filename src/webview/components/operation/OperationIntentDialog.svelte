@@ -1,5 +1,7 @@
 <script lang="ts">
   import { isImeComposing } from "../../i18n/keyboard";
+  import { formatZhDateTime } from "../../i18n/formatters";
+  import { finalActionLabel } from "../../i18n/terminology";
   import PreviewPathList from "../list/PreviewPathList.svelte";
   import { isConfirmationChallengeSatisfied } from "../../../operation/operationIntent";
   import type { OperationIntentView } from "../../../operation/operationIntent";
@@ -227,11 +229,11 @@
 
       <div class="operation-intent-dialog__meta">
         <span class="operation-intent-dialog__count"
-          >影响 {intent.paths.length} 个路径</span
+          >{finalActionLabel(intent.paths.length)}</span
         >
         {#if intent.createdAt}
           <small class="operation-intent-dialog__time"
-            >{new Date(intent.createdAt).toLocaleString("zh-CN")}</small
+            >{formatZhDateTime(intent.createdAt)}</small
           >
         {/if}
       </div>

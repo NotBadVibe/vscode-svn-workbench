@@ -117,8 +117,8 @@ test.describe("V013 主路径闭环", () => {
     // === 第一个冲突 a.ts：编辑 ===
     await clearCaptured(page);
     await clickTakeMine(page);
-    // 中文注释：draft-update 草稿同步（中文注释：校验 Host 内存草稿已同步提示出现）
-    await expect(page.getByText("Host 内存草稿已同步").first()).toBeVisible({
+    // 中文注释：draft-update 草稿同步（中文注释：校验 合并草稿仅本次会话保留提示出现）
+    await expect(page.getByText("合并草稿仅本次会话保留").first()).toBeVisible({
       timeout: 15_000,
     });
     let actions = await getCapturedActions(page);
@@ -180,7 +180,7 @@ test.describe("V013 主路径闭环", () => {
     // === 第二个冲突 b.ts：同样保存→预览→Resolve ===
     await clearCaptured(page);
     await clickTakeMine(page);
-    await expect(page.getByText("Host 内存草稿已同步").first()).toBeVisible({
+    await expect(page.getByText("合并草稿仅本次会话保留").first()).toBeVisible({
       timeout: 15_000,
     });
     actions = await getCapturedActions(page);
@@ -276,7 +276,7 @@ test.describe("V013 主路径闭环", () => {
 
     // 中文注释：编辑→保存→预览→Resolve 仍可完成（不依赖 AI）
     await clickTakeMine(page);
-    await expect(page.getByText("Host 内存草稿已同步").first()).toBeVisible({
+    await expect(page.getByText("合并草稿仅本次会话保留").first()).toBeVisible({
       timeout: 15_000,
     });
     const saveBtn = page.getByRole("button", { name: "保存工作副本合并结果" });

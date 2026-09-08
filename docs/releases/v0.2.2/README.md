@@ -35,7 +35,7 @@
 
 - **原评审映射：** 第 27 项。
 - **优先级 / 证据等级：** P1 / 生产 Webview 已观察。
-- **实施状态：** 待实施。
+- **实施状态：** 已实施（高度链 + 小高度收起 + 窄屏列特异性；R55 断言由 `test.fail` 翻绿）。
 - **看到的现状：** 720×480 实测 Changes 列表约从 y=699、History 列表从 y=655 开始，首屏看不到列表；可滚动到达，不是永久裁切。
 - **用户影响：** 用户打开查看修改却只看到说明、草稿和控件，误以为没有数据。
 - **现有证据与预计改动入口：** [global.css](../../../src/webview/styles/global.css)、[ChangesModule.svelte](../../../src/webview/features/changes/ChangesModule.svelte)、[HistoryModule.svelte](../../../src/webview/features/history/HistoryModule.svelte)、[AppShell.svelte](../../../src/webview/components/ui/AppShell.svelte)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
@@ -49,10 +49,10 @@
 
 **验收场景与完成条件：**
 
-- [ ] 720×480 普通无阻止场景首次打开至少看到 2 个完整文件/修订行。
-- [ ] 阻止场景先展示必要警告且仍可抵达列表及主操作。
-- [ ] 底部 Terminal 展开和 200% 真缩放无永久裁切。
-- [ ] 滚动列表不带走关键范围与动作。
+- [x] 720×480 普通无阻止场景首次打开至少看到 2 个完整文件/修订行。
+- [x] 阻止场景先展示必要警告且仍可抵达列表及主操作。
+- [x] 底部 Terminal 展开和 200% 真缩放无永久裁切。
+- [x] 滚动列表不带走关键范围与动作。
 
 <a id="v022-r28"></a>
 
@@ -60,8 +60,8 @@
 
 - **原评审映射：** 第 28 项。
 - **优先级 / 证据等级：** P1 / 生产 Webview 与源码已确认。
-- **实施状态：** 待实施。
-- **看到的现状：** 全局推荐在提交页仍可能显示前往检查并提交，并占据设置/历史/Diff 的明显首屏区域。
+- **实施状态：** 已实施（Webview 按已有 moduleId/taskId 过滤，协议不改写；单测 + E2E 回归）。
+- **看到的现状（已修复）：** 全局推荐在提交页仍可能显示前往检查并提交，并占据设置/历史/Diff 的明显首屏区域。
 - **用户影响：** 用户在完成任务时被重复引导，主按钮竞争且挤占内容。
 - **现有证据与预计改动入口：** [AppShell.svelte](../../../src/webview/components/ui/AppShell.svelte)、[nextStepRecommendation.ts](../../../src/extension/workbench/nextStepRecommendation.ts)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
 
@@ -74,10 +74,10 @@
 
 **验收场景与完成条件：**
 
-- [ ] 提交页无跳回自身的推荐按钮。
-- [ ] 冲突风险仍可从适用任务直达且数量准确。
-- [ ] 忽略后同状态不重复，真实状态改变可重新推荐。
-- [ ] 推荐不执行写操作、不扩大范围。
+- [x] 提交页无跳回自身的推荐按钮。
+- [x] 冲突风险仍可从适用任务直达且数量准确。
+- [x] 忽略后同状态不重复，真实状态改变可重新推荐。
+- [x] 推荐不执行写操作、不扩大范围。
 
 <a id="v022-r29"></a>
 
@@ -110,7 +110,7 @@
 
 - **原评审映射：** 第 30 项。
 - **优先级 / 证据等级：** P2 / 界面已观察。
-- **实施状态：** 待实施。
+- **实施状态：** 已实施（terminology scopeSourceLabels/draftStorageLabels/conflictDraftSyncedLabel 集中收口，ScopeBar/Changes/Changelists/Conflicts/AdvancedTask 引用；诊断代码进可展开详情；诊断可检索性断言待补）。
 - **看到的现状：** 界面可见扩展主机草稿、Host 内存草稿、入口内部跳转、verification-blocked 等术语。
 - **用户影响：** 用户需要理解实现才能判断是否保存、为什么阻止以及下一步怎么做。
 - **现有证据与预计改动入口：** [terminology.ts](../../../src/webview/i18n/terminology.ts)、[ScopeBar.svelte](../../../src/webview/components/svn/ScopeBar.svelte)、[ConflictStepBar.svelte](../../../src/webview/features/conflicts/ConflictStepBar.svelte)、[ActivityModule.svelte](../../../src/webview/features/activity/ActivityModule.svelte)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
@@ -124,10 +124,10 @@
 
 **验收场景与完成条件：**
 
-- [ ] 核心任务正常/失败/过期状态无需阅读 Host/token/hash 才能行动。
-- [ ] 保存位置描述真实。
+- [x] 核心任务正常/失败/过期状态无需阅读 Host/token/hash 才能行动。
+- [x] 保存位置描述真实。
 - [ ] 诊断仍可找到精确代码且不包含凭据。
-- [ ] 读屏名称与可见文案一致。
+- [x] 读屏名称与可见文案一致。
 
 <a id="v022-r31"></a>
 
@@ -135,7 +135,7 @@
 
 - **原评审映射：** 第 31 项。
 - **优先级 / 证据等级：** P2 / 体验建议。
-- **实施状态：** 待实施。
+- **实施状态：** 已实施（selectionSummaryLabel/finalActionLabel/scopeRootsSummary 集中收口；主操作旁最终候选数，选择区匹配 M/已选 N/隐藏 K；目录/文件分开，远端数量标预估；读屏播报去重待补）。
 - **看到的现状：** 范围数、候选数、结果数、可操作数、推荐数与已选数同时出现，同页可能有 4 与 3 等不同数字但解释分散。
 - **用户影响：** 用户不能迅速确认到底会改动多少文件。
 - **现有证据与预计改动入口：** [ScopeBar.svelte](../../../src/webview/components/svn/ScopeBar.svelte)、[SelectionSummary.svelte](../../../src/webview/components/list/SelectionSummary.svelte)、[CommitModule.svelte](../../../src/webview/features/commit/CommitModule.svelte)、[UpdateModule.svelte](../../../src/webview/features/update/UpdateModule.svelte)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
@@ -149,8 +149,8 @@
 
 **验收场景与完成条件：**
 
-- [ ] 混合状态、多目录、外部工作副本、隐藏选择情况下各数字可核算。
-- [ ] 预览后状态变化数量同步且旧确认失效。
+- [x] 混合状态、多目录、外部工作副本、隐藏选择情况下各数字可核算。
+- [x] 预览后状态变化数量同步且旧确认失效。
 - [ ] 读屏不重复播报无变化数字。
 
 <a id="v022-r32"></a>
@@ -159,7 +159,7 @@
 
 - **原评审映射：** 第 32 项。
 - **优先级 / 证据等级：** P2 / 界面已观察。
-- **实施状态：** 待实施。
+- **实施状态：** 已实施（行内解释收敛进行详情同一语义单元，可聚焦展开；阻止行文字与行样式多通道；完整路径出口保留；滚动保持与 axe/读屏记录待补）。
 - **看到的现状：** 状态、选择建议、路径分别增加独立信息按钮，行内控件密集且已发生 grid 排版副作用。
 - **用户影响：** 降低扫描效率，键盘用户需要大量 Tab 才能离开一行。
 - **现有证据与预计改动入口：** [StatusExplanation.svelte](../../../src/webview/components/svn/StatusExplanation.svelte)、[PathCell.svelte](../../../src/webview/components/list/PathCell.svelte)、[FilePathDetail.svelte](../../../src/webview/components/svn/FilePathDetail.svelte)、[ChangesModule.svelte](../../../src/webview/features/changes/ChangesModule.svelte)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
@@ -173,7 +173,7 @@
 
 **验收场景与完成条件：**
 
-- [ ] 键盘可查看完整路径和阻止原因并回到原触发点。
+- [x] 键盘可查看完整路径和阻止原因并回到原触发点。
 - [ ] 关闭详情不跳滚动位置。
 - [ ] 减少解释按钮后信息仍完整，axe 与手动读屏分别记录。
 
@@ -183,7 +183,7 @@
 
 - **原评审映射：** 第 33 项。
 - **优先级 / 证据等级：** P2 / 生产 Webview 已观察。
-- **实施状态：** 待实施。
+- **实施状态：** 已实施（CommitMessageEditor touched 门控：初始中性提示，失焦或请求预览后显字段错误；修正即时更新；composition 保护；修正后错误消除断言待补）。
 - **看到的现状：** 初始未输入提交说明就展示提交说明不能为空的警告色块。
 - **用户影响：** 用户尚未操作就被呈现为失败，界面显得紧张。
 - **现有证据与预计改动入口：** [CommitMessageEditor.svelte](../../../src/webview/features/commit/CommitMessageEditor.svelte)、[CommitModule.svelte](../../../src/webview/features/commit/CommitModule.svelte)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
@@ -197,10 +197,10 @@
 
 **验收场景与完成条件：**
 
-- [ ] 首次进入空表单无错误色误报。
-- [ ] 请求预览仍严格拒绝空说明。
+- [x] 首次进入空表单无错误色误报。
+- [x] 请求预览仍严格拒绝空说明。
 - [ ] 修正后错误消失且已有草稿不被重置。
-- [ ] composition 期间不触发预览或提前错误播报。
+- [x] composition 期间不触发预览或提前错误播报。
 
 <a id="v022-r34"></a>
 
@@ -208,7 +208,7 @@
 
 - **原评审映射：** 第 34 项。
 - **优先级 / 证据等级：** P2 / 生产 Webview 已观察。
-- **实施状态：** 待实施。
+- **实施状态：** 已实施（commitLocalOnlyLabels：未配置模型显示本地生成/不会外发并隐藏预算术语；外部动作才展示模型/范围/预算/回执；回执取消动作断言待补）。
 - **看到的现状：** ai=disabled 的提交样例仍以外发预览标题说明本地规则，不含实际外发动作。
 - **用户影响：** 用户不确定是否需要配模型才能提交，也可能误认为本地动作会上传。
 - **现有证据与预计改动入口：** [CommitModule.svelte](../../../src/webview/features/commit/CommitModule.svelte)、[ReceiptSummary.svelte](../../../src/webview/components/assistance/ReceiptSummary.svelte)、[SuggestionSourceBadge.svelte](../../../src/webview/components/assistance/SuggestionSourceBadge.svelte)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
@@ -222,10 +222,10 @@
 
 **验收场景与完成条件：**
 
-- [ ] 未配置模型可独立写说明、检查并预览提交。
-- [ ] 本地动作不产生模型请求。
+- [x] 未配置模型可独立写说明、检查并预览提交。
+- [x] 本地动作不产生模型请求。
 - [ ] 启用模型后回执要素完整且可取消。
-- [ ] 失败回退保留草稿和选择。
+- [x] 失败回退保留草稿和选择。
 
 <a id="v022-r35"></a>
 
@@ -233,7 +233,7 @@
 
 - **原评审映射：** 第 35 项。
 - **优先级 / 证据等级：** P2 / 生产 Webview 已观察。
-- **实施状态：** 待实施。
+- **实施状态：** 已实施（常驻文件名/基线/块导航/编辑保存 + 更多菜单 + 窄屏二行紧凑 + 定位器规模/视口折叠 + 工具栏 sticky；单测 + 组件回归）。
 - **看到的现状：** 多项导航、显示、编辑、原生对比、打开、提交和返回并列，文件名被截短，下一处按钮出现换行。
 - **用户影响：** 比较双方和文件身份被挤压，工具多却不好找。
 - **现有证据与预计改动入口：** [DiffModule.svelte](../../../src/webview/features/diff/DiffModule.svelte)、[DiffOverview.svelte](../../../src/webview/features/diff/DiffOverview.svelte)、[global.css](../../../src/webview/styles/global.css)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
@@ -247,10 +247,10 @@
 
 **验收场景与完成条件：**
 
-- [ ] 1280/1024/720 宽按钮文字完整，路径可展开复制。
-- [ ] 更多菜单键盘可达、Esc 回焦。
-- [ ] 差异滚动不带走文件身份/保存动作。
-- [ ] 历史 Diff 不出现 R09 已移除的不适用动作。
+- [x] 1280/1024/720 宽按钮文字完整，路径可展开复制。
+- [x] 更多菜单键盘可达、Esc 回焦。
+- [x] 差异滚动不带走文件身份/保存动作。
+- [x] 历史 Diff 不出现 R09 已移除的不适用动作。
 
 <a id="v022-r36"></a>
 
@@ -258,7 +258,7 @@
 
 - **原评审映射：** 第 36 项。
 - **优先级 / 证据等级：** P2 / 生产 Webview 已观察。
-- **实施状态：** 待实施。
+- **实施状态：** 已实施（底座审计：无公开本地化能力，外层中文对照 + 折叠按钮中文 aria-label，不操作私有 Shadow DOM；限制登记于 `terminology.diffBottomUntranslatable`）。
 - **看到的现状：** 正常 Diff 中仍显示 6 unmodified lines 等英文界面字串，外层任务已中文化。
 - **用户影响：** 用户阅读与导航在中英文任务词之间切换，初学者理解成本增加。
 - **现有证据与预计改动入口：** [DiffView.svelte](../../../src/webview/features/diff/DiffView.svelte)、[diffViewAdapter.ts](../../../src/webview/features/diff/diffViewAdapter.ts)、[ConflictDiffView.svelte](../../../src/webview/features/conflicts/ConflictDiffView.svelte)、[terminology.ts](../../../src/webview/i18n/terminology.ts)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
@@ -272,9 +272,9 @@
 
 **验收场景与完成条件：**
 
-- [ ] 普通/历史/冲突/降级视图核心操作文案中文一致。
-- [ ] 国际化不影响行号/导航/编辑数据。
-- [ ] 无法翻译的底层项逐条登记，不宣称全部完成。
+- [x] 普通/历史/冲突/降级视图核心操作文案中文一致。
+- [x] 国际化不影响行号/导航/编辑数据。
+- [x] 无法翻译的底层项逐条登记，不宣称全部完成。
 
 <a id="v022-r37"></a>
 
@@ -282,7 +282,7 @@
 
 - **原评审映射：** 第 37 项。
 - **优先级 / 证据等级：** P2 / Mock 界面已观察，真实组合需复核。
-- **实施状态：** 待实施。
+- **实施状态：** 已实施（移除 marker 残留重复块，恢复出口唯一权威摘要 + 阶段条仅进度 + 就近定位入口 + 写盘/核验区分 + 恢复后清除；组件回归）。
 - **看到的现状：** 默认冲突样例中仍检测到冲突标记在多个大区域重复出现；需核对真实 Host 各反馈来源组合。
 - **用户影响：** 重复黄色警告挤压编辑区域，也让用户以为发生了多个不同故障。
 - **现有证据与预计改动入口：** [ConflictsModule.svelte](../../../src/webview/features/conflicts/ConflictsModule.svelte)、[ConflictStepBar.svelte](../../../src/webview/features/conflicts/ConflictStepBar.svelte)、[TaskErrorState.svelte](../../../src/webview/components/task/TaskErrorState.svelte)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
@@ -296,10 +296,10 @@
 
 **验收场景与完成条件：**
 
-- [ ] 同一核验错误只保留一个完整解释。
-- [ ] 写盘失败、marker 残留、过期内容各自准确恢复。
-- [ ] 重试成功不残留红黄旧状态。
-- [ ] 普通与低高度编辑区可达。
+- [x] 同一核验错误只保留一个完整解释。
+- [x] 写盘失败、marker 残留、过期内容各自准确恢复。
+- [x] 重试成功不残留红黄旧状态。
+- [x] 普通与低高度编辑区可达。
 
 <a id="v022-r55"></a>
 
@@ -307,10 +307,10 @@
 
 - **原评审映射：** 第 55 项。
 - **优先级 / 证据等级：** P1 / 验收覆盖不足的已观察实例。
-- **实施状态：** 待实施。
+- **实施状态：** 已实施（断言基座先行；R02/R03 宽屏与主操作锁定通过，R27 首屏行数与 R03 窄屏四列记预期失败待业务修复）。
 - **看到的现状：** 已有截图/axe 未阻止小 textarea 与错列；page-screenshots 用全页拼接专用高度/overflow 样式，不能代表真实小视口。
 - **用户影响：** 自动化通过仍可能交付不好用的页面。
-- **现有证据与预计改动入口：** [page-screenshots.spec.ts](../../../tests/webview-e2e/page-screenshots.spec.ts)、[visual-accessibility.spec.ts](../../../tests/webview-e2e/visual-accessibility.spec.ts)、[v017f-ux-matrix.spec.ts](../../../tests/webview-e2e/v017f-ux-matrix.spec.ts)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
+- **现有证据与预计改动入口：** [page-screenshots.spec.ts](../../../tests/webview-e2e/page-screenshots.spec.ts)、[visual-accessibility.spec.ts](../../../tests/webview-e2e/visual-accessibility.spec.ts)、[v017f-ux-matrix.spec.ts](../../../tests/webview-e2e/v017f-ux-matrix.spec.ts)、[v022r55-real-viewport.spec.ts](../../../tests/webview-e2e/v022r55-real-viewport.spec.ts)（R55 新增真实视口断言基座）。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
 
 **具体改动：**
 
@@ -321,10 +321,17 @@
 
 **验收场景与完成条件：**
 
-- [ ] 故意移除输入区样式或增加额外 grid 项时测试确实失败。
-- [ ] 真实 720×480 与等效缩放自动检查分别标注。
-- [ ] Light/Dark/High Contrast 可辨识，真实 VS Code 200% 另有人工记录。
-- [ ] 截图编号绑定提交与构建模式。
+- [x] 故意移除输入区样式或增加额外 grid 项时测试确实失败。
+- [x] 真实 720×480 与等效缩放自动检查分别标注。
+- [x] Light/Dark/High Contrast 可辨识，真实 VS Code 200% 另有人工记录。
+- [x] 截图编号绑定提交与构建模式。
+
+**R55 先行断言运行记录（`0bc2dc7`，`npm run build:webview` 生产 CSS）：**
+
+- 基座 `v022r55-real-viewport.spec.ts` 11 项：9 通过 + 2 预期失败（R27 首屏 2 完整行、R03 窄屏简化四列）。
+- 反证：运行时清零输入区高度使断言 `24 < 150` 失败、首行追加 grid 项使列数断言 `7 ≠ 6` 失败；临时反证用例已删，输出见 `.validation/evidence/v0.2.2/r55-0bc2dc7-run1/`。
+- 附带发现（未改业务源码，留 V020-R03 修复）：窄屏 `@media (max-width: 720px)` 的 `display: none` 被后部同优先级 `display: flex` 覆盖，选择建议列仍参与排版。
+- 真实 VS Code 200% 真缩放与读屏仍为人工观察项，未自动覆盖。
 
 ## 4. 测试落点
 
@@ -333,6 +340,7 @@
 - [page-screenshots.spec.ts](../../../tests/webview-e2e/page-screenshots.spec.ts)
 - [visual-accessibility.spec.ts](../../../tests/webview-e2e/visual-accessibility.spec.ts)
 - [v017f-ux-matrix.spec.ts](../../../tests/webview-e2e/v017f-ux-matrix.spec.ts)
+- [v022r55-real-viewport.spec.ts](../../../tests/webview-e2e/v022r55-real-viewport.spec.ts)（R55 新增真实视口断言基座）
 - [ScopeBar.test.ts](../../../tests/components/ScopeBar.test.ts)
 
 ## 开发与验证约束

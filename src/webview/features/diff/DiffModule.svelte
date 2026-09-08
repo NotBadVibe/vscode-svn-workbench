@@ -16,9 +16,12 @@
   import FilePathDetail from "../../components/svn/FilePathDetail.svelte";
   import { resolveDiffCompare } from "./diffCompare";
   import {
+    diffBottomLabels,
     diffCompareLabels,
     diffFallbackNotices,
     diffHunkPositionLabel,
+    diffToolbarLabels,
+    diffUnmodifiedLinesLabel,
     diffViewLabels,
     whitespaceIgnoredLabel,
     whitespaceLabels,
@@ -120,6 +123,12 @@
   let ignoreExitedNotice = $state(false);
   let viewSettingsOpen = $state(false);
   let viewSettingsTrigger = $state<HTMLButtonElement>();
+  /**
+   * V022-R35：低频出口收进更多菜单。Esc 关闭并回焦触发按钮；
+   * 常驻：文件名、左右基线、块导航、当前编辑/保存状态。
+   */
+  let moreMenuOpen = $state(false);
+  let moreMenuTrigger = $state<HTMLButtonElement>();
   /**
    * v0.1.0：进入编辑前的视图偏好（统一视图不支持页内编辑时暂存，
    * 退出编辑后恢复；见 diffViewLabels.editForcesSplit）。
@@ -534,6 +543,13 @@
   function onKeydown(event: KeyboardEvent): void {
     // 中文 IME composition 保护：候选阶段 Enter 不触发；Ctrl/Cmd+S 保存。
     if (isImeComposing(event)) return;
+    // V022-R35：Esc 先关闭更多菜单并回焦，不误退出任务。
+    if (event.key === "Escape" && moreMenuOpen) {
+      event.preventDefault();
+      moreMenuOpen = false;
+      moreMenuTrigger?.focus();
+      return;
+    }
     // Esc 先关闭“显示设置”浮层并恢复触发按钮焦点，不误退出任务。
     if (event.key === "Escape" && viewSettingsOpen) {
       event.preventDefault();
@@ -1004,55 +1020,99 @@
           >
         {/if}
       {/if}
-      {#if compare.showLocalActions && compare.targetPath}
-        {#if snapshot.language !== "diff"}
-          <button
-            class="button button--secondary"
-            disabled={snapshot.binary || snapshot.truncated}
-            title={snapshot.binary
-              ? "二进制文件不支持文本对比"
-              : snapshot.truncated
-                ? "超过 5 MB 的文件不支持原生对比"
-                : undefined}
-            onclick={() => onAction("diff/open-in-editor")}
-          >
-            在编辑器中对比
-          </button>
-        {/if}
-        <button
-          class="button button--secondary"
-          onclick={() =>
-            onAction("open-file", { relativePath: compare.targetPath })}
-        >
-          在编辑器中打开
-        </button>
-        <button
-          class="button button--secondary"
-          onclick={() =>
-            onAction("open-module", {
-              moduleId: "commit",
-              selectedPaths: [compare.targetPath],
-            })}
-        >
-          提交此文件
-        </button>
-      {/if}
       <!--
-        V014-C2 · 返回本地修改：回到 Changes 唯一主路径（不新建全局导航
-        Rail）；返回后的选择/活动行/滚动恢复由 Changes 消费 continuityRestore
-        完成，本按钮只发起模块路由，不传递可写操作身份。
+        V022-R35：低频出口收进更多菜单。常驻更多菜单（含返回来源任务），
+        本地文件动作仅 working-copy 可用；历史比较只保留返回。
       -->
-      <button
-        class="button button--secondary"
-        onclick={() =>
-          onAction("open-module", {
-            moduleId: "changes",
-            taskId: "changes/overview",
-          })}
-      >
-        <span class="codicon codicon-arrow-left" aria-hidden="true"
-        ></span>返回本地修改
-      </button>
+      <div class="diff-more-menu">
+        <button
+          type="button"
+          class="button button--secondary"
+          aria-expanded={moreMenuOpen}
+          aria-haspopup="menu"
+          bind:this={moreMenuTrigger}
+          onclick={() => (moreMenuOpen = !moreMenuOpen)}
+        >
+          <span class="codicon codicon-ellipsis" aria-hidden="true"
+          ></span>{diffToolbarLabels.moreActions}
+        </button>
+        {#if moreMenuOpen}
+          <div
+            class="diff-more-menu__panel"
+            role="menu"
+            aria-label={diffToolbarLabels.moreActionsRegion}
+          >
+            {#if compare.showLocalActions && compare.targetPath}
+              {#if snapshot.language !== "diff"}
+                <button
+                  type="button"
+                  role="menuitem"
+                  class="button button--secondary diff-more-menu__item"
+                  disabled={snapshot.binary || snapshot.truncated}
+                  title={snapshot.binary
+                    ? "二进制文件不支持文本对比"
+                    : snapshot.truncated
+                      ? "超过 5 MB 的文件不支持原生对比"
+                      : undefined}
+                  onclick={() => {
+                    moreMenuOpen = false;
+                    onAction("diff/open-in-editor");
+                  }}
+                >
+                  在编辑器中对比
+                </button>
+              {/if}
+              <button
+                type="button"
+                role="menuitem"
+                class="button button--secondary diff-more-menu__item"
+                onclick={() => {
+                  moreMenuOpen = false;
+                  onAction("open-file", {
+                    relativePath: compare.targetPath,
+                  });
+                }}
+              >
+                在编辑器中打开
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                class="button button--secondary diff-more-menu__item"
+                onclick={() => {
+                  moreMenuOpen = false;
+                  onAction("open-module", {
+                    moduleId: "commit",
+                    selectedPaths: [compare.targetPath],
+                  });
+                }}
+              >
+                提交此文件
+              </button>
+            {/if}
+            <!--
+                V014-C2 · 返回本地修改：回到 Changes 唯一主路径（不新建全局导航
+                Rail）；返回后的选择/活动行/滚动恢复由 Changes 消费 continuityRestore
+                完成，本按钮只发起模块路由，不传递可写操作身份。
+              -->
+            <button
+              type="button"
+              role="menuitem"
+              class="button button--secondary diff-more-menu__item"
+              onclick={() => {
+                moreMenuOpen = false;
+                onAction("open-module", {
+                  moduleId: "changes",
+                  taskId: "changes/overview",
+                });
+              }}
+            >
+              <span class="codicon codicon-arrow-left" aria-hidden="true"
+              ></span>返回本地修改
+            </button>
+          </div>
+        {/if}
+      </div>
     </div>
   </div>
 
@@ -1199,6 +1259,23 @@
     >
       <span class="codicon codicon-info" aria-hidden="true"></span>
       <span>{snapshot.message}</span>
+    </div>
+  {/if}
+
+  {#if !snapshot.binary}
+    <!--
+      V022-R36：底座折叠/查找的外层中文对照。底座（@pierre/diffs 1.3.4）
+      无公开本地化配置（见 terminology.diffBottomUntranslatable），不操作
+      私有 Shadow DOM；此处仅解释含义与操作，行号/导航/编辑数据不受影响。
+    -->
+    <div class="notice" role="note" data-testid="diff-bottom-i18n-hint">
+      <span class="codicon codicon-info" aria-hidden="true"></span>
+      <span
+        >{diffBottomLabels.legend}{diffUnmodifiedLinesLabel(
+          6,
+        )}；{diffBottomLabels.expandAll}（底座显示英文 Expand all）；{diffBottomLabels.searchPlaceholder}；{diffBottomLabels.noResults}（底座显示英文
+        No results）。代码与路径保持原文。</span
+      >
     </div>
   {/if}
 
@@ -1360,6 +1437,58 @@
 </section>
 
 <style>
+  /*
+   * V022-R35：工具栏分层。文件身份区固定可达（sticky，不随差异滚动带走），
+   * 常驻操作与更多菜单允许二行紧凑换行；短按钮 white-space:nowrap 不挤成碎字；
+   * 文件名区 min-width:0 + 省略，完整路径经路径详情展开复制。
+   */
+  .diff-feature .feature-toolbar {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    background: var(--vscode-editor-background);
+    padding: 6px 0;
+  }
+  .diff-feature .file-title {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .diff-feature .file-title strong {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .diff-feature .toolbar-actions {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+  .diff-feature .toolbar-actions .button {
+    white-space: nowrap;
+    flex: none;
+  }
+  .diff-more-menu {
+    position: relative;
+    flex: none;
+  }
+  .diff-more-menu__panel {
+    position: absolute;
+    right: 0;
+    top: calc(100% + 4px);
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 180px;
+    padding: 6px;
+    background: var(--vscode-editor-background);
+    border: 1px solid var(--vscode-panel-border);
+    border-radius: 4px;
+  }
+  .diff-more-menu__item {
+    justify-content: flex-start;
+    white-space: nowrap;
+  }
   /* V018-D：主内容行（差异区 + 定位器），局部滚动归属，不用全局 overflow。 */
   .diff-content-row {
     display: flex;

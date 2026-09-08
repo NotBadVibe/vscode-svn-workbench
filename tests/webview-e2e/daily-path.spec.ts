@@ -41,9 +41,14 @@ test("V014-F1：日常主路径 Changes→Diff→返回→Commit→意向单无�
     .getByRole("button", { name: "查看 src/extension.ts 差异" })
     .click();
   await expect(page.getByText("BASE ↔ 工作副本 · typescript")).toBeVisible();
-  const backButton = page.getByRole("button", { name: "返回本地修改" });
+  // V022-R35：返回入口收进更多菜单。
+  await page.getByRole("button", { name: "更多操作" }).click();
+  const backButton = page.getByRole("menuitem", { name: "返回本地修改" });
   await expect(backButton).toBeVisible();
   await expect(backButton).not.toHaveClass(/button--primary/);
+  // 关闭菜单后继续页内编辑，保持后续步骤从确定状态开始。
+  await page.keyboard.press("Escape");
+  await expect(backButton).toHaveCount(0);
 
   // 第 4 步：Diff 页内编辑并 Ctrl+S 保存（mock Host 成功路径）。
   await page.getByRole("button", { name: "页内编辑" }).click();
@@ -84,7 +89,8 @@ test("V014-F1：日常主路径 Changes→Diff→返回→Commit→意向单无�
   await expect(page.getByRole("button", { name: "页内编辑" })).toBeVisible();
 
   // 第 5 步：返回本地修改（同一组合载荷重新消费，再次恢复）。
-  const returnButton = page.getByRole("button", { name: "返回本地修改" });
+  await page.getByRole("button", { name: "更多操作" }).click();
+  const returnButton = page.getByRole("menuitem", { name: "返回本地修改" });
   await expect(returnButton).toBeVisible();
   await returnButton.click();
   await expect(
@@ -147,7 +153,7 @@ test("V014-F1：日常主路径 Changes→Diff→返回→Commit→意向单无�
   await expect(dialog).toBeVisible();
   // 意向单标题与数量来自 preview.selectedPaths（mock 为 2 个）。
   await expect(dialog.getByText("提交 2 个文件").first()).toBeVisible();
-  await expect(dialog.getByText("影响 2 个路径")).toBeVisible();
+  await expect(dialog.getByText("最终将操作 2 个文件")).toBeVisible();
   // 意向单内唯一 primary（确认），取消为次级。
   await expect(dialog.locator(".button--primary")).toHaveCount(1);
   const confirmBtn = dialog.getByRole("button", { name: /确认提交/ });

@@ -7,6 +7,9 @@
     isScopeFinalCandidateTask,
     scopeFinalCandidateLabel,
     scopeRangeCountLabel,
+    scopeRangeExplanation,
+    scopeRootsSummary,
+    scopeSourceLabels,
     taskLabels,
   } from "../../i18n/terminology";
 
@@ -31,14 +34,9 @@
    * v0.1.5 V015-D1：数量口径按任务区分——写操作（Commit/Update）显示
    * 「最终候选数」，普通浏览显示「范围数」，两者文案不混用；收起态长路径
    * 截断时以 title 提供悬停 Tooltip（设计基线 §2.3），完整值经展开清单复制。
+   * V022-R30：入口来源文案集中复用 terminology（内部来源称“工作台内打开”）。
+   * V022-R31：多根汇总区分目录数与文件数，不把目录数当文件数。
    */
-  const sourceLabels: Record<WorkbenchScopeView["source"], string> = {
-    explorer: "资源管理器右键",
-    editor: "编辑器",
-    scm: "源代码管理",
-    commandPalette: "命令面板",
-    internal: "内部跳转",
-  };
 
   let rootsExpanded = $state(false);
   let rootsTriggerEl = $state<HTMLElement | null>(null);
@@ -46,8 +44,11 @@
   const rootsSummary = $derived(
     scope
       ? scope.roots.length === 1
-        ? scope.roots[0].relativePath
-        : `${scope.roots.length} 个操作范围`
+        ? (scope.roots[0].relativePath as string)
+        : scopeRootsSummary(
+            scope.roots.filter((root) => root.kind === "folder").length,
+            scope.roots.filter((root) => root.kind === "file").length,
+          )
       : "",
   );
 
@@ -117,7 +118,7 @@
         {/if}
         <span class="scope-fact"
           ><span class="codicon codicon-link" aria-hidden="true"></span>
-          入口：{sourceLabels[scope.source]}</span
+          入口：{scopeSourceLabels[scope.source]}</span
         >
       </div>
       <button
@@ -187,5 +188,6 @@
         >复制全部范围路径</button
       >
     {/if}
+    <p class="scope-roots__note" role="note">{scopeRangeExplanation}</p>
   </div>
 {/if}

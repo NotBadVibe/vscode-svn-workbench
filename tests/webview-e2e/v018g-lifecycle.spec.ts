@@ -377,7 +377,7 @@ test("V018-G1：500 块降级→简化编辑→恢复完整视图→保存", asy
   await simplifiedContent.click({ position: { x: 20, y: 20 } });
   await expect(simplifiedContent).toBeFocused({ timeout: 15_000 });
   await page.keyboard.press("ControlOrMeta+v");
-  await expect(page.getByText("Host 内存草稿已同步")).toBeVisible({
+  await expect(page.getByText("合并草稿仅本次会话保留")).toBeVisible({
     timeout: 30_000,
   });
 

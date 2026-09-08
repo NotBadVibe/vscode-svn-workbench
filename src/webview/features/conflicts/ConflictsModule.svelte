@@ -46,6 +46,11 @@
     countWhitespaceOnlyConflictBlocks,
   } from "../diff/diffOverviewModel";
   import {
+    conflictDraftSyncedLabel,
+    conflictDraftWorkingLabels,
+    conflictSwitchLabels,
+    conflictVerifyLabels,
+    draftStorageLabels,
     openInVscodeEditorLabel,
     whitespaceLabels,
   } from "../../i18n/terminology";
@@ -1586,6 +1591,16 @@
     diffProgress = { ...diffProgress, current: next };
   }
 
+  /**
+   * V022-R37：marker 残留的就近修复入口——定位到首个冲突块（只改导航，
+   * 不触碰草稿/范围/快照）；完整三段解释只保留 recoveryItems 中的权威摘要。
+   */
+  function focusFirstConflictBlock(): void {
+    if (!diffProgress.total) return;
+    diffView?.focusConflict(0);
+    diffProgress = { ...diffProgress, current: 1 };
+  }
+
   // V012-E：快捷键全局守卫（中文 IME 期间不触发，单一来源）
   function handleModuleKeydown(e: KeyboardEvent): void {
     if (
@@ -2241,6 +2256,15 @@
             <small>{item.recovery}</small>
           </div>
           <div class="toolbar-actions">
+            {#if item.id === "markerRemaining"}
+              <!-- V022-R37：编辑处就近修复入口（只改导航，不触碰草稿/范围）。 -->
+              <button
+                class="button button--secondary"
+                data-testid="{item.testId}-locate"
+                onclick={focusFirstConflictBlock}
+                >{conflictVerifyLabels.locateFirstBlock}</button
+              >
+            {/if}
             {#if item.actions.includes("retry")}
               <button
                 class="button button--secondary"
@@ -2298,27 +2322,14 @@
           </div>
         </div>
       {/each}
-      {#if !isNonTextBranch && recoveryItems.some((i) => i.id === "markerRemaining")}
-        <div
-          class="notice notice--warning"
-          role="alert"
-          data-testid="recovery-marker-remaining"
-        >
-          <span class="codicon codicon-warning" aria-hidden="true"></span>
-          <div>
-            <strong>{RECOVERY_CATALOG.markerRemaining.what}</strong>
-            <p>{RECOVERY_CATALOG.markerRemaining.cause}</p>
-            <small>{RECOVERY_CATALOG.markerRemaining.recovery}</small>
-          </div>
-          <div class="toolbar-actions">
-            <span
-              class="status-badge status-badge--blocked"
-              aria-label="核验未通过">核验未通过</span
-            >
-            <small>继续编辑</small>
-          </div>
-        </div>
-      {/if}
+      <!--
+        V022-R37 去重：marker 残留的完整三段解释只保留上方 recoveryItems
+        的权威摘要（deriveRecoveryItems 按 markerRemaining 单 id 去重，
+        写盘失败 writeFailed 与核验失败分属不同 id 不得合并）；
+        阶段条（ConflictStepBar）仅表达进度与简短阻止原因，不复述整段原因。
+        此处不再渲染第二份完整解释，避免同一核验错误多区域重复。
+        恢复成功（marker 消除/保存成功）后派生项自动清除，不残留旧状态。
+      -->
       <div class="conflict-tabs" role="tablist" aria-label="冲突版本">
         {#each ["working", "mine", "theirs", "base"] as pane (pane)}
           <button
@@ -2835,11 +2846,18 @@
               role="status"
             >
               <span class="codicon codicon-save" aria-hidden="true"></span><span
-                >Host 内存草稿已同步（修订 {snapshot.selected.draft
-                  .revision}，{snapshot.selected.draft.dirty
-                  ? "有未保存变更"
-                  : "干净"}），关闭任务前可复制/导出逃生。</span
+                >{conflictDraftSyncedLabel(
+                  snapshot.selected.draft.revision,
+                  snapshot.selected.draft.dirty,
+                )}</span
               >
+              <details class="conflict-diagnostics">
+                <summary>诊断信息</summary>
+                <code
+                  >conflict/draft-update · 修订 {snapshot.selected.draft
+                    .revision}</code
+                >
+              </details>
             </div>{/if}
           {#if conflictDraftFeedback}<div
               class="conflict-inline-feedback"
@@ -2867,7 +2885,7 @@
                 class="status-badge status-badge--error">保存失败</span
               ><small
                 >{checkpointStatusDetail ||
-                  "检查点保存失败，草稿仍保留在内存"}</small
+                  draftStorageLabels.checkpointFailedDetail}</small
               >{/if}
             {#if snapshot.selected?.mergeEditor.feedback?.includes("容量上限")}<div
                 class="notice notice--warning"
@@ -2903,8 +2921,8 @@
           <div class="merge-save-bar">
             <span
               >{workingDirty
-                ? "有尚未保存的合并修改（Host 草稿已同步）"
-                : "工作副本与已保存内容一致"}</span
+                ? conflictDraftWorkingLabels.unsaved
+                : conflictDraftWorkingLabels.clean}</span
             ><button
               bind:this={saveButtonEl}
               class={snapshot.resolvePreview
@@ -3275,21 +3293,23 @@
       <form method="dialog" class="dialog-card">
         <h3>有未保存的合并草稿</h3>
         <p>
-          文件 <strong>{conflictSwitchRequest.currentRelativePath}</strong> 的合并草稿仅保存在
-          Host 内存（未写入工作副本，未标记解决）。请选择：
+          文件 <strong>{conflictSwitchRequest.currentRelativePath}</strong>
+          {conflictSwitchLabels.descriptionIntro}
         </p>
         <p class="dialog-timer-notice">
           <span class="codicon codicon-clock" aria-hidden="true"></span> 30 秒未选择将自动保存检查点并继续（草稿不丢）
         </p>
         <ul class="dialog-options">
           <li>
-            <strong>保存检查点并继续</strong>：将当前草稿保存为 Host
-            检查点（不写盘），切换到
+            <strong>保存检查点并继续</strong
+            >：{conflictSwitchLabels.saveOptionDetail}切换到
             <code>{conflictSwitchRequest.nextRelativePath}</code
             >，可在返回后继续编辑或复制/导出逃生。
           </li>
           <li><strong>留在当前文件</strong>：取消切换，保留编辑器与草稿。</li>
-          <li><strong>放弃草稿</strong>：丢弃 Host 草稿并切换。</li>
+          <li>
+            <strong>放弃草稿</strong>：{conflictSwitchLabels.discardOption}
+          </li>
         </ul>
         <div class="toolbar-actions" role="group" aria-label="草稿处理选项">
           <button

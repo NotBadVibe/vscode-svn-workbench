@@ -279,9 +279,9 @@ test("V014-F2(c)：三主题下主操作区/摘要条/交接来源行可见且�
 
 /*
  * d) 键盘：Changes「更多」菜单键盘展开/Esc 关闭/焦点返回触发按钮；
- * Diff「返回本地修改」Tab 可达。
+ * Diff 更多菜单返回项 Tab 可达（V022-R35 分层）。
  */
-test("V014-F2(d)：更多菜单键盘往返与 Diff 返回按钮 Tab 可达", async ({
+test("V014-F2(d)：更多菜单键盘往返与 Diff 更多菜单返回项 Tab 可达", async ({
   page,
 }) => {
   await page.goto("/?module=changes");
@@ -304,14 +304,19 @@ test("V014-F2(d)：更多菜单键盘往返与 Diff 返回按钮 Tab 可达", as
   await expect(moreButton).toHaveAttribute("aria-expanded", "false");
   await expect(moreButton).toBeFocused();
 
-  // Diff 返回本地修改：Tab 可达（焦点可进入也可离开，不形成陷阱）。
+  // Diff 返回本地修改：更多菜单按钮 Tab 可达，菜单项键盘可操作（不形成陷阱）。
   await page.goto("/?module=diff");
-  const backButton = page.getByRole("button", { name: "返回本地修改" });
-  await expect(backButton).toBeVisible();
-  await backButton.focus();
-  await expect(backButton).toBeFocused();
-  await backButton.press("Tab");
+  const diffMoreButton = page.getByRole("button", { name: "更多操作" });
+  await expect(diffMoreButton).toBeVisible();
+  await diffMoreButton.focus();
+  await expect(diffMoreButton).toBeFocused();
+  await diffMoreButton.press("Enter");
+  const backItem = page.getByRole("menuitem", { name: "返回本地修改" });
+  await expect(backItem).toBeVisible();
+  await backItem.focus();
+  await expect(backItem).toBeFocused();
+  await backItem.press("Tab");
   expect(
-    await backButton.evaluate((element) => document.activeElement !== element),
+    await backItem.evaluate((element) => document.activeElement !== element),
   ).toBe(true);
 });

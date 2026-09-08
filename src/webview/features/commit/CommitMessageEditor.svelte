@@ -17,6 +17,7 @@
    */
   import { isExplicitSubmitShortcut } from "../../i18n/keyboard";
   import { commitMessageShortcutHint } from "../../i18n/shortcutHelp";
+  import { commitMessageEmptyWritingHint } from "../../i18n/terminology";
 
   /** 提交说明模板（Host 下发，id/label/body）。 */
   export interface CommitMessageTemplate {
@@ -34,6 +35,7 @@
     onApplyTemplate,
     onDraftUpdate,
     onPreviewRequest,
+    forceShowValidation = false,
   }: {
     /** 提交说明草稿：父模块权威，本组件只经 `bind:message` 受控展示。 */
     message: string;
@@ -51,13 +53,40 @@
     onDraftUpdate: (next: string) => void;
     /** 预览请求：显式 Ctrl/⌘+Enter 时透传，由父模块携带选择生成预览。 */
     onPreviewRequest: () => void;
+    /**
+     * V022-R33：父模块主预览按钮被点击后置 true——空表单同样进入“已请求预览”，
+     * 字段错误不再保持中性提示。缺省 false（仅编辑区自身失焦/Ctrl+Enter 驱动）。
+     */
+    forceShowValidation?: boolean;
   } = $props();
+
+  /*
+   * V022-R33：空表单先提示再校验。`touched` 在失焦或请求预览后置位；置位前
+   * 空表单只展示中性写作提示，不展示字段错误（不做错误色误报、不打断读屏）。
+   * 有内容时的规范问题始终立即展示；修正后随 props 即时更新，草稿不重置。
+   * `isComposing` 跟踪中文 IME 候选：候选阶段不同步草稿（不提前触发 Host 校验
+   * 与错误播报），组合结束后一次性同步；候选阶段 Enter 不触发预览（快捷键守卫）。
+   */
+  let touched = $state(false);
+  let isComposing = $state(false);
+  const showIssues = $derived(
+    messageIssues.length > 0 &&
+      (message.trim().length > 0 || touched || forceShowValidation),
+  );
 
   /** IME 保护的提交预览快捷键：候选阶段 Enter 不触发（`keyboard.ts` 同模式）。 */
   function handleMessageKeydown(event: KeyboardEvent): void {
     if (!isExplicitSubmitShortcut(event)) return;
     event.preventDefault();
+    // 请求预览后进入已校验态：空表单字段错误不再保持中性提示。
+    touched = true;
     onPreviewRequest();
+  }
+
+  /** 候选阶段不同步草稿；组合结束后一次性同步，避免提前错误播报。 */
+  function handleCompositionEnd(): void {
+    isComposing = false;
+    onDraftUpdate(message);
   }
 </script>
 
@@ -71,8 +100,15 @@
   </div>
   <textarea
     bind:value={message}
-    onblur={() => onDraftUpdate(message)}
-    oninput={() => onDraftUpdate(message)}
+    onblur={() => {
+      touched = true;
+      onDraftUpdate(message);
+    }}
+    oninput={() => {
+      if (!isComposing) onDraftUpdate(message);
+    }}
+    oncompositionstart={() => (isComposing = true)}
+    oncompositionend={handleCompositionEnd}
     onkeydown={handleMessageKeydown}
     aria-label="提交说明"
     aria-describedby="commit-message-shortcut"
@@ -83,7 +119,7 @@
     <span id="commit-message-shortcut">{commitMessageShortcutHint}</span>
     {#if conventionHint}<span title={conventionHint}>团队规范已加载</span>{/if}
   </div>
-  {#if messageIssues.length > 0}
+  {#if showIssues}
     <div class="issue-list" role="alert">
       {#each messageIssues as issue, issueIndex (issueIndex)}
         <div>
@@ -92,6 +128,8 @@
         </div>
       {/each}
     </div>
+  {:else if message.trim().length === 0}
+    <p class="compose-hint">{commitMessageEmptyWritingHint}</p>
   {/if}
 </div>
 
@@ -123,5 +161,13 @@
   }
   .commit-message-editor textarea:focus {
     border-color: var(--border-strong);
+  }
+  /*
+   * V022-R33：空表单中性写作提示——描述文字色，无警告色，不进入活区播报。
+   */
+  .compose-hint {
+    margin: 4px 0 0;
+    font-size: 12px;
+    color: var(--vscode-descriptionForeground);
   }
 </style>

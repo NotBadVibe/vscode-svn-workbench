@@ -149,9 +149,14 @@ test("V017-G(PATH-1)：Changes→Diff→返回→Commit→意向单确认前键�
   await page.keyboard.press("Alt+ArrowUp");
   await expect(position).toBeVisible();
 
-  // 第 9 步：Tab 前进到返回入口并 Enter（全键盘返回，不用鼠标）。
-  const backButton = page.getByRole("button", { name: "返回本地修改" });
-  await tabTo(page, backButton, 40);
+  // 第 9 步：Tab 前进到更多菜单并 Enter 打开，再 Tab 到返回项 Enter（全键盘返回，不用鼠标）。
+  const moreButton = page.getByRole("button", { name: "更多操作" });
+  await tabTo(page, moreButton, 40);
+  await expect(moreButton).toBeFocused();
+  await page.keyboard.press("Enter");
+  const backButton = page.getByRole("menuitem", { name: "返回本地修改" });
+  await expect(backButton).toBeVisible();
+  await tabTo(page, backButton, 10);
   await expect(backButton).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(
@@ -228,7 +233,7 @@ test("V017-G(PATH-1)：Changes→Diff→返回→Commit→意向单确认前键�
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
   await expect(dialog.getByText("提交 2 个文件").first()).toBeVisible();
-  await expect(dialog.getByText("影响 2 个路径")).toBeVisible();
+  await expect(dialog.getByText("最终将操作 2 个文件")).toBeVisible();
   await expect(dialog.locator(".button--primary")).toHaveCount(1);
   const confirmBtn = dialog.getByRole("button", { name: /确认提交/ });
   await expect(confirmBtn).toBeVisible();

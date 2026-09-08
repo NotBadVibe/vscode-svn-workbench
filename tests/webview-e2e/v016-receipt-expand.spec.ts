@@ -78,7 +78,7 @@ test("V016-F2(2b)：Conflicts 主动展开回执完整后放弃，合并草稿�
 
   // 先产生合并草稿（用于放弃后保留断言）。
   await page.getByRole("button", { name: "采用我的修改" }).first().click();
-  await expect(page.getByText("Host 内存草稿已同步")).toBeVisible();
+  await expect(page.getByText("合并草稿仅本次会话保留")).toBeVisible();
 
   // 展开「需要帮助」→模型动作（解释冲突意图）→回执卡出现。
   await page.getByRole("button", { name: "需要帮助" }).click();

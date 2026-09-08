@@ -3,7 +3,10 @@
    * v0.0.8 SelectionSummary：已选 N、当前筛选可操作 M、隐藏 K 的权威
    * 摘要与“只看已选 / 清除隐藏 / 清空全部 / 推荐项”入口；刷新移除
    * 说明经 role=status 播报。
+   * V022-R31：数量口径统一为“匹配 M · 已选 N · 隐藏 K”，文案集中复用
+   * terminology（selectionSummaryLabel），读屏名称与可见文案一致。
    */
+  import { selectionSummaryLabel } from "../../i18n/terminology";
 
   let {
     selectedCount,
@@ -31,8 +34,16 @@
 </script>
 
 <div class="selection-summary">
-  <span class="selection-summary__counts">
-    已选 {selectedCount} · 当前筛选可操作 {actionableCount} · 隐藏 {hiddenCount}
+  <span
+    class="selection-summary__counts"
+    role="status"
+    aria-label={selectionSummaryLabel(
+      selectedCount,
+      actionableCount,
+      hiddenCount,
+    )}
+  >
+    {selectionSummaryLabel(selectedCount, actionableCount, hiddenCount)}
   </span>
   <span class="selection-summary__actions">
     <button

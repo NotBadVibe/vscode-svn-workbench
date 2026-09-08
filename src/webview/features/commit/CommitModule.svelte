@@ -22,6 +22,7 @@
     commitSelectionAiSourceLabels,
     describeCommitSelectionEvaluation,
     fileStatusLabels,
+    rowDetailReasonsLabel,
     sourceLabels,
     statusExplanations,
   } from "../../i18n/terminology";
@@ -30,6 +31,7 @@
   import AssistancePanel from "../../components/assistance/AssistancePanel.svelte";
   import {
     commitAssistanceLabels,
+    commitLocalOnlyLabels,
     taskStateCopy,
   } from "../../i18n/terminology";
   import {
@@ -130,6 +132,11 @@
   let replaceConfirmOpen = $state(false);
   /** 替换确认对应的目标字符数（打开时计算）。 */
   let replaceTargetLength = $state(0);
+  /*
+   * V022-R33：主预览按钮被点击后进入“已请求预览”——空表单字段错误不再保持
+   * 中性提示（透传给 CommitMessageEditor 的 forceShowValidation）。
+   */
+  let previewAttempted = $state(false);
   /*
    * v0.1.4 V014-D Commit 紧凑模式：首屏只保留摘要条、提交说明、
    * 本地检查摘要与唯一主操作；完整文件选择、AI 回执/建议、团队规则
@@ -396,6 +403,19 @@
   $effect(() => {
     if (pathDetail) list.markPathDetailArrived();
   });
+
+  /*
+   * V022-R32：行内解释收敛——状态徽标文字直接表达，行内不再配独立解释按钮；
+   * 完整状态解释收敛进行详情区（决策依据文字仍保留在行内）。键盘经路径详情
+   * 按钮打开详情、Esc 关闭回到触发点，关闭不改动滚动位置。
+   */
+  const detailFile = $derived(
+    pathDetail
+      ? snapshot.files.find(
+          (file) => file.relativePath === pathDetail.relativePath,
+        )
+      : undefined,
+  );
 
   // v0.0.7 §7.2：跨项目 scope 的提交预览按项目分组；单项目不分组。
   const previewGroups = $derived.by(() => {
@@ -1012,11 +1032,10 @@
             {snapshot.feedback.message}
           </div>
         {/if}
+        <!-- V022-R29：展开态推荐按钮去重——“选择推荐项”与下方选择摘要入口重复，
+          此处只保留“应用本地规则”；数量摘要以紧凑摘要条（待提交/阻止项）与
+          选择摘要（已选/可操作/隐藏）为准，不再重复推荐计数。 -->
         <div class="commit-action-row">
-          <button class="button button--secondary" onclick={selectRecommended}
-            ><span class="codicon codicon-checklist" aria-hidden="true"
-            ></span>选择推荐项</button
-          >
           <button
             class="button button--secondary"
             onclick={() => onAction("commit/apply-local-rules")}
@@ -1125,6 +1144,18 @@
                     relativePath: pathDetail.relativePath,
                   })}
               />
+              {#if detailFile}
+                <div
+                  class="path-detail-host__reasons"
+                  role="group"
+                  aria-label={rowDetailReasonsLabel}
+                >
+                  <StatusExplanation
+                    term={fileStatusLabels[detailFile.status]}
+                    explanation={statusExplanations[detailFile.status]}
+                  />
+                </div>
+              {/if}
             </div>
           {/if}
           {#each list.visibleRows as { row: file, index: rowIndex } (file.selectionKey)}
@@ -1181,11 +1212,6 @@
               <span class={`status-badge status-badge--${file.status}`}
                 >{fileStatusLabels[file.status]}</span
               >
-              <!-- v0.0.18 批次 B（C-05）：状态词键盘可达的就地解释。 -->
-              <StatusExplanation
-                term={fileStatusLabels[file.status]}
-                explanation={statusExplanations[file.status]}
-              />
               <button
                 type="button"
                 class="icon-button icon-button--small"
@@ -1231,13 +1257,25 @@
           </button>
         </div>
       </div>
-      {#if messagePrivacy}<div class="privacy-note">
-          <strong>外发预览</strong><span
-            >{messagePrivacy.data}；最多 {messagePrivacy.fileLimit} 个文件；模型 {messagePrivacy.model}；{messagePrivacy.historyIncluded
-              ? `包含 ${messagePrivacy.historyCount ?? 0} 条已脱敏历史摘要`
-              : "不含历史"}。</span
-          >
-        </div>{/if}
+      {#if messagePrivacy}
+        {#if assistanceConfigured}
+          <div class="privacy-note">
+            <strong>外发预览</strong><span
+              >{messagePrivacy.data}；最多 {messagePrivacy.fileLimit} 个文件；模型
+              {messagePrivacy.model}；{messagePrivacy.historyIncluded
+                ? `包含 ${messagePrivacy.historyCount ?? 0} 条已脱敏历史摘要`
+                : "不含历史"}。</span
+            >
+          </div>
+        {:else}
+          <!-- V022-R34：未配置模型时如实展示本地状态，不使用外发预览标题与模型/预算术语。 -->
+          <div class="privacy-note privacy-note--local">
+            <strong>{commitLocalOnlyLabels.title}</strong><span
+              >{commitLocalOnlyLabels.body}</span
+            >
+          </div>
+        {/if}
+      {/if}
       <!-- v0.1.6 V016-E：提交说明编辑区已抽取为 CommitMessageEditor（受控展示 + 事件透传，state 仍由本模块权威）。 -->
       <CommitMessageEditor
         bind:message
@@ -1248,11 +1286,14 @@
           onAction("commit/apply-template", { templateId })}
         onDraftUpdate={(next) =>
           onAction("commit/update-draft", { message: next })}
-        onPreviewRequest={() =>
+        onPreviewRequest={() => {
+          previewAttempted = true;
           onAction("commit/preview", {
             selectedPaths: selectedPaths(),
             message,
-          })}
+          });
+        }}
+        forceShowValidation={previewAttempted}
       />
     </div>
 
@@ -1753,11 +1794,13 @@
         </div>
         <button
           class="button button--secondary"
-          onclick={() =>
+          onclick={() => {
+            previewAttempted = true;
             onAction("commit/preview", {
               selectedPaths: selectedPaths(),
               message,
-            })}>重新检查</button
+            });
+          }}>重新检查</button
         >
       </div>
       {#if localRuleSummary}
@@ -1869,11 +1912,13 @@
           <button
             class="button button--primary"
             disabled={selected.size === 0}
-            onclick={() =>
+            onclick={() => {
+              previewAttempted = true;
               onAction("commit/preview", {
                 selectedPaths: selectedPaths(),
                 message,
-              })}>预览提交 {selected.size} 个文件</button
+              });
+            }}>预览提交 {selected.size} 个文件</button
           >
         </div>
       {/if}

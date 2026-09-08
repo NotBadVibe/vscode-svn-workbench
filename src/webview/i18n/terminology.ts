@@ -1,5 +1,6 @@
 import type {
   WorkbenchFileStatus,
+  WorkbenchScopeView,
   WorkbenchTaskId,
 } from "@protocol/workbenchProtocol";
 import type {
@@ -60,6 +61,13 @@ export const selectionDecisionExplanations = {
   blocked:
     "安全规则阻止提交（例如冲突未解决、外部工作副本）；该结果不可被建议覆盖。",
 } as const;
+
+/**
+ * V022-R32：行内解释收敛——状态徽标与选择建议文字本身即直接表达（常见状态
+ * 不再配独立解释按钮）；完整解释收敛进行详情区（`rowDetailReasonsLabel`），
+ * 随路径详情一并经键盘打开、Esc 关闭并回到触发点。
+ */
+export const rowDetailReasonsLabel = "状态与选择说明";
 
 /** 更新风险等级的就地解释。 */
 export const riskExplanations = {
@@ -360,6 +368,72 @@ export const diffFallbackNotices = {
 } as const;
 
 /**
+ * V022-R35：Diff 工具栏分层文案（集中收口，页面不各自拼字符串）。
+ * 常驻：文件名、左右基线、块导航、当前编辑/保存状态；
+ * 低频出口收进更多菜单（含返回来源任务）。
+ */
+export const diffToolbarLabels = {
+  moreActions: "更多操作",
+  moreActionsRegion: "更多差异操作",
+  primaryGroup: "差异主要操作",
+  lowFrequencyGroup: "低频出口",
+  closeMenu: "关闭更多操作",
+} as const;
+
+/**
+ * V022-R36：底座（@pierre/diffs 1.3.4）公开文案审计结论。
+ *
+ * 可经公开配置/适配层覆盖的项：无。以下底座字串均硬编码在库实现内，
+ * FileDiffOptions/UnresolvedFileOptions 均未暴露 locale/文案覆盖入口：
+ * - `getModifiedLinesString`（DiffHunksRenderer.js）：`${n} unmodified line(s)`
+ *  （Intl.PluralRules("en-US")，无本地化参数）；
+ * - 折叠分隔符 `chunked` 时的 `"Expand all"`（createSeparator.js 硬编码）；
+ * - 查找面板 `"Search"` / `"No results"` / `"N results"` / `"N of M"`
+ *  （editor/searchPanel.js 硬编码，placeholder 同样无覆盖入口）；
+ * - `"More unchanged context may be available"`（DiffHunksRenderer.js 回退文案）。
+ *
+ * 可维护适配出口（不操作私有 Shadow DOM）：
+ * - 折叠按钮仅补中文 `aria-label`（cspCompatObserver.fixExpandButtons），
+ *   可见文本仍为英文原文；
+ * - 外层中文图例（diffBottomLabels/diffBottomHint）解释含义与操作，
+ *   不改写 Shadow DOM 内文本；
+ * - 冲突三动作经 `mergeConflictActionsType` 自定义渲染器已中文化
+ *  （conflictDiffViewAdapter.createChineseActionRenderer），属公开能力。
+ */
+export const diffBottomUntranslatable = [
+  "N unmodified lines（折叠行数）",
+  "Expand all（全部展开）",
+  "Search（查找输入）",
+  "No results（无结果）",
+  "N results / N of M（结果计数）",
+  "More unchanged context may be available（更多上下文提示）",
+] as const;
+
+/** V022-R36：底座折叠/查找的外层中文对照（集中收口，不在单页造同义词）。 */
+export const diffBottomLabels = {
+  legend: "底座提示：折叠行显示英文行数与展开字样，含义对照如下——",
+  expandAll: "全部展开",
+  searchPlaceholder: "查找（底座面板为英文 Search）",
+  noResults: "无结果",
+} as const;
+
+/** V022-R36：折叠行数中文对照（参数化标签，页面不各自拼字符串）。 */
+export function diffUnmodifiedLinesLabel(count: number): string {
+  return `共 ${count} 行未修改`;
+}
+
+/**
+ * V022-R37：冲突核验错误的权威摘要归属（集中收口）。
+ * 同一核验错误（marker 残留）只保留 recoveryItems 中的完整三段解释；
+ * 阶段条仅表达进度与简短阻止原因，不复述整段原因；
+ * 写盘失败与核验失败按不同 id 区分，不得合并。
+ */
+export const conflictVerifyLabels = {
+  stepBlockedShort: "核验未通过",
+  locateFirstBlock: "定位到首个冲突块",
+} as const;
+
+/**
  * 提交页候选决策依据的完整中文描述（规划 4.3）：
  * 最终决策 · 决策原因（命中规则及来源 / 状态默认策略 / 安全规则）· 安全锁定。
  * 文案统一收口在此处，提交页与设置预览不各自拼字符串。
@@ -465,6 +539,90 @@ export function scopeRangeCountLabel(count: number): string {
 export function isScopeFinalCandidateTask(taskId: WorkbenchTaskId): boolean {
   return taskId === "commit/compose" || taskId === "update/preview";
 }
+
+/**
+ * V022-R30：入口来源用户语言（集中收口，页面不各自造词）。
+ * `internal` 指工作台内模块间打开，不暴露“内部跳转”实现词。
+ */
+export const scopeSourceLabels: Record<WorkbenchScopeView["source"], string> = {
+  explorer: "资源管理器右键",
+  editor: "编辑器",
+  scm: "源代码管理",
+  commandPalette: "命令面板",
+  internal: "工作台内打开",
+};
+
+/**
+ * V022-R30：草稿保存位置用户语言（集中收口）。
+ * 普通视图只说“与提交页共享、仅本次会话保留、尚未写入文件、校验未通过”；
+ * 协议名与诊断代码只进可展开的诊断详情，不进主文案。
+ */
+export const draftStorageLabels = {
+  sharedCommitDraft:
+    "与提交页共享同一份草稿，仅本次会话保留，尚未写入文件。切换模块不会生成第二份提交说明。",
+  changelistCheckHint: "应用前会重新检查范围与最新工作副本状态。",
+  advancedGuardHint: "本地有未提交修改时，将阻止执行，请先处理本地修改后再试。",
+  checkpointFailedDetail: "检查点保存失败，草稿仍保留在本次会话中。",
+  validationFailed: "校验未通过",
+} as const;
+
+/** V022-R30：冲突合并草稿已同步（用户语言，诊断代码另进详情）。 */
+export function conflictDraftSyncedLabel(
+  revision: number | string,
+  dirty: boolean,
+): string {
+  return `合并草稿仅本次会话保留、尚未写入文件（修订 ${revision}，${dirty ? "有未保存变更" : "已保存"}），关闭任务前可复制或导出。`;
+}
+
+export const conflictDraftWorkingLabels = {
+  unsaved: "有尚未保存的合并修改（草稿仅本次会话保留）",
+  clean: "工作副本与已保存内容一致",
+} as const;
+
+export const conflictSwitchLabels = {
+  descriptionIntro:
+    "的合并草稿仅本次会话保留（尚未写入工作副本，未标记解决）。请选择：",
+  saveOptionDetail:
+    "将当前草稿保存在本次会话中（不写入工作副本），切换后可在返回时继续编辑，或复制/导出。",
+  discardOption: "放弃本次会话草稿并切换。",
+} as const;
+
+/**
+ * V022-R31：数量口径统一（集中收口，页面不各自拼字符串）。
+ * - 主操作旁突出“最终将操作 N 个文件”（最终候选集合数量）；
+ * - 选择区显示“匹配 M · 已选 N · 隐藏 K”；
+ * - 目录数仅为操作起点，不计为文件数。
+ */
+export function selectionSummaryLabel(
+  selected: number,
+  matched: number,
+  hidden: number,
+): string {
+  return `匹配 ${matched} · 已选 ${selected} · 隐藏 ${hidden}`;
+}
+
+export function finalActionLabel(count: number): string {
+  return `最终将操作 ${count} 个文件`;
+}
+
+export function scopeRootsSummary(
+  dirs: number,
+  files: number,
+  singlePath?: string,
+): string {
+  if (singlePath) return singlePath;
+  return `${dirs + files} 个位置（${dirs} 个目录、${files} 个文件）`;
+}
+
+export const scopeRangeExplanation =
+  "目录数仅为操作起点，不计为文件数；外部工作副本、阻止项与排除项不计入最终候选。";
+
+/** V022-R31：动态远端数量必须标预估或未知，不虚构精确值。 */
+export function remoteEstimateLabel(count: number): string {
+  return `远端预估 ${count} 项`;
+}
+
+export const remoteUnknownLabel = "远端数量未知";
 
 export function historyLoadedStatus(count: number, hasMore?: boolean): string {
   return `已加载最近 ${count} 条修订${hasMore ? "（可能还有更早修订）" : "（已是全部历史）"}`;
@@ -614,6 +772,22 @@ export const commitAssistanceLabels = {
   selectionDemotedHint:
     "选择建议默认使用本地规则，结果见下方本地检查摘要；模型选择已收起。",
   unconfiguredDisabledReason: "未配置外部模型，本地检查仍可用",
+} as const;
+
+/**
+ * V022-R33：空提交表单先提示再校验——初始为空且未失焦/未请求预览时展示
+ * 中性写作提示，不展示字段错误；范围冲突与安全阻止项不在此收敛，始终立即展示。
+ */
+export const commitMessageEmptyWritingHint =
+  "先简要说明改动意图、范围与影响；离开输入框或请求预览后，将按团队规范检查。";
+
+/**
+ * V022-R34：无模型时外发说明改为准确本地状态——本地动作文案不得包含
+ * 模型/预算/历史等外发术语；外部动作仍展示完整回执要素。
+ */
+export const commitLocalOnlyLabels = {
+  title: "本地生成",
+  body: "不会外发：当前仅使用本地规则与人工流程，可独立写说明、检查并预览提交；模型、预算与历史说明仅适用于外部模型动作。",
 } as const;
 
 /**

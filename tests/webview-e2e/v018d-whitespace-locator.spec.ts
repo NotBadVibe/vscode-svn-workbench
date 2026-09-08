@@ -120,12 +120,14 @@ test.describe("V018-D 空白与定位器", () => {
     expect(frameWidth).toBeGreaterThan(200);
     const toggle = page.getByTestId("diff-overview-toggle");
     await expect(toggle).toBeVisible();
+    // V022-R35：窄屏默认折叠定位器（不占代码宽度），用户可显式展开/收起。
+    await expect(page.getByTestId("diff-overview-list")).toHaveCount(0);
+    // 展开恢复
+    await toggle.click();
+    await expect(page.getByTestId("diff-overview-list")).toBeVisible();
     // 收起后主差异区仍可见且可达
     await toggle.click();
     await expect(page.getByTestId("diff-overview-list")).toHaveCount(0);
     await expect(page.locator(".diff-hunk-position")).toBeVisible();
-    // 展开恢复
-    await toggle.click();
-    await expect(page.getByTestId("diff-overview-list")).toBeVisible();
   });
 });

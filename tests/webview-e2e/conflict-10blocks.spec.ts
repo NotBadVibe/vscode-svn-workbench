@@ -115,7 +115,7 @@ test.describe("10块连续操作（V011-C 多块 fixture）", () => {
       await expect(btn).toBeVisible();
       await clearCapturedActions(page);
       await btn.click();
-      await expect(page.getByText("Host 内存草稿已同步")).toBeVisible({
+      await expect(page.getByText("合并草稿仅本次会话保留")).toBeVisible({
         timeout: 15000,
       });
       const actions = await getCapturedActions(page);

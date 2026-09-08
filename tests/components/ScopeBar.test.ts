@@ -166,7 +166,9 @@ describe("范围栏长路径展开与复制（v0.1.5 V015-D1）", () => {
       "changes/overview",
       onCopyText,
     );
-    const chip = screen.getByRole("button", { name: "2 个操作范围" });
+    const chip = screen.getByRole("button", {
+      name: "2 个位置（2 个目录、0 个文件）",
+    });
     chip.focus();
     await fireEvent.click(chip);
     expect(

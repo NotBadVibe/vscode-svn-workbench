@@ -13,7 +13,9 @@
   import { isContinuityRestoreView } from "@protocol/workbenchProtocol";
   import { formatZhTime } from "../../i18n/formatters";
   import {
+    draftStorageLabels,
     fileStatusLabels,
+    rowDetailReasonsLabel,
     selectionDecisionExplanations,
     statusExplanations,
   } from "../../i18n/terminology";
@@ -123,6 +125,13 @@
   let commitDraft = $state("");
   let synchronizedCommitDraft = $state("");
   let draftExpanded = $state(false);
+  /*
+   * V022-R27：小高度（<600px）默认收起共享草稿与长帮助，保留一键展开。
+   * 脏草稿内容保留在状态中，展开即回；该阈值只影响初始展开态，不改变保存语义。
+   * 正常高度行为不变（HELP-01 与往返恢复断言不受影响）。
+   */
+  const smallViewportHeight =
+    typeof window !== "undefined" && window.innerHeight < 600;
   let operationPreviewToken = $state<string | undefined>();
   // v0.0.14 批次 D：文件操作意向单（还原/删除等）
   let fileOpIntentOpen = $state(false);
@@ -442,7 +451,8 @@
     // ⑤ 草稿第二道保守：本地已有输入时丢弃载荷草稿。
     if (restore.commitDraft !== undefined && commitDraft.trim().length === 0) {
       commitDraft = restore.commitDraft;
-      if (restore.commitDraft.trim().length > 0) draftExpanded = true;
+      if (restore.commitDraft.trim().length > 0 && !smallViewportHeight)
+        draftExpanded = true;
     }
     // ⑥ 播报：移除原因逐条 + 恢复提示（SelectionSummary 经 role=status 播报）。
     const restoreMessages = [
@@ -492,8 +502,8 @@
     const next = snapshot.commitDraft;
     if (commitDraft === synchronizedCommitDraft) commitDraft = next;
     synchronizedCommitDraft = next;
-    // 脏草稿始终可见。
-    if (next.trim().length > 0) draftExpanded = true;
+    // 脏草稿始终可见（小高度首屏除外：默认收起，展开按钮保留，内容不丢）。
+    if (next.trim().length > 0 && !smallViewportHeight) draftExpanded = true;
   });
 
   $effect(() => {
@@ -525,6 +535,20 @@
     excluded: "已排除",
     blocked: "不可提交",
   } as const;
+
+  /*
+   * V022-R32：行内解释收敛——状态徽标与选择建议文字直接表达，不再配独立
+   * 行内解释按钮（每行减少 2 个 Tab 停留点）；完整解释收敛进行详情区，随
+   * 路径详情一并经键盘打开、Esc 关闭并回到触发点（`useFileList` 既有语义：
+   * 关闭只恢复焦点，不改动滚动位置）。完整路径出口仍为路径详情按钮。
+   */
+  const detailFile = $derived(
+    pathDetail
+      ? snapshot.files.find(
+          (file) => file.relativePath === pathDetail.relativePath,
+        )
+      : undefined,
+  );
 
   function selectedPaths(): string[] {
     return pathsFromKeys(selected, keyToPath);
@@ -710,7 +734,7 @@
   }
 </script>
 
-<section class="feature-layout" use:focusOnMount tabindex="-1">
+<section class="feature-layout changes-layout" use:focusOnMount tabindex="-1">
   <div class="feature-toolbar">
     <SearchInput
       bind:this={searchInputRef}
@@ -763,7 +787,7 @@
       <span class="eyebrow">当前范围共享草稿</span>
       <h2 id="shared-commit-draft-title">提交草稿</h2>
       <p>
-        与“智能提交”使用同一份扩展主机草稿；切换模块不会生成第二份提交说明。
+        {draftStorageLabels.sharedCommitDraft}
       </p>
       <button
         class="button button--secondary"
@@ -908,8 +932,20 @@
   />
 
   <div class="table-card">
-    <!-- V017-B 列表紧凑提示条（按区域实际绑定生成，可忽略、可关闭）。 -->
-    <ListShortcutHint region="list" hintKey="changes-list" searchAvailable />
+    <!-- V017-B 列表紧凑提示条（按区域实际绑定生成，可忽略、可关闭）。
+      V022-R27：小高度默认收起为一行摘要（details），一键展开；正常高度保持原样。 -->
+    {#if smallViewportHeight}
+      <details class="changes-help" open={false}>
+        <summary>键盘与列表操作说明</summary>
+        <ListShortcutHint
+          region="list"
+          hintKey="changes-list"
+          searchAvailable
+        />
+      </details>
+    {:else}
+      <ListShortcutHint region="list" hintKey="changes-list" searchAvailable />
+    {/if}
     {#if pathDetail && list.detailOpen}
       <div class="path-detail-host">
         <div class="path-detail-host__bar">
@@ -930,6 +966,26 @@
               relativePath: pathDetail.relativePath,
             })}
         />
+        {#if detailFile}
+          <div
+            class="path-detail-host__reasons"
+            role="group"
+            aria-label={rowDetailReasonsLabel}
+          >
+            <StatusExplanation
+              term={fileStatusLabels[detailFile.status]}
+              explanation={statusExplanations[detailFile.status]}
+            />
+            {#if detailFile.selection}
+              <StatusExplanation
+                term={selectionLabels[detailFile.selection]}
+                explanation={selectionDecisionExplanations[
+                  detailFile.selection
+                ]}
+              />
+            {/if}
+          </div>
+        {/if}
       </div>
     {/if}
     <div role="table" aria-label="变更文件列表" class="table-head-wrap">
@@ -1113,11 +1169,6 @@
                       <span class={`status-badge status-badge--${file.status}`}
                         >{fileStatusLabels[file.status]}</span
                       >
-                      <!-- v0.0.18 批次 B（C-05）：状态词键盘可达的就地解释（与状态徽标同列）。 -->
-                      <StatusExplanation
-                        term={fileStatusLabels[file.status]}
-                        explanation={statusExplanations[file.status]}
-                      />
                     </span>
                     <span class="file-row__selection">
                       <span class="selection-note" title={file.reason}
@@ -1126,14 +1177,6 @@
                             ? selectionLabels[file.selection]
                             : "—")}</span
                       >
-                      {#if file.selection}
-                        <StatusExplanation
-                          term={selectionLabels[file.selection]}
-                          explanation={selectionDecisionExplanations[
-                            file.selection
-                          ]}
-                        />
-                      {/if}
                     </span>
                     <span
                       class="file-row__ownership"

@@ -384,8 +384,8 @@ describe("OperationIntentDialog", () => {
       expect(
         screen.getAllByText("提交 2 个文件").length,
       ).toBeGreaterThanOrEqual(1);
-      // 2 数量：标题数量 + 影响 N 个路径口径一致。
-      expect(screen.getByText("影响 2 个路径")).toBeInTheDocument();
+      // 2 数量：标题数量 + 最终将操作 N 个文件口径一致。
+      expect(screen.getByText("最终将操作 2 个文件")).toBeInTheDocument();
       // 3 项目仓库 + 4 scope：scopeText 行含项目与范围摘要。
       expect(screen.getByText("项目 A · trunk")).toBeInTheDocument();
       expect(

@@ -158,7 +158,7 @@ test.describe("AI 完全关闭主路径 E2E", () => {
         : page.getByRole("button", { name: "采用我的修改" }).first();
     await expect(mineBtnVisible).toBeVisible();
     await mineBtnVisible.click();
-    await expect(page.getByText("Host 内存草稿已同步")).toBeVisible({
+    await expect(page.getByText("合并草稿仅本次会话保留")).toBeVisible({
       timeout: 15000,
     });
     // 文本校验：若 DOM 可查则校验，否则由后续 draft-update 内容断言覆盖
@@ -201,7 +201,7 @@ test.describe("AI 完全关闭主路径 E2E", () => {
         : page.getByRole("button", { name: "采用对方修改" }).first();
     await expect(theirsButton).toBeVisible();
     await theirsButton.click();
-    await expect(page.getByText("Host 内存草稿已同步")).toBeVisible({
+    await expect(page.getByText("合并草稿仅本次会话保留")).toBeVisible({
       timeout: 15000,
     });
     // 文本校验已在 draft-update 中覆盖，此处宽松：若 DOM 可查则校验
@@ -233,7 +233,7 @@ test.describe("AI 完全关闭主路径 E2E", () => {
         : page.getByRole("button", { name: "保留双方修改" }).first();
     await expect(bothButton).toBeVisible();
     await bothButton.click();
-    await expect(page.getByText("Host 内存草稿已同步")).toBeVisible({
+    await expect(page.getByText("合并草稿仅本次会话保留")).toBeVisible({
       timeout: 15000,
     });
     actions = await getCapturedActions(page);
@@ -283,7 +283,7 @@ test.describe("AI 完全关闭主路径 E2E", () => {
     await expect(page.getByTestId("conflict-role-bar")).toBeVisible();
     // 产生脏草稿
     await page.getByRole("button", { name: "采用我的修改" }).first().click();
-    await expect(page.getByText("Host 内存草稿已同步")).toBeVisible({
+    await expect(page.getByText("合并草稿仅本次会话保留")).toBeVisible({
       timeout: 15000,
     });
     // 保存草稿按钮可用（AI 关闭不应影响）
@@ -300,7 +300,7 @@ test.describe("AI 完全关闭主路径 E2E", () => {
     await page.goto("/?module=conflicts&ai=disabled");
     await expect(page.getByTestId("conflict-role-bar")).toBeVisible();
     await page.getByRole("button", { name: "采用对方修改" }).first().click();
-    await expect(page.getByText("Host 内存草稿已同步")).toBeVisible({
+    await expect(page.getByText("合并草稿仅本次会话保留")).toBeVisible({
       timeout: 15000,
     });
     await expect(page.getByRole("button", { name: "复制草稿" })).toBeEnabled();
@@ -313,7 +313,7 @@ test.describe("AI 完全关闭主路径 E2E", () => {
     await page.goto("/?module=conflicts&ai=disabled");
     await expect(page.getByTestId("conflict-role-bar")).toBeVisible();
     await page.getByRole("button", { name: "采用我的修改" }).first().click();
-    await expect(page.getByText("Host 内存草稿已同步")).toBeVisible({
+    await expect(page.getByText("合并草稿仅本次会话保留")).toBeVisible({
       timeout: 15000,
     });
     await clearCapturedActions(page);
@@ -375,7 +375,7 @@ test.describe("AI 完全关闭主路径 E2E", () => {
     await page.getByRole("button", { name: "本地建议" }).click();
     await expect(page.getByText("两侧都修改了同一处行为")).toBeVisible();
     await page.getByRole("button", { name: "采用我的修改" }).first().click();
-    await expect(page.getByText("Host 内存草稿已同步")).toBeVisible({
+    await expect(page.getByText("合并草稿仅本次会话保留")).toBeVisible({
       timeout: 15000,
     });
     // 触发保存等完整主路径
