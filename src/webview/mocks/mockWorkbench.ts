@@ -4004,7 +4004,9 @@ function activitySnapshot(): WorkbenchModuleSnapshot {
         repositoryUuid: "mock-repository-uuid",
         scopeLabel: "冲突草稿 src/conflict/example.ts",
         impactedCount: 1,
-        previewSummary: "已保存冲突合并草稿（仅内存）",
+        // V024-R51：与 Host 一致，会话检查点绝不标为已写文件。
+        previewSummary:
+          "会话检查点已保留（未写入工作副本，仅本次会话；重启后不恢复，请复制或导出）",
         nextActions: [{ id: "open-output", label: "打开日志" }],
       },
     ],

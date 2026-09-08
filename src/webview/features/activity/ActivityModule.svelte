@@ -61,6 +61,14 @@
       <span class="eyebrow">操作记录</span>
       <h1>操作时间线</h1>
       <p>会话内记录，共 {snapshot.records.length} 条，仅本次会话可见</p>
+      <!-- V024-R51：存续范围三态 + 重启告知 + 可靠出口，不假装已恢复。 -->
+      <p>
+        未同步 · 仅会话保留（会话检查点，未写入工作副本） ·
+        已写入工作副本（仍需预览确认才会提交或标记解决）
+      </p>
+      <p>
+        重启后草稿正文不恢复；如需保留请先复制时间线或在原任务中复制、导出草稿。会话检查点不是已写文件。
+      </p>
       <p>生成于 {formatZhDateTime(snapshot.generatedAt)}</p>
     </div>
     <div class="toolbar-actions">
@@ -149,12 +157,20 @@
             </div>
             <span class="status-badge"
               >{record.kind === "draft-checkpoint"
-                ? "草稿"
+                ? "会话检查点"
                 : record.kind === "understanding-confirmation"
                   ? "已确认"
                   : "执行"}</span
             >
           </div>
+          {#if record.kind === "draft-checkpoint"}
+            <div class="notice notice--warning" role="note">
+              <span class="codicon codicon-info" aria-hidden="true"></span>
+              <span
+                >未写入工作副本，仅本次会话可见；重启后不恢复，如需保留请复制或导出。</span
+              >
+            </div>
+          {/if}
           {#if record.errorReason}
             <div class="activity-error" role="alert">
               <span class="codicon codicon-warning" aria-hidden="true"></span>

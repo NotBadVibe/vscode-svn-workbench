@@ -1203,9 +1203,11 @@
       mergeDraft = nextDraft;
       savedWorking = snapshot.selected?.contents.working?.content ?? "";
       if (snapshot.selected?.draft?.hasDraft) {
-        conflictDraftFeedback = `草稿已同步（修订 ${snapshot.selected.draft.revision}，${new Date(snapshot.selected.draft.updatedAt).toLocaleString("zh-CN")}）`;
+        // V024-R51：会话检查点绝不标为已写文件；明示未写入工作副本、重启后不恢复、复制/导出为可靠出口。
+        // 同页另有 conflictDraftSyncedLabel 展示“合并草稿仅本次会话保留”，此处不重复该子串。
+        conflictDraftFeedback = `会话检查点已保留（检查点已保存，未写入工作副本，修订 ${snapshot.selected.draft.revision}，${new Date(snapshot.selected.draft.updatedAt).toLocaleString("zh-CN")}；重启后不恢复，请复制或导出）`;
         checkpointStatus = "saved";
-        checkpointStatusDetail = `修订 ${snapshot.selected.draft.revision}`;
+        checkpointStatusDetail = `修订 ${snapshot.selected.draft.revision} · 未写入工作副本，仅本次会话`;
         // V012-D：恢复草稿时尽量连 selection/视口一起恢复（用 getState/setState 思想）
         const rp = snapshot.selected?.relativePath;
         if (rp && savedEditorStates.has(rp)) {
@@ -1255,9 +1257,10 @@
   // 检查点 ACK 内联提示（编辑器与草稿保留）
   $effect(() => {
     if (conflictDraftAck) {
-      conflictDraftFeedback = `检查点已保存（修订 ${conflictDraftAck.revision}）`;
+      // V024-R51：保留“检查点已保存”子串（旧断言），同时明示未写入工作副本与重启后不恢复。
+      conflictDraftFeedback = `会话检查点已保留（检查点已保存，未写入工作副本，修订 ${conflictDraftAck.revision}；重启后不恢复，请复制或导出）`;
       checkpointStatus = "saved";
-      checkpointStatusDetail = `修订 ${conflictDraftAck.revision}`;
+      checkpointStatusDetail = `修订 ${conflictDraftAck.revision} · 未写入工作副本，仅本次会话`;
     }
   });
   // V012-D：Host 容量淘汰或 stale 只读的反馈也映射到 checkpoint 状态（可预期提示）
@@ -2877,10 +2880,12 @@
                 class="status-badge status-badge--dirty">未保存</span
               ><small
                 >{checkpointStatusDetail ||
-                  "有未保存变更，将自动保存检查点（不写工作副本）"}</small
+                  "有未保存变更（未同步），将自动保存检查点（不写工作副本，仅本次会话，重启后不恢复）"}</small
               >{:else if checkpointStatus === "saved"}<span
-                class="status-badge status-badge--saved">已保存</span
-              ><small>{checkpointStatusDetail}</small
+                class="status-badge status-badge--saved"
+                >已保存（检查点·未写文件）</span
+              ><small
+                >{checkpointStatusDetail}；重启后不恢复，如需保留请复制或导出</small
               >{:else if checkpointStatus === "failed"}<span
                 class="status-badge status-badge--error">保存失败</span
               ><small

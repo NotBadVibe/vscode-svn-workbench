@@ -1405,8 +1405,9 @@
     <div class="notice notice--warning" role="status">
       <span class="codicon codicon-circle-filled" aria-hidden="true"></span>
       <span
-        >有未保存的修改（草稿已自动暂存）。按 Ctrl/Cmd+S
-        或点击“保存修改”写入工作副本。</span
+        >有未保存的修改（未同步，草稿已自动暂存为会话检查点，未写入工作副本）。按
+        Ctrl/Cmd+S
+        或点击“保存修改”写入工作副本；重载或重启前请先保存、复制或导出，否则未落盘草稿将丢失。</span
       >
     </div>
   {/if}

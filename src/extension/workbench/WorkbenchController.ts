@@ -4075,7 +4075,9 @@ export class WorkbenchController implements vscode.Disposable {
           repositoryUuid: session.repositoryUuid,
           scopeLabel: `冲突草稿 ${relativePath}`,
           impactedCount: 1,
-          previewSummary: "已保存冲突合并草稿（仅内存）",
+          // V024-R51：会话检查点绝不标为已写文件；明示未写入工作副本、仅本次会话、重启后不恢复。
+          previewSummary:
+            "会话检查点已保留（未写入工作副本，仅本次会话；重启后不恢复，请复制或导出）",
           projectName: session.scopeView.projectName,
           capturedRevision: session.workingCopyRevision,
         });
@@ -7482,7 +7484,9 @@ export class WorkbenchController implements vscode.Disposable {
         repositoryUuid: session.repositoryUuid,
         scopeLabel: `草稿检查点 ${targetId.slice(0, 8)}`,
         impactedCount: 1,
-        previewSummary: "已保存页内编辑草稿（仅内存）",
+        // V024-R51：会话检查点绝不标为已写文件；明示未写入工作副本、仅本次会话、重启后不恢复。
+        previewSummary:
+          "会话检查点已保留（未写入工作副本，仅本次会话；重启后不恢复，请复制或导出）",
         projectName: session.scopeView.projectName,
         capturedRevision: session.workingCopyRevision,
       });
