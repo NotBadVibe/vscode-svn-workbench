@@ -15,6 +15,7 @@
   import {
     draftStorageLabels,
     fileStatusLabels,
+    rowDetailReasonsLabel,
     selectionDecisionExplanations,
     statusExplanations,
   } from "../../i18n/terminology";
@@ -535,6 +536,20 @@
     blocked: "不可提交",
   } as const;
 
+  /*
+   * V022-R32：行内解释收敛——状态徽标与选择建议文字直接表达，不再配独立
+   * 行内解释按钮（每行减少 2 个 Tab 停留点）；完整解释收敛进行详情区，随
+   * 路径详情一并经键盘打开、Esc 关闭并回到触发点（`useFileList` 既有语义：
+   * 关闭只恢复焦点，不改动滚动位置）。完整路径出口仍为路径详情按钮。
+   */
+  const detailFile = $derived(
+    pathDetail
+      ? snapshot.files.find(
+          (file) => file.relativePath === pathDetail.relativePath,
+        )
+      : undefined,
+  );
+
   function selectedPaths(): string[] {
     return pathsFromKeys(selected, keyToPath);
   }
@@ -951,6 +966,26 @@
               relativePath: pathDetail.relativePath,
             })}
         />
+        {#if detailFile}
+          <div
+            class="path-detail-host__reasons"
+            role="group"
+            aria-label={rowDetailReasonsLabel}
+          >
+            <StatusExplanation
+              term={fileStatusLabels[detailFile.status]}
+              explanation={statusExplanations[detailFile.status]}
+            />
+            {#if detailFile.selection}
+              <StatusExplanation
+                term={selectionLabels[detailFile.selection]}
+                explanation={selectionDecisionExplanations[
+                  detailFile.selection
+                ]}
+              />
+            {/if}
+          </div>
+        {/if}
       </div>
     {/if}
     <div role="table" aria-label="变更文件列表" class="table-head-wrap">
@@ -1134,11 +1169,6 @@
                       <span class={`status-badge status-badge--${file.status}`}
                         >{fileStatusLabels[file.status]}</span
                       >
-                      <!-- v0.0.18 批次 B（C-05）：状态词键盘可达的就地解释（与状态徽标同列）。 -->
-                      <StatusExplanation
-                        term={fileStatusLabels[file.status]}
-                        explanation={statusExplanations[file.status]}
-                      />
                     </span>
                     <span class="file-row__selection">
                       <span class="selection-note" title={file.reason}
@@ -1147,14 +1177,6 @@
                             ? selectionLabels[file.selection]
                             : "—")}</span
                       >
-                      {#if file.selection}
-                        <StatusExplanation
-                          term={selectionLabels[file.selection]}
-                          explanation={selectionDecisionExplanations[
-                            file.selection
-                          ]}
-                        />
-                      {/if}
                     </span>
                     <span
                       class="file-row__ownership"

@@ -62,6 +62,13 @@ export const selectionDecisionExplanations = {
     "安全规则阻止提交（例如冲突未解决、外部工作副本）；该结果不可被建议覆盖。",
 } as const;
 
+/**
+ * V022-R32：行内解释收敛——状态徽标与选择建议文字本身即直接表达（常见状态
+ * 不再配独立解释按钮）；完整解释收敛进行详情区（`rowDetailReasonsLabel`），
+ * 随路径详情一并经键盘打开、Esc 关闭并回到触发点。
+ */
+export const rowDetailReasonsLabel = "状态与选择说明";
+
 /** 更新风险等级的就地解释。 */
 export const riskExplanations = {
   low: "未发现本地修改与远端更新的同路径重叠，更新通常安全。",
@@ -699,6 +706,22 @@ export const commitAssistanceLabels = {
   selectionDemotedHint:
     "选择建议默认使用本地规则，结果见下方本地检查摘要；模型选择已收起。",
   unconfiguredDisabledReason: "未配置外部模型，本地检查仍可用",
+} as const;
+
+/**
+ * V022-R33：空提交表单先提示再校验——初始为空且未失焦/未请求预览时展示
+ * 中性写作提示，不展示字段错误；范围冲突与安全阻止项不在此收敛，始终立即展示。
+ */
+export const commitMessageEmptyWritingHint =
+  "先简要说明改动意图、范围与影响；离开输入框或请求预览后，将按团队规范检查。";
+
+/**
+ * V022-R34：无模型时外发说明改为准确本地状态——本地动作文案不得包含
+ * 模型/预算/历史等外发术语；外部动作仍展示完整回执要素。
+ */
+export const commitLocalOnlyLabels = {
+  title: "本地生成",
+  body: "不会外发：当前仅使用本地规则与人工流程，可独立写说明、检查并预览提交；模型、预算与历史说明仅适用于外部模型动作。",
 } as const;
 
 /**

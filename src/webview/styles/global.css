@@ -792,8 +792,10 @@ button.path-detail__value:hover {
 .changes-layout .table-head-wrap {
   flex: 0 0 auto;
   /* V022-R03 对齐修复：表头与下方 .file-list.scroll-region 分属不同滚动容器，
-   * 列表经 scrollbar-gutter:stable 预留滚动条槽位；表头同步预留，
-   * 否则表头与首行同列错位（1280×800 实测 4.4px）。 */
+   * 列表经 scrollbar-gutter:stable 预留滚动条槽位；scrollbar-gutter 仅对
+   * overflow 非 visible 元素生效，表头同步 overflow-y:auto（无溢出即无滚动条）
+   * +gutter 预留，否则表头与首行同列错位（1280×800 实测 4.4px）。 */
+  overflow-y: auto;
   scrollbar-gutter: stable;
 }
 .changes-layout .file-list {

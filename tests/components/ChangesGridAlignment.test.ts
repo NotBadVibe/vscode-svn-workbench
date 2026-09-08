@@ -65,21 +65,24 @@ describe("Changes 表列对齐（V020-R03）", () => {
     }
   });
 
-  it("状态徽标与解释按钮同列，选择建议与解释同列", () => {
+  /*
+   * V022-R32：行内解释收敛进行详情——行内不再有独立解释按钮（每行减少
+   * 2 个 Tab 停留点）；状态徽标与选择建议文字直接表达，信息仍完整；
+   * 完整解释随路径详情在行详情区展开（见 RowDetailReasons.test.ts）。
+   */
+  it("行内无独立解释按钮，状态与选择文字直接表达", () => {
     render(ChangesModule, { snapshot, onAction: vi.fn() });
 
-    const statusTerm = screen.getByRole("button", {
-      name: "解释术语：已修改",
-    });
-    expect(statusTerm.closest(".file-row__status")).not.toBeNull();
-    // 状态解释按钮不出状态列。
-    expect(statusTerm.closest(".file-row__selection")).toBeNull();
-
-    const selectionTerm = screen.getByRole("button", {
-      name: "解释术语：建议提交",
-    });
-    expect(selectionTerm.closest(".file-row__selection")).not.toBeNull();
-    expect(selectionTerm.closest(".file-row__status")).toBeNull();
+    expect(screen.queryByRole("button", { name: /解释术语：/ })).toBeNull();
+    // 状态徽标文字仍在各自状态列内直接表达。
+    const rows = screen.getAllByRole("listitem");
+    expect(rows[0].children[2].textContent).toContain("已修改");
+    expect(rows[1].children[2].textContent).toContain("存在冲突");
+    expect(rows[1].children[2].className).toContain("file-row__status");
+    // 选择建议文字仍在选择列内直接表达（含阻止行）。
+    expect(rows[0].children[3].textContent).toContain("本地修改");
+    expect(rows[1].children[3].textContent).toContain("存在冲突");
+    expect(rows[1].className).toContain("file-row--blocked");
   });
 
   it("冲突动作与差异动作归入固定操作列，普通行与冲突行列位置一致", () => {
