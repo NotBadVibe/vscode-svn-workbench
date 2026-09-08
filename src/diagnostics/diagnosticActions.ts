@@ -109,7 +109,11 @@ export async function dispatchDiagnosticAction(
     }
     case "openUrl": {
       const url = params?.url as string | undefined;
-      if (url) await handleOpenUrl(url);
+      if (typeof url !== "string" || url.length === 0) {
+        vscode.window.showWarningMessage("链接缺失，无法打开对应帮助页面。");
+        return false;
+      }
+      await handleOpenUrl(url);
       return false;
     }
     default:

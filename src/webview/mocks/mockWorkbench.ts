@@ -324,6 +324,8 @@ const mockModifiedByPath = new Map<string, string>();
 let currentMockSessionId = "mock-session-id";
 /** v0.0.17 批次 E：会话共享筛选预设（mock 内存，与 Host 会话状态总线语义一致）。 */
 let mockFilterPresets: FilterPresetView[] = [];
+/** V024-R39：mock 项目统计序号（每次构建 projects 快照递增，模拟 Host statsSeq）。 */
+let mockProjectsSeq = 0;
 
 /** 重建当前模块快照（预设存取后回发，模拟 Host 下发新快照）。 */
 function currentModuleSnapshot(): WorkbenchModuleSnapshot {
@@ -796,9 +798,18 @@ export function startMockWorkbench(): void {
         changes: ["changes", changesSnapshot],
         commit: ["commit", commitSnapshot],
         update: ["update", updateSnapshot],
+        // V024-R40：冲突数直达该项目冲突任务（mock 直接注入冲突快照）。
+        conflicts: ["conflicts", () => conflictSnapshot()],
       };
       const entry = taskSnapshots[data.task];
       if (entry) injectSnapshot(entry[0], entry[1]());
+    }
+    // V024-R39：mock 单项目重试即下发新序号快照（其他项目值保持可信）。
+    if (
+      action === "projects/retry-stats" &&
+      typeof data.projectRoot === "string"
+    ) {
+      injectSnapshot("projects", projectsSnapshot());
     }
     if (action === "open-diff" && typeof data.relativePath === "string") {
       const target = data.relativePath;
@@ -3791,6 +3802,7 @@ function settingsSnapshot(
 }
 
 function projectsSnapshot(): WorkbenchModuleSnapshot {
+  // V024-R39：统计状态显式建模；零修改（全 0）与未读取/失败（无 counts）不等同。
   return {
     kind: "projects",
     projects: [
@@ -3802,6 +3814,8 @@ function projectsSnapshot(): WorkbenchModuleSnapshot {
         bindingLabel: "独立工作副本根",
         workingCopyRoot: "/mock/vscode-svn",
         counts: { changes: 2, conflicts: 0, unversioned: 1 },
+        statsStatus: "ready",
+        statsUpdatedAt: new Date().toISOString(),
         current: true,
       },
       {
@@ -3812,6 +3826,10 @@ function projectsSnapshot(): WorkbenchModuleSnapshot {
         bindingLabel: "位于上层工作副本",
         workingCopyRoot: "/mock/code",
         counts: { changes: 1, conflicts: 1, unversioned: 0 },
+        statsStatus: "stale",
+        statsError: "工作副本统计失败：模拟超时；其他项目统计不受影响。",
+        statsUpdatedAt: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+        staleReason: "工作副本统计失败，已保留上次成功值。",
         current: false,
       },
       {
@@ -3820,10 +3838,12 @@ function projectsSnapshot(): WorkbenchModuleSnapshot {
         exists: true,
         binding: "notSvn",
         bindingLabel: "非 SVN 目录",
+        statsStatus: "ready",
         current: false,
       },
     ],
     generatedAt: new Date().toISOString(),
+    statsSeq: ++mockProjectsSeq,
   };
 }
 

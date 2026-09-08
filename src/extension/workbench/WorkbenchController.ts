@@ -178,6 +178,7 @@ import {
   type WorkbenchModuleId,
   type WorkbenchTaskId,
   type WorkbenchModuleSnapshot,
+  type ProjectOverviewItem,
   type ProjectsSnapshot,
   type ExternalMergeView,
 } from "../../protocol/workbenchProtocol";
@@ -241,7 +242,9 @@ import {
 import {
   isSameOrDescendantPath,
   isSamePathIdentity,
+  normalizePathIdentity,
 } from "../../scope/pathIdentity";
+import { buildProjectStatsItems } from "./projectStats";
 import {
   classifyWorkingCopyBinding,
   isSvnBound,
@@ -501,6 +504,29 @@ export class WorkbenchController implements vscode.Disposable {
   private readonly conflictSaveService: ConflictSaveService;
   /** v0.1.3 修复：resolve preview token 注册表（TTL 15min、绑定 session/scope/UUID/revision/contentHash、单次消耗） */
   private readonly resolvePreviewTokens = new DiffEditTokenRegistry();
+  /**
+   * V024-R39：项目统计请求序号（每次下发 projects 快照递增）。
+   * Webview 保留已见最大序号，旧序号晚到直接忽略，不覆盖新状态。
+   */
+  private projectStatsSeq = 0;
+  /**
+   * V024-R39：项目统计上一成功值（按项目绝对路径缓存）。
+   * 采集失败时保留展示（stale 配过期原因与成功时间）；无缓存的失败
+   * 为 error（无 counts，绝不当作 0）。同工作副本分组共享一次采集。
+   */
+  private readonly projectStatsCache = new Map<
+    string,
+    {
+      counts: { changes: number; conflicts: number; unversioned: number };
+      updatedAt: string;
+    }
+  >();
+  /**
+   * V024-R39：项目统计最近一次失败原因（按项目绝对路径）。
+   * 定向重试只重采目标分组时，非目标项目沿用此处保留的状态重放，
+   * 不被清空、不被当作 0；成功后删除对应条目。
+   */
+  private readonly projectStatsFailures = new Map<string, string>();
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -1634,6 +1660,14 @@ export class WorkbenchController implements vscode.Disposable {
       }
       case "projects/switch": {
         await this.switchActiveProject(session, message.requestId);
+        return;
+      }
+      case "projects/retry-stats": {
+        await this.retryProjectStats(
+          session,
+          asString(data.projectRoot),
+          message.requestId,
+        );
         return;
       }
       case "security/configure-authentication":
@@ -9221,9 +9255,14 @@ export class WorkbenchController implements vscode.Disposable {
   /**
    * v0.0.7 项目总览（§6.1）：只读优先，允许聚合数量，但不得把多个项目
    * 自动合成一个 operationScope。同一工作副本只采集一次状态再按项目切片。
+   * V024-R39：统计状态显式建模 ready/error/stale（Host 快照终态不下发
+   * loading，等待态由 Webview 本地表达）；成功值按项目缓存并携带成功时间，
+   * 失败且有缓存时 stale 保留上一成功值配过期原因，无缓存时 error 无 counts
+   * （绝不当作 0）；单工作副本失败不影响其他项目；statsSeq 每次下发递增。
    */
   private async buildProjectsSnapshot(
     session: WorkbenchSession,
+    collectOnly?: Set<string>,
   ): Promise<ProjectsSnapshot> {
     const folders = (vscode.workspace.workspaceFolders ?? []).map((folder) => ({
       name: folder.name,
@@ -9257,10 +9296,6 @@ export class WorkbenchController implements vscode.Disposable {
       }),
     );
     // 同一工作副本共享一次状态采集，再按项目根切片统计数量。
-    const countByProject = new Map<
-      string,
-      { changes: number; conflicts: number; unversioned: number }
-    >();
     const svnProjects = items.filter(
       (item) => item.workingCopyRoot !== undefined,
     );
@@ -9271,8 +9306,68 @@ export class WorkbenchController implements vscode.Disposable {
       })),
       nativePathSemantics,
     );
+    // 定向重试只重采目标分组；其他分组沿用缓存状态重放，不清空、不重采。
+    const groupsToCollect =
+      collectOnly === undefined
+        ? [...groups.values()]
+        : [...groups.entries()]
+            .filter(([key]) => collectOnly.has(key))
+            .map(([, group]) => group);
+    const collected = await this.collectProjectStatsGroups(
+      session.svnPath,
+      groupsToCollect,
+    );
+    for (const [absolutePath, entry] of collected.successes) {
+      this.projectStatsCache.set(absolutePath, entry);
+      this.projectStatsFailures.delete(absolutePath);
+    }
+    for (const [absolutePath, reason] of collected.failures) {
+      this.projectStatsFailures.set(absolutePath, reason);
+    }
+    const projects: ProjectOverviewItem[] = buildProjectStatsItems(
+      items,
+      collected.successes,
+      collected.failures,
+      this.projectStatsCache,
+      this.projectStatsFailures,
+    );
+    this.projectStatsSeq += 1;
+    return {
+      kind: "projects",
+      projects,
+      generatedAt: new Date().toISOString(),
+      statsSeq: this.projectStatsSeq,
+    };
+  }
+
+  /**
+   * V024-R39：按工作副本分组采集项目统计（复用工作副本级采集，
+   * 同一工作副本只执行一次 SVN 状态采集，再按项目根切片）。
+   * 单组失败只记录该组各项目的中文原因并继续其他组（不抛错、不阻塞）。
+   */
+  private async collectProjectStatsGroups(
+    svnPath: string,
+    groups: Array<Array<{ absolutePath: string; workingCopyRoot: string }>>,
+  ): Promise<{
+    successes: Map<
+      string,
+      {
+        counts: { changes: number; conflicts: number; unversioned: number };
+        updatedAt: string;
+      }
+    >;
+    failures: Map<string, string>;
+  }> {
+    const successes = new Map<
+      string,
+      {
+        counts: { changes: number; conflicts: number; unversioned: number };
+        updatedAt: string;
+      }
+    >();
+    const failures = new Map<string, string>();
     await Promise.all(
-      [...groups.values()].map(async (group) => {
+      groups.map(async (group) => {
         const workingCopyRoot = group[0].workingCopyRoot;
         try {
           const scope = createWorkingCopyScope(workingCopyRoot);
@@ -9280,46 +9375,120 @@ export class WorkbenchController implements vscode.Disposable {
             await this.commitSelectionRuleService.getEffectiveRules(
               workingCopyRoot,
             );
-          const candidates = await collectCommitCandidates(
-            session.svnPath,
-            scope,
-            { rules },
-          );
+          const candidates = await collectCommitCandidates(svnPath, scope, {
+            rules,
+          });
+          const updatedAt = new Date().toISOString();
           for (const project of group) {
             const sliced = sliceCandidatesForProject(
               candidates,
               project.absolutePath,
               nativePathSemantics,
             );
-            countByProject.set(project.absolutePath, {
-              conflicts: sliced.filter(
-                (candidate) => candidate.status === "conflicted",
-              ).length,
-              unversioned: sliced.filter(
-                (candidate) => candidate.status === "unversioned",
-              ).length,
-              changes: sliced.filter(
-                (candidate) =>
-                  candidate.status !== "conflicted" &&
-                  candidate.status !== "unversioned",
-              ).length,
+            successes.set(project.absolutePath, {
+              counts: {
+                conflicts: sliced.filter(
+                  (candidate) => candidate.status === "conflicted",
+                ).length,
+                unversioned: sliced.filter(
+                  (candidate) => candidate.status === "unversioned",
+                ).length,
+                changes: sliced.filter(
+                  (candidate) =>
+                    candidate.status !== "conflicted" &&
+                    candidate.status !== "unversioned",
+                ).length,
+              },
+              updatedAt,
             });
           }
         } catch (error) {
-          appendOutput(
-            `项目总览统计 ${workingCopyRoot} 失败：${error instanceof Error ? error.message : String(error)}`,
-          );
+          const reason = `工作副本统计失败：${error instanceof Error ? error.message : String(error)}；其他项目统计不受影响。`;
+          appendOutput(`项目总览统计 ${workingCopyRoot} 失败：${reason}`);
+          for (const project of group) {
+            failures.set(project.absolutePath, reason);
+          }
         }
       }),
     );
-    return {
-      kind: "projects",
-      projects: items.map((item) => ({
-        ...item,
-        counts: countByProject.get(item.absolutePath),
-      })),
-      generatedAt: new Date().toISOString(),
-    };
+    return { successes, failures };
+  }
+
+  /**
+   * V024-R39：单项目统计重试（原地重试，不阻塞其他项目）。
+   * 只重新采集目标项目所属的工作副本分组并刷新缓存后下发新快照
+   * （statsSeq 递增；其他项目沿用缓存可信值，不被清空）；
+   * projectRoot 非法（不在工作区/非 SVN）时 Host 拒绝并给出中文原因。
+   */
+  private async retryProjectStats(
+    session: WorkbenchSession,
+    projectRoot: string | undefined,
+    requestId: string | undefined,
+  ): Promise<void> {
+    const folder = (vscode.workspace.workspaceFolders ?? []).find(
+      (candidate) =>
+        projectRoot !== undefined &&
+        isSamePathIdentity(
+          candidate.uri.fsPath,
+          projectRoot,
+          nativePathSemantics,
+        ),
+    );
+    if (!projectRoot || !folder) {
+      await this.sendError(
+        session.moduleId,
+        "无法重试项目统计",
+        "目标项目不在当前工作区，可能是工作区已变化；请刷新项目总览后重试。",
+        true,
+        requestId,
+      );
+      return;
+    }
+    const binding = await this.classifyFolderWorkingCopyBinding(
+      folder.uri.fsPath,
+      session.svnPath,
+    );
+    if (binding === "notSvn" || binding === "missing") {
+      await this.sendError(
+        session.moduleId,
+        "无法重试项目统计",
+        `项目 ${folder.name} 不属于 SVN 工作副本，没有可重试的统计；可打开文件夹选择工作副本，或查看环境诊断。`,
+        true,
+        requestId,
+      );
+      return;
+    }
+    const workingCopyRoot = await resolveWorkingCopyRoot(
+      session.svnPath,
+      folder.uri.fsPath,
+    );
+    if (!workingCopyRoot) {
+      await this.sendError(
+        session.moduleId,
+        "无法重试项目统计",
+        `项目 ${folder.name} 当前无法定位所属工作副本；请刷新项目总览后重试。`,
+        true,
+        requestId,
+      );
+      return;
+    }
+    // 只重采目标分组（同工作副本共享一次采集），其他项目沿用缓存重放；
+    // 直接下发快照（不走 loadModule 的全局 loading，其他项目不闪烁不阻塞）。
+    const targetKey = normalizePathIdentity(
+      workingCopyRoot,
+      nativePathSemantics,
+    );
+    const snapshot = await this.buildProjectsSnapshot(
+      session,
+      new Set([targetKey]),
+    );
+    await this.post({
+      protocolVersion: WORKBENCH_PROTOCOL_VERSION,
+      type: "module/snapshot",
+      requestId,
+      moduleId: "projects",
+      payload: { snapshot },
+    });
   }
 
   /** 为明确项目目标构建独立 scope；不得把多个项目合成一个 scope。 */
@@ -9337,7 +9506,8 @@ export class WorkbenchController implements vscode.Disposable {
     );
   }
 
-  /** 项目总览行动作：以明确项目目标打开变更/提交/更新。 */
+  /** 项目总览行动作：以明确项目目标打开变更/提交/更新/冲突（V024-R40
+   * 冲突数量直达该项目冲突任务；每次只建单项目 scope，不混合仓库 revision）。 */
   private async openProjectTask(
     session: WorkbenchSession,
     projectRoot: string | undefined,
@@ -9351,6 +9521,7 @@ export class WorkbenchController implements vscode.Disposable {
       changes: { moduleId: "changes", taskId: "changes/overview" },
       commit: { moduleId: "commit", taskId: "commit/compose" },
       update: { moduleId: "update", taskId: "update/preview" },
+      conflicts: { moduleId: "conflicts", taskId: "conflicts/resolve" },
     };
     const entry = task ? taskMap[task] : undefined;
     const folder = (vscode.workspace.workspaceFolders ?? []).find(
