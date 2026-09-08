@@ -15,6 +15,7 @@
   import SelectionSummary from "../../components/list/SelectionSummary.svelte";
   import SearchInput from "../../components/list/SearchInput.svelte";
   import ResultCount from "../../components/list/ResultCount.svelte";
+  import ListShortcutHint from "../../components/help/ListShortcutHint.svelte";
   import { useFileList } from "../../components/list/useFileList.svelte";
   import CommitMessageEditor from "./CommitMessageEditor.svelte";
   import { formatZhDateTime } from "../../i18n/formatters";
@@ -109,6 +110,8 @@
     "all" | "selected" | "recommended" | "needsReview" | "excluded" | "blocked";
 
   let query = $state("");
+  /** V023-R23：`/` 聚焦搜索目标（集中 keymap `list/searchFocus`）。 */
+  let searchInputRef = $state<{ focusInput: () => void } | undefined>();
   let filter = $state<CommitFilter>("all");
   let onlySelected = $state(false);
   let message = $state("");
@@ -148,7 +151,16 @@
   let evidenceExpanded = $state(false);
 
   const savedPreferences = loadListPreferences("commit");
-  sortField = savedPreferences.sortField;
+  // V023-R22：动态字段失效时默认回退（未知字段不沿用）。
+  sortField =
+    savedPreferences.sortField === "path" ||
+    savedPreferences.sortField === "fileName" ||
+    savedPreferences.sortField === "status" ||
+    savedPreferences.sortField === "recommendation" ||
+    savedPreferences.sortField === "ruleSource" ||
+    savedPreferences.sortField === "ownership"
+      ? savedPreferences.sortField
+      : undefined;
   sortDirection = savedPreferences.sortDirection ?? "asc";
   density = savedPreferences.density ?? "comfortable";
 
@@ -212,6 +224,8 @@
       // Commit：excluded/blocked 不可提交，不能勾选。
       if (canSelectIndividually(file, MODE)) toggleKey(file.selectionKey);
     },
+    // V023-R23：`/` 聚焦搜索（集中 keymap `list/searchFocus`，空结果同样可用）。
+    onFocusSearch: () => searchInputRef?.focusInput(),
   });
   const filteredFiles = $derived(
     snapshot.files.filter((file) => {
@@ -385,6 +399,25 @@
       sortField = field;
       sortDirection = "asc";
     }
+    saveListPreferences("commit", { sortField, sortDirection, density });
+  }
+
+  /**
+   * V023-R22：字段选择只定字段（同字段不反转；select onchange 难再触发
+   * 同值，方向切换由独立按钮承担）。表头点击仍走 toggleSort 显式切换。
+   */
+  function setSortField(field: SortField): void {
+    if (sortField !== field) {
+      sortField = field;
+      sortDirection = "asc";
+      saveListPreferences("commit", { sortField, sortDirection, density });
+    }
+  }
+
+  /** V023-R22：独立方向切换（同一字段可明确切升/降）。 */
+  function toggleSortDirection(): void {
+    if (!sortField) sortField = "path";
+    sortDirection = sortDirection === "asc" ? "desc" : "asc";
     saveListPreferences("commit", { sortField, sortDirection, density });
   }
 
@@ -893,12 +926,15 @@
             </p>
           </div>
           <SearchInput
+            bind:this={searchInputRef}
             bind:value={query}
             ariaLabel="筛选提交文件"
             placeholder="筛选文件…"
             compact
           />
           <ResultCount count={filteredFiles.length} />
+          <!-- V023-R22：排序菜单为小屏等效能力（交互基线 §7.3），方向经下方中文按钮展示；
+            真正的 role=columnheader + aria-sort 由表头 SortHeader 承担，此处不重复以免 ARIA 父子违规。 -->
           <div class="toolbar-actions">
             <select
               class="sort-menu"
@@ -909,7 +945,7 @@
                 if (value === "") {
                   resetSort();
                 } else {
-                  toggleSort(value as SortField);
+                  setSortField(value as SortField);
                 }
               }}
             >
@@ -928,12 +964,20 @@
               >{density === "compact" ? "紧凑" : "宽松"}</button
             >
             {#if sortField}
+              <button
+                type="button"
+                class="button button--secondary"
+                aria-label={`排序方向：当前${sortDirection === "asc" ? "升序" : "降序"}，点击切换`}
+                onclick={toggleSortDirection}
+                >{sortDirection === "asc" ? "升序" : "降序"}</button
+              >
               <button class="button button--secondary" onclick={resetSort}
                 >恢复默认顺序</button
               >
             {/if}
           </div>
         </div>
+        <ListShortcutHint region="list" hintKey="commit-list" searchAvailable />
         <div class="status-filters" aria-label="提交文件筛选">
           {#each Object.entries(filterLabels) as [value, label] (value)}
             <button

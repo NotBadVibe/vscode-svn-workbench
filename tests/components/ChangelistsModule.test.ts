@@ -137,14 +137,14 @@ describe("ChangelistsModule", () => {
       snapshot: buildSnapshot(),
       onAction: vi.fn(),
     });
-    expect(screen.getByText("3 个结果")).toBeInTheDocument();
+    expect(screen.getByText("3 个匹配")).toBeInTheDocument();
     const input = screen.getByRole("textbox", { name: "筛选变更集文件" });
     await fireEvent.input(input, { target: { value: "webview" } });
-    expect(screen.getByText("2 个结果")).toBeInTheDocument();
+    expect(screen.getByText("2 个匹配")).toBeInTheDocument();
     // PathCell 分两行显示文件名与父目录；未命中的未分组文件不渲染。
     expect(screen.queryByText("readme.md")).toBeNull();
     await fireEvent.click(screen.getByRole("button", { name: "清除筛选" }));
-    expect(screen.getByText("3 个结果")).toBeInTheDocument();
+    expect(screen.getByText("3 个匹配")).toBeInTheDocument();
     expect(screen.getByText("readme.md")).toBeInTheDocument();
   });
 
@@ -171,7 +171,7 @@ describe("ChangelistsModule", () => {
     });
   });
 
-  it("“选择当前筛选”只选择筛选命中的可选项且幂等", async () => {
+  it("“选择全部匹配项”只选择筛选命中的可选项且幂等", async () => {
     const onAction = vi.fn();
     render(ChangelistsModule, {
       snapshot: buildSnapshot(),
@@ -180,7 +180,7 @@ describe("ChangelistsModule", () => {
     const input = screen.getByRole("textbox", { name: "筛选变更集文件" });
     await fireEvent.input(input, { target: { value: "webview" } });
     const selectFiltered = screen.getByRole("button", {
-      name: "选择当前筛选（2）",
+      name: "选择全部匹配项（2）",
     });
     await fireEvent.click(selectFiltered);
     expect(
@@ -241,16 +241,25 @@ describe("ChangelistsModule", () => {
       onAction: vi.fn(),
     });
     // 折叠后行不渲染，但匹配数量仍可见。
-    const toggle = screen.getByRole("button", { name: "ui" });
+    const toggle = screen.getByRole("button", { name: "ui，匹配 2，共 2" });
     await fireEvent.click(toggle);
     expect(screen.queryByText("a.ts")).toBeNull();
     expect(screen.getByText("2/2")).toBeInTheDocument();
-    // 筛选命中 1 个时折叠头部显示 1/2。
+    // 筛选命中 1 个时折叠头部显示 1/2；V023-R21 搜索默认展开命中组
+    // （用户折叠偏好保留在后台，清空搜索后恢复）。
     const input = screen.getByRole("textbox", { name: "筛选变更集文件" });
     await fireEvent.input(input, { target: { value: "a.ts" } });
     expect(screen.getByText("1/2")).toBeInTheDocument();
+    expect(screen.getByText("a.ts")).toBeInTheDocument();
+    // 搜索期间手动折叠只写覆盖层：行收起但匹配数不变。
+    await fireEvent.click(toggle);
+    expect(screen.queryByText("a.ts")).toBeNull();
+    expect(screen.getByText("1/2")).toBeInTheDocument();
+    // 再次点击恢复展开；清空搜索后回到用户折叠偏好（收起）。
     await fireEvent.click(toggle);
     expect(screen.getByText("a.ts")).toBeInTheDocument();
+    await fireEvent.input(input, { target: { value: "" } });
+    expect(screen.queryByText("a.ts")).toBeNull();
   });
 
   it("路径详情按钮发送工作副本内路径", async () => {

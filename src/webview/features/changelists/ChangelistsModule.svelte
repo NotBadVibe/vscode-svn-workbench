@@ -11,6 +11,7 @@
   import { focusOnMount } from "../../components/ui/focusOnMount";
   import SearchInput from "../../components/list/SearchInput.svelte";
   import ResultCount from "../../components/list/ResultCount.svelte";
+  import ListShortcutHint from "../../components/help/ListShortcutHint.svelte";
   import PathCell from "../../components/list/PathCell.svelte";
   import SelectionSummary from "../../components/list/SelectionSummary.svelte";
   import BulkActionBar from "../../components/list/BulkActionBar.svelte";
@@ -89,12 +90,20 @@
   let name = $state("");
   let applyPaths = $state<string[]>([]);
   let query = $state("");
+  /** V023-R23：`/` 聚焦搜索目标（集中 keymap `list/searchFocus`）。 */
+  let searchInputRef = $state<{ focusInput: () => void } | undefined>();
   let onlySelected = $state(false);
   let sortField = $state<ChangelistSortField | undefined>();
   let sortDirection = $state<SortDirection>("asc");
   let announcement = $state("");
   let selected = $state<ReadonlySet<SelectionKey>>(emptySelection());
   let collapsedGroups = new SvelteSet<string>();
+  /**
+   * V023-R21：搜索期间折叠覆盖（组名→是否折叠），清空搜索后丢弃，
+   * 用户折叠偏好（collapsedGroups）全程保留，恢复不受影响。
+   */
+  let searchCollapseOverride = new SvelteMap<string, boolean>();
+  const isSearching = $derived(query.trim().length > 0);
 
   const savedPreferences = loadListPreferences("changelists");
   sortField =
@@ -172,11 +181,21 @@
   /** 全部条目按筛选与排序组织成节；折叠的分组不渲染，但仍计入匹配集合。 */
   const sections = $derived.by(() => {
     const filterEntry = matchesEntry;
+    const searching = query.trim().length > 0;
     const result: ListSection[] = [];
     let start = 0;
     for (const group of snapshot.groups) {
       const matched = group.files.filter(filterEntry);
-      const collapsed = collapsedGroups.has(group.name);
+      // V023-R21：搜索默认展开命中组（无命中默认收起），用户在搜索期间的手动
+      // 折叠写入覆盖层；清空搜索后覆盖层丢弃，用户偏好恢复。
+      let collapsed: boolean;
+      if (searching && searchCollapseOverride.has(group.name)) {
+        collapsed = searchCollapseOverride.get(group.name) ?? false;
+      } else if (searching) {
+        collapsed = matched.length === 0;
+      } else {
+        collapsed = collapsedGroups.has(group.name);
+      }
       const entries = collapsed ? [] : sortEntries(matched);
       result.push({
         key: `group:${group.name}`,
@@ -333,6 +352,8 @@
     onToggleActive: (entry) => {
       if (entry.selectionKey) toggleKey(entry.selectionKey);
     },
+    // V023-R23：`/` 聚焦搜索（集中 keymap `list/searchFocus`，空结果同样可用）。
+    onFocusSearch: () => searchInputRef?.focusInput(),
   });
 
   $effect(() => {
@@ -357,6 +378,15 @@
   }
 
   function toggleCollapse(groupName: string): void {
+    if (isSearching) {
+      // 搜索期间只写覆盖层：清空搜索后用户偏好原样恢复。
+      const section = sections.find(
+        (item) => item.kind === "group" && item.name === groupName,
+      );
+      const current = isGroupCollapsed(groupName, section?.matchedCount ?? 0);
+      searchCollapseOverride.set(groupName, !current);
+      return;
+    }
     if (collapsedGroups.has(groupName)) {
       collapsedGroups.delete(groupName);
     } else {
@@ -364,13 +394,59 @@
     }
   }
 
-  function toggleSort(field: ChangelistSortField): void {
-    if (sortField === field) {
-      sortDirection = sortDirection === "asc" ? "desc" : "asc";
-    } else {
+  // V023-R21：清空搜索后丢弃搜索覆盖层，恢复用户折叠偏好（不改变已选）。
+  $effect(() => {
+    if (!isSearching && searchCollapseOverride.size > 0) {
+      searchCollapseOverride.clear();
+    }
+  });
+
+  /** V023-R21：组级选择本组全部匹配项（只改选择，不改变操作 scope）。 */
+  function selectGroupMatched(groupName: string): void {
+    const group = snapshot.groups.find((item) => item.name === groupName);
+    if (!group) return;
+    const matched = group.files.filter(matchesEntry);
+    const next = cloneSelection(selected);
+    for (const entry of matched) {
+      if (entry.selectionKey) next.add(entry.selectionKey);
+    }
+    selected = next;
+  }
+
+  /**
+   * V023-R21：有效折叠态（模板与节头共用）：搜索期间命中组默认展开，
+   * 覆盖层优先；非搜索沿用用户偏好。aria-expanded 据此播报。
+   */
+  function isGroupCollapsed(groupName: string, matchedLength: number): boolean {
+    if (isSearching && searchCollapseOverride.has(groupName)) {
+      return searchCollapseOverride.get(groupName) ?? false;
+    }
+    if (isSearching) return matchedLength === 0;
+    return collapsedGroups.has(groupName);
+  }
+
+  /**
+   * V023-R22：字段选择只定字段（同字段不反转，方向由独立按钮切换）。
+   * select onchange 难再触发同值，方向切换不再依赖重复选择字段。
+   */
+  function setSortField(field: ChangelistSortField | undefined): void {
+    if (field === undefined) {
+      resetSort();
+      return;
+    }
+    if (sortField !== field) {
       sortField = field;
       sortDirection = "asc";
+      saveListPreferences("changelists", { sortField, sortDirection });
     }
+  }
+
+  /** V023-R22：独立方向切换（同一字段可明确切升/降）。 */
+  function toggleSortDirection(): void {
+    if (!sortField) {
+      sortField = "path";
+    }
+    sortDirection = sortDirection === "asc" ? "desc" : "asc";
     saveListPreferences("changelists", { sortField, sortDirection });
   }
 
@@ -733,12 +809,15 @@
     <div class="changelist-column changelist-column--files">
       <div class="feature-toolbar feature-toolbar--compact">
         <SearchInput
+          bind:this={searchInputRef}
           bind:value={query}
           ariaLabel="筛选变更集文件"
           placeholder="筛选文件…"
           compact
         />
-        <ResultCount count={matchedCount} />
+        <ResultCount count={matchedCount} suffix="个匹配" />
+        <!-- V023-R22：变更集文件列表为非表格分组列表，无语义列头；排序菜单为小屏等效能力
+          （交互基线 §7.3），方向由中文升序/降序按钮（含 aria-label）承担，不虚构 columnheader。 -->
         <div class="toolbar-actions">
           <select
             class="sort-menu"
@@ -749,7 +828,7 @@
               if (value === "") {
                 resetSort();
               } else {
-                toggleSort(value as ChangelistSortField);
+                setSortField(value as ChangelistSortField);
               }
             }}
           >
@@ -758,12 +837,24 @@
             <option value="status">按状态</option>
           </select>
           {#if sortField}
+            <button
+              type="button"
+              class="button button--secondary"
+              aria-label={`排序方向：当前${sortDirection === "asc" ? "升序" : "降序"}，点击切换`}
+              onclick={toggleSortDirection}
+              >{sortDirection === "asc" ? "升序" : "降序"}</button
+            >
             <button class="button button--secondary" onclick={resetSort}
               >恢复默认顺序</button
             >
           {/if}
         </div>
       </div>
+      <ListShortcutHint
+        region="list"
+        hintKey="changelists-list"
+        searchAvailable
+      />
       <SelectionSummary
         selectedCount={selected.size}
         {actionableCount}
@@ -783,9 +874,10 @@
         <button
           class="button button--secondary"
           disabled={actionableCount === 0}
+          title="包含折叠分组中的匹配文件"
           onclick={() =>
             (selected = selectActionable(filteredSelectable, selected))}
-          >选择当前筛选（{actionableCount}）</button
+          >选择全部匹配项（{actionableCount}）</button
         >
       </div>
       {#if pathDetail && list.detailOpen}
@@ -860,15 +952,21 @@
                 <button
                   type="button"
                   class="changelist-section-toggle"
-                  aria-expanded={!collapsedGroups.has(section.name)}
+                  aria-expanded={!isGroupCollapsed(
+                    section.name,
+                    section.matchedCount,
+                  )}
+                  aria-label={`${section.name}，匹配 ${section.matchedCount}，共 ${section.totalCount}`}
                   onclick={() => toggleCollapse(section.name)}
                   ><span
                     class="codicon"
-                    class:codicon-chevron-right={collapsedGroups.has(
+                    class:codicon-chevron-right={isGroupCollapsed(
                       section.name,
+                      section.matchedCount,
                     )}
-                    class:codicon-chevron-down={!collapsedGroups.has(
+                    class:codicon-chevron-down={!isGroupCollapsed(
                       section.name,
+                      section.matchedCount,
                     )}
                     aria-hidden="true"
                   ></span>{section.name}</button
@@ -876,10 +974,22 @@
               {:else}
                 <strong class="changelist-section-name">{section.name}</strong>
               {/if}
-              <span class="changelist-section-count"
+              <span
+                class="changelist-section-count"
+                role="status"
+                aria-label={`匹配 ${section.matchedCount}，共 ${section.totalCount}`}
+                title={`匹配 ${section.matchedCount} / 共 ${section.totalCount}`}
                 >{section.matchedCount}/{section.totalCount}</span
               >
               {#if section.kind === "group" && section.totalCount > 0}
+                <button
+                  type="button"
+                  class="text-action"
+                  disabled={section.matchedCount === 0}
+                  title="只改变选择，不改变变更集归属范围"
+                  onclick={() => selectGroupMatched(section.name)}
+                  >选择本组匹配项（{section.matchedCount}）</button
+                >
                 <button
                   class="text-action text-action--danger"
                   onclick={() =>

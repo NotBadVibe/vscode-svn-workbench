@@ -7,6 +7,11 @@
   import SearchInput from "../../../components/list/SearchInput.svelte";
   import ResultCount from "../../../components/list/ResultCount.svelte";
   import { naturalCompare } from "../../../../selection/selectionSort";
+  import type { SortDirection } from "../../../../selection/selectionSort";
+  import {
+    loadListPreferences,
+    saveListPreferences,
+  } from "../../../app/listPreferences";
   import { formatZhDateTime, formatZhFileSize } from "../../../i18n/formatters";
 
   /*
@@ -23,13 +28,78 @@
     onAction: (action: WebviewAction, data?: Record<string, unknown>) => void;
   } = $props();
 
+  type BrowseSortField =
+    "name" | "type" | "revision" | "author" | "date" | "size";
+
   let browserUrl = $state("");
   let initializedRepository = $state("");
   let query = $state("");
-  let sortField = $state<
-    "name" | "type" | "revision" | "author" | "date" | "size"
-  >("name");
+  let sortField = $state<BrowseSortField>("name");
+  let sortDirection = $state<SortDirection>("asc");
   let dirsFirst = $state(true);
+
+  /**
+   * V023-R22：各字段默认方向（名称/类型/作者升序，其余降序）；用户可独立切换。
+   * 偏好按 `repository-browse` 模块存储，不串入 AI 建议等有意顺序。
+   */
+  const BROWSE_DEFAULT_DIRECTION: Record<BrowseSortField, SortDirection> = {
+    name: "asc",
+    type: "asc",
+    author: "asc",
+    revision: "desc",
+    date: "desc",
+    size: "desc",
+  };
+
+  function isBrowseSortField(value: unknown): value is BrowseSortField {
+    return (
+      value === "name" ||
+      value === "type" ||
+      value === "revision" ||
+      value === "author" ||
+      value === "date" ||
+      value === "size"
+    );
+  }
+
+  const savedBrowsePreferences = loadListPreferences("repository-browse");
+  sortField = isBrowseSortField(savedBrowsePreferences.customSortField)
+    ? savedBrowsePreferences.customSortField
+    : "name";
+  sortDirection =
+    savedBrowsePreferences.sortDirection === "asc" ||
+    savedBrowsePreferences.sortDirection === "desc"
+      ? savedBrowsePreferences.sortDirection
+      : (BROWSE_DEFAULT_DIRECTION[sortField] ?? "asc");
+
+  function persistBrowseSort(): void {
+    saveListPreferences("repository-browse", {
+      customSortField: sortField,
+      sortDirection,
+    });
+  }
+
+  /** V023-R22：字段选择只定字段并取该字段默认方向（方向由独立按钮切换）。 */
+  function setBrowseSortField(field: BrowseSortField): void {
+    if (sortField !== field) {
+      sortField = field;
+      sortDirection = BROWSE_DEFAULT_DIRECTION[field];
+      persistBrowseSort();
+    }
+  }
+
+  /** V023-R22：同一字段可明确切升/降。 */
+  function toggleBrowseSortDirection(): void {
+    sortDirection = sortDirection === "asc" ? "desc" : "asc";
+    persistBrowseSort();
+  }
+
+  /** V023-R22：恢复默认顺序（按名称升序）。 */
+  function resetBrowseSort(): void {
+    sortField = "name";
+    sortDirection = BROWSE_DEFAULT_DIRECTION.name;
+    persistBrowseSort();
+  }
 
   $effect(() => {
     const identity =
@@ -93,23 +163,26 @@
 
   const orderedEntries = $derived.by(() => {
     const list = [...filteredEntries];
+    const dir = sortDirection === "asc" ? 1 : -1;
     list.sort((left, right) => {
       if (dirsFirst && left.kind !== right.kind) {
         return left.kind === "dir" ? -1 : 1;
       }
       switch (sortField) {
         case "type":
-          return left.kind.localeCompare(right.kind);
+          return dir * left.kind.localeCompare(right.kind);
         case "revision":
-          return (Number(right.revision) || 0) - (Number(left.revision) || 0);
+          return (
+            dir * ((Number(left.revision) || 0) - (Number(right.revision) || 0))
+          );
         case "author":
-          return (left.author ?? "").localeCompare(right.author ?? "");
+          return dir * (left.author ?? "").localeCompare(right.author ?? "");
         case "date":
-          return (right.date ?? "").localeCompare(left.date ?? "");
+          return dir * (left.date ?? "").localeCompare(right.date ?? "");
         case "size":
-          return (right.size ?? -1) - (left.size ?? -1);
+          return dir * ((left.size ?? -1) - (right.size ?? -1));
         default:
-          return naturalCompare(left.name, right.name);
+          return dir * naturalCompare(left.name, right.name);
       }
     });
     return list;
@@ -180,6 +253,7 @@
         ><span class="codicon codicon-copy" aria-hidden="true"></span></button
       >
     </nav>
+    <!-- V023-R22：仓库条目非表格列头，方向经中文按钮展示；不用 role=columnheader 以免 ARIA 父子违规。 -->
     <div class="browser-filter-bar">
       <SearchInput
         bind:value={query}
@@ -194,26 +268,28 @@
         value={sortField}
         onchange={(event) => {
           const value = (event.currentTarget as HTMLSelectElement).value;
-          if (
-            value === "type" ||
-            value === "revision" ||
-            value === "author" ||
-            value === "date" ||
-            value === "size"
-          ) {
-            sortField = value;
-          } else {
-            sortField = "name";
-          }
+          setBrowseSortField(isBrowseSortField(value) ? value : "name");
         }}
       >
         <option value="name">按名称</option>
         <option value="type">按类型</option>
-        <option value="revision">按修订（新优先）</option>
+        <option value="revision">按修订</option>
         <option value="author">按作者</option>
-        <option value="date">按日期（新优先）</option>
-        <option value="size">按大小（大优先）</option>
+        <option value="date">按日期</option>
+        <option value="size">按大小</option>
       </select>
+      <button
+        type="button"
+        class="button button--secondary"
+        aria-label={`排序方向：当前${sortDirection === "asc" ? "升序" : "降序"}，点击切换`}
+        onclick={toggleBrowseSortDirection}
+        >{sortDirection === "asc" ? "升序" : "降序"}</button
+      >
+      <button
+        type="button"
+        class="button button--secondary"
+        onclick={resetBrowseSort}>恢复默认顺序</button
+      >
       <button
         class="button button--secondary"
         aria-pressed={dirsFirst}
@@ -221,6 +297,17 @@
         >{dirsFirst ? "目录优先：开" : "目录优先：关"}</button
       >
     </div>
+    {#if query.trim() && orderedEntries.length === 0 && (snapshot.advanced.browser.entries.length ?? 0) > 0 && !snapshot.advanced.browser.error}
+      <div class="notice notice--warning" role="status">
+        当前名称筛选“{query.trim()}”无匹配（共 {snapshot.advanced.browser
+          .entries.length} 个条目）。可能是切换目录后保留的旧筛选，清除后恢复全部条目显示。
+        <button
+          type="button"
+          class="button button--secondary"
+          onclick={() => (query = "")}>清除名称筛选</button
+        >
+      </div>
+    {/if}
     {#if snapshot.advanced.browser.error}<div class="notice notice--error">
         {snapshot.advanced.browser.error}
       </div>{/if}

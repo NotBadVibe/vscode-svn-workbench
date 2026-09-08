@@ -175,7 +175,15 @@
 
   // 列表偏好按模块本地保存（workspace 容器 + module），不跨模块串用。
   const savedPreferences = loadListPreferences("changes");
-  sortField = savedPreferences.sortField;
+  // V023-R22：动态字段失效时默认回退（未知字段不沿用）。
+  sortField =
+    savedPreferences.sortField === "path" ||
+    savedPreferences.sortField === "fileName" ||
+    savedPreferences.sortField === "status" ||
+    savedPreferences.sortField === "recommendation" ||
+    savedPreferences.sortField === "ownership"
+      ? savedPreferences.sortField
+      : undefined;
   sortDirection = savedPreferences.sortDirection ?? "asc";
   density = savedPreferences.density ?? "comfortable";
 
@@ -637,6 +645,25 @@
     });
   }
 
+  /**
+   * V023-R22：字段选择只定字段（同字段不反转；select onchange 难再触发
+   * 同值，方向切换由独立按钮承担）。表头点击仍走 toggleSort 显式切换。
+   */
+  function setSortField(field: SortField): void {
+    if (sortField !== field) {
+      sortField = field;
+      sortDirection = "asc";
+      saveListPreferences("changes", { sortField, sortDirection, density });
+    }
+  }
+
+  /** V023-R22：独立方向切换（同一字段可明确切升/降）。 */
+  function toggleSortDirection(): void {
+    if (!sortField) sortField = "path";
+    sortDirection = sortDirection === "asc" ? "desc" : "asc";
+    saveListPreferences("changes", { sortField, sortDirection, density });
+  }
+
   function resetSort(): void {
     sortField = undefined;
     sortDirection = "asc";
@@ -743,6 +770,8 @@
       placeholder="筛选文件…"
     />
     <ResultCount count={filteredFiles.length} />
+    <!-- V023-R22：排序菜单为小屏等效能力（交互基线 §7.3），方向经下方中文按钮展示；
+      真正的 role=columnheader + aria-sort 由表头 SortHeader 承担，此处不重复以免 ARIA 父子违规。 -->
     <div class="toolbar-actions">
       <select
         class="sort-menu"
@@ -753,7 +782,7 @@
           if (value === "") {
             resetSort();
           } else {
-            toggleSort(value as SortField);
+            setSortField(value as SortField);
           }
         }}
       >
@@ -771,6 +800,13 @@
         >{density === "compact" ? "紧凑" : "宽松"}</button
       >
       {#if sortField}
+        <button
+          type="button"
+          class="button button--secondary"
+          aria-label={`排序方向：当前${sortDirection === "asc" ? "升序" : "降序"}，点击切换`}
+          onclick={toggleSortDirection}
+          >{sortDirection === "asc" ? "升序" : "降序"}</button
+        >
         <button class="button button--secondary" onclick={resetSort}
           >恢复默认顺序</button
         >
