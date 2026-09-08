@@ -36,11 +36,11 @@ test("UX08-SEL-01/02/03/07：三态、筛选排序不改变选择、隐藏选择
   // blocked 永不加入。
   await expect(page.getByLabel("选择 src/conflict/example.ts")).toBeDisabled();
 
-  // SEL-02：筛选与排序不静默改变选择（点状态列头排序；V023-R24 新增的复制按钮不参与）。
+  // SEL-02：筛选与排序不静默改变选择（点状态列头排序）。
   await page.getByRole("button", { name: "状态 未排序" }).click();
   await expect(page.getByLabel("选择 src/extension.ts")).toBeChecked();
   await page.getByLabel("筛选变更文件").fill("App.svelte");
-  // 隐藏选择保留并可见（SEL-03；摘要计数，V023-R24 复制按钮文案不参与）。
+  // 隐藏选择保留并可见（SEL-03；摘要计数）。
   await expect(page.getByRole("status", { name: /隐藏 2/ })).toBeVisible();
   await expect(page.getByLabel("选择 src/webview/App.svelte")).toBeChecked();
   // 清除隐藏选择只移除筛选外部分。

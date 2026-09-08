@@ -6,6 +6,7 @@ import ChangelistsModule from "../../src/webview/features/changelists/Changelist
 import type {
   ChangelistsSnapshot,
   CommitSnapshot,
+  WorkbenchFileView,
 } from "../../src/protocol/workbenchProtocol";
 
 /*
@@ -381,5 +382,146 @@ describe("V023-R26 直接移动到已有变更集", () => {
       ),
     ).toBe(false);
     expect(screen.getByText("将分组的文件（1）")).toBeInTheDocument();
+  });
+});
+
+describe("V023-R26 终审：新下拉路径本地拒绝（过期/未版本化/不可操作）", () => {
+  const rejectFile = (
+    path: string,
+    overrides: Pick<WorkbenchFileView, "status" | "selection">,
+  ): WorkbenchFileView => ({
+    relativePath: path,
+    selectionKey: key(path) as never,
+    status: "modified",
+    selection: "selected",
+    ...overrides,
+  });
+
+  function rejectSnapshot() {
+    const snapshot = changelistsSnapshot();
+    return {
+      ...snapshot,
+      unassigned: [
+        groupFile("src/ok.ts"),
+        rejectFile("src/fresh.ts", { status: "unversioned" }),
+        rejectFile("src/locked.ts", { selection: "blocked" }),
+        rejectFile("src/stale.ts", { selection: "needsReview" }),
+      ],
+    };
+  }
+
+  async function refuseCase(badPath: string) {
+    const onAction = vi.fn();
+    render(ChangelistsModule, {
+      snapshot: rejectSnapshot(),
+      onAction,
+    });
+    await fireEvent.click(screen.getByLabelText("选择 src/ok.ts"));
+    await fireEvent.click(screen.getByLabelText(`选择 ${badPath}`));
+    await fireEvent.change(screen.getByLabelText("目标变更集"), {
+      target: { value: "ui" },
+    });
+    await fireEvent.click(
+      screen.getByRole("button", { name: /移动到所选变更集（2）/ }),
+    );
+    // 拒绝：不发预览、不发起写操作，就地中文反馈。
+    expect(
+      onAction.mock.calls.some(
+        (call) => call[0] === "changelist/preview-apply",
+      ),
+    ).toBe(false);
+    expect(
+      screen.getByText(/不能移动到变更集“ui”.*已保留全部选择/),
+    ).toBeInTheDocument();
+    // 选择保留：两项仍勾选，可取消坏项后重试。
+    expect(screen.getByLabelText("选择 src/ok.ts")).toBeChecked();
+    expect(screen.getByLabelText(`选择 ${badPath}`)).toBeChecked();
+    return onAction;
+  }
+
+  it("未纳入版本控制文件拒绝且保留选择", async () => {
+    await refuseCase("src/fresh.ts");
+  });
+
+  it("阻止提交文件拒绝且保留选择", async () => {
+    await refuseCase("src/locked.ts");
+  });
+
+  it("需要确认（过期）文件拒绝且保留选择", async () => {
+    await refuseCase("src/stale.ts");
+  });
+
+  it("剔除坏项后同一选择器可继续生成预览", async () => {
+    const onAction = vi.fn();
+    render(ChangelistsModule, {
+      snapshot: rejectSnapshot(),
+      onAction,
+    });
+    await fireEvent.click(screen.getByLabelText("选择 src/ok.ts"));
+    await fireEvent.click(screen.getByLabelText("选择 src/stale.ts"));
+    await fireEvent.change(screen.getByLabelText("目标变更集"), {
+      target: { value: "ui" },
+    });
+    await fireEvent.click(
+      screen.getByRole("button", { name: /移动到所选变更集（2）/ }),
+    );
+    expect(screen.getByText(/不能移动到变更集“ui”/)).toBeInTheDocument();
+    // 取消坏项选择后重试：预览正常发出且只含好项。
+    await fireEvent.click(screen.getByLabelText("选择 src/stale.ts"));
+    await fireEvent.click(
+      screen.getByRole("button", { name: /移动到所选变更集（1）/ }),
+    );
+    const previewCall = onAction.mock.calls.find(
+      (call) => call[0] === "changelist/preview-apply",
+    );
+    expect(previewCall?.[1]).toMatchObject({
+      name: "ui",
+      remove: false,
+      paths: ["src/ok.ts"],
+    });
+  });
+});
+
+describe("V023-R24 终审：复制失败就地反馈且不改选择", () => {
+  function failingCopyAction() {
+    return vi.fn((action: string) => {
+      if (action === "copy-text") throw new Error("剪贴板不可用");
+      return undefined;
+    });
+  }
+
+  it("Changes：copy-text 失败就地反馈，选择与候选不变", async () => {
+    const onAction = failingCopyAction();
+    render(ChangesModule, { snapshot: changesSnapshot, onAction });
+    await fireEvent.click(screen.getByLabelText("选择 src/b.ts"));
+    await fireEvent.click(screen.getByRole("button", { name: "更多批量操作" }));
+    await fireEvent.click(
+      screen.getByRole("menuitem", { name: /复制已选路径（1）/ }),
+    );
+    expect(
+      screen.getByText("复制失败，请重试；选择未改动，未发起写操作。"),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("选择 src/b.ts")).toBeChecked();
+  });
+
+  it("Commit：copy-text 失败就地反馈，不写 Host 选择状态", async () => {
+    const onAction = failingCopyAction();
+    render(CommitModule, {
+      snapshot: { ...commitSnapshot, selectedPaths: [] },
+      onAction,
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "调整文件" }));
+    await fireEvent.click(screen.getByLabelText("选择 src/b.ts"));
+    onAction.mockClear();
+    await fireEvent.click(
+      screen.getByRole("button", { name: /复制已选路径（1）/ }),
+    );
+    expect(
+      screen.getByText("复制失败，请重试；选择未改动，未发起写操作。"),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("选择 src/b.ts")).toBeChecked();
+    expect(
+      onAction.mock.calls.some((call) => call[0] === "commit/update-selection"),
+    ).toBe(false);
   });
 });

@@ -668,13 +668,36 @@
    * V023-R26：移动到变更集选择器。选中已有组后把当前已选填入目标并
    * 直接走既有预览/令牌执行链（changelist/preview-apply）；选“新建”时只
    * 填入应用栏，由用户命名后再预览。取消只清本地草稿，不触发写操作。
+   * V023-R26 终审：新下拉路径先本地拒绝未版本化/不可操作/过期文件
+   * （status=unversioned、selection=blocked/无身份键、selection=needsReview），
+   * 拒绝时保留选择、不发预览；Host 预览/执行前仍复验（不信任 Webview）。
    */
+  function entryByRelativePath(
+    relativePath: string,
+  ): ChangelistGroupFileView | undefined {
+    return allEntries().find((entry) => entry.relativePath === relativePath);
+  }
+
   function moveToSelectedTarget(): void {
     if (selectedPaths.length === 0 || !moveTarget) return;
     if (moveTarget === NEW_CHANGESET_OPTION) {
       applyPaths = [...selectedPaths];
       name = "";
       moveFeedback = `已把 ${applyPaths.length} 个已选文件加入应用栏，请填写新变更集名称后生成预览。`;
+      return;
+    }
+    const rejected = selectedPaths.filter((relativePath) => {
+      const entry = entryByRelativePath(relativePath);
+      if (!entry || !entry.selectionKey) return true;
+      if (entry.status === "unversioned") return true;
+      if (entry.selection === "blocked") return true;
+      if (entry.selection === "needsReview") return true;
+      return false;
+    });
+    if (rejected.length > 0) {
+      const shown = rejected.slice(0, 3).join("、");
+      const more = rejected.length > 3 ? `等 ${rejected.length} 个文件` : "";
+      moveFeedback = `有 ${rejected.length} 个已选文件不能移动到变更集“${moveTarget}”（未纳入版本控制、阻止提交或需要确认），已保留全部选择，未发起预览与写操作：${shown}${more}。请取消选择这些文件后重试。`;
       return;
     }
     name = moveTarget;

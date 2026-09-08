@@ -1430,3 +1430,149 @@ describe("DiffModule 失败降级与可观测性（v0.1.0 V010-E）", () => {
     expect(screen.queryByTestId("diff-bottom-i18n-hint")).toBeNull();
   });
 });
+
+describe("DiffModule 连续审阅队列（V023-R18）", () => {
+  const reviewSnapshot: DiffSnapshot = {
+    ...workingSnapshot,
+    relativePath: "src/a.ts",
+    review: {
+      queue: [
+        {
+          relativePath: "src/a.ts",
+          contentHash: "hash-a",
+          current: true,
+          reviewed: false,
+        },
+        {
+          relativePath: "src/b.ts",
+          contentHash: "",
+          current: false,
+          reviewed: true,
+        },
+        {
+          relativePath: "src/c.ts",
+          contentHash: "",
+          current: false,
+          reviewed: false,
+        },
+      ],
+      index: 0,
+      total: 3,
+      reviewedCount: 1,
+      unreviewedCount: 2,
+      scopeHash: "scope-1",
+      repositoryUuid: "repo-1",
+    },
+  };
+
+  it("显示第 N/M 个、已看/未看计数与未看徽章（文字+图标，不只靠颜色）", async () => {
+    render(DiffModule, { snapshot: reviewSnapshot, onAction: vi.fn() });
+    await waitFor(() => expect(pierreMocks.records).toHaveLength(1));
+    expect(screen.getByText("文件审阅队列")).toBeVisible();
+    expect(screen.getByText("第 1/3 个")).toBeVisible();
+    expect(screen.getByText("已看 1 个，未看 2 个")).toBeVisible();
+    expect(screen.getByText("未看")).toBeVisible();
+    // 只读语义声明可见：标已看不代表提交授权或质量通过。
+    expect(
+      screen.getByText(/标记已看仅为个人审阅进度，不代表提交授权或质量通过/),
+    ).toBeVisible();
+  });
+
+  it("上一个文件在队首禁用，下一文件经 open-diff 切换（不带写身份）", async () => {
+    const onAction = vi.fn();
+    render(DiffModule, { snapshot: reviewSnapshot, onAction });
+    await waitFor(() => expect(pierreMocks.records).toHaveLength(1));
+    const prev = screen.getByRole("button", { name: "上一个文件" });
+    expect(prev).toBeDisabled();
+    expect(prev).toHaveAttribute("title", "已经是队列中第一个文件");
+    const next = screen.getByRole("button", { name: "下一个文件" });
+    expect(next).toBeEnabled();
+    expect(next).toHaveAttribute("title", "打开 src/b.ts");
+    await fireEvent.click(next);
+    expect(onAction).toHaveBeenCalledWith("open-diff", {
+      relativePath: "src/b.ts",
+    });
+  });
+
+  it("标为已看携带当前文件与内容指纹，已看文件不再显示该按钮", async () => {
+    const onAction = vi.fn();
+    const { rerender } = render(DiffModule, {
+      snapshot: reviewSnapshot,
+      onAction,
+    });
+    await waitFor(() => expect(pierreMocks.records).toHaveLength(1));
+    const mark = screen.getByRole("button", {
+      name: "标为已看：src/a.ts",
+    });
+    await fireEvent.click(mark);
+    expect(onAction).toHaveBeenCalledWith("diff/mark-reviewed", {
+      relativePath: "src/a.ts",
+      contentHash: "hash-a",
+    });
+    // 已看的当前文件不再提供标已看按钮，徽章转为已看。
+    const reviewed = reviewSnapshot.review;
+    await rerender({
+      snapshot: {
+        ...reviewSnapshot,
+        relativePath: "src/b.ts",
+        review: reviewed
+          ? {
+              ...reviewed,
+              queue: reviewed.queue.map((item, position) => ({
+                ...item,
+                current: position === 1,
+              })),
+              index: 1,
+            }
+          : undefined,
+      },
+      onAction,
+    });
+    expect(screen.getByText("第 2/3 个")).toBeVisible();
+    expect(screen.getByText("已看")).toBeVisible();
+    expect(screen.queryByRole("button", { name: /标为已看/ })).toBeNull();
+  });
+
+  it("队尾下一个文件禁用且不越界，已看文件隐藏标已看按钮", async () => {
+    const onAction = vi.fn();
+    const lastSnapshot: DiffSnapshot = {
+      ...reviewSnapshot,
+      relativePath: "src/c.ts",
+      review: reviewSnapshot.review
+        ? {
+            ...reviewSnapshot.review,
+            queue: reviewSnapshot.review.queue.map((item, position) => ({
+              ...item,
+              current: position === 2,
+            })),
+            index: 2,
+          }
+        : undefined,
+    };
+    render(DiffModule, { snapshot: lastSnapshot, onAction });
+    await waitFor(() => expect(pierreMocks.records).toHaveLength(1));
+    expect(screen.getByText("第 3/3 个")).toBeVisible();
+    const next = screen.getByRole("button", { name: "下一个文件" });
+    expect(next).toBeDisabled();
+    expect(next).toHaveAttribute("title", "已经是队列中最后一个文件");
+    const prev = screen.getByRole("button", { name: "上一个文件" });
+    expect(prev).toBeEnabled();
+    await fireEvent.click(prev);
+    expect(onAction).toHaveBeenCalledWith("open-diff", {
+      relativePath: "src/b.ts",
+    });
+    // 队尾未看文件仍可标已看（越界的是导航按钮，已禁用）。
+    expect(
+      screen.getByRole("button", { name: "标为已看：src/c.ts" }),
+    ).toBeVisible();
+  });
+
+  it("无 review 的单文件快照不展示队列条", async () => {
+    render(DiffModule, { snapshot: workingSnapshot, onAction: vi.fn() });
+    await waitFor(() => expect(pierreMocks.records).toHaveLength(1));
+    expect(screen.queryByText("文件审阅队列")).toBeNull();
+    expect(screen.queryByRole("button", { name: "上一个文件" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "下一个文件" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /标为已看/ })).toBeNull();
+  });
+});
