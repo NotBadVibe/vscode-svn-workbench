@@ -69,10 +69,43 @@
   /*
    * v0.0.18 批次 A（C-03）：引导第 1 步——进入工作台即完成；第 2 步在
    * Changes 模块看到候选文件时由 ChangesModule 埋点推进。
+   *
+   * V024-R41：错误/诊断态分支覆盖（CLI 缺失 > 非工作副本）。只读派生，
+   * 不发起 SVN 调用；clean/modified/conflict 由 Changes 模块按候选权威更新，
+   * 此处不覆盖（避免无候选数据的模块把干净分支误写回“有修改”）。
    */
   $effect(() => {
     if (workbenchState.connected && workbenchState.snapshot) {
       onboarding.recordStep("open-workbench");
+    }
+  });
+
+  $effect(() => {
+    const errorText = `${workbenchState.error?.title ?? ""} ${workbenchState.error?.message ?? ""}`;
+    if (/CLI|可执行文件/.test(errorText)) {
+      onboarding.setBranch("cli-missing");
+      return;
+    }
+    if (/不是工作副本|非 SVN|均未检测到 SVN 工作副本/.test(errorText)) {
+      onboarding.setBranch("non-svn");
+      return;
+    }
+    const snapshot = workbenchState.snapshot;
+    if (snapshot?.kind === "diagnostics") {
+      const svnCheck = snapshot.checks.find((check) => check.id === "svn-cli");
+      const workspaceCheck = snapshot.checks.find(
+        (check) => check.id === "workspace",
+      );
+      if (svnCheck?.status === "fail") {
+        onboarding.setBranch("cli-missing");
+        return;
+      }
+      if (
+        workspaceCheck?.status === "warn" &&
+        /均未检测到 SVN 工作副本/.test(workspaceCheck.detail ?? "")
+      ) {
+        onboarding.setBranch("non-svn");
+      }
     }
   });
 
@@ -165,7 +198,13 @@
         >
       </div>
     {/if}
-    <OnboardingStrip />
+    <OnboardingStrip
+      onNavigate={(target) =>
+        workbenchState.openModule(
+          target.moduleId,
+          target.taskId as typeof workbenchState.taskId,
+        )}
+    />
     <div class="workbench-content">
       {@render children()}
     </div>

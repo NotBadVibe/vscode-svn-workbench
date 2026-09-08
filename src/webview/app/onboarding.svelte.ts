@@ -54,6 +54,106 @@ export const ONBOARDING_STEPS: OnboardingStep[] = [
   },
 ];
 
+/*
+ * V024-R41：按工作副本状态分支的新手引导。分支只由 Webview 已有的快照/
+ * 错误派生（纯函数，不发起任何 SVN 调用），随状态变化重新计算下一步。
+ * 五态：clean（干净）/ modified（有修改）/ conflict（有冲突且无可提交项）/
+ * non-svn（非工作副本）/ cli-missing（CLI 缺失）。冲突与修改并存且仍有
+ * 可提交项时走修改分支（冲突文件由既有阻止语义隔离，步骤文案已说明先解决冲突）。
+ */
+export type OnboardingBranch =
+  "clean" | "modified" | "conflict" | "non-svn" | "cli-missing";
+
+/** 分支输入信号：纯数字/布尔，与平台无关，可单元断言。 */
+export interface OnboardingBranchSignals {
+  fileCount: number;
+  conflictedCount: number;
+  /** 范围内是否存在可提交项（与 Changes 唯一主操作同一口径）。 */
+  hasCommittable: boolean;
+  cliMissing: boolean;
+  nonSvn: boolean;
+}
+
+/**
+ * 推导分支（优先级：CLI 缺失 > 非工作副本 > 冲突阻塞 > 干净 > 有修改）。
+ * 冲突只在“无可提交项”时独立成支（与 Changes conflicts-only 同口径，
+ * 此时选择→预览已不可能，必须先处理冲突）；冲突与可提交项并存时走修改分支。
+ * 纯函数，不读取磁盘、不调用 SVN。
+ */
+export function deriveOnboardingBranch(
+  signals: OnboardingBranchSignals,
+): OnboardingBranch {
+  if (signals.cliMissing) return "cli-missing";
+  if (signals.nonSvn) return "non-svn";
+  if (signals.conflictedCount > 0 && !signals.hasCommittable) return "conflict";
+  if (signals.fileCount === 0) return "clean";
+  return "modified";
+}
+
+/**
+ * 分支必需步骤（ONBOARDING_STEPS 的子序列，保持原顺序）。
+ * 干净/冲突分支跳过“选择→预览”（冲突阻塞时无可提交项、干净无候选），
+ * 非 SVN/CLI 缺失分支只保留“打开→结束”（恢复优先于演示流程）。
+ */
+export function requiredStepsForBranch(
+  branch: OnboardingBranch,
+): OnboardingStepId[] {
+  switch (branch) {
+    case "clean":
+    case "conflict":
+      return ["open-workbench", "view-changes", "before-confirm"];
+    case "non-svn":
+    case "cli-missing":
+      return ["open-workbench", "before-confirm"];
+    case "modified":
+      return ONBOARDING_STEPS.map((step) => step.id);
+  }
+}
+
+/**
+ * 随状态变化重新计算下一步：首个仍未达到的分支必需步骤；
+ * 分支全部走完返回 undefined（引导条隐藏逻辑沿用 active）。
+ */
+export function nextRequiredStep(
+  state: OnboardingState,
+  branch: OnboardingBranch,
+): OnboardingStepId | undefined {
+  for (const id of requiredStepsForBranch(branch)) {
+    const index = ONBOARDING_STEPS.findIndex((step) => step.id === id);
+    if (index >= state.completedSteps) return id;
+  }
+  return undefined;
+}
+
+/** 分支中文说明：解释状态是否正常 + 只读下一步，不含任何写操作入口。 */
+export const ONBOARDING_BRANCH_COPY: Record<
+  OnboardingBranch,
+  { statusLine: string; nextAction: string }
+> = {
+  clean: {
+    statusLine: "当前工作副本没有本地修改，这是正常状态，不需要制造修改。",
+    nextAction:
+      "只读下一步：去“历史”查看修订，或到“更新”检查远端（均不改工作副本）。",
+  },
+  modified: {
+    statusLine: "当前范围有本地修改，走完选择→预览即可熟悉提交流程。",
+    nextAction: "按步骤继续即可；引导在最终写确认前停止。",
+  },
+  conflict: {
+    statusLine: "当前范围存在冲突，冲突解决前不能提交。",
+    nextAction: "先到冲突模块处理冲突；本引导只演示流程，不替你解决或提交。",
+  },
+  "non-svn": {
+    statusLine: "当前目录不是 SVN 工作副本，不能执行 SVN 任务。",
+    nextAction:
+      "可打开文件夹选择工作副本，或查看环境诊断；检出（Checkout）不在本引导承诺范围。",
+  },
+  "cli-missing": {
+    statusLine: "未找到 SVN 命令行工具，SVN 命令暂不可用。",
+    nextAction: "可选择 SVN 可执行文件路径，或重新检测；浏览与引导不受影响。",
+  },
+};
+
 export interface OnboardingState {
   /** 全部步骤完成（含用户确认结束）。 */
   completed: boolean;
@@ -139,9 +239,20 @@ function persist(state: OnboardingState): void {
  */
 class OnboardingStore {
   state = $state<OnboardingState>(initialOnboardingState());
+  /*
+   * V024-R41：当前分支（瞬态，不持久化）。由持有权威数据的模块按状态重算：
+   * Changes 模块按候选/冲突更新 clean/modified/conflict；AppShell 按错误与
+   * 诊断快照覆盖 cli-missing/non-svn。分支切换只改变“下一步”展示，不触碰
+   * 选择、草稿与已完成记录（刷新不丢手工草稿）。
+   */
+  branch = $state<OnboardingBranch>("modified");
 
   constructor() {
     this.state = loadPersisted();
+  }
+
+  setBranch(next: OnboardingBranch): void {
+    this.branch = next;
   }
 
   /** 引导条是否应展示（未完成且未跳过，或用户显式重开）。 */
@@ -174,6 +285,7 @@ class OnboardingStore {
 
   restart(): void {
     this.state = restartOnboarding();
+    this.branch = "modified";
     persist(this.state);
   }
 }

@@ -110,7 +110,7 @@
 
 - **原评审映射：** 第 41 项。
 - **优先级 / 证据等级：** P2 / 源码已确认。
-- **实施状态：** 待实施。
+- **实施状态：** 已实施（`deriveOnboardingBranch` 五态纯推导 + `OnboardingStrip` 分支展示与只读恢复；证据见 `tests/unit/onboarding.test.ts`、`tests/components/OnboardingStrip.test.ts`、`tests/components/ChangesOnboardingBranch.test.ts`）。
 - **看到的现状：** 查看修改的步骤依赖 files.length>0，选择步骤依赖 selected.size>0；干净仓库可能停在固定流程。
 - **用户影响：** 第一次安装就打开干净项目的用户无法完成引导，误认为需要制造修改。
 - **现有证据与预计改动入口：** [onboarding.svelte.ts](../../../src/webview/app/onboarding.svelte.ts)、[ChangesModule.svelte](../../../src/webview/features/changes/ChangesModule.svelte)、[OnboardingStrip.svelte](../../../src/webview/components/ui/OnboardingStrip.svelte)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
@@ -124,10 +124,10 @@
 
 **验收场景与完成条件：**
 
-- [ ] 干净/修改/冲突/非 SVN/CLI 缺失五态有可完成的路径或明确恢复。
-- [ ] 中途刷新不丢手工草稿。
-- [ ] 跳过后不自动再次打开。
-- [ ] 引导完成不产生提交。
+- [x] 干净/修改/冲突/非 SVN/CLI 缺失五态有可完成的路径或明确恢复。
+- [x] 中途刷新不丢手工草稿。
+- [x] 跳过后不自动再次打开。
+- [x] 引导完成不产生提交。
 
 <a id="v024-r42"></a>
 
@@ -207,6 +207,9 @@
 
 下列是已存在的回归入口，实施时扩展真实行为用例；如需新测试文件，按任务 ID 建立并同步实现映射。本次未新增待开发功能的验收用例；现有回归运行结果见路线的本次验证记录，不代表新功能已经通过。
 
+- [ChangesOnboardingBranch.test.ts](../../../tests/components/ChangesOnboardingBranch.test.ts)（V024-R41 新增：干净/冲突分支集成与草稿保留）
+- [OnboardingStrip.test.ts](../../../tests/components/OnboardingStrip.test.ts)（V024-R41 扩展：五态恢复只读断言）
+- [onboarding.test.ts](../../../tests/unit/onboarding.test.ts)（V024-R41 扩展：五态推导/必需步骤/重算）
 - [ProjectsModule.test.ts](../../../tests/components/ProjectsModule.test.ts)
 - [DiagnosticsModule.test.ts](../../../tests/components/DiagnosticsModule.test.ts)
 - [projectSwitchGuard.test.ts](../../../tests/unit/projectSwitchGuard.test.ts)

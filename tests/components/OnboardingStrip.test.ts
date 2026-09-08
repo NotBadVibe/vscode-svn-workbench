@@ -1,6 +1,8 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/svelte";
-import { beforeEach, describe, expect, it } from "vitest";
-import OnboardingStrip from "../../src/webview/components/ui/OnboardingStrip.svelte";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import OnboardingStrip, {
+  RECOVERY_TARGETS,
+} from "../../src/webview/components/ui/OnboardingStrip.svelte";
 import { onboarding } from "../../src/webview/app/onboarding.svelte";
 
 /*
@@ -47,6 +49,81 @@ describe("OnboardingStrip（v0.0.18）", () => {
     // 完成后无痕隐藏；全程没有出现执行提交的动作。
     expect(screen.queryByRole("region", { name: "新手引导" })).toBeNull();
     expect(screen.queryByRole("button", { name: /确认提交/ })).toBeNull();
+  });
+
+  it("五态恢复目标只含只读模块导航，不含任何写操作", () => {
+    // 断言平台无关：只检查模块/任务标识，不涉及路径与平台。
+    const readonlyModules = ["history", "update", "conflicts", "diagnostics"];
+    for (const targets of Object.values(RECOVERY_TARGETS)) {
+      for (const target of targets) {
+        expect(readonlyModules).toContain(target.moduleId);
+        expect(target.taskId).not.toMatch(
+          /execute|commit\/|resolve\/|revert|delete/,
+        );
+      }
+    }
+    expect(RECOVERY_TARGETS.modified).toEqual([]);
+    expect(RECOVERY_TARGETS.clean.length).toBeGreaterThan(0);
+    expect(RECOVERY_TARGETS.conflict.length).toBeGreaterThan(0);
+    expect(RECOVERY_TARGETS["non-svn"].length).toBeGreaterThan(0);
+    expect(RECOVERY_TARGETS["cli-missing"].length).toBeGreaterThan(0);
+  });
+
+  it("干净分支：解释正常状态并可直接完成，无须选择与预览", async () => {
+    onboarding.recordStep("open-workbench");
+    onboarding.recordStep("view-changes");
+    onboarding.setBranch("clean");
+    const onNavigate = vi.fn();
+    render(OnboardingStrip, { branch: "clean", onNavigate });
+    expect(
+      await screen.findByText(/引导步骤 3\/3：最终确认前结束/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/这是正常状态/)).toBeInTheDocument();
+    // 恢复按钮只做只读导航。
+    await fireEvent.click(screen.getByRole("button", { name: "查看历史" }));
+    expect(onNavigate).toHaveBeenCalledWith(
+      expect.objectContaining({ moduleId: "history" }),
+    );
+    await fireEvent.click(screen.getByRole("button", { name: "检查远端更新" }));
+    expect(onNavigate).toHaveBeenCalledWith(
+      expect.objectContaining({ moduleId: "update" }),
+    );
+    // 完成引导：只翻转引导状态，不触发任何导航与写操作。
+    const navigateCalls = onNavigate.mock.calls.length;
+    await fireEvent.click(
+      screen.getByRole("button", { name: "完成引导（未执行任何提交）" }),
+    );
+    expect(onNavigate.mock.calls.length).toBe(navigateCalls);
+    expect(screen.queryByRole("region", { name: "新手引导" })).toBeNull();
+  });
+
+  it("冲突分支：先处理冲突，恢复按钮直达冲突模块", async () => {
+    onboarding.recordStep("open-workbench");
+    onboarding.recordStep("view-changes");
+    const onNavigate = vi.fn();
+    render(OnboardingStrip, { branch: "conflict", onNavigate });
+    expect(
+      await screen.findByText(/引导步骤 3\/3：最终确认前结束/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/冲突解决前不能提交/)).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "处理冲突" }));
+    expect(onNavigate).toHaveBeenCalledWith(
+      expect.objectContaining({ moduleId: "conflicts" }),
+    );
+  });
+
+  it("非 SVN/CLI 缺失分支：首步后即有明确恢复与完成路径", async () => {
+    onboarding.recordStep("open-workbench");
+    const onNavigate = vi.fn();
+    render(OnboardingStrip, { branch: "non-svn", onNavigate });
+    expect(
+      await screen.findByText(/引导步骤 2\/2：最终确认前结束/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/不是 SVN 工作副本/)).toBeInTheDocument();
+    await fireEvent.click(screen.getByRole("button", { name: "打开环境诊断" }));
+    expect(onNavigate).toHaveBeenCalledWith(
+      expect.objectContaining({ moduleId: "diagnostics" }),
+    );
   });
 
   it("store restart 后可从头再次渲染引导", async () => {
