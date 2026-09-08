@@ -15,6 +15,7 @@
   import ScrollArea from "../../components/ui/ScrollArea.svelte";
   import SearchInput from "../../components/list/SearchInput.svelte";
   import ResultCount from "../../components/list/ResultCount.svelte";
+  import ListShortcutHint from "../../components/help/ListShortcutHint.svelte";
   import FilePathDetail from "../../components/svn/FilePathDetail.svelte";
   import { useFileList } from "../../components/list/useFileList.svelte";
   import PrimaryActionBar from "../../components/task/PrimaryActionBar.svelte";
@@ -25,6 +26,10 @@
   import type { OperationIntentView } from "../../../operation/operationIntent";
   import { isOperationIntentStale } from "../../../operation/operationIntent";
   import { naturalCompare } from "../../../selection/selectionSort";
+  import {
+    loadListPreferences,
+    saveListPreferences,
+  } from "../../app/listPreferences";
   import { formatZhDateTime } from "../../i18n/formatters";
   import {
     historyCompareCount,
@@ -61,11 +66,25 @@
   } = $props();
 
   let query = $state("");
+  /** V023-R23：`/` 聚焦搜索目标（集中 keymap `list/searchFocus`）。 */
+  let searchInputRef = $state<{ focusInput: () => void } | undefined>();
   /** 修订排序：默认最新在前（Host 快照顺序）；可切换最早在前。 */
   let revisionOrder = $state<"newest" | "oldest">("newest");
   let pathQuery = $state("");
   let pathActionFilter = $state<string>("all");
   let pathSort = $state<"path" | "action">("path");
+  /*
+   * V023-R23：小高度（<600px）默认收起键盘提示为一行摘要（一键展开），
+   * 与 Changes 的 V022-R27 收起规则一致，保证 720×480 首屏修订行数。
+   */
+  const smallViewportHeight =
+    typeof window !== "undefined" && window.innerHeight < 600;
+  // V023-R22：修订/路径排序按模块本地保存（history 通道，不串入 AI 建议顺序）。
+  const savedHistoryPreferences = loadListPreferences("history");
+  revisionOrder =
+    savedHistoryPreferences.sortDirection === "asc" ? "oldest" : "newest";
+  pathSort =
+    savedHistoryPreferences.customSortField === "action" ? "action" : "path";
   /** v0.0.18 C-06：仅用于下一次“加载更早”的只读请求，不影响本地搜索。 */
   let loadQuery = $state<HistoryQueryView>({});
   const compare = new SvelteSet<string>();
@@ -222,6 +241,8 @@
         compareRevisions: [...compare],
       }),
     onToggleActive: (revision) => toggleCompare(revision.revision),
+    // V023-R23：`/` 聚焦修订搜索（集中 keymap `list/searchFocus`，空结果同样可用）。
+    onFocusSearch: () => searchInputRef?.focusInput(),
   });
 
   $effect(() => {
@@ -234,6 +255,29 @@
   $effect(() => {
     if (pathDetail) list.markPathDetailArrived();
   });
+
+  /** V023-R22：修订排序切换即持久化（最新=降序，默认；最早=升序）。 */
+  function setRevisionOrder(next: "newest" | "oldest"): void {
+    revisionOrder = next;
+    saveListPreferences("history", {
+      customSortField: pathSort === "action" ? "action" : undefined,
+      sortDirection: next === "oldest" ? "asc" : "desc",
+    });
+  }
+
+  /** V023-R22：恢复默认顺序（最新在前）。 */
+  function resetRevisionOrder(): void {
+    setRevisionOrder("newest");
+  }
+
+  /** V023-R22：变更路径排序切换即持久化，失效值回退按路径。 */
+  function setPathSort(next: string): void {
+    pathSort = next === "action" ? "action" : "path";
+    saveListPreferences("history", {
+      customSortField: pathSort === "action" ? "action" : undefined,
+      sortDirection: revisionOrder === "oldest" ? "asc" : "desc",
+    });
+  }
 
   function toggleCompare(revision: string): void {
     if (compare.has(revision)) {
@@ -587,12 +631,15 @@
         />
       </div>
       <SearchInput
+        bind:this={searchInputRef}
         bind:value={query}
         ariaLabel="筛选历史"
         placeholder="筛选已加载结果：作者、说明、修订号…"
         compact
       />
       <ResultCount count={orderedRevisions.length} suffix="条修订" />
+      <!-- V023-R22：修订排序经中文选项（最新在前（降序）/最早在前（升序））展示；
+        修订行非表格列头，此处不用 role=columnheader 以免 ARIA 父子违规。 -->
       <div class="toolbar-actions">
         {#if snapshot.hasMore}
           <button
@@ -608,14 +655,33 @@
           value={revisionOrder}
           onchange={(event) => {
             const value = (event.currentTarget as HTMLSelectElement).value;
-            revisionOrder = value === "oldest" ? "oldest" : "newest";
+            setRevisionOrder(value === "oldest" ? "oldest" : "newest");
           }}
         >
-          <option value="newest">最新在前</option>
-          <option value="oldest">最早在前</option>
+          <option value="newest">最新在前（降序）</option>
+          <option value="oldest">最早在前（升序）</option>
         </select>
+        {#if revisionOrder !== "newest"}
+          <button
+            type="button"
+            class="button button--secondary"
+            onclick={resetRevisionOrder}>恢复默认顺序</button
+          >
+        {/if}
       </div>
     </div>
+    {#if smallViewportHeight}
+      <details class="history-help">
+        <summary>键盘与列表操作说明</summary>
+        <ListShortcutHint
+          region="list"
+          hintKey="history-list"
+          searchAvailable
+        />
+      </details>
+    {:else}
+      <ListShortcutHint region="list" hintKey="history-list" searchAvailable />
+    {/if}
     <!-- v0.1.5 V015-D2：本地筛选与仓库查询的语义边界——搜索框只过滤已加载结果，历史请求只走下方条件。 -->
     <p class="history-filter-hint">
       修订搜索仅在已加载结果内筛选，不会向仓库请求；需要更早修订时，请用下方的条件表单发起新的只读请求。
@@ -983,7 +1049,7 @@
           value={pathSort}
           onchange={(event) => {
             const value = (event.currentTarget as HTMLSelectElement).value;
-            pathSort = value === "action" ? "action" : "path";
+            setPathSort(value);
           }}
         >
           <option value="path">按路径</option>

@@ -11,6 +11,7 @@
   import { focusOnMount } from "../../components/ui/focusOnMount";
   import SearchInput from "../../components/list/SearchInput.svelte";
   import ResultCount from "../../components/list/ResultCount.svelte";
+  import ListShortcutHint from "../../components/help/ListShortcutHint.svelte";
   import PathCell from "../../components/list/PathCell.svelte";
   import SelectionSummary from "../../components/list/SelectionSummary.svelte";
   import BulkActionBar from "../../components/list/BulkActionBar.svelte";
@@ -21,6 +22,11 @@
     matchesFileQuery,
     rangeItems,
   } from "../../components/list/listModel";
+  import {
+    buildPathListText,
+    buildStatusPathListText,
+    orderSelectedForCopy,
+  } from "../../components/list/copySelectionList";
   import { naturalCompare } from "../../../selection/selectionSort";
   import type {
     SortDirection,
@@ -88,13 +94,27 @@
 
   let name = $state("");
   let applyPaths = $state<string[]>([]);
+  /** V023-R26：移动目标（已有组名或新建入口）；空表示未选择。 */
+  const NEW_CHANGESET_OPTION = "__new__";
+  let moveTarget = $state("");
+  let moveFeedback = $state("");
+  /** V023-R24：复制就地反馈，不改选择、不发起写操作。 */
+  let copyFeedback = $state("");
   let query = $state("");
+  /** V023-R23：`/` 聚焦搜索目标（集中 keymap `list/searchFocus`）。 */
+  let searchInputRef = $state<{ focusInput: () => void } | undefined>();
   let onlySelected = $state(false);
   let sortField = $state<ChangelistSortField | undefined>();
   let sortDirection = $state<SortDirection>("asc");
   let announcement = $state("");
   let selected = $state<ReadonlySet<SelectionKey>>(emptySelection());
   let collapsedGroups = new SvelteSet<string>();
+  /**
+   * V023-R21：搜索期间折叠覆盖（组名→是否折叠），清空搜索后丢弃，
+   * 用户折叠偏好（collapsedGroups）全程保留，恢复不受影响。
+   */
+  let searchCollapseOverride = new SvelteMap<string, boolean>();
+  const isSearching = $derived(query.trim().length > 0);
 
   const savedPreferences = loadListPreferences("changelists");
   sortField =
@@ -172,11 +192,21 @@
   /** 全部条目按筛选与排序组织成节；折叠的分组不渲染，但仍计入匹配集合。 */
   const sections = $derived.by(() => {
     const filterEntry = matchesEntry;
+    const searching = query.trim().length > 0;
     const result: ListSection[] = [];
     let start = 0;
     for (const group of snapshot.groups) {
       const matched = group.files.filter(filterEntry);
-      const collapsed = collapsedGroups.has(group.name);
+      // V023-R21：搜索默认展开命中组（无命中默认收起），用户在搜索期间的手动
+      // 折叠写入覆盖层；清空搜索后覆盖层丢弃，用户偏好恢复。
+      let collapsed: boolean;
+      if (searching && searchCollapseOverride.has(group.name)) {
+        collapsed = searchCollapseOverride.get(group.name) ?? false;
+      } else if (searching) {
+        collapsed = matched.length === 0;
+      } else {
+        collapsed = collapsedGroups.has(group.name);
+      }
       const entries = collapsed ? [] : sortEntries(matched);
       result.push({
         key: `group:${group.name}`,
@@ -333,6 +363,8 @@
     onToggleActive: (entry) => {
       if (entry.selectionKey) toggleKey(entry.selectionKey);
     },
+    // V023-R23：`/` 聚焦搜索（集中 keymap `list/searchFocus`，空结果同样可用）。
+    onFocusSearch: () => searchInputRef?.focusInput(),
   });
 
   $effect(() => {
@@ -357,6 +389,15 @@
   }
 
   function toggleCollapse(groupName: string): void {
+    if (isSearching) {
+      // 搜索期间只写覆盖层：清空搜索后用户偏好原样恢复。
+      const section = sections.find(
+        (item) => item.kind === "group" && item.name === groupName,
+      );
+      const current = isGroupCollapsed(groupName, section?.matchedCount ?? 0);
+      searchCollapseOverride.set(groupName, !current);
+      return;
+    }
     if (collapsedGroups.has(groupName)) {
       collapsedGroups.delete(groupName);
     } else {
@@ -364,13 +405,59 @@
     }
   }
 
-  function toggleSort(field: ChangelistSortField): void {
-    if (sortField === field) {
-      sortDirection = sortDirection === "asc" ? "desc" : "asc";
-    } else {
+  // V023-R21：清空搜索后丢弃搜索覆盖层，恢复用户折叠偏好（不改变已选）。
+  $effect(() => {
+    if (!isSearching && searchCollapseOverride.size > 0) {
+      searchCollapseOverride.clear();
+    }
+  });
+
+  /** V023-R21：组级选择本组全部匹配项（只改选择，不改变操作 scope）。 */
+  function selectGroupMatched(groupName: string): void {
+    const group = snapshot.groups.find((item) => item.name === groupName);
+    if (!group) return;
+    const matched = group.files.filter(matchesEntry);
+    const next = cloneSelection(selected);
+    for (const entry of matched) {
+      if (entry.selectionKey) next.add(entry.selectionKey);
+    }
+    selected = next;
+  }
+
+  /**
+   * V023-R21：有效折叠态（模板与节头共用）：搜索期间命中组默认展开，
+   * 覆盖层优先；非搜索沿用用户偏好。aria-expanded 据此播报。
+   */
+  function isGroupCollapsed(groupName: string, matchedLength: number): boolean {
+    if (isSearching && searchCollapseOverride.has(groupName)) {
+      return searchCollapseOverride.get(groupName) ?? false;
+    }
+    if (isSearching) return matchedLength === 0;
+    return collapsedGroups.has(groupName);
+  }
+
+  /**
+   * V023-R22：字段选择只定字段（同字段不反转，方向由独立按钮切换）。
+   * select onchange 难再触发同值，方向切换不再依赖重复选择字段。
+   */
+  function setSortField(field: ChangelistSortField | undefined): void {
+    if (field === undefined) {
+      resetSort();
+      return;
+    }
+    if (sortField !== field) {
       sortField = field;
       sortDirection = "asc";
+      saveListPreferences("changelists", { sortField, sortDirection });
     }
+  }
+
+  /** V023-R22：独立方向切换（同一字段可明确切升/降）。 */
+  function toggleSortDirection(): void {
+    if (!sortField) {
+      sortField = "path";
+    }
+    sortDirection = sortDirection === "asc" ? "desc" : "asc";
     saveListPreferences("changelists", { sortField, sortDirection });
   }
 
@@ -547,7 +634,87 @@
 
   function copySelectedPaths(): void {
     if (selectedPaths.length === 0) return;
-    onAction("copy-text", { text: selectedPaths.join("\n") });
+    // V023-R24：按当前列表顺序输出，隐藏选择稳定追加；只含相对路径。
+    try {
+      const pathSet = new Set(selectedPaths);
+      const ordered = orderSelectedForCopy(allRows, allEntries(), pathSet);
+      onAction("copy-text", { text: buildPathListText(ordered) });
+      copyFeedback =
+        hiddenCount > 0
+          ? `已复制 ${selectedPaths.length} 个已选路径（含 ${hiddenCount} 个隐藏选择）。`
+          : `已复制 ${selectedPaths.length} 个已选路径。`;
+    } catch {
+      copyFeedback = "复制失败，请重试；选择未改动，未发起写操作。";
+    }
+  }
+
+  /** V023-R24：复制状态+路径清单（顺序与当前列表一致，失败就地反馈）。 */
+  function copySelectedStatusPaths(): void {
+    if (selectedPaths.length === 0) return;
+    try {
+      const pathSet = new Set(selectedPaths);
+      const ordered = orderSelectedForCopy(allRows, allEntries(), pathSet);
+      onAction("copy-text", { text: buildStatusPathListText(ordered) });
+      copyFeedback =
+        hiddenCount > 0
+          ? `已复制 ${selectedPaths.length} 个状态+路径（含 ${hiddenCount} 个隐藏选择）。`
+          : `已复制 ${selectedPaths.length} 个状态+路径。`;
+    } catch {
+      copyFeedback = "复制失败，请重试；选择未改动，未发起写操作。";
+    }
+  }
+
+  /*
+   * V023-R26：移动到变更集选择器。选中已有组后把当前已选填入目标并
+   * 直接走既有预览/令牌执行链（changelist/preview-apply）；选“新建”时只
+   * 填入应用栏，由用户命名后再预览。取消只清本地草稿，不触发写操作。
+   * V023-R26 终审：新下拉路径先本地拒绝未版本化/不可操作/过期文件
+   * （status=unversioned、selection=blocked/无身份键、selection=needsReview），
+   * 拒绝时保留选择、不发预览；Host 预览/执行前仍复验（不信任 Webview）。
+   */
+  function entryByRelativePath(
+    relativePath: string,
+  ): ChangelistGroupFileView | undefined {
+    return allEntries().find((entry) => entry.relativePath === relativePath);
+  }
+
+  function moveToSelectedTarget(): void {
+    if (selectedPaths.length === 0 || !moveTarget) return;
+    if (moveTarget === NEW_CHANGESET_OPTION) {
+      applyPaths = [...selectedPaths];
+      name = "";
+      moveFeedback = `已把 ${applyPaths.length} 个已选文件加入应用栏，请填写新变更集名称后生成预览。`;
+      return;
+    }
+    const rejected = selectedPaths.filter((relativePath) => {
+      const entry = entryByRelativePath(relativePath);
+      if (!entry || !entry.selectionKey) return true;
+      if (entry.status === "unversioned") return true;
+      if (entry.selection === "blocked") return true;
+      if (entry.selection === "needsReview") return true;
+      return false;
+    });
+    if (rejected.length > 0) {
+      const shown = rejected.slice(0, 3).join("、");
+      const more = rejected.length > 3 ? `等 ${rejected.length} 个文件` : "";
+      moveFeedback = `有 ${rejected.length} 个已选文件不能移动到变更集“${moveTarget}”（未纳入版本控制、阻止提交或需要确认），已保留全部选择，未发起预览与写操作：${shown}${more}。请取消选择这些文件后重试。`;
+      return;
+    }
+    name = moveTarget;
+    applyPaths = [...selectedPaths];
+    moveFeedback = "";
+    onAction("changelist/preview-apply", {
+      name,
+      paths: applyPaths,
+      remove: false,
+    });
+  }
+
+  /** V023-R26：取消只清本地名称与应用栏，不发 Host 动作、不写操作。 */
+  function cancelMoveDraft(): void {
+    name = "";
+    applyPaths = [];
+    moveFeedback = "已取消，未发起写操作。";
   }
 
   function sendSelectionToEditor(): void {
@@ -733,12 +900,15 @@
     <div class="changelist-column changelist-column--files">
       <div class="feature-toolbar feature-toolbar--compact">
         <SearchInput
+          bind:this={searchInputRef}
           bind:value={query}
           ariaLabel="筛选变更集文件"
           placeholder="筛选文件…"
           compact
         />
-        <ResultCount count={matchedCount} />
+        <ResultCount count={matchedCount} suffix="个匹配" />
+        <!-- V023-R22：变更集文件列表为非表格分组列表，无语义列头；排序菜单为小屏等效能力
+          （交互基线 §7.3），方向由中文升序/降序按钮（含 aria-label）承担，不虚构 columnheader。 -->
         <div class="toolbar-actions">
           <select
             class="sort-menu"
@@ -749,7 +919,7 @@
               if (value === "") {
                 resetSort();
               } else {
-                toggleSort(value as ChangelistSortField);
+                setSortField(value as ChangelistSortField);
               }
             }}
           >
@@ -758,12 +928,24 @@
             <option value="status">按状态</option>
           </select>
           {#if sortField}
+            <button
+              type="button"
+              class="button button--secondary"
+              aria-label={`排序方向：当前${sortDirection === "asc" ? "升序" : "降序"}，点击切换`}
+              onclick={toggleSortDirection}
+              >{sortDirection === "asc" ? "升序" : "降序"}</button
+            >
             <button class="button button--secondary" onclick={resetSort}
               >恢复默认顺序</button
             >
           {/if}
         </div>
       </div>
+      <ListShortcutHint
+        region="list"
+        hintKey="changelists-list"
+        searchAvailable
+      />
       <SelectionSummary
         selectedCount={selected.size}
         {actionableCount}
@@ -783,9 +965,10 @@
         <button
           class="button button--secondary"
           disabled={actionableCount === 0}
+          title="包含折叠分组中的匹配文件"
           onclick={() =>
             (selected = selectActionable(filteredSelectable, selected))}
-          >选择当前筛选（{actionableCount}）</button
+          >选择全部匹配项（{actionableCount}）</button
         >
       </div>
       {#if pathDetail && list.detailOpen}
@@ -860,15 +1043,21 @@
                 <button
                   type="button"
                   class="changelist-section-toggle"
-                  aria-expanded={!collapsedGroups.has(section.name)}
+                  aria-expanded={!isGroupCollapsed(
+                    section.name,
+                    section.matchedCount,
+                  )}
+                  aria-label={`${section.name}，匹配 ${section.matchedCount}，共 ${section.totalCount}`}
                   onclick={() => toggleCollapse(section.name)}
                   ><span
                     class="codicon"
-                    class:codicon-chevron-right={collapsedGroups.has(
+                    class:codicon-chevron-right={isGroupCollapsed(
                       section.name,
+                      section.matchedCount,
                     )}
-                    class:codicon-chevron-down={!collapsedGroups.has(
+                    class:codicon-chevron-down={!isGroupCollapsed(
                       section.name,
+                      section.matchedCount,
                     )}
                     aria-hidden="true"
                   ></span>{section.name}</button
@@ -876,10 +1065,22 @@
               {:else}
                 <strong class="changelist-section-name">{section.name}</strong>
               {/if}
-              <span class="changelist-section-count"
+              <span
+                class="changelist-section-count"
+                role="status"
+                aria-label={`匹配 ${section.matchedCount}，共 ${section.totalCount}`}
+                title={`匹配 ${section.matchedCount} / 共 ${section.totalCount}`}
                 >{section.matchedCount}/{section.totalCount}</span
               >
               {#if section.kind === "group" && section.totalCount > 0}
+                <button
+                  type="button"
+                  class="text-action"
+                  disabled={section.matchedCount === 0}
+                  title="只改变选择，不改变变更集归属范围"
+                  onclick={() => selectGroupMatched(section.name)}
+                  >选择本组匹配项（{section.matchedCount}）</button
+                >
                 <button
                   class="text-action text-action--danger"
                   onclick={() =>
@@ -968,8 +1169,30 @@
         <button
           class="button button--secondary"
           disabled={selectedPaths.length === 0}
-          onclick={copySelectedPaths}>复制已选路径</button
+          title={selectedPaths.length === 0
+            ? "先选择至少 1 个文件再复制"
+            : hiddenCount > 0
+              ? `复制 ${selectedPaths.length} 个已选相对路径（含 ${hiddenCount} 个隐藏选择），只含相对路径`
+              : "复制已选相对路径，只含相对路径"}
+          onclick={copySelectedPaths}
+          >复制已选路径（{selectedPaths.length}{hiddenCount > 0
+            ? `，含隐藏 ${hiddenCount}`
+            : ""}）</button
         >
+        <button
+          class="button button--secondary"
+          disabled={selectedPaths.length === 0}
+          title={selectedPaths.length === 0
+            ? "先选择至少 1 个文件再复制"
+            : hiddenCount > 0
+              ? `复制 ${selectedPaths.length} 个状态+路径（含 ${hiddenCount} 个隐藏选择），只含相对路径`
+              : "复制状态与相对路径，只含相对路径"}
+          onclick={copySelectedStatusPaths}
+          >复制状态+路径（{selectedPaths.length}{hiddenCount > 0
+            ? `，含隐藏 ${hiddenCount}`
+            : ""}）</button
+        >
+        {#if copyFeedback}<span role="status">{copyFeedback}</span>{/if}
         <button
           class="button button--secondary"
           disabled={selectedPaths.length !== 1}
@@ -989,8 +1212,12 @@
     >
       <div class="section-heading">
         <div>
-          <span class="eyebrow">按目录和文件类型分组</span>
-          <h2>分组候选</h2>
+          <span class="eyebrow">按目录和文件类型生成</span>
+          <h2>分组建议（仅建议，不直接移动）</h2>
+          <p role="note">
+            此处为本地规则或模型生成的分组建议，仅供参考；人工移动文件请走右侧“应用到
+            SVN”，无需先理解建议栏。
+          </p>
         </div>
       </div>
       {#if snapshot.suggestions.length === 0}<div class="preview-empty">
@@ -1035,9 +1262,45 @@
     >
       <div class="section-heading">
         <div>
-          <span class="eyebrow">应用分组</span>
+          <span class="eyebrow">人工移动到变更集</span>
           <h2>应用到 SVN</h2>
+          <p role="note">
+            人工操作入口：选择目标后走预览确认执行；分组建议仅在左侧展示，不直接移动文件。
+          </p>
         </div>
+      </div>
+      <!-- V023-R26：移动到变更集选择器（已有组 + 新建入口），确认后复用既有预览/令牌执行链。 -->
+      <div class="move-target-row" role="group" aria-label="移动到变更集">
+        <label class="field"
+          ><span>目标变更集</span><select
+            aria-label="目标变更集"
+            bind:value={moveTarget}
+          >
+            <option value="">请选择目标…</option>
+            {#each snapshot.groups as group (group.name)}
+              <option value={group.name}
+                >{group.name}（{group.files.length} 个文件）</option
+              >
+            {/each}
+            <option value={NEW_CHANGESET_OPTION}>新建变更集…</option>
+          </select></label
+        >
+        <button
+          class="button button--secondary"
+          disabled={selectedPaths.length === 0 || !moveTarget}
+          title={selectedPaths.length === 0
+            ? "先在左侧选择至少 1 个文件"
+            : !moveTarget
+              ? "先选择目标变更集"
+              : moveTarget === NEW_CHANGESET_OPTION
+                ? "把已选填入应用栏，命名后生成预览"
+                : `把 ${selectedPaths.length} 个已选文件移入“${moveTarget}”并生成预览`}
+          onclick={moveToSelectedTarget}
+          >{moveTarget === NEW_CHANGESET_OPTION
+            ? `填入应用栏（${selectedPaths.length}）`
+            : `移动到所选变更集（${selectedPaths.length}）`}</button
+        >
+        {#if moveFeedback}<span role="status">{moveFeedback}</span>{/if}
       </div>
       <label class="field"
         ><span>变更集名称</span><input
@@ -1067,6 +1330,13 @@
             paths: applyPaths,
             remove: false,
           })}>生成应用预览</button
+      >
+      <!-- V023-R26：取消只清本地草稿，不发 Host 动作、不触发写操作。 -->
+      <button
+        class="button button--secondary commit-button"
+        disabled={!name && applyPaths.length === 0}
+        title="清空名称与应用栏，不发起写操作"
+        onclick={cancelMoveDraft}>取消</button
       >
       {#if snapshot.preview}
         <div class="changelist-preview">

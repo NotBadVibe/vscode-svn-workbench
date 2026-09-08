@@ -14,6 +14,12 @@ export interface ListPreferences {
   sortDirection?: SortDirection;
   density?: ListDensity;
   /**
+   * V023-R22：非 SortField 体系的模块排序字段（如仓库浏览 name/type/...
+   * 与历史变更路径 path/action），按模块键隔离存储，不串入 AI 建议等有意顺序。
+   * 与 sortField 互斥使用：调用方只读写其中之一。
+   */
+  customSortField?: string;
+  /**
    * v0.0.17 批次 D：任务导航分组展开记忆（组 id 集合；缺省表示全部默认
    * 折叠状态，由调用方决定哪些组默认展开）。
    */

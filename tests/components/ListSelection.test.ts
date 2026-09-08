@@ -77,14 +77,14 @@ describe("Changes 选择闭环（v0.0.8）", () => {
     await fireEvent.input(screen.getByLabelText("筛选变更文件"), {
       target: { value: "b.ts" },
     });
-    expect(screen.getByText(/隐藏 1/)).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: /隐藏 1/ })).toBeInTheDocument();
     // 只看已选：列表只剩已选行（a.ts 被筛选排除 → 空态提示）。
     await fireEvent.click(screen.getByRole("button", { name: "只看已选" }));
     expect(screen.getByText("已选文件不在当前筛选中")).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "只看已选" }));
     // 清除隐藏：选择清空但可见筛选不变。
     await fireEvent.click(screen.getByRole("button", { name: "清除隐藏选择" }));
-    expect(screen.getByText(/隐藏 0/)).toBeInTheDocument();
+    expect(screen.getByRole("status", { name: /隐藏 0/ })).toBeInTheDocument();
     // 重新选择后清空全部。
     await fireEvent.click(screen.getByLabelText("选择 src/b.ts"));
     await fireEvent.click(screen.getByRole("button", { name: "清空全部" }));

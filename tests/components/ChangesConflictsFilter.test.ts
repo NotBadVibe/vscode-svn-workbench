@@ -109,16 +109,22 @@ describe("Changes 冲突直达与筛选预设（v0.0.17）", () => {
     await fireEvent.change(screen.getByLabelText("文件类型筛选"), {
       target: { value: ".ts" },
     });
-    await fireEvent.input(screen.getByLabelText("筛选预设名称"), {
+    // V023-R25：保存表单按需展开后填写名称并保存。
+    await fireEvent.click(
+      screen.getByRole("button", { name: "保存文件类型组合" }),
+    );
+    await fireEvent.input(screen.getByLabelText("文件类型组合名称"), {
       target: { value: "仅 TypeScript" },
     });
-    await fireEvent.click(screen.getByRole("button", { name: "保存为预设" }));
+    await fireEvent.click(
+      screen.getByRole("button", { name: "保存文件类型组合" }),
+    );
     expect(onAction).toHaveBeenCalledWith("list/save-filter-preset", {
       name: "仅 TypeScript",
       patterns: ["*.ts"],
     });
     expect(
-      screen.getByText(/已保存筛选预设“仅 TypeScript”/),
+      screen.getByText(/已保存文件类型组合“仅 TypeScript”/),
     ).toBeInTheDocument();
   });
 
@@ -131,14 +137,14 @@ describe("Changes 冲突直达与筛选预设（v0.0.17）", () => {
       onAction,
     });
     // 应用预设：只剩 b.svelte 可见。
-    await fireEvent.change(screen.getByLabelText("筛选预设"), {
+    await fireEvent.change(screen.getByLabelText("文件类型组合"), {
       target: { value: "preset-1" },
     });
     expect(screen.getByText("b.svelte")).toBeInTheDocument();
     expect(screen.queryByText("a.ts")).toBeNull();
     // 删除预设：发送 Host 动作且视图恢复。
     await fireEvent.click(
-      screen.getByRole("button", { name: "删除筛选预设 仅 Svelte" }),
+      screen.getByRole("button", { name: "删除文件类型组合 仅 Svelte" }),
     );
     expect(onAction).toHaveBeenCalledWith("list/delete-filter-preset", {
       id: "preset-1",
@@ -151,7 +157,7 @@ describe("Changes 冲突直达与筛选预设（v0.0.17）", () => {
       snapshot: changesSnapshot(mixedFiles()),
       onAction: vi.fn(),
     });
-    const save = screen.getByRole("button", { name: "保存为预设" });
+    const save = screen.getByRole("button", { name: "保存文件类型组合" });
     expect(save).toBeDisabled();
     expect(save.getAttribute("title")).toContain("先选择文件类型或预设");
   });

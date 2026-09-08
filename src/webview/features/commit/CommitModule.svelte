@@ -15,6 +15,7 @@
   import SelectionSummary from "../../components/list/SelectionSummary.svelte";
   import SearchInput from "../../components/list/SearchInput.svelte";
   import ResultCount from "../../components/list/ResultCount.svelte";
+  import ListShortcutHint from "../../components/help/ListShortcutHint.svelte";
   import { useFileList } from "../../components/list/useFileList.svelte";
   import CommitMessageEditor from "./CommitMessageEditor.svelte";
   import { formatZhDateTime } from "../../i18n/formatters";
@@ -75,6 +76,11 @@
     matchesFilePatterns,
     NO_EXTENSION_KEY,
   } from "../../components/list/filterPresets";
+  import {
+    buildPathListText,
+    buildStatusPathListText,
+    orderSelectedForCopy,
+  } from "../../components/list/copySelectionList";
   import OperationIntentDialog from "../../components/operation/OperationIntentDialog.svelte";
   import { onboarding } from "../../app/onboarding.svelte";
   import {
@@ -109,6 +115,8 @@
     "all" | "selected" | "recommended" | "needsReview" | "excluded" | "blocked";
 
   let query = $state("");
+  /** V023-R23：`/` 聚焦搜索目标（集中 keymap `list/searchFocus`）。 */
+  let searchInputRef = $state<{ focusInput: () => void } | undefined>();
   let filter = $state<CommitFilter>("all");
   let onlySelected = $state(false);
   let message = $state("");
@@ -128,6 +136,10 @@
   let presetNameInput = $state("");
   let presetNameComposing = $state(false);
   let presetFeedback = $state("");
+  /** V023-R25：保存表单按需展开，默认收起避免挤压筛选行。 */
+  let presetFormOpen = $state(false);
+  /** V023-R24：复制就地反馈（成功/失败），不改选择、不发起写操作。 */
+  let copyFeedback = $state("");
   /** v0.0.9 §4：替换前确认态（展示字符数，等待用户确认）。 */
   let replaceConfirmOpen = $state(false);
   /** 替换确认对应的目标字符数（打开时计算）。 */
@@ -148,7 +160,16 @@
   let evidenceExpanded = $state(false);
 
   const savedPreferences = loadListPreferences("commit");
-  sortField = savedPreferences.sortField;
+  // V023-R22：动态字段失效时默认回退（未知字段不沿用）。
+  sortField =
+    savedPreferences.sortField === "path" ||
+    savedPreferences.sortField === "fileName" ||
+    savedPreferences.sortField === "status" ||
+    savedPreferences.sortField === "recommendation" ||
+    savedPreferences.sortField === "ruleSource" ||
+    savedPreferences.sortField === "ownership"
+      ? savedPreferences.sortField
+      : undefined;
   sortDirection = savedPreferences.sortDirection ?? "asc";
   density = savedPreferences.density ?? "comfortable";
 
@@ -165,24 +186,86 @@
   function saveCurrentPreset(): void {
     const name = presetNameInput.trim();
     if (!name) {
-      presetFeedback = "请先填写预设名称。";
+      presetFeedback = "请先填写文件类型组合名称。";
       return;
     }
     const patterns = activePreset
       ? activePreset.patterns
       : fileTypeToPattern(activeFileType);
     if (patterns.length === 0) {
-      presetFeedback = "“无扩展名”筛选暂不支持保存为预设；请选择具体文件类型。";
+      presetFeedback =
+        "“无扩展名”筛选暂不支持保存为文件类型组合；请选择具体文件类型。";
       return;
     }
+    const duplicate = snapshot.filterPresets?.some(
+      (preset) => preset.name === name,
+    );
     onAction("list/save-filter-preset", { name, patterns });
     presetNameInput = "";
-    presetFeedback = `已保存筛选预设“${name}”。`;
+    presetFormOpen = false;
+    presetFeedback = duplicate
+      ? `已用“${name}”覆盖同名文件类型组合（仅含类型 ${patterns.join("、")}，搜索、状态与排序未保存）。`
+      : `已保存文件类型组合“${name}”（仅含类型 ${patterns.join("、")}，搜索、状态与排序未保存）。`;
+  }
+
+  /** V023-R25：应用只改视图，不改选择与提交范围；隐藏计数随视图更新。 */
+  function applyPreset(presetId: string | undefined): void {
+    activePresetId = presetId;
+    if (!presetId) {
+      presetFeedback = "";
+      return;
+    }
+    const preset = snapshot.filterPresets?.find((item) => item.id === presetId);
+    presetFeedback = preset
+      ? `已应用文件类型组合“${preset.name}”（只切换视图，选择与操作范围未变）。`
+      : "";
   }
 
   function deletePreset(presetId: string): void {
+    const preset = snapshot.filterPresets?.find((item) => item.id === presetId);
     if (activePresetId === presetId) activePresetId = undefined;
     onAction("list/delete-filter-preset", { id: presetId });
+    presetFeedback = preset ? `已删除文件类型组合“${preset.name}”。` : "";
+  }
+
+  /**
+   * V023-R24：已选清单按当前列表顺序输出，隐藏选择稳定追加；
+   * 只复制相对展示路径，不含身份键/绝对路径/仓库地址。只读操作，
+   * 不改选择、不写 Host 选择状态、不发起写操作。
+   */
+  function orderedSelectedForCopy(): Parameters<typeof buildPathListText>[0] {
+    const paths = new Set(pathsFromKeys(selected, keyToPath));
+    return orderSelectedForCopy(sortedFiles, snapshot.files, paths);
+  }
+
+  function copySelectedPathList(): void {
+    if (selected.size === 0) return;
+    try {
+      const text = buildPathListText(orderedSelectedForCopy());
+      onAction("copy-text", { text });
+      const hidden = hiddenCount;
+      copyFeedback =
+        hidden > 0
+          ? `已复制 ${selected.size} 个已选路径（含 ${hidden} 个隐藏选择）。`
+          : `已复制 ${selected.size} 个已选路径。`;
+    } catch {
+      copyFeedback = "复制失败，请重试；选择未改动，未发起写操作。";
+    }
+  }
+
+  function copySelectedStatusList(): void {
+    if (selected.size === 0) return;
+    try {
+      const text = buildStatusPathListText(orderedSelectedForCopy());
+      onAction("copy-text", { text });
+      const hidden = hiddenCount;
+      copyFeedback =
+        hidden > 0
+          ? `已复制 ${selected.size} 个状态+路径（含 ${hidden} 个隐藏选择）。`
+          : `已复制 ${selected.size} 个状态+路径。`;
+    } catch {
+      copyFeedback = "复制失败，请重试；选择未改动，未发起写操作。";
+    }
   }
 
   /*
@@ -212,6 +295,8 @@
       // Commit：excluded/blocked 不可提交，不能勾选。
       if (canSelectIndividually(file, MODE)) toggleKey(file.selectionKey);
     },
+    // V023-R23：`/` 聚焦搜索（集中 keymap `list/searchFocus`，空结果同样可用）。
+    onFocusSearch: () => searchInputRef?.focusInput(),
   });
   const filteredFiles = $derived(
     snapshot.files.filter((file) => {
@@ -385,6 +470,25 @@
       sortField = field;
       sortDirection = "asc";
     }
+    saveListPreferences("commit", { sortField, sortDirection, density });
+  }
+
+  /**
+   * V023-R22：字段选择只定字段（同字段不反转；select onchange 难再触发
+   * 同值，方向切换由独立按钮承担）。表头点击仍走 toggleSort 显式切换。
+   */
+  function setSortField(field: SortField): void {
+    if (sortField !== field) {
+      sortField = field;
+      sortDirection = "asc";
+      saveListPreferences("commit", { sortField, sortDirection, density });
+    }
+  }
+
+  /** V023-R22：独立方向切换（同一字段可明确切升/降）。 */
+  function toggleSortDirection(): void {
+    if (!sortField) sortField = "path";
+    sortDirection = sortDirection === "asc" ? "desc" : "asc";
     saveListPreferences("commit", { sortField, sortDirection, density });
   }
 
@@ -893,12 +997,15 @@
             </p>
           </div>
           <SearchInput
+            bind:this={searchInputRef}
             bind:value={query}
             ariaLabel="筛选提交文件"
             placeholder="筛选文件…"
             compact
           />
           <ResultCount count={filteredFiles.length} />
+          <!-- V023-R22：排序菜单为小屏等效能力（交互基线 §7.3），方向经下方中文按钮展示；
+            真正的 role=columnheader + aria-sort 由表头 SortHeader 承担，此处不重复以免 ARIA 父子违规。 -->
           <div class="toolbar-actions">
             <select
               class="sort-menu"
@@ -909,7 +1016,7 @@
                 if (value === "") {
                   resetSort();
                 } else {
-                  toggleSort(value as SortField);
+                  setSortField(value as SortField);
                 }
               }}
             >
@@ -928,12 +1035,20 @@
               >{density === "compact" ? "紧凑" : "宽松"}</button
             >
             {#if sortField}
+              <button
+                type="button"
+                class="button button--secondary"
+                aria-label={`排序方向：当前${sortDirection === "asc" ? "升序" : "降序"}，点击切换`}
+                onclick={toggleSortDirection}
+                >{sortDirection === "asc" ? "升序" : "降序"}</button
+              >
               <button class="button button--secondary" onclick={resetSort}
                 >恢复默认顺序</button
               >
             {/if}
           </div>
         </div>
+        <ListShortcutHint region="list" hintKey="commit-list" searchAvailable />
         <div class="status-filters" aria-label="提交文件筛选">
           {#each Object.entries(filterLabels) as [value, label] (value)}
             <button
@@ -968,12 +1083,11 @@
           {#if filterPresets.length > 0}
             <select
               class="sort-menu"
-              aria-label="筛选预设"
+              aria-label="文件类型组合"
               value={activePresetId ?? ""}
               onchange={(event) => {
                 const value = (event.currentTarget as HTMLSelectElement).value;
-                activePresetId = value || undefined;
-                presetFeedback = "";
+                applyPreset(value || undefined);
               }}
             >
               <option value="">不使用预设</option>
@@ -986,35 +1100,59 @@
             {#if activePreset}
               <button
                 class="button button--secondary"
-                aria-label={`删除筛选预设 ${activePreset.name}`}
-                onclick={() => deletePreset(activePreset.id)}>删除预设</button
+                aria-label={`删除文件类型组合 ${activePreset.name}`}
+                onclick={() => deletePreset(activePreset.id)}>删除组合</button
               >
             {/if}
           {/if}
-          <input
-            class="filter-preset-name"
-            aria-label="筛选预设名称"
-            placeholder="预设名称…"
-            bind:value={presetNameInput}
-            oncompositionstart={() => (presetNameComposing = true)}
-            oncompositionend={() => (presetNameComposing = false)}
-            onkeydown={(event) => {
-              // IME 候选阶段的 Enter 不触发保存。
-              if (event.key === "Enter" && !presetNameComposing) {
-                event.preventDefault();
-                saveCurrentPreset();
-              }
-            }}
-          />
-          <button
-            class="button button--secondary"
-            disabled={activeFileType === "all" && !activePreset}
-            title={activeFileType === "all" && !activePreset
-              ? "先选择文件类型或预设，再保存"
-              : undefined}
-            onclick={saveCurrentPreset}>保存为预设</button
-          >
+          {#if presetFormOpen}
+            <input
+              class="filter-preset-name"
+              aria-label="文件类型组合名称"
+              placeholder="文件类型组合名称…"
+              bind:value={presetNameInput}
+              oncompositionstart={() => (presetNameComposing = true)}
+              oncompositionend={() => (presetNameComposing = false)}
+              onkeydown={(event) => {
+                // IME 候选阶段的 Enter 不触发保存。
+                if (event.key === "Enter" && !presetNameComposing) {
+                  event.preventDefault();
+                  saveCurrentPreset();
+                }
+              }}
+            />
+          {/if}
+          {#if presetFormOpen}
+            <button
+              class="button button--secondary"
+              disabled={activeFileType === "all" && !activePreset}
+              title={activeFileType === "all" && !activePreset
+                ? "先选择文件类型或预设，再保存"
+                : "只保存文件类型，不保存搜索词、状态、归属与排序"}
+              onclick={saveCurrentPreset}>保存文件类型组合</button
+            >
+            <button
+              class="button button--secondary"
+              onclick={() => {
+                presetFormOpen = false;
+                presetNameInput = "";
+              }}>取消</button
+            >
+          {:else}
+            <button
+              class="button button--secondary"
+              disabled={activeFileType === "all" && !activePreset}
+              title={activeFileType === "all" && !activePreset
+                ? "先选择文件类型或预设，再保存"
+                : "只保存文件类型，不保存搜索词、状态、归属与排序"}
+              onclick={() => (presetFormOpen = true)}>保存文件类型组合</button
+            >
+          {/if}
           {#if presetFeedback}<span role="status">{presetFeedback}</span>{/if}
+          <small role="note"
+            >只保存文件类型组合（如
+            *.ts），不保存搜索词、状态筛选、项目归属与排序；完整视图预设为后续候选，本版暂不支持。</small
+          >
         </div>
         <div class="commit-summary">
           <span>推荐 {snapshot.summary.selected}</span>
@@ -1058,6 +1196,36 @@
           onClearAll={() => setSelected(emptySelection())}
           onSelectRecommended={selectRecommended}
         />
+        <!-- V023-R24：统一复制已选清单（只读，不改选择与提交范围）。 -->
+        <div class="commit-action-row">
+          <button
+            class="button button--secondary"
+            disabled={selected.size === 0}
+            title={selected.size === 0
+              ? "先选择至少 1 个文件再复制"
+              : hiddenCount > 0
+                ? `复制 ${selected.size} 个已选相对路径（含 ${hiddenCount} 个隐藏选择），只含相对路径`
+                : "复制已选相对路径，只含相对路径"}
+            onclick={copySelectedPathList}
+            >复制已选路径（{selected.size}{hiddenCount > 0
+              ? `，含隐藏 ${hiddenCount}`
+              : ""}）</button
+          >
+          <button
+            class="button button--secondary"
+            disabled={selected.size === 0}
+            title={selected.size === 0
+              ? "先选择至少 1 个文件再复制"
+              : hiddenCount > 0
+                ? `复制 ${selected.size} 个状态+路径（含 ${hiddenCount} 个隐藏选择），只含相对路径`
+                : "复制状态与相对路径，只含相对路径"}
+            onclick={copySelectedStatusList}
+            >复制状态+路径（{selected.size}{hiddenCount > 0
+              ? `，含隐藏 ${hiddenCount}`
+              : ""}）</button
+          >
+          {#if copyFeedback}<span role="status">{copyFeedback}</span>{/if}
+        </div>
         <div role="table" aria-label="提交候选文件列表" class="table-head-wrap">
           <div role="rowgroup">
             <div class="table-header table-header--grid" role="row">

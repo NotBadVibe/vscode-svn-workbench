@@ -548,12 +548,12 @@
     },
     {
       "version": "0.2.3",
-      "status": "draft",
-      "phase": "planned",
+      "status": "released",
+      "phase": "released",
       "baseVersion": "0.2.2",
       "canonicalEntry": "releases/v0.2.3/README.md",
       "manifest": "releases/v0.2.3/manifest.json",
-      "releasedFact": false,
+      "releasedFact": true,
       "topics": [
         "review-queue",
         "bulk-actions",

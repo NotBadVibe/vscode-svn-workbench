@@ -232,6 +232,12 @@ export function useFileList<T>(
     }
     const rows = options.rows();
     const count = rows.length;
+    // V023-R23：`/` 聚焦搜索先于空列表早退，空结果仍可聚焦搜索（IME/输入框闸门已在入口保证）。
+    if (event.key === "/" && options.onFocusSearch) {
+      event.preventDefault();
+      options.onFocusSearch();
+      return;
+    }
     if (count === 0) return;
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a") {
       if (!options.onSelectAll) return;
@@ -296,11 +302,7 @@ export function useFileList<T>(
       options.onActivate(rows[activeIndex], activeIndex);
       return;
     }
-    // V017-B `/` 聚焦搜索：列表容器聚焦且不在输入/IME 候选中（总闸门已保证）。
-    if (event.key === "/" && options.onFocusSearch) {
-      event.preventDefault();
-      options.onFocusSearch();
-    }
+    // V023-R23：`/` 已在空列表早退前处理（含空结果聚焦），此处不再重复绑定。
   }
 
   return {

@@ -38,6 +38,13 @@
   import { SHORTCUTS_BY_REGION } from "../../keyboard/shortcuts";
   import { computeDiffHunks, computePatchHunks } from "./diffHunks";
   import type { DiffErrorInfo } from "./diffErrorTaxonomy";
+  import {
+    diffReviewLabels,
+    diffReviewPositionLabel,
+    diffReviewProgressLabel,
+  } from "../../i18n/terminology";
+  import { readReviewScroll, saveReviewScroll } from "./reviewScrollMemory";
+  import { tick } from "svelte";
 
   /**
    * V017-B：导航/保存按钮 title 来自集中 keymap（区域 `diff`），
@@ -637,6 +644,102 @@
     diffViewRef?.focusLine(displayHunks[clamped].newStart);
   }
 
+  /**
+   * V023-R18：连续审阅队列（只读）。队列视图由 Host 按 scope/内容指纹绑定
+   * 下发；上一文件/下一文件经既有 open-diff 切换（脏草稿走既有三选一守卫，
+   * 由 Host 拦截）；标已看经 diff/mark-reviewed，不产生写操作、不代表
+   * 提交授权或质量通过（见 progressDisclaimer）。
+   */
+  const review = $derived(snapshot.review);
+  const reviewCurrentIndex = $derived(
+    review && review.index >= 0 && review.index < review.total
+      ? review.index
+      : -1,
+  );
+  const reviewShowQueue = $derived(
+    review !== undefined && reviewCurrentIndex >= 0,
+  );
+  const reviewCurrentItem = $derived(
+    reviewShowQueue && review ? review.queue[reviewCurrentIndex] : undefined,
+  );
+  const reviewPrevItem = $derived(
+    reviewShowQueue && review && reviewCurrentIndex > 0
+      ? review.queue[reviewCurrentIndex - 1]
+      : undefined,
+  );
+  const reviewNextItem = $derived(
+    reviewShowQueue && review && reviewCurrentIndex + 1 < review.total
+      ? review.queue[reviewCurrentIndex + 1]
+      : undefined,
+  );
+  /** V023-R18：队列首尾的非阻塞反馈（焦点不丢失）。 */
+  let reviewBoundary = $state<"first" | "last" | undefined>();
+
+  /** V023-R18：切换文件前暂存当前文件的块索引与滚动位置（逐文件保留）。 */
+  function persistReviewScroll(): void {
+    const key = snapshot.relativePath;
+    if (!key) return;
+    const host = sectionEl?.parentElement;
+    const scrollTop =
+      host && typeof host.scrollTop === "number"
+        ? host.scrollTop
+        : typeof window !== "undefined"
+          ? window.scrollY
+          : 0;
+    saveReviewScroll(key, { navIndex, scrollTop });
+  }
+
+  /** V023-R18：队列内文件切换（只读导航，不携带可写身份）。 */
+  function navigateReviewFile(direction: -1 | 1): void {
+    if (!reviewShowQueue) return;
+    const target = direction === -1 ? reviewPrevItem : reviewNextItem;
+    if (!target) {
+      reviewBoundary = direction === -1 ? "first" : "last";
+      return;
+    }
+    reviewBoundary = undefined;
+    persistReviewScroll();
+    onAction("open-diff", { relativePath: target.relativePath });
+  }
+
+  /** V023-R18：标为已看（当前文件 + 当前内容指纹，Host 复验后生效）。 */
+  function markReviewFile(): void {
+    if (!reviewCurrentItem || reviewCurrentItem.reviewed) return;
+    persistReviewScroll();
+    onAction("diff/mark-reviewed", {
+      relativePath: reviewCurrentItem.relativePath,
+      contentHash: reviewCurrentItem.contentHash,
+    });
+  }
+
+  // V023-R18：回到已看过的文件时恢复块索引与滚动位置（身份锚优先，
+  // 像素仅辅助；快照目标切换时的归零 effect 先执行，本恢复在 tick 后覆盖）。
+  let restoredReviewKey: string | undefined;
+  $effect(() => {
+    const key = snapshot.relativePath;
+    if (key === restoredReviewKey) return;
+    restoredReviewKey = key;
+    reviewBoundary = undefined;
+    const saved = readReviewScroll(key);
+    if (!saved) return;
+    void tick().then(() => {
+      if (restoredReviewKey !== snapshot.relativePath) return;
+      if (displayHunks.length > 0) {
+        navBoundary = undefined;
+        navIndex = Math.min(saved.navIndex, displayHunks.length - 1);
+        diffViewRef?.focusLine(displayHunks[navIndex].newStart);
+      }
+      const host = sectionEl?.parentElement;
+      try {
+        if (host && typeof saved.scrollTop === "number") {
+          host.scrollTop = saved.scrollTop;
+        }
+      } catch {
+        // 滚动容器不可写时忽略（块索引恢复已保证可定位）。
+      }
+    });
+  });
+
   function adoptCurrentHunk(): void {
     const hunk = displayHunks[navIndex];
     if (!hunk) return;
@@ -1116,6 +1219,110 @@
     </div>
   </div>
 
+  {#if reviewShowQueue && review}
+    <!--
+      V023-R18 · 连续审阅队列（只读）：第 N/M 个与已看/未看；上一文件/下一文件
+      经既有 open-diff 切换（脏草稿由 Host 走既有三选一守卫）；标已看仅为个人
+      进度，不代表提交授权或质量通过。状态文字+图标双通道，不只靠颜色。
+    -->
+    <div
+      class="diff-review-queue"
+      role="region"
+      aria-label={diffReviewLabels.region}
+    >
+      <div class="diff-review-queue__status" role="status">
+        <span class="codicon codicon-checklist" aria-hidden="true"></span>
+        <strong>{diffReviewLabels.region}</strong>
+        <span
+          >{diffReviewPositionLabel(reviewCurrentIndex + 1, review.total)}</span
+        >
+        <span
+          >{diffReviewProgressLabel(
+            review.reviewedCount,
+            review.unreviewedCount,
+          )}</span
+        >
+        {#if reviewCurrentItem}
+          <span
+            class="review-state-badge"
+            class:review-state-badge--reviewed={reviewCurrentItem.reviewed}
+            role="status"
+          >
+            <span
+              class="codicon {reviewCurrentItem.reviewed
+                ? 'codicon-check'
+                : 'codicon-circle-outline'} codicon-modifier"
+              aria-hidden="true"
+            ></span>{reviewCurrentItem.reviewed
+              ? diffReviewLabels.reviewedBadge
+              : diffReviewLabels.unreviewedBadge}
+          </span>
+        {/if}
+      </div>
+      <div
+        class="diff-review-queue__actions"
+        role="group"
+        aria-label={diffReviewLabels.region}
+      >
+        <button
+          type="button"
+          class="button button--secondary"
+          disabled={!reviewPrevItem}
+          title={reviewPrevItem
+            ? `打开 ${reviewPrevItem.relativePath}`
+            : diffReviewLabels.firstFileReached}
+          aria-label={diffReviewLabels.prevFile}
+          onclick={() => navigateReviewFile(-1)}
+        >
+          <span class="codicon codicon-arrow-left" aria-hidden="true"
+          ></span>{diffReviewLabels.prevFile}
+        </button>
+        <button
+          type="button"
+          class="button button--secondary"
+          disabled={!reviewNextItem}
+          title={reviewNextItem
+            ? `打开 ${reviewNextItem.relativePath}`
+            : diffReviewLabels.lastFileReached}
+          aria-label={diffReviewLabels.nextFile}
+          onclick={() => navigateReviewFile(1)}
+        >
+          <span class="codicon codicon-arrow-right" aria-hidden="true"
+          ></span>{diffReviewLabels.nextFile}
+        </button>
+        {#if reviewCurrentItem && !reviewCurrentItem.reviewed}
+          <button
+            type="button"
+            class="button button--secondary"
+            aria-label={`${diffReviewLabels.markReviewed}：${reviewCurrentItem.relativePath}`}
+            title="仅记录个人审阅进度，不发起写操作"
+            onclick={markReviewFile}
+          >
+            <span class="codicon codicon-check" aria-hidden="true"
+            ></span>{diffReviewLabels.markReviewed}
+          </button>
+        {/if}
+        {#if reviewBoundary}
+          <span class="diff-nav-feedback" role="status"
+            >{reviewBoundary === "first"
+              ? diffReviewLabels.firstFileReached
+              : diffReviewLabels.lastFileReached}</span
+          >
+        {/if}
+      </div>
+      {#if review.notice}
+        <div class="notice" role="status">
+          <span class="codicon codicon-info" aria-hidden="true"></span>
+          <span>{review.notice}</span>
+        </div>
+      {/if}
+      <div class="notice" role="note">
+        <span class="codicon codicon-info" aria-hidden="true"></span>
+        <span>{diffReviewLabels.progressDisclaimer}</span>
+      </div>
+    </div>
+  {/if}
+
   {#if pathDetail && pathDetailOpen}
     <div class="path-detail-host">
       <div class="path-detail-host__bar">
@@ -1520,6 +1727,41 @@
   .show-whitespace .ws-tab::after {
     content: "→";
     opacity: 0.8;
+  }
+  /*
+   * V023-R18：连续审阅队列条（只读进度）。静态条，不随差异滚动带走文件身份；
+   * 状态文字+图标双通道，不只靠颜色；窄屏允许换行，不断字。
+   */
+  .diff-review-queue {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--vscode-panel-border);
+  }
+  .diff-review-queue__status {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .diff-review-queue__actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .diff-review-queue__actions .button {
+    white-space: nowrap;
+    flex: none;
+  }
+  .review-state-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .review-state-badge--reviewed {
+    color: var(--vscode-testing-iconPassed, var(--vscode-editor-foreground));
   }
   @media (max-width: 760px) {
     .diff-content-row {

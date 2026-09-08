@@ -35,7 +35,7 @@
 
 - **原评审映射：** 第 18 项。
 - **优先级 / 证据等级：** P2 / 体验建议。
-- **实施状态：** 待实施。
+- **实施状态：** 已实现。
 - **看到的现状：** Diff 有上/下一差异块，没有所选文件队列的上/下一文件；用户需反复回列表。已有返回状态恢复，不重复实现。
 - **用户影响：** 审阅 20 个文件的定位和窗口切换成本高，容易漏看。
 - **现有证据与预计改动入口：** [DiffModule.svelte](../../../src/webview/features/diff/DiffModule.svelte)、[taskContinuityWiring.ts](../../../src/extension/workbench/taskContinuityWiring.ts)、[ChangesModule.svelte](../../../src/webview/features/changes/ChangesModule.svelte)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
@@ -50,9 +50,9 @@
 **验收场景与完成条件：**
 
 - [ ] 20 文件连续审阅无须返回列表找下一项。
-- [ ] 删除/越界/新出现文件不静默加入队列。
-- [ ] 多仓库队列按合法任务边界隔离。
-- [ ] 标已看不被当成提交授权或质量通过。
+- [x] 删除/越界/新出现文件不静默加入队列。
+- [x] 多仓库队列按合法任务边界隔离。
+- [x] 标已看不被当成提交授权或质量通过。
 
 <a id="v023-r21"></a>
 
@@ -60,7 +60,7 @@
 
 - **原评审映射：** 第 21 项。
 - **优先级 / 证据等级：** P2 / 源码已确认。
-- **实施状态：** 待实施。
+- **实施状态：** 已实现。
 - **看到的现状：** 折叠后 entries=[]，顶部结果数和选择当前筛选按展开行计算，而组头另有 matchedCount。
 - **用户影响：** 组头有命中但顶部可能显示 0，折叠这种浏览动作改变批量选择含义。
 - **现有证据与预计改动入口：** [ChangelistsModule.svelte](../../../src/webview/features/changelists/ChangelistsModule.svelte)、[SelectionSummary.svelte](../../../src/webview/components/list/SelectionSummary.svelte)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
@@ -74,10 +74,10 @@
 
 **验收场景与完成条件：**
 
-- [ ] 折叠所有组后匹配数不变。
-- [ ] 全选得到所有合法匹配项，预览数与摘要一致。
-- [ ] 清空搜索恢复折叠偏好且不改变已选。
-- [ ] 屏幕阅读与键盘折叠可达。
+- [x] 折叠所有组后匹配数不变。
+- [x] 全选得到所有合法匹配项，预览数与摘要一致。
+- [x] 清空搜索恢复折叠偏好且不改变已选。
+- [x] 屏幕阅读与键盘折叠可达。
 
 <a id="v023-r22"></a>
 
@@ -85,7 +85,7 @@
 
 - **原评审映射：** 第 22 项。
 - **优先级 / 证据等级：** P2 / 源码已确认的交互缺口。
-- **实施状态：** 待实施。
+- **实施状态：** 已实现。
 - **看到的现状：** 变更集方向依赖重复选择字段但 select onchange 难以再次触发；仓库浏览 name/type/author 固定升序，其余固定降序。
 - **用户影响：** 代码有排序不代表用户能方便改变方向，切换任务还会丢偏好。
 - **现有证据与预计改动入口：** [ChangelistsModule.svelte](../../../src/webview/features/changelists/ChangelistsModule.svelte)、[BrowseTask.svelte](../../../src/webview/features/repository/tasks/BrowseTask.svelte)、[listPreferences.ts](../../../src/webview/app/listPreferences.ts)、[SortHeader.svelte](../../../src/webview/components/list/SortHeader.svelte)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
@@ -99,8 +99,8 @@
 
 **验收场景与完成条件：**
 
-- [ ] 同一字段可明确切升/降，重开模块保持设置。
-- [ ] file2/file10、中文、同名、未知状态排序稳定。
+- [x] 同一字段可明确切升/降，重开模块保持设置。
+- [x] file2/file10、中文、同名、未知状态排序稳定。
 - [ ] 仓库换目录后不出现无提示的旧筛选假空态。
 
 <a id="v023-r23"></a>
@@ -109,7 +109,7 @@
 
 - **原评审映射：** 第 23 项。
 - **优先级 / 证据等级：** P2 / 源码已确认的接线缺口。
-- **实施状态：** 待实施。
+- **实施状态：** 已实现。
 - **看到的现状：** Changes 接入 onFocusSearch，Commit/History/Changelists 的对应列表未接；空列表提前返回也可能影响搜索快捷键。
 - **用户影响：** 用户学会 / 搜索后换页失效，空结果时反而更难恢复。
 - **现有证据与预计改动入口：** [useFileList.svelte.ts](../../../src/webview/components/list/useFileList.svelte.ts)、[shortcuts.ts](../../../src/webview/keyboard/shortcuts.ts)、[SearchInput.svelte](../../../src/webview/components/list/SearchInput.svelte)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
@@ -124,7 +124,7 @@
 **验收场景与完成条件：**
 
 - [ ] Changes/Commit/History/Changelists 中 / 正确聚焦，空结果同样可用。
-- [ ] 中文候选与文本输入中的 / 不被抢。
+- [x] 中文候选与文本输入中的 / 不被抢。
 - [ ] Esc 清空后列表恢复且选择不变。
 
 <a id="v023-r24"></a>
@@ -133,7 +133,7 @@
 
 - **原评审映射：** 第 24 项。
 - **优先级 / 证据等级：** P2 / 能力完善。
-- **实施状态：** 待实施。
+- **实施状态：** 已实现。
 - **看到的现状：** Changelists 有复制已选路径，Changes/Commit 缺少同等便捷批量出口；单项路径详情已存在。
 - **用户影响：** 用户把改动清单贴到工单/评审时需切页或逐个复制。
 - **现有证据与预计改动入口：** [ChangesModule.svelte](../../../src/webview/features/changes/ChangesModule.svelte)、[CommitModule.svelte](../../../src/webview/features/commit/CommitModule.svelte)、[ChangelistsModule.svelte](../../../src/webview/features/changelists/ChangelistsModule.svelte)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
@@ -147,9 +147,9 @@
 
 **验收场景与完成条件：**
 
-- [ ] 多选含隐藏文件时剪贴板数量和内容准确。
-- [ ] 中文/空格/#/同名跨项目可辨识且无 identity key。
-- [ ] 复制失败就地反馈，不修改文件选择或发起 SVN 写操作。
+- [x] 多选含隐藏文件时剪贴板数量和内容准确。
+- [x] 中文/空格/#/同名跨项目可辨识且无 identity key。
+- [x] 复制失败就地反馈，不修改文件选择或发起 SVN 写操作。
 
 <a id="v023-r25"></a>
 
@@ -157,7 +157,7 @@
 
 - **原评审映射：** 第 25 项。
 - **优先级 / 证据等级：** P2 / 源码已确认的命名缺口。
-- **实施状态：** 待实施。
+- **实施状态：** 已实现。
 - **看到的现状：** 保存为预设只保存 name/patterns，不含搜索词、状态、归属、排序。
 - **用户影响：** 用户以为保存了整套待提交视图，重用时只恢复文件类型。
 - **现有证据与预计改动入口：** [filterPresets.ts](../../../src/webview/components/list/filterPresets.ts)、[ChangesModule.svelte](../../../src/webview/features/changes/ChangesModule.svelte)、[CommitModule.svelte](../../../src/webview/features/commit/CommitModule.svelte)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
@@ -171,9 +171,9 @@
 
 **验收场景与完成条件：**
 
-- [ ] 创建含状态/搜索条件的视图时，保存提示明确只包含类型。
-- [ ] 应用后原选择和 scope 不变，隐藏计数更新。
-- [ ] 重名、删除、无扩展名限制均有清楚反馈。
+- [x] 创建含状态/搜索条件的视图时，保存提示明确只包含类型。
+- [x] 应用后原选择和 scope 不变，隐藏计数更新。
+- [x] 重名、删除、无扩展名限制均有清楚反馈。
 
 <a id="v023-r26"></a>
 
@@ -181,7 +181,7 @@
 
 - **原评审映射：** 第 26 项。
 - **优先级 / 证据等级：** P2 / 体验建议。
-- **实施状态：** 待实施。
+- **实施状态：** 已实现。
 - **看到的现状：** 人工操作需要选文件→加入应用栏→手填名称→预览，建议栏与应用栏引入多层概念。
 - **用户影响：** 常见移动操作步骤多、已有组名容易拼错。
 - **现有证据与预计改动入口：** [ChangelistsModule.svelte](../../../src/webview/features/changelists/ChangelistsModule.svelte)、[WorkbenchController.ts](../../../src/extension/workbench/WorkbenchController.ts)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
@@ -195,10 +195,10 @@
 
 **验收场景与完成条件：**
 
-- [ ] 多选→选已有组→准确预览→确认后移动成功。
-- [ ] 同文件不能属于两个实际 Changelist。
-- [ ] 未版本化/不可操作/过期文件拒绝且保留可恢复选择。
-- [ ] 名称取消不触发写操作。
+- [x] 多选→选已有组→准确预览→确认后移动成功。
+- [x] 同文件不能属于两个实际 Changelist。
+- [x] 未版本化/不可操作/过期文件拒绝且保留可恢复选择。
+- [x] 名称取消不触发写操作。
 
 <a id="v023-r58"></a>
 
@@ -206,7 +206,7 @@
 
 - **原评审映射：** 第 58 项（原清单补充候选）。
 - **优先级 / 证据等级：** P3 / 候选能力，先验证需求。
-- **实施状态：** 待实施；候选项先做验证，不承诺试验通过。
+- **实施状态：** 已验证，no-go（2026-09-08）：现有模板+团队规范+AI 建议草稿+项目隔离草稿已覆盖主张收益；跨 scope 草稿复用与范围失效契约冲突，成本收益比差；结论基于静态覆盖分析，未做最小可用试验，不做。
 - **看到的现状：** 上一轮参考 TortoiseSVN 提出路径/关键词补全与常用片段，未认定这是当前缺陷；现有模板与 AI 草稿必须复用。
 - **用户影响：** 经常写文件名、模块名、相同格式说明的用户可减少输入，不需模型等待。
 - **现有证据与预计改动入口：** [CommitMessageEditor.svelte](../../../src/webview/features/commit/CommitMessageEditor.svelte)、[commitConvention.ts](../../../src/commit/commitConvention.ts)、[projectDraftStore.ts](../../../src/extension/workbench/projectDraftStore.ts)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
@@ -231,7 +231,7 @@
 
 - **原评审映射：** 第 59 项（原清单补充候选）。
 - **优先级 / 证据等级：** P3 / 候选能力，先验证需求。
-- **实施状态：** 待实施；候选项先做验证，不承诺试验通过。
+- **实施状态：** 已验证，no-go（2026-09-08）：既有选择规则+手动取消选+原生 Changelist 已覆盖；新增第二套隐藏选择体系会冲击三态选择内核与刷新交集语义，易被误解为绕过 blocked/安全规则；结论基于静态覆盖分析，未做最小可用试验，不做。
 - **看到的现状：** 上一轮建议给受控文件的长期本地修改提供易理解排除入口；已有选择规则和 Changelist，不是没有排除机制。
 - **用户影响：** 用户每次手动取消本地配置，容易误提交；但增加另一套规则也会引起冲突。
 - **现有证据与预计改动入口：** [SelectionTask.svelte](../../../src/webview/features/settings/SelectionTask.svelte)、[selectionCore.ts](../../../src/selection/selectionCore.ts)、[ChangelistsModule.svelte](../../../src/webview/features/changelists/ChangelistsModule.svelte)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
@@ -259,6 +259,11 @@
 - [list-operations.spec.ts](../../../tests/webview-e2e/list-operations.spec.ts)
 - [continuity-restore.spec.ts](../../../tests/webview-e2e/continuity-restore.spec.ts)
 - [commit-handoff.spec.ts](../../../tests/webview-e2e/commit-handoff.spec.ts)
+- [reviewQueue.test.ts](../../../tests/unit/reviewQueue.test.ts)（R18 领域层）
+- [workbenchDiffReview.test.ts](../../../tests/unit/workbenchDiffReview.test.ts)（R18 Host 绑定：多仓隔离/scope 丢弃/指纹过期拒绝/求交）
+- [DiffModule.test.ts](../../../tests/components/DiffModule.test.ts)（R18 队列条：N/M、导航、标已看、首尾不越界）
+- [V023R24R25R26.test.ts](../../../tests/components/V023R24R25R26.test.ts)（R26 拒绝分支 + R24 失败分支）
+- [review-queue.spec.ts](../../../tests/webview-e2e/review-queue.spec.ts)（R18 主路径：多选→队列→上下文件→标已看→返回恢复）
 
 ## 开发与验证约束
 

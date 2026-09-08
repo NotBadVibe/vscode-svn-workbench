@@ -60,6 +60,12 @@ export interface OpenWorkbenchRequest {
   scope: OperationScope;
   targetFile?: string;
   selectedPaths?: string[];
+  /**
+   * V023-R18：连续审阅队列的明确选择（项目内相对路径）。
+   * 仅 diff 模块使用：Host 据此建立只读审阅队列（保序去重、范围求交，
+   * 永不静默新增）；缺省表示单文件模式，不建立队列。
+   */
+  reviewQueue?: string[];
   revisionCompare?: RevisionCompareRequest;
   initialFileOperation?: {
     operation: "add" | "ignore" | "revert" | "lock" | "unlock";
@@ -328,6 +334,17 @@ export interface WorkbenchSession extends OpenWorkbenchRequest {
   activeOperation?: {
     moduleId: WorkbenchModuleId;
     controller: AbortController;
+  };
+  /**
+   * V023-R18：Diff 连续审阅队列会话状态（仅 diff 模块使用）。
+   * 只读语义：只存相对路径顺序与已看内容指纹，不存任何可写 token；
+   * 跨仓库/范围变化时由 Host 按 scopeHash + repositoryUuid 隔离或求交缩小。
+   */
+  diffReview?: {
+    queue: string[];
+    reviewedHashes: Record<string, string>;
+    scopeHash: string;
+    repositoryUuid: string;
   };
   /**
    * v0.1.4 V014-A：连续任务上下文（Changes → Diff → Commit 纯模型）。

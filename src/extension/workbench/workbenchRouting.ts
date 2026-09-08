@@ -83,6 +83,11 @@ export function buildDiffWindowRequest(input: {
   scope: OperationScope;
   targetFile?: string;
   revisionCompare?: RevisionCompareRequest;
+  /**
+   * V023-R18：连续审阅队列的明确选择（项目内相对路径）。
+   * 缺省表示单文件模式；修订比较不携带队列。
+   */
+  reviewQueue?: string[];
 }): OpenWorkbenchRequest {
   return {
     moduleId: "diff",
@@ -91,6 +96,9 @@ export function buildDiffWindowRequest(input: {
     scope: input.scope,
     targetFile: input.targetFile,
     revisionCompare: input.revisionCompare,
+    ...(input.reviewQueue !== undefined
+      ? { reviewQueue: [...input.reviewQueue] }
+      : {}),
   };
 }
 
@@ -123,6 +131,8 @@ export function workbenchRevealTarget(
  * Diff 目标只在 Host 内判等；摘要不进入 Webview、URI 或日志。
  * 同目标再次显式打开时仅 reveal，避免重新初始化破坏阅读位置。
  * V020-R09：修订对按升序归一后再摘要，r41/r42 与 r42/r41 视为同一目标。
+ * V023-R18：审阅队列参与判等（排序后归一）：同文件不同队列视为不同目标，
+ * 建立队列时即使目标相同也会重新加载以装配队列视图；缺省与空队列等价。
  */
 export function buildDiffTargetKey(request: OpenWorkbenchRequest): string {
   return createHash("sha256")
@@ -149,6 +159,13 @@ export function buildDiffTargetKey(request: OpenWorkbenchRequest): string {
                 request.revisionCompare.pathDiff.copyFromRevision,
             }
           : undefined,
+        // V023-R18：审阅队列排序后参与判等（缺省/空视为无队列）。
+        reviewQueue:
+          request.reviewQueue && request.reviewQueue.length > 0
+            ? [...request.reviewQueue].sort((left, right) =>
+                left.localeCompare(right),
+              )
+            : undefined,
       }),
     )
     .digest("hex");
