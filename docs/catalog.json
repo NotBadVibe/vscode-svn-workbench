@@ -533,12 +533,12 @@
     },
     {
       "version": "0.2.2",
-      "status": "draft",
-      "phase": "planned",
+      "status": "released",
+      "phase": "released",
       "baseVersion": "0.2.1",
       "canonicalEntry": "releases/v0.2.2/README.md",
       "manifest": "releases/v0.2.2/manifest.json",
-      "releasedFact": false,
+      "releasedFact": true,
       "topics": [
         "responsive-layout",
         "information-hierarchy",
