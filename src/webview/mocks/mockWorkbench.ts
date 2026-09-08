@@ -2410,20 +2410,24 @@ export function startMockWorkbench(): void {
     }
     if (
       action === "repository/preview-advanced" ||
-      action === "repository/select-patch"
+      action === "repository/select-patch" ||
+      action === "repository/preview-shelf-restore"
     ) {
       const operation =
         action === "repository/select-patch"
           ? "apply-patch"
-          : typeof data.operation === "string"
-            ? data.operation
-            : "branch";
+          : action === "repository/preview-shelf-restore"
+            ? "restore-shelf"
+            : typeof data.operation === "string"
+              ? data.operation
+              : "branch";
       const destructive = [
         "switch",
         "relocate",
         "merge",
         "apply-patch",
         "shelf",
+        "restore-shelf",
       ].includes(operation);
       const titleByOperation: Record<string, string> = {
         branch: "创建分支",
@@ -2432,6 +2436,7 @@ export function startMockWorkbench(): void {
         relocate: "重定位仓库根地址",
         merge: "合并到当前工作副本",
         shelf: "创建本地搁置（补丁 + 还原）",
+        "restore-shelf": "恢复本地搁置",
         "apply-patch": "应用补丁",
       };
       const title = titleByOperation[operation] ?? "仓库操作";
@@ -2486,6 +2491,18 @@ export function startMockWorkbench(): void {
         "repository",
         repositorySnapshot({
           advanced: { feedback: "补丁已导出：/tmp/svn-workbench.patch" },
+        }),
+      );
+    }
+    if (
+      action === "repository/refresh-shelves" ||
+      action === "repository/export-shelf" ||
+      action === "repository/delete-shelf"
+    ) {
+      injectSnapshot(
+        "repository",
+        repositorySnapshot({
+          advanced: { shelfFeedback: "搁置清单已刷新。" },
         }),
       );
     }
@@ -4050,6 +4067,20 @@ function repositorySnapshot(
         parentUrl: "https://svn.example.test/repos/workbench",
         entries: browserEntries,
       },
+      shelves: [
+        {
+          id: "shelf-1700000000000-abcdef",
+          displayName: "修复登录",
+          createdAt: "2026-09-01T10:00:00.000Z",
+          fileCount: 2,
+          files: ["src/a.ts", "src/b.ts"],
+          baselineRevision: "42",
+          repositoryUuid: "mock-repo",
+          projectName: "示例项目",
+          patchFileName: "shelf-1700000000000-abcdef.patch",
+          integrity: "ok",
+        },
+      ],
     },
     ...guardedOverrides,
   } as WorkbenchModuleSnapshot;

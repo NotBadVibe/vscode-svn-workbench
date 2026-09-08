@@ -143,6 +143,7 @@
     merge: "合并到工作副本",
     "apply-patch": "应用补丁",
     shelf: "创建本地搁置",
+    "restore-shelf": "恢复本地搁置",
   };
 
   const currentTask = $derived(
@@ -370,13 +371,17 @@
           payload.sourceUrl = value;
       }
     }
-    // shelf 名称只出现在搁置命令 `> <name>.patch` 中；解析失败则仅重发
-    // operation，由 Host 提示补填。
+    // shelf 中文显示名在命令中为“搁置“<名称>””形式；解析失败仅重发 operation。
     if (preview.operation === "shelf") {
-      const shelfName = (preview.commands[0] ?? "").match(
-        />\s*([A-Za-z0-9._-]{1,64})\.patch/,
-      )?.[1];
-      if (shelfName) payload.shelfName = shelfName;
+      const shelfName =
+        (preview.commands[0] ?? "").match(/搁置“(.+?)”/)?.[1] ??
+        (preview.commands[0] ?? "").match(/>\s*([^\s]+)\.patch/)?.[1];
+      if (shelfName && shelfName !== "<名称>") payload.shelfName = shelfName;
+    }
+    // V024-R38：恢复预览重查需 shelfId；命令含内部补丁路径，不可反推 ID，
+    // 仅重发 operation 时由 Host 提示补选，不虚构。
+    if (preview.operation === "restore-shelf") {
+      return { operation: "restore-shelf" };
     }
     return payload;
   }

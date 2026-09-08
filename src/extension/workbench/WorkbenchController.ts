@@ -4934,6 +4934,30 @@ export class WorkbenchController implements vscode.Disposable {
       case "repository/select-patch":
         await this.selectPatchForPreview(session, message.requestId);
         return;
+      case "repository/refresh-shelves":
+        await this.repositoryActions.refreshShelves(session, message.requestId);
+        return;
+      case "repository/preview-shelf-restore":
+        await this.previewAdvancedRepositoryOperation(
+          session,
+          { operation: "restore-shelf", shelfId: asString(data.shelfId) },
+          message.requestId,
+        );
+        return;
+      case "repository/export-shelf":
+        await this.repositoryActions.exportShelf(
+          session,
+          asString(data.shelfId),
+          message.requestId,
+        );
+        return;
+      case "repository/delete-shelf":
+        await this.repositoryActions.deleteShelf(
+          session,
+          asString(data.shelfId),
+          message.requestId,
+        );
+        return;
       case "repository/generate-release-notes":
         await this.generateReleaseNotes(
           session,

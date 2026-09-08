@@ -22,6 +22,17 @@ import {
   validatePatchText,
   validateRepositoryUrl,
 } from "../../repository/advancedRepositoryTools";
+import {
+  buildShelfId,
+  loadShelfIndex,
+  resolveShelfPatchPath,
+  saveShelfIndexAtomic,
+  shelfIndexFilePath,
+  shelfPatchFileName,
+  validateShelfDisplayName,
+  type ShelfEntry,
+  type ShelfIndexDeps,
+} from "../../repository/shelfIndex";
 import { validatePathsInScope } from "../../scope/pathBoundaryGuard";
 import { nativePathSemantics } from "../../scope/nativePathSemantics";
 import { parseInfoXml } from "../../svn/parsers/infoXmlParser";
@@ -83,6 +94,107 @@ export interface RepositoryWorkbenchHost {
 export class RepositoryWorkbenchActions {
   constructor(private readonly host: RepositoryWorkbenchHost) {}
 
+  /** V024-R38：搁置目录（按 repositoryUuid 隔离，同名多项目不串用）。 */
+  getShelfDirectory(session: WorkbenchSession): string {
+    return path.join(
+      this.host.context.globalStorageUri.fsPath,
+      "shelves",
+      session.repositoryUuid,
+    );
+  }
+
+  private shelfDeps(): ShelfIndexDeps {
+    return {
+      readTextFile: (filePath) => fs.readFile(filePath, "utf8"),
+      writeTextFile: (filePath, content, options) =>
+        fs.writeFile(filePath, content, {
+          encoding: "utf8",
+          mode: options?.mode ?? 0o600,
+        }),
+      renameFile: (fromPath, toPath) => fs.rename(fromPath, toPath),
+      removeFile: (filePath) => fs.unlink(filePath),
+      listDir: (dirPath) => fs.readdir(dirPath),
+    };
+  }
+
+  /** V024-R38：读取本仓库搁置清单（含旧项迁移），失败 fail-closed。 */
+  async listShelfEntries(
+    session: WorkbenchSession,
+  ): Promise<{ entries: ShelfEntry[]; error?: string }> {
+    const shelfDir = this.getShelfDirectory(session);
+    try {
+      const loaded = await loadShelfIndex(
+        this.shelfDeps(),
+        shelfDir,
+        session.repositoryUuid,
+      );
+      const checked = await this.checkShelfIntegrity(shelfDir, loaded.entries);
+      const issues =
+        loaded.issues.length > 0 ? loaded.issues.join(" ") : undefined;
+      return { entries: checked, error: issues };
+    } catch (error) {
+      return { entries: [], error: `搁置清单不可读：${errorMessage(error)}` };
+    }
+  }
+
+  private async checkShelfIntegrity(
+    shelfDir: string,
+    entries: ShelfEntry[],
+  ): Promise<ShelfEntry[]> {
+    const result: ShelfEntry[] = [];
+    for (const entry of entries) {
+      const resolved = resolveShelfPatchPath(shelfDir, entry.patchFileName);
+      if (!resolved) {
+        result.push({
+          ...entry,
+          integrity: "unreadable",
+          integrityDetail: "搁置路径越界，已拒绝读取。",
+        });
+        continue;
+      }
+      try {
+        const stat = await fs.stat(resolved);
+        if (stat.size > MAX_PATCH_BYTES) {
+          result.push({
+            ...entry,
+            integrity: "corrupt",
+            integrityDetail: "补丁超过 20 MB 安全上限。",
+          });
+          continue;
+        }
+        const content = await fs.readFile(resolved, "utf8");
+        const patchIssues = validatePatchText(content, MAX_PATCH_BYTES);
+        if (patchIssues.length > 0) {
+          result.push({
+            ...entry,
+            integrity: "corrupt",
+            integrityDetail: patchIssues[0],
+          });
+          continue;
+        }
+        result.push({
+          ...entry,
+          integrity: entry.integrity === "ok" ? "ok" : entry.integrity,
+          fileCount: entry.fileCount > 0 ? entry.fileCount : entry.files.length,
+        });
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException | undefined)?.code;
+        result.push({
+          ...entry,
+          integrity: code === "ENOENT" ? "missing-patch" : "unreadable",
+          integrityDetail:
+            code === "ENOENT"
+              ? "补丁文件已丢失，可尝试导出残留索引。"
+              : `补丁不可读：${errorMessage(error)}`,
+        });
+      }
+    }
+    // 按创建时间倒序，同名条目通过日期/项目消歧。
+    return result.sort((left, right) =>
+      right.createdAt < left.createdAt ? -1 : 1,
+    );
+  }
+
   async buildRepositorySnapshot(session: WorkbenchSession) {
     // V021-R14：外发前纵深校验 releaseNotes 形状；畸形时 fail-closed 丢弃
     // 该字段（保留 feedback 说明），不把坏载荷发给 Webview。
@@ -112,6 +224,29 @@ export class RepositoryWorkbenchActions {
     const propertyPreview = session.repositoryState?.propertyPreview;
     const cleanupTarget = getSingleFolderScopeTarget(session.scope);
     const cleanupPreview = session.repositoryState?.cleanupPreview;
+    // V024-R38：搁置清单随快照下发（重启可发现）；失败不阻断快照。
+    let shelfEntries: ShelfEntry[] | undefined;
+    let shelvesError: string | undefined;
+    try {
+      const listed = await this.listShelfEntries(session);
+      shelfEntries = listed.entries.map((entry) => ({
+        id: entry.id,
+        displayName: entry.displayName,
+        createdAt: entry.createdAt,
+        fileCount: entry.fileCount,
+        files: entry.files,
+        baselineRevision: entry.baselineRevision,
+        repositoryUuid: entry.repositoryUuid,
+        projectName: entry.projectName,
+        patchFileName: entry.patchFileName,
+        integrity: entry.integrity,
+        integrityDetail: entry.integrityDetail,
+      }));
+      shelvesError = listed.error;
+    } catch (error) {
+      shelfEntries = undefined;
+      shelvesError = `搁置清单不可读：${errorMessage(error)}`;
+    }
     return {
       kind: "repository" as const,
       recovery: session.recoveryState,
@@ -167,6 +302,9 @@ export class RepositoryWorkbenchActions {
         browser: session.repositoryState?.advanced?.browser,
         releaseNotes,
         feedback: session.repositoryState?.advanced?.feedback,
+        shelves: shelfEntries,
+        shelvesError,
+        shelfFeedback: session.repositoryState?.advanced?.shelfFeedback,
         preview: session.repositoryState?.advanced?.preview
           ? {
               token: session.repositoryState.advanced.preview.token,
@@ -354,14 +492,82 @@ export class RepositoryWorkbenchActions {
         `svn merge ${quoteRelative(input.sourceUrl || "")} ${quoteRelative(session.scope.repositoryRoot)} --accept postpone`,
       );
       details.push("合并只写入工作副本，不会自动提交；冲突统一进入冲突模块。");
+    } else if (operation === "restore-shelf") {
+      title = "恢复本地搁置";
+      destructive = true;
+      const shelfId = input.shelfId || "";
+      const listed = await this.listShelfEntries(session);
+      const entry = listed.entries.find((item) => item.id === shelfId);
+      if (!shelfId || !entry) {
+        issues.push("未找到该搁置条目，请刷新搁置清单后重试。");
+      } else {
+        const resolved = resolveShelfPatchPath(
+          this.getShelfDirectory(session),
+          entry.patchFileName,
+        );
+        if (!resolved) {
+          issues.push("搁置路径越界，已拒绝读取。");
+        } else {
+          try {
+            const stat = await fs.stat(resolved);
+            if (stat.size > MAX_PATCH_BYTES) {
+              issues.push("补丁超过 20 MB 安全上限。");
+            } else {
+              const patchText = await fs.readFile(resolved, "utf8");
+              issues.push(...validatePatchText(patchText, MAX_PATCH_BYTES));
+            }
+          } catch (error) {
+            issues.push(`无法读取搁置补丁：${errorMessage(error)}`);
+          }
+          if (issues.length === 0) {
+            const dryRun = await runSvnCommand(
+              session.svnPath,
+              ["patch", "--dry-run", resolved, session.scope.repositoryRoot],
+              session.scope.repositoryRoot,
+              { maxOutputBytes: MAX_DIFF_BYTES },
+            );
+            if (dryRun.exitCode !== 0) {
+              issues.push(
+                dryRun.stderr ||
+                  dryRun.stdout ||
+                  "搁置试运行失败，当前工作副本可能已冲突或过期。",
+              );
+            }
+            if (
+              entry.baselineRevision &&
+              info?.revision &&
+              entry.baselineRevision !== info.revision
+            ) {
+              details.push(
+                `基线 r${entry.baselineRevision}，当前工作副本 r${info.revision}：内容可能已过期，恢复前请核对。`,
+              );
+            }
+            if (candidates.length > 0) {
+              details.push(
+                `当前工作副本有 ${candidates.length} 个本地变更，恢复只写入工作副本，不会自动提交；冲突请先处理。`,
+              );
+            }
+          }
+          commands.push(
+            `svn patch ${quoteRelative(resolved)} ${quoteRelative(session.scope.repositoryRoot)}`,
+          );
+          details.push(
+            `搁置：${entry.displayName}（${entry.createdAt}，${entry.fileCount} 个文件，基线 ${entry.baselineRevision ?? "未知"}）`,
+            ...entry.files.map((file) => `文件 ${file}`),
+            "恢复只写入工作副本，不会自动提交；搁置在成功后保留，删除需单独确认。",
+          );
+          input.shelfId = entry.id;
+          input.patchPath = resolved;
+        }
+      }
     } else {
       title = "创建本地搁置（补丁 + 还原）";
       destructive = true;
-      const name = input.shelfName || "";
-      if (!/^[A-Za-z0-9._-]{1,64}$/.test(name))
-        issues.push(
-          "搁置名称只能包含字母、数字、点、下划线和连字符，长度 1–64。",
-        );
+      const displayName = (input.shelfName || "").trim();
+      const existing = (await this.listShelfEntries(session)).entries.map(
+        (item) => item.displayName,
+      );
+      issues.push(...validateShelfDisplayName(input.shelfName ?? "", existing));
       if (candidates.length === 0) issues.push("当前范围没有可搁置变更。");
       const unsupported = candidates.filter(
         (item) =>
@@ -372,7 +578,7 @@ export class RepositoryWorkbenchActions {
           `有 ${unsupported.length} 个新增、未版本化、冲突或其他不安全项，不能进入本地搁置。`,
         );
       commands.push(
-        `svn diff <current-scope> > ${name || "<shelf-name>"}.patch`,
+        `svn diff <current-scope> > 搁置“${displayName || "<名称>"}”（内部安全文件名，重启可找回）.patch`,
         "svn revert --depth empty <exact-files>",
       );
       details.push(
@@ -651,6 +857,13 @@ export class RepositoryWorkbenchActions {
           { signal: controller.signal, maxOutputBytes: MAX_DIFF_BYTES },
         );
         successMessage = "补丁已写入工作副本；尚未提交，请检查变更。";
+      } else if (preview.operation === "restore-shelf") {
+        successMessage = await this.restoreShelfEntry(
+          session,
+          input.shelfId,
+          input.patchPath,
+          controller.signal,
+        );
       } else {
         successMessage = await this.host.createLocalShelf(
           session,
@@ -708,6 +921,13 @@ export class RepositoryWorkbenchActions {
     shelfName: string,
     signal: AbortSignal,
   ): Promise<string> {
+    // V024-R48：shelfName 为中文显示名，Host 始终复验（含重复与控制字符）。
+    const existing = (await this.listShelfEntries(session)).entries.map(
+      (item) => item.displayName,
+    );
+    const nameIssues = validateShelfDisplayName(shelfName, existing);
+    if (nameIssues.length > 0) throw new Error(nameIssues.join(" "));
+    const displayName = (shelfName as string).trim();
     const shelfCandidates = candidates.filter((item) =>
       ["modified", "deleted", "missing", "replaced"].includes(item.status),
     );
@@ -737,21 +957,58 @@ export class RepositoryWorkbenchActions {
     const patchIssues = validatePatchText(diff.stdout, MAX_PATCH_BYTES);
     if (patchIssues.length > 0) throw new Error(patchIssues.join(" "));
 
-    const shelfDirectory = path.join(
-      this.host.context.globalStorageUri.fsPath,
-      "shelves",
-      session.repositoryUuid,
-    );
+    const shelfDirectory = this.getShelfDirectory(session);
     await fs.mkdir(shelfDirectory, { recursive: true, mode: 0o700 });
-    const patchPath = path.join(
-      shelfDirectory,
-      `${shelfName}-${Date.now()}.patch`,
+    // V024-R48：内部安全 ID 独立于显示名，路径分隔永不进入内部路径。
+    const shelfId = buildShelfId(
+      Date.now(),
+      randomUUID().replace(/-/g, "").slice(0, 8),
     );
+    const fileName = shelfPatchFileName(shelfId);
+    if (!fileName) throw new Error("搁置内部标识生成失败，请重试。");
+    const patchPath = resolveShelfPatchPath(shelfDirectory, fileName);
+    if (!patchPath) throw new Error("搁置路径越界，已拒绝写入。");
     await fs.writeFile(patchPath, diff.stdout, {
       encoding: "utf8",
       mode: 0o600,
       flag: "wx",
     });
+    // V024-R38：索引原子保存（临时文件 + rename），失败保留补丁并如实提示。
+    const baselineRevision =
+      session.workingCopyRevision ?? session.scopeView.workingCopyRevision;
+    try {
+      const loaded = await loadShelfIndex(
+        this.shelfDeps(),
+        shelfDirectory,
+        session.repositoryUuid,
+      );
+      const next: ShelfEntry[] = [
+        ...loaded.entries.filter(
+          (entry) =>
+            entry.repositoryUuid === session.repositoryUuid ||
+            !entry.repositoryUuid,
+        ),
+        {
+          id: shelfId,
+          displayName,
+          createdAt: new Date().toISOString(),
+          fileCount: shelfCandidates.length,
+          files: relativePaths,
+          baselineRevision,
+          repositoryUuid: session.repositoryUuid,
+          projectName: session.scopeView.projectName,
+          patchFileName: fileName,
+          integrity: "ok" as const,
+        },
+      ];
+      await saveShelfIndexAtomic(
+        this.shelfDeps(),
+        shelfIndexFilePath(shelfDirectory),
+        next,
+      );
+    } catch (error) {
+      appendOutput(`搁置索引保存失败（补丁已保留）：${errorMessage(error)}`);
+    }
     const revert = await runSvnCommand(
       session.svnPath,
       ["revert", "--depth", "empty", ...absolutePaths],
@@ -767,7 +1024,193 @@ export class RepositoryWorkbenchActions {
         `${revert.stderr || "还原失败。"} 补丁已安全保存在 ${patchPath}。`,
       );
     appendOutput(`搁置补丁已保存：${patchPath}`);
-    return `本地搁置已创建并还原 ${absolutePaths.length} 个文件；补丁：${patchPath}`;
+    return `本地搁置“${displayName}”已创建并还原 ${absolutePaths.length} 个文件；重启后可在搁置清单中找到。`;
+  }
+
+  /** V024-R38：恢复搁置（新 token 预览已校验；成功保留搁置，不自动提交）。 */
+  async restoreShelfEntry(
+    session: WorkbenchSession,
+    shelfId: string,
+    patchPath: string | undefined,
+    signal: AbortSignal,
+  ): Promise<string> {
+    const listed = await this.listShelfEntries(session);
+    const entry = listed.entries.find((item) => item.id === shelfId);
+    if (!entry)
+      throw new Error("搁置条目已不存在或不属于当前仓库，请刷新清单。");
+    const resolved = resolveShelfPatchPath(
+      this.getShelfDirectory(session),
+      entry.patchFileName,
+    );
+    if (!resolved) throw new Error("搁置路径越界，已拒绝恢复。");
+    if (patchPath && path.resolve(patchPath) !== resolved) {
+      throw new Error("搁置路径已变化，请重新预览。");
+    }
+    let patchText: string;
+    try {
+      patchText = await fs.readFile(resolved, "utf8");
+    } catch (error) {
+      throw new Error(`无法读取搁置补丁：${errorMessage(error)}`, {
+        cause: error,
+      });
+    }
+    const patchIssues = validatePatchText(patchText, MAX_PATCH_BYTES);
+    if (patchIssues.length > 0) throw new Error(patchIssues.join(" "));
+    const result = await runSvnCommand(
+      session.svnPath,
+      ["patch", resolved, session.scope.repositoryRoot],
+      session.scope.repositoryRoot,
+      { signal, maxOutputBytes: MAX_DIFF_BYTES },
+    );
+    if (result.cancelled) throw new Error("恢复搁置已取消，工作副本未改动。");
+    if (result.exitCode !== 0) {
+      throw new Error(
+        result.stderr ||
+          result.stdout ||
+          "搁置恢复失败，工作副本未被强行覆盖。",
+      );
+    }
+    return `搁置“${entry.displayName}”已恢复到工作副本；尚未提交，搁置已保留。`;
+  }
+
+  /** V024-R38：刷新搁置清单（只读，不改工作副本）。 */
+  async refreshShelves(
+    session: WorkbenchSession,
+    requestId?: string,
+  ): Promise<void> {
+    const state = this.host.ensureAdvancedRepositoryState(session);
+    const listed = await this.listShelfEntries(session);
+    state.shelfFeedback =
+      listed.error ??
+      (listed.entries.length === 0
+        ? "暂无本地搁置。"
+        : `已载入 ${listed.entries.length} 个本地搁置。`);
+    await this.host.sendRepositorySnapshot(session, requestId);
+  }
+
+  /** V024-R38：导出搁置补丁（只读，不改工作副本）。 */
+  async exportShelf(
+    session: WorkbenchSession,
+    shelfId: string | undefined,
+    requestId?: string,
+  ): Promise<void> {
+    const state = this.host.ensureAdvancedRepositoryState(session);
+    const listed = await this.listShelfEntries(session);
+    const entry = listed.entries.find((item) => item.id === shelfId);
+    if (!entry) {
+      await this.host.sendError(
+        "repository",
+        "未找到搁置",
+        "该搁置条目不存在或不属于当前仓库，请刷新清单。",
+        true,
+        requestId,
+      );
+      return;
+    }
+    const resolved = resolveShelfPatchPath(
+      this.getShelfDirectory(session),
+      entry.patchFileName,
+    );
+    if (!resolved) {
+      await this.host.sendError(
+        "repository",
+        "搁置路径越界",
+        "该搁置路径已越界，已拒绝导出。",
+        true,
+        requestId,
+      );
+      return;
+    }
+    let content: string;
+    try {
+      content = await fs.readFile(resolved, "utf8");
+    } catch (error) {
+      await this.host.sendError(
+        "repository",
+        "导出搁置失败",
+        `无法读取搁置补丁：${errorMessage(error)}`,
+        true,
+        requestId,
+      );
+      return;
+    }
+    const destination = await vscode.window.showSaveDialog({
+      title: `导出搁置“${entry.displayName}”`,
+      defaultUri: vscode.Uri.file(
+        path.join(session.scope.repositoryRoot, `${entry.displayName}.patch`),
+      ),
+      filters: { 补丁文件: ["patch", "diff"] },
+      saveLabel: "导出搁置",
+    });
+    if (!destination) return;
+    await vscode.workspace.fs.writeFile(
+      destination,
+      Buffer.from(content, "utf8"),
+    );
+    state.shelfFeedback = `搁置“${entry.displayName}”已导出：${destination.fsPath}`;
+    await this.host.sendRepositorySnapshot(session, requestId);
+  }
+
+  /** V024-R38：删除搁置（明确独立动作，不碰工作副本）。 */
+  async deleteShelf(
+    session: WorkbenchSession,
+    shelfId: string | undefined,
+    requestId?: string,
+  ): Promise<void> {
+    const state = this.host.ensureAdvancedRepositoryState(session);
+    const shelfDir = this.getShelfDirectory(session);
+    const listed = await this.listShelfEntries(session);
+    const entry = listed.entries.find((item) => item.id === shelfId);
+    if (!entry) {
+      await this.host.sendError(
+        "repository",
+        "未找到搁置",
+        "该搁置条目不存在或不属于当前仓库，请刷新清单。",
+        true,
+        requestId,
+      );
+      return;
+    }
+    const resolved = resolveShelfPatchPath(shelfDir, entry.patchFileName);
+    if (!resolved) {
+      await this.host.sendError(
+        "repository",
+        "搁置路径越界",
+        "该搁置路径已越界，已拒绝删除。",
+        true,
+        requestId,
+      );
+      return;
+    }
+    try {
+      await fs.unlink(resolved);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException | undefined)?.code;
+      if (code !== "ENOENT") {
+        await this.host.sendError(
+          "repository",
+          "删除搁置失败",
+          `无法删除补丁文件：${errorMessage(error)}`,
+          true,
+          requestId,
+        );
+        return;
+      }
+    }
+    try {
+      const next = listed.entries.filter((item) => item.id !== entry.id);
+      await saveShelfIndexAtomic(
+        this.shelfDeps(),
+        shelfIndexFilePath(shelfDir),
+        next,
+      );
+    } catch (error) {
+      state.shelfFeedback = `补丁已删除，但索引更新失败：${errorMessage(error)}`;
+      await this.host.sendRepositorySnapshot(session, requestId);
+      return;
+    }
+    state.shelfFeedback = `搁置“${entry.displayName}”已删除，工作副本未改动。`;
+    await this.host.sendRepositorySnapshot(session, requestId);
   }
 
   async exportScopePatch(

@@ -1189,6 +1189,25 @@ export interface DiagnosticsSnapshot {
   reportText: string;
 }
 
+/**
+ * V024-R38/R48：本地搁置清单条目视图（Host 签发，Webview 只展示）。
+ * - displayName 为中文显示名；id/patchFileName 为内部安全标识；
+ * - integrity 说明补丁完整性；缺省 shelves 表示尚未加载。
+ */
+export interface ShelfEntryView {
+  id: string;
+  displayName: string;
+  createdAt: string;
+  fileCount: number;
+  files: string[];
+  baselineRevision?: string;
+  repositoryUuid: string;
+  projectName?: string;
+  patchFileName: string;
+  integrity: "ok" | "missing-patch" | "corrupt" | "unreadable";
+  integrityDetail?: string;
+}
+
 export interface RepositorySnapshot {
   kind: "repository";
   recovery?: {
@@ -1255,7 +1274,8 @@ export interface RepositorySnapshot {
         | "relocate"
         | "merge"
         | "apply-patch"
-        | "shelf";
+        | "shelf"
+        | "restore-shelf";
       title: string;
       commands: string[];
       details: string[];
@@ -1299,6 +1319,9 @@ export interface RepositorySnapshot {
       rangeNote?: string;
     };
     feedback?: string;
+    shelves?: ShelfEntryView[];
+    shelvesError?: string;
+    shelfFeedback?: string;
   };
 }
 
@@ -1750,6 +1773,10 @@ export type WebviewAction =
   | "repository/execute-advanced"
   | "repository/export-patch"
   | "repository/select-patch"
+  | "repository/refresh-shelves"
+  | "repository/preview-shelf-restore"
+  | "repository/export-shelf"
+  | "repository/delete-shelf"
   | "repository/generate-release-notes"
   | "repository/export-release-notes"
   | "changelist/suggest"
@@ -1905,6 +1932,10 @@ export const webviewActions = [
   "repository/execute-advanced",
   "repository/export-patch",
   "repository/select-patch",
+  "repository/refresh-shelves",
+  "repository/preview-shelf-restore",
+  "repository/export-shelf",
+  "repository/delete-shelf",
   "repository/generate-release-notes",
   "repository/export-release-notes",
   "changelist/suggest",
@@ -2533,6 +2564,44 @@ export function isUpdatePreviewView(
 }
 
 /**
+ * V024-R38/R48：搁置条目视图守卫（Host/Webview/Mock 共用）。
+ * 缺省字段即合法（旧快照兼容）；携带时逐项严检，畸形拒绝。
+ */
+export function isShelfEntryView(value: unknown): value is ShelfEntryView {
+  if (!isRecord(value)) return false;
+  if (
+    typeof value.id !== "string" ||
+    value.id.length === 0 ||
+    typeof value.displayName !== "string" ||
+    value.displayName.length === 0 ||
+    typeof value.createdAt !== "string" ||
+    typeof value.fileCount !== "number" ||
+    !Number.isFinite(value.fileCount) ||
+    !Array.isArray(value.files) ||
+    !(value.files as unknown[]).every((item) => typeof item === "string") ||
+    typeof value.repositoryUuid !== "string" ||
+    typeof value.patchFileName !== "string" ||
+    (value.integrity !== "ok" &&
+      value.integrity !== "missing-patch" &&
+      value.integrity !== "corrupt" &&
+      value.integrity !== "unreadable")
+  ) {
+    return false;
+  }
+  if (
+    (value.baselineRevision !== undefined &&
+      typeof value.baselineRevision !== "string") ||
+    (value.projectName !== undefined &&
+      typeof value.projectName !== "string") ||
+    (value.integrityDetail !== undefined &&
+      typeof value.integrityDetail !== "string")
+  ) {
+    return false;
+  }
+  return true;
+}
+
+/**
  * V021-R14/R15：RepositorySnapshot / UpdateSnapshot 类型守卫（Host/Webview/Mock 共用）。
  * 无 releaseNotes/preview 的旧快照继续接受（向后兼容）；携带时必须分别通过
  * isReleaseNotesView/isUpdatePreviewView，否则整快照拒绝（fail-closed）。
@@ -2556,6 +2625,20 @@ export function isRepositorySnapshot(
   if (
     advanced.releaseNotes !== undefined &&
     !isReleaseNotesView(advanced.releaseNotes)
+  ) {
+    return false;
+  }
+  if (advanced.shelves !== undefined) {
+    if (!Array.isArray(advanced.shelves)) return false;
+    for (const entry of advanced.shelves as unknown[]) {
+      if (!isShelfEntryView(entry)) return false;
+    }
+  }
+  if (
+    (advanced.shelvesError !== undefined &&
+      typeof advanced.shelvesError !== "string") ||
+    (advanced.shelfFeedback !== undefined &&
+      typeof advanced.shelfFeedback !== "string")
   ) {
     return false;
   }
