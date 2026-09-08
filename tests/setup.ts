@@ -26,4 +26,16 @@ if (
 // 仓库任务视图按需加载；Windows CI 首次解析 Svelte 分块时可能超过默认 1 秒。
 configure({ asyncUtilTimeout: 5_000 });
 
-afterEach(() => cleanup());
+/*
+ * bits-ui body-scroll-lock 在浮层关闭后用 window.setTimeout(24ms) 延迟清理
+ * body 样式。若测试在 24ms 内完成，jsdom 环境拆毁后该回调访问 document 会抛
+ * `ReferenceError: document is not defined`（unhandled error，CI 环境 fail）。
+ * 在 cleanup 后等待真实延时让该回调在 jsdom 存活期内落定（全局一次性修复，
+ * 各测试文件不再各自修补）。
+ */
+afterEach(async () => {
+  cleanup();
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, 30);
+  });
+});
