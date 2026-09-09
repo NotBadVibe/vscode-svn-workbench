@@ -36,6 +36,10 @@ import {
   type ResolvedCommitSelectionRules,
 } from "../../commit/commitSelectionRuleResolver";
 import { createCommitSelectionEvaluator } from "../../commit/commitSelectionRuleEvaluator";
+import {
+  buildCommitConventionConfigFromEditorInput,
+  previewCommitConventionSample,
+} from "../../commit/commitConventionRules";
 import type { SvnStatus } from "../../svn/svnTypes";
 import { workbenchBridge } from "../bridge/vscodeBridge";
 import { onboarding } from "../app/onboarding.svelte";
@@ -2114,6 +2118,43 @@ export function startMockWorkbench(): void {
         }),
       );
     }
+    if (action === "settings/preview-team-sample") {
+      // V025-R47 Mock：与 Host 同一纯逻辑计算示例结论（基于未保存草稿，
+      // 不写配置、不发模型请求），供 Webview E2E 与手工演示使用。
+      const payload = (data ?? {}) as Record<string, unknown>;
+      const asText = (value: unknown): string =>
+        typeof value === "string" ? value : "";
+      const config = buildCommitConventionConfigFromEditorInput({
+        enabled: payload.enabled === true,
+        requiredIssueId: payload.requiredIssueId === true,
+        issueIdPattern: asText(payload.issueIdPattern),
+        requiredModule: payload.requiredModule === true,
+        allowedModulesText: asText(payload.allowedModulesText),
+        requiredPrefix: payload.requiredPrefix === true,
+        allowedPrefixesText: asText(payload.allowedPrefixesText),
+      });
+      const sample = asText(payload.sample);
+      const preview = previewCommitConventionSample(sample, config);
+      injectSnapshot(
+        "settings",
+        settingsSnapshot({
+          team: {
+            ...settingsSnapshotValue.team,
+            samplePreview: {
+              sample,
+              skeleton: preview.skeleton,
+              valid: preview.valid,
+              configIssues: preview.configIssues,
+              ...(preview.budgetIssue === undefined
+                ? {}
+                : { budgetIssue: preview.budgetIssue }),
+              ruleResults: preview.ruleResults,
+              draftBased: true as const,
+            },
+          },
+        }),
+      );
+    }
     if (action === "settings/preview-team-migration") {
       injectSnapshot(
         "settings",
@@ -2562,7 +2603,7 @@ export function startMockWorkbench(): void {
       action === "changelist/preview-receipt" ||
       (action === "changelist/suggest" && data?.mode === "semantic")
     )
-      injectMockChangelistReceipt();
+      injectMockChangelistReceipt(data as Record<string, unknown>);
     if (action === "changelist/receipt-dismiss") {
       injectSnapshot(
         "changelists",
@@ -4148,7 +4189,30 @@ function changelistSemanticSuggestions() {
   ];
 }
 
-function injectMockChangelistReceipt(): void {
+function injectMockChangelistReceipt(data?: Record<string, unknown>): void {
+  // 演示 Mock 保真：按请求 data.selectedPaths/selectAll 生成回执 files，
+  // 不固定为 1 个文件；无明确选择时保留单文件演示值。
+  const requestedPaths = Array.isArray(data?.selectedPaths)
+    ? (data?.selectedPaths as unknown[]).filter(
+        (item): item is string => typeof item === "string",
+      )
+    : undefined;
+  const selectAll = data?.selectAll === true;
+  const receiptPaths =
+    requestedPaths && requestedPaths.length > 0
+      ? requestedPaths
+      : selectAll
+        ? ["src/extension.ts", "src/webview/App.svelte"]
+        : ["src/webview/App.svelte"];
+  const receiptFiles = receiptPaths.map((projectRelativePath, index) => ({
+    candidateId: `mock-candidate-${index + 1}`,
+    projectRelativePath: projectRelativePath as never,
+    status: "modified" as const,
+    state: "analyzed" as const,
+    diffHash: "deadbeef",
+    charCount: 120,
+    hunkCount: 1,
+  }));
   workbenchBridge.injectMock({
     protocolVersion: WORKBENCH_PROTOCOL_VERSION,
     type: "changelist/receipt",
@@ -4164,30 +4228,20 @@ function injectMockChangelistReceipt(): void {
         projectId: "mock-project",
         model: "deepseek-v4-flash",
         dataTypes: ["项目内相对路径、SVN 状态、脱敏差异片段"],
-        files: 1,
+        files: receiptFiles.length,
         totalBudget: 40000,
         perFileBudget: 6000,
         historyIncluded: false,
       },
       coverage: {
-        total: 1,
-        analyzed: 1,
+        total: receiptFiles.length,
+        analyzed: receiptFiles.length,
         truncated: 0,
         binary: 0,
         readFailed: 0,
         budgetExcluded: 0,
       },
-      files: [
-        {
-          candidateId: "mock-candidate-a",
-          projectRelativePath: "src/webview/App.svelte" as never,
-          status: "modified",
-          state: "analyzed",
-          diffHash: "deadbeef",
-          charCount: 120,
-          hunkCount: 1,
-        },
-      ],
+      files: receiptFiles,
       excludedCount: 0,
       historyIncluded: false,
       notSent: ["本地绝对路径（只发送项目内相对路径）"],

@@ -9,6 +9,7 @@
   import { formatZhDateTime } from "../../i18n/formatters";
   // 中文注释：V017-C T6——模块主区落点（挂载聚焦一次，刷新不抢焦点）。
   import { focusOnMount } from "../../components/ui/focusOnMount";
+  import { isExplicitSubmitShortcut } from "../../i18n/keyboard";
   import { confidenceLabels, sourceLabels } from "../../i18n/terminology";
   import SelectionTask from "./SelectionTask.svelte";
 
@@ -75,6 +76,11 @@
   let prevAiFeedbackMessage = $state<string | undefined>(undefined);
   let teamBaseline = $state<TeamConfigBaseline | null>(null);
   let teamInitialized = $state(false);
+  // V025-R47 示例即时校验：样例文本只保存在本地编辑态；结论由 Host 经
+  // `settings/preview-team-sample` 使用与提交页相同的逻辑计算后，随
+  // snapshot.team.samplePreview 下发，Webview 只展示，不写配置、不发模型请求。
+  let sampleText = $state("");
+  let lastSampleDraftFingerprint = $state<string | null>(null);
 
   function sortedRecord(value: Record<string, string>): Record<string, string> {
     return Object.fromEntries(
@@ -360,6 +366,46 @@
   function saveTeam(): void {
     onAction("settings/save-team", teamPayload());
   }
+
+  // V025-R47：生效项目与继承来源（与本页顶部“来源”同一指向，措辞不重复
+  // 顶部文案，避免读屏重复播报同一结论）。
+  function teamSampleSourceLabel(): string {
+    const source = snapshot.team.configSource;
+    if (source === "project") return "项目级配置";
+    if (source === "workingCopy")
+      return snapshot.team.inheritedFromWorkingCopy
+        ? "自工作副本根继承"
+        : "工作副本根配置";
+    return "VS Code 设置项";
+  }
+
+  function requestSamplePreview(): void {
+    lastSampleDraftFingerprint = currentTeamFingerprint();
+    onAction("settings/preview-team-sample", {
+      ...teamPayload(),
+      sample: sampleText,
+    });
+  }
+
+  function fillSampleSkeleton(): void {
+    const skeleton = snapshot.team.samplePreview?.skeleton;
+    if (skeleton !== undefined) sampleText = skeleton;
+  }
+
+  // 中文 IME 保护：候选阶段 Enter 不触发校验，只有显式 Ctrl/⌘+Enter 才请求预览。
+  function handleSampleKeydown(event: KeyboardEvent): void {
+    if (!isExplicitSubmitShortcut(event)) return;
+    event.preventDefault();
+    requestSamplePreview();
+  }
+
+  // 样例文本或团队规则草稿变化后，上次 Host 结论视为过期，需重新校验。
+  let samplePreviewStale = $derived(
+    snapshot.team.samplePreview !== undefined &&
+      (snapshot.team.samplePreview.sample !== sampleText ||
+        (lastSampleDraftFingerprint !== null &&
+          lastSampleDraftFingerprint !== currentTeamFingerprint())),
+  );
 
   function discardTeam(): void {
     applyTeamDraftFromBaseline();
@@ -759,6 +805,110 @@
               onclick={discardTeam}>放弃修改</button
             >{/if}
         </div>
+      </section>
+
+      <section
+        class="settings-card settings-card--wide"
+        aria-label="示例即时校验"
+      >
+        <div class="section-heading">
+          <div>
+            <span class="eyebrow">就地验证</span>
+            <h2>示例即时校验</h2>
+          </div>
+          {#if snapshot.team.samplePreview}<span
+              class:status-badge--modified={snapshot.team.samplePreview.valid}
+              class="status-badge"
+              >{snapshot.team.samplePreview.valid
+                ? "示例通过"
+                : "示例未通过"}</span
+            >{/if}
+        </div>
+        <p class="muted">
+          结论由 Host
+          使用与提交页相同的校验逻辑计算；预览基于当前未保存草稿，不会写入团队配置，也不会发起模型请求。已保存配置的生效位置：{teamSampleSourceLabel()}（详见本页顶部来源）。
+        </p>
+        <label class="field"
+          ><span>提交说明样例（可编辑）</span><textarea
+            bind:value={sampleText}
+            rows="4"
+            placeholder="粘贴或填写一条提交说明，例如 feat(order): 修复订单列表"
+            aria-label="提交说明样例"
+            onkeydown={handleSampleKeydown}></textarea></label
+        >
+        <div class="toolbar-actions">
+          <button class="button button--primary" onclick={requestSamplePreview}
+            >校验示例</button
+          >
+          <button
+            class="button button--secondary"
+            disabled={snapshot.team.samplePreview?.skeleton === undefined}
+            title={snapshot.team.samplePreview?.skeleton === undefined
+              ? "先校验一次以获取符合当前规则的骨架"
+              : "把符合前缀/模块结构的骨架填入样例（不含真实工单号）"}
+            onclick={fillSampleSkeleton}>填入骨架</button
+          >
+        </div>
+        {#if snapshot.team.samplePreview}
+          {@const samplePreview = snapshot.team.samplePreview}
+          {#if samplePreviewStale}<div
+              class="notice notice--warning"
+              role="status"
+            >
+              样例或规则草稿已更改，上次结论已过期，请重新点击“校验示例”。
+            </div>{/if}
+          <details class="command-preview">
+            <summary>查看示例骨架（符合前缀/模块结构，不含真实工单号）</summary>
+            <pre>{samplePreview.skeleton}</pre>
+          </details>
+          {#if samplePreview.configIssues.length > 0}
+            <div class="issue-list" role="alert">
+              {#each samplePreview.configIssues as configIssue, configIssueIndex (configIssueIndex)}
+                <div>
+                  <span class="codicon codicon-error" aria-hidden="true"
+                  ></span>{configIssue}
+                </div>
+              {/each}
+            </div>
+          {/if}
+          {#if samplePreview.budgetIssue}<div
+              class="notice notice--error"
+              role="alert"
+            >
+              {samplePreview.budgetIssue}
+            </div>{/if}
+          <ul class="sample-rule-list">
+            {#each samplePreview.ruleResults as ruleResult (ruleResult.rule)}
+              <li>
+                <span
+                  class={`codicon codicon-${ruleResult.passed ? "check" : "error"}`}
+                  aria-hidden="true"
+                ></span><strong
+                  >{ruleResult.label}{ruleResult.required
+                    ? "（要求）"
+                    : "（未启用）"}：{ruleResult.passed
+                    ? "通过"
+                    : "未通过"}</strong
+                ><span>{ruleResult.message}</span>
+              </li>
+            {/each}
+          </ul>
+          <div
+            class={`notice notice--${samplePreview.valid ? "success" : "warning"}`}
+            role="status"
+          >
+            {samplePreview.valid
+              ? "示例符合当前草稿规则；在提交页使用相同说明将得到相同结论。"
+              : "示例不符合当前草稿规则；请按上述原因调整规则或样例后再保存。"}
+          </div>
+        {:else}
+          <div class="preview-empty">
+            <span class="codicon codicon-beaker" aria-hidden="true"></span>
+            <p>
+              填写样例并点击“校验示例”，即可就地看到逐规则通过/失败；也可先校验一次再“填入骨架”。
+            </p>
+          </div>
+        {/if}
       </section>
 
       <section class="settings-card">

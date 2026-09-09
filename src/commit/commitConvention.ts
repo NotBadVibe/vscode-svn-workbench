@@ -13,21 +13,36 @@ import {
   updateSvnWorkbenchConfig,
   type SvnWorkbenchConfigLocation,
 } from "../config/svnWorkbenchConfig";
-
-export interface CommitConventionConfig {
-  enabled: boolean;
-  requiredIssueId: boolean;
-  issueIdPattern: string;
-  requiredModule: boolean;
-  allowedModules: string[];
-  requiredPrefix: boolean;
-  allowedPrefixes: string[];
-}
-
-export interface CommitConventionValidation {
-  valid: boolean;
-  issues: string[];
-}
+import {
+  defaultCommitConventionConfig,
+  normalizePattern,
+  normalizeStringList,
+  type CommitConventionConfig,
+} from "./commitConventionRules";
+// V025-R47：纯规则（配置类型、默认值、校验、示例预览）已收敛到
+// commitConventionRules.ts（无 VS Code 依赖，Host 与 Mock 共用）；
+// 此处重导出以保持既有导入位置兼容。
+export {
+  COMMIT_CONVENTION_SAMPLE_MAX_LENGTH,
+  buildCommitConventionConfigFromEditorInput,
+  buildCommitConventionSampleSkeleton,
+  defaultCommitConventionConfig,
+  formatCommitConventionList,
+  normalizePattern,
+  normalizeStringList,
+  normalizeTextList,
+  previewCommitConventionSample,
+  validateCommitConventionConfig,
+  validateCommitMessageConvention,
+} from "./commitConventionRules";
+export type {
+  CommitConventionConfig,
+  CommitConventionEditorInput,
+  CommitConventionSamplePreview,
+  CommitConventionSampleRuleId,
+  CommitConventionSampleRuleResult,
+  CommitConventionValidation,
+} from "./commitConventionRules";
 
 export interface SvnWorkbenchProjectConfig {
   [key: string]: unknown;
@@ -55,16 +70,6 @@ export interface CommitConventionHintOptions {
   warnings?: string[];
 }
 
-export interface CommitConventionEditorInput {
-  enabled: boolean;
-  requiredIssueId: boolean;
-  issueIdPattern: string;
-  requiredModule: boolean;
-  allowedModulesText: string;
-  requiredPrefix: boolean;
-  allowedPrefixesText: string;
-}
-
 export interface CommitConventionEditState {
   configPath: string;
   config: CommitConventionConfig;
@@ -76,24 +81,6 @@ export interface CommitConventionEditState {
 }
 
 export { SVN_WORKBENCH_CONFIG_FILE };
-
-export const defaultCommitConventionConfig: CommitConventionConfig = {
-  enabled: false,
-  requiredIssueId: false,
-  issueIdPattern: "[A-Z]+-\\d+|#\\d+",
-  requiredModule: false,
-  allowedModules: ["order", "user", "config", "docs"],
-  requiredPrefix: false,
-  allowedPrefixes: [
-    "feat",
-    "fix",
-    "config",
-    "docs",
-    "refactor",
-    "test",
-    "chore",
-  ],
-};
 
 export function readCommitConventionConfig(): CommitConventionConfig {
   const config = vscode.workspace.getConfiguration(
@@ -347,52 +334,6 @@ export async function ensureSvnWorkbenchProjectConfig(
   );
 }
 
-export function buildCommitConventionConfigFromEditorInput(
-  input: CommitConventionEditorInput,
-): CommitConventionConfig {
-  return {
-    enabled: Boolean(input.enabled),
-    requiredIssueId: Boolean(input.requiredIssueId),
-    issueIdPattern: normalizePattern(input.issueIdPattern),
-    requiredModule: Boolean(input.requiredModule),
-    allowedModules: normalizeTextList(input.allowedModulesText),
-    requiredPrefix: Boolean(input.requiredPrefix),
-    allowedPrefixes: normalizeTextList(input.allowedPrefixesText),
-  };
-}
-
-export function formatCommitConventionList(values: string[]): string {
-  return normalizeStringList(values).join(", ");
-}
-
-export function validateCommitConventionConfig(
-  config: CommitConventionConfig,
-): CommitConventionValidation {
-  if (!config.enabled) {
-    return { valid: true, issues: [] };
-  }
-
-  const issues: string[] = [];
-  if (config.requiredPrefix && config.allowedPrefixes.length === 0) {
-    issues.push("启用前缀校验时，至少需要填写一个允许前缀。");
-  }
-  if (config.requiredModule && config.allowedModules.length === 0) {
-    issues.push("启用模块校验时，至少需要填写一个允许模块。");
-  }
-  if (config.requiredIssueId) {
-    try {
-      new RegExp(config.issueIdPattern);
-    } catch {
-      issues.push(`工单号正则不合法：${config.issueIdPattern}。`);
-    }
-  }
-
-  return {
-    valid: issues.length === 0,
-    issues,
-  };
-}
-
 export function updateSvnWorkbenchProjectConfigContent(
   content: string,
   commitConvention: CommitConventionConfig,
@@ -412,63 +353,6 @@ export async function saveProjectCommitConventionConfig(
       createDefaultSvnWorkbenchProjectConfig(),
     ),
   );
-}
-
-export function validateCommitMessageConvention(
-  message: string,
-  config: CommitConventionConfig,
-): CommitConventionValidation {
-  if (!config.enabled) {
-    return { valid: true, issues: [] };
-  }
-
-  const issues: string[] = [];
-  const header = getHeader(message);
-  const parsed = parseConventionalHeader(header);
-
-  if (config.requiredPrefix) {
-    if (!parsed?.prefix) {
-      issues.push(
-        `提交说明首行需要使用前缀：${config.allowedPrefixes.join(", ")}。`,
-      );
-    } else if (
-      config.allowedPrefixes.length > 0 &&
-      !config.allowedPrefixes.includes(parsed.prefix)
-    ) {
-      issues.push(
-        `提交说明前缀 "${parsed.prefix}" 不在允许范围：${config.allowedPrefixes.join(", ")}。`,
-      );
-    }
-  }
-
-  if (config.requiredModule) {
-    if (!parsed?.module) {
-      issues.push(
-        `提交说明首行需要包含模块，例如 feat(order): 修复订单列表。允许模块：${config.allowedModules.join(", ")}。`,
-      );
-    } else if (
-      config.allowedModules.length > 0 &&
-      !config.allowedModules.includes(parsed.module)
-    ) {
-      issues.push(
-        `提交说明模块 "${parsed.module}" 不在允许范围：${config.allowedModules.join(", ")}。`,
-      );
-    }
-  }
-
-  if (
-    config.requiredIssueId &&
-    !matchesIssueId(message, config.issueIdPattern)
-  ) {
-    issues.push(
-      `提交说明需要包含工单号，格式需匹配：${config.issueIdPattern}。`,
-    );
-  }
-
-  return {
-    valid: issues.length === 0,
-    issues,
-  };
 }
 
 export function buildCommitConventionHint(
@@ -520,39 +404,6 @@ export function toAiCommitConventionHint(
   };
 }
 
-function getHeader(message: string): string {
-  return (
-    message
-      .replace(/\r\n/g, "\n")
-      .replace(/\r/g, "\n")
-      .split("\n")
-      .map((line) => line.trim())
-      .find(Boolean) ?? ""
-  );
-}
-
-function parseConventionalHeader(
-  header: string,
-): { prefix: string; module?: string } | undefined {
-  const match = /^([a-z][a-z0-9-]*)(?:\(([^()]+)\))?\s*[:：]/i.exec(header);
-  if (!match) {
-    return undefined;
-  }
-
-  return {
-    prefix: match[1],
-    module: match[2]?.trim(),
-  };
-}
-
-function matchesIssueId(message: string, pattern: string): boolean {
-  try {
-    return new RegExp(pattern).test(message);
-  } catch {
-    return false;
-  }
-}
-
 function normalizePartialCommitConventionConfig(
   value: Record<string, unknown>,
 ): Partial<CommitConventionConfig> {
@@ -591,16 +442,4 @@ function normalizePartialCommitConventionConfig(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function normalizePattern(value: string): string {
-  return value.trim() || defaultCommitConventionConfig.issueIdPattern;
-}
-
-function normalizeTextList(value: string): string[] {
-  return normalizeStringList(value.split(/[\n,，;；]+/g));
-}
-
-function normalizeStringList(value: string[]): string[] {
-  return Array.from(new Set(value.map((item) => item.trim()).filter(Boolean)));
 }

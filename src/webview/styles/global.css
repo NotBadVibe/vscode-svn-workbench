@@ -2990,6 +2990,7 @@ details.changes-help:not([open]) > :not(summary) {
 }
 .field input,
 .field select,
+.field textarea,
 .scenario-row input {
   width: 100%;
   min-height: 31px;
@@ -3100,6 +3101,29 @@ details.changes-help:not([open]) > :not(summary) {
 .settings-card ul {
   padding-left: 18px;
   color: var(--muted);
+}
+/* V025-R47：示例逐规则结论（文字 + 图标，不只靠颜色）。 */
+.settings-card .sample-rule-list {
+  display: grid;
+  gap: 8px;
+  padding-left: 0;
+  margin: 10px 0;
+  list-style: none;
+}
+.sample-rule-list > li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: baseline;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--vscode-foreground);
+}
+.sample-rule-list > li > span:last-child {
+  flex-basis: 100%;
+  color: var(--muted);
+  white-space: pre-line;
 }
 .diagnostic-summary {
   display: flex;

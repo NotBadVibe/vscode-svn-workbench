@@ -239,6 +239,11 @@ export interface WorkbenchSession extends OpenWorkbenchRequest {
     };
     /** 团队规则动作一次性反馈。 */
     teamFeedback?: { tone: "success" | "warning" | "error"; message: string };
+    /**
+     * V025-R47：提交说明样例即时校验结论（Host 权威计算，基于未保存草稿）。
+     * 保存团队规则成功后清除；草稿变化由 Webview 按 sample 指纹判断过期。
+     */
+    teamSamplePreview?: SettingsSnapshot["team"]["samplePreview"];
   };
   /**
    * v0.0.17 批次 A：Update 独立模块的会话状态（自 repositoryState 拆出）。
@@ -305,10 +310,13 @@ export interface WorkbenchSession extends OpenWorkbenchRequest {
       paths: string[];
       issues: string[];
     };
-    /** v0.0.12 批次 B：语义拆分受限差异回执（任务 changelist-split，跨任务拒绝）。 */
+    /** v0.0.12 批次 B：语义拆分受限差异回执（任务 changelist-split，跨任务拒绝）。
+     * V025-R50：绑定明确勾选集合（项目内相对路径，去重排序），改选后旧 token 作废。 */
     pendingReceipt?: {
       token: string;
       task: import("../../commit/commitDiffEvidence").AnalysisTask;
+      /** V025-R50：回执对应的明确分析选择（项目内相对路径）。 */
+      selectedPaths: string[];
       receipt: import("../../commit/commitDiffEvidence").AnalysisReceipt;
       coverage: import("../../commit/commitDiffEvidence").DiffCoverageSummary;
       files: import("../../protocol/workbenchProtocol").CommitDiffFileCoverageView[];

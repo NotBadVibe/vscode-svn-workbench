@@ -54,6 +54,7 @@ import {
   buildCommitSplitAiRequest,
   createLocalCommitSplitResult,
   validateCommitSplitResult,
+  validateCommitSplitResultStrict,
 } from "../../ai/commitSplitAi";
 import {
   hashChangelistPlan,
@@ -97,6 +98,7 @@ import {
   validateCommitConventionConfig,
   validateCommitMessageConvention,
 } from "../../commit/commitConvention";
+import { previewCommitConventionSample } from "../../commit/commitConventionRules";
 import { runCommitFlow } from "../../commit/commitFlow";
 import {
   SVN_WORKBENCH_CONFIG_FILE,
@@ -438,6 +440,13 @@ import {
   isNonRecoverableKind,
 } from "../../activity/activityRecord";
 import { createSnapshotFreshness } from "../../activity/snapshotFreshness";
+
+/**
+ * V025-R50：语义拆分空选择时的明确指引——默认按明确勾选集合生成回执，
+ * 空选择不回退为全部候选，要求明确选择分析范围。
+ */
+const CHANGELIST_SPLIT_SELECTION_REQUIRED =
+  "尚未选择要分析的文件：请勾选至少 1 个文件，或明确选择“分析当前范围全部候选”后再生成语义拆分回执。";
 
 /**
  * 统一模块窗口路由回调：
@@ -4269,6 +4278,8 @@ export class WorkbenchController implements vscode.Disposable {
           );
           const state = this.ensureSettingsState(session);
           state.recommendedTeamConfig = undefined;
+          // V025-R47：已保存配置变化，基于旧草稿的示例结论失效，清除。
+          state.teamSamplePreview = undefined;
           state.recommendation = {
             summary: "团队提交规范已保存。",
             reasons: ["后续提交预检将使用当前仓库配置。"],
@@ -4286,6 +4297,33 @@ export class WorkbenchController implements vscode.Disposable {
             message.requestId,
           );
         }
+        return;
+      }
+      case "settings/preview-team-sample": {
+        // V025-R47：示例即时校验。只用当前未保存草稿做纯 Host 校验：
+        // 不写团队配置，不发模型请求；逐规则结论与提交页同一逻辑。
+        const config = toTeamConfig(data);
+        const sample = asStringAllowEmpty(data.sample) ?? "";
+        const preview = previewCommitConventionSample(sample, config);
+        const state = this.ensureSettingsState(session);
+        state.teamSamplePreview = {
+          sample,
+          skeleton: preview.skeleton,
+          valid: preview.valid,
+          configIssues: preview.configIssues,
+          ...(preview.budgetIssue === undefined
+            ? {}
+            : { budgetIssue: preview.budgetIssue }),
+          ruleResults: preview.ruleResults.map((item) => ({
+            rule: item.rule,
+            label: item.label,
+            required: item.required,
+            passed: item.passed,
+            message: item.message,
+          })),
+          draftBased: true as const,
+        };
+        await this.sendSettingsSnapshot(session, message.requestId);
         return;
       }
       case "settings/recommend-team": {
@@ -5006,24 +5044,33 @@ export class WorkbenchController implements vscode.Disposable {
         await this.exportReleaseNotes(session, message.requestId);
         return;
       case "changelist/suggest": {
-        // v0.0.12 批次 B：semantic 模式先走受限差异回执（不调用模型），
-        // 确认后再经 changelist/run-semantic 语义拆分；默认 metadata 分组。
+        // V025-R49：本地整理是确定性独立动作，不经过模型。
+        // semantic 模式先走受限差异回执（不调用模型），
+        // 确认后再经 changelist/run-semantic 语义拆分；默认 metadata 为纯本地分组。
         if (asString(data.mode) === "semantic") {
-          await this.previewChangelistSplitReceipt(session, message.requestId);
+          await this.previewChangelistSplitReceipt(
+            session,
+            message.requestId,
+            data,
+          );
           return;
         }
         const candidates = await this.collectScopeCandidates(session);
-        await this.runChangelistSplit(
+        await this.runChangelistLocalTidy(
           session,
           candidates,
-          {},
           message.requestId,
         );
         return;
       }
       case "changelist/preview-receipt": {
         // v0.0.12 批次 B：语义拆分受限差异回执（任务 changelist-split）。
-        await this.previewChangelistSplitReceipt(session, message.requestId);
+        // V025-R50：按明确勾选集合生成回执（data.selectedPaths / data.selectAll）。
+        await this.previewChangelistSplitReceipt(
+          session,
+          message.requestId,
+          data,
+        );
         return;
       }
       case "changelist/receipt-dismiss": {
@@ -5045,6 +5092,8 @@ export class WorkbenchController implements vscode.Disposable {
         // v0.0.12 批次 B：确认回执后语义拆分；pending 显式绑定
         // changelist-split，跨任务一律拒绝；模型永不加入 scope 外文件
         // （validateCommitSplitResult 范围/候选/去重校验）。
+        // V025-R50：回执绑定明确勾选集合——确认时选择变化则旧 token 作废；
+        // 模型结果逐项严格校验，整份拒绝时不修剪残余，人工选择与草稿保留。
         const state = session.changelistState;
         const candidates = await this.collectScopeCandidates(session);
         const receiptToken = asString(data.receiptToken);
@@ -5073,7 +5122,63 @@ export class WorkbenchController implements vscode.Disposable {
           );
           return;
         }
+        const confirmed = asStringArray(data.selectedPaths);
+        if (confirmed !== undefined) {
+          const before = [...pending.selectedPaths].sort();
+          const after = [...new Set(confirmed)].sort();
+          const changed =
+            before.length !== after.length ||
+            before.some((item, index) => item !== after[index]);
+          if (changed) {
+            state!.pendingReceipt = undefined;
+            await this.sendError(
+              "changelists",
+              "外发回执已失效",
+              "分析选择已变化，旧语义拆分回执已作废，未调用模型；请用当前选择重新生成回执。",
+              true,
+              message.requestId,
+            );
+            await this.sendChangelistsSnapshot(
+              session,
+              message.requestId,
+              candidates,
+            );
+            return;
+          }
+        }
+        const revalidation = validateCommitSelection(
+          pending.selectedPaths,
+          candidates,
+        );
+        if (
+          revalidation.missing.length > 0 ||
+          revalidation.notSubmittable.length > 0
+        ) {
+          state!.pendingReceipt = undefined;
+          await this.sendError(
+            "changelists",
+            "外发回执已失效",
+            "分析范围内的候选已变化（文件消失或变为排除/阻止项），旧语义拆分回执已作废，未调用模型；请重新生成回执。",
+            true,
+            message.requestId,
+          );
+          await this.sendChangelistsSnapshot(
+            session,
+            message.requestId,
+            candidates,
+          );
+          return;
+        }
         state!.pendingReceipt = undefined;
+        const absoluteByRelative = new Map(
+          candidates.map((item) => [item.relativePath, item.absolutePath]),
+        );
+        const selectedAbsolutePaths = revalidation.selectedPaths
+          .map((relativePath) => absoluteByRelative.get(relativePath))
+          .filter(
+            (absolutePath): absolutePath is string =>
+              absolutePath !== undefined,
+          );
         await this.runChangelistSplit(
           session,
           candidates,
@@ -5090,6 +5195,7 @@ export class WorkbenchController implements vscode.Disposable {
               binary: fragment.binary,
             })),
           },
+          selectedAbsolutePaths,
           message.requestId,
         );
         return;
@@ -8805,6 +8911,7 @@ export class WorkbenchController implements vscode.Disposable {
         requiredPrefix: team.requiredPrefix,
         allowedPrefixesText: formatCommitConventionList(team.allowedPrefixes),
         warnings: teamState.warnings,
+        samplePreview: state.teamSamplePreview,
         memory: {
           source: memory.source,
           count: memory.entries.length,
@@ -10582,14 +10689,13 @@ export class WorkbenchController implements vscode.Disposable {
   }
 
   /**
-   * v0.0.12 批次 B：拆分建议公共编排（元数据分组与语义拆分共用）——
-   * 构建请求（含仍有效确认事实）→ 调用模型/本地回退 → 范围/候选/去重
-   * 校验 → 写入 changelistState → 下发快照。requestOptions 传入 diffs。
+   * V025-R49：本地整理（确定性独立动作，不经过模型）。
+   * 只用路径元数据按目录/文件类型分组：不读取差异正文、不调用 Provider，
+   * 模型配置与否不影响结果；来源固定为 `local-rule`（本地确定性）。
    */
-  private async runChangelistSplit(
+  private async runChangelistLocalTidy(
     session: WorkbenchSession,
     candidates: Awaited<ReturnType<typeof collectCommitCandidates>>,
-    requestOptions: Parameters<typeof buildCommitSplitAiRequest>[3],
     requestId?: string,
   ): Promise<void> {
     const convention = await resolveCommitConventionConfig(
@@ -10608,15 +10714,9 @@ export class WorkbenchController implements vscode.Disposable {
       {
         convention: toAiCommitConventionHint(convention.config),
         userConfirmations: this.readValidConfirmations(session, candidates),
-        ...requestOptions,
       },
     );
-    const aiResult = await this.runAiScenario(
-      "commitSplit",
-      createLocalCommitSplitResult(request),
-      (provider) => provider.suggestCommitSplits(request),
-    );
-    const { result: rawResult, source, fallbackReason } = aiResult;
+    const rawResult = createLocalCommitSplitResult(request);
     const result = validateCommitSplitResult(
       session.scope,
       rawResult,
@@ -10632,23 +10732,194 @@ export class WorkbenchController implements vscode.Disposable {
         ),
       })),
       warnings: result.warnings,
+      source: "local-rule",
+    };
+    await this.sendChangelistsSnapshot(session, requestId, candidates);
+  }
+
+  /**
+   * v0.0.12 批次 B：语义拆分公共编排（仅 changelist/run-semantic 调用）——
+   * 构建请求（含仍有效确认事实 + 受限差异）→ 调用模型/本地回退 → 范围/候选/去重
+   * 校验 → 写入 changelistState → 下发快照。requestOptions 传入 diffs。
+   * V025-R49：本地整理不再经过此方法（见 runChangelistLocalTidy）。
+   * V025-R50：selectedAbsolutePaths 必须是由回执绑定的明确选择解析而来，
+   * 模型请求只含该集合；模型结果逐项严格校验，整份拒绝时不修剪残余。
+   */
+  private async runChangelistSplit(
+    session: WorkbenchSession,
+    candidates: Awaited<ReturnType<typeof collectCommitCandidates>>,
+    requestOptions: Parameters<typeof buildCommitSplitAiRequest>[3],
+    selectedAbsolutePaths: string[],
+    requestId?: string,
+  ): Promise<void> {
+    const convention = await resolveCommitConventionConfig(
+      session.scope.repositoryRoot,
+      session.scope.project?.projectRoot,
+    );
+    const request = buildCommitSplitAiRequest(
+      session.scope,
+      candidates,
+      selectedAbsolutePaths,
+      {
+        convention: toAiCommitConventionHint(convention.config),
+        userConfirmations: this.readValidConfirmations(session, candidates),
+        ...requestOptions,
+      },
+    );
+    const aiResult = await this.runAiScenario(
+      "commitSplit",
+      createLocalCommitSplitResult(request),
+      (provider) => provider.suggestCommitSplits(request),
+    );
+    const { result: rawResult, source, fallbackReason } = aiResult;
+    // V025-R50：逐项严格校验——虚构、越界、重复或过期路径出现任一即整份拒绝。
+    const absoluteByRelative = new Map(
+      candidates.map((candidate) => [
+        candidate.relativePath,
+        candidate.absolutePath,
+      ]),
+    );
+    const selectedRelative = selectedAbsolutePaths.map(
+      (absolutePath) =>
+        [...absoluteByRelative.entries()].find(
+          ([, absolute]) => absolute === absolutePath,
+        )?.[0] ??
+        normalizeRelative(
+          path.relative(session.scope.repositoryRoot, absolutePath),
+        ),
+    );
+    const strict = validateCommitSplitResultStrict(
+      session.scope,
+      rawResult,
+      selectedRelative,
+      candidates,
+    );
+    if (!strict.valid) {
+      const rejected: NonNullable<WorkbenchSession["changelistState"]> =
+        session.changelistState ?? {
+          suggestions: [],
+          warnings: [],
+          source: "local-rule",
+        };
+      rejected.suggestions = [];
+      rejected.warnings = [];
+      rejected.fallbackReason = undefined;
+      rejected.feedback = `模型返回的拆分建议包含无效路径，已整体拒绝，未采用：${strict.errors.slice(0, 3).join("；")}${strict.errors.length > 3 ? "等" : ""}。此前的本地整理建议已一并清空，人工选择保留，草稿不受影响；可重试或改用本地整理。`;
+      session.changelistState = rejected;
+      await this.sendError(
+        "changelists",
+        "模型建议已拒绝",
+        rejected.feedback,
+        true,
+        requestId,
+      );
+      await this.sendChangelistsSnapshot(session, requestId, candidates);
+      return;
+    }
+    session.changelistState = {
+      suggestions: strict.splits.map((item) => ({
+        ...item,
+        paths: item.paths.map((filePath) =>
+          normalizeRelative(
+            path.relative(session.scope.repositoryRoot, filePath),
+          ),
+        ),
+      })),
+      warnings: strict.warnings,
       source,
       fallbackReason,
     };
     await this.sendChangelistsSnapshot(session, requestId, candidates);
   }
 
-  /** v0.0.12 批次 B：语义拆分受限差异回执（任务 changelist-split，不调用模型）。 */
+  /**
+   * V025-R50：语义拆分分析选择解析（项目内相对路径）。
+   * - selectAll=true：显式选择当前范围全部可拆分候选（仍在原 scope 内）；
+   * - selectedPaths：明确勾选集合，整批校验，任一无效即拒绝；
+   * - 缺省：沿用会话共享选择，与刷新后候选求交收缩并说明移除原因；
+   * - 空选择：一律要求明确选择分析范围，不回退为全部候选。
+   */
+  private resolveChangelistSplitSelection(
+    session: WorkbenchSession,
+    candidates: Awaited<ReturnType<typeof collectCommitCandidates>>,
+    data: Record<string, unknown> | undefined,
+  ): { relative: string[]; shrunkReasons: string[] } | { error: string } {
+    if (data?.selectAll === true) {
+      return {
+        relative: candidates
+          .filter(
+            (item) =>
+              item.selection !== "blocked" && item.selection !== "excluded",
+          )
+          .map((item) => item.relativePath),
+        shrunkReasons: [],
+      };
+    }
+    const requested = data ? asStringArray(data.selectedPaths) : undefined;
+    if (requested !== undefined) {
+      if (requested.length === 0) {
+        return { error: CHANGELIST_SPLIT_SELECTION_REQUIRED };
+      }
+      const validation = validateCommitSelection(requested, candidates);
+      if (
+        validation.missing.length > 0 ||
+        validation.notSubmittable.length > 0
+      ) {
+        return {
+          error: `语义拆分选择包含无效文件：${validation.missing.length} 个不在当前候选集合${validation.notSubmittable.length > 0 ? `，${validation.notSubmittable.length} 个为排除/阻止项` : ""}。已保留原有选择，未生成回执；请刷新状态后重新选择。`,
+        };
+      }
+      return { relative: validation.selectedPaths, shrunkReasons: [] };
+    }
+    const shared = session.selectedPaths ?? [];
+    if (shared.length === 0) {
+      return { error: CHANGELIST_SPLIT_SELECTION_REQUIRED };
+    }
+    const filtered = filterCommitSelectionByCandidates(shared, candidates);
+    if (filtered.kept.length === 0) {
+      return {
+        error:
+          "已带入的选择已全部失效（文件消失或变为排除/阻止项），请选择要分析的文件，或明确选择“分析当前范围全部候选”。",
+      };
+    }
+    return { relative: filtered.kept, shrunkReasons: filtered.removedReasons };
+  }
+
+  /**
+   * v0.0.12 批次 B：语义拆分受限差异回执（任务 changelist-split，不调用模型）。
+   * V025-R50：默认按明确勾选集合生成回执（data.selectedPaths / data.selectAll /
+   * 会话共享选择），空选择要求明确选择分析范围；回执绑定该集合，改选后旧 token 作废。
+   */
   private async previewChangelistSplitReceipt(
     session: WorkbenchSession,
     requestId?: string,
+    data?: Record<string, unknown>,
   ): Promise<void> {
     const candidates = await this.collectScopeCandidates(session);
-    const selectedPaths = candidates
+    const resolved = this.resolveChangelistSplitSelection(
+      session,
+      candidates,
+      data,
+    );
+    if ("error" in resolved) {
+      session.changelistState = session.changelistState ?? {
+        suggestions: [],
+        warnings: [],
+        source: "local-rule",
+      };
+      session.changelistState.pendingReceipt = undefined;
+      session.changelistState.feedback = resolved.error;
+      await this.sendChangelistsSnapshot(session, requestId, candidates);
+      return;
+    }
+    const absoluteByRelative = new Map(
+      candidates.map((item) => [item.relativePath, item.absolutePath]),
+    );
+    const selectedPaths = resolved.relative
+      .map((relativePath) => absoluteByRelative.get(relativePath))
       .filter(
-        (item) => item.selection !== "blocked" && item.selection !== "excluded",
-      )
-      .map((item) => item.absolutePath);
+        (absolutePath): absolutePath is string => absolutePath !== undefined,
+      );
     if (selectedPaths.length === 0) {
       session.changelistState = {
         suggestions: [],
@@ -10664,6 +10935,7 @@ export class WorkbenchController implements vscode.Disposable {
       session,
       candidates,
       selectedPaths,
+      resolved.relative,
       storedAi,
     );
     if (!pending) {
@@ -10683,12 +10955,18 @@ export class WorkbenchController implements vscode.Disposable {
     };
     session.changelistState.pendingReceipt = pending;
     await this.postChangelistReceipt(pending, requestId);
+    // V025-R50：会话共享选择与刷新后候选求交收缩时，随快照说明移除原因。
+    if (resolved.shrunkReasons.length > 0) {
+      session.changelistState.feedback = `分析范围已按当前候选收缩：${resolved.shrunkReasons.slice(0, 3).join("；")}${resolved.shrunkReasons.length > 3 ? "等" : ""}。`;
+      await this.sendChangelistsSnapshot(session, requestId, candidates);
+    }
   }
 
   private async collectChangelistSplitReceipt(
     session: WorkbenchSession,
     candidates: Awaited<ReturnType<typeof collectCommitCandidates>>,
     selectedAbsolutePaths: string[],
+    selectedRelativePaths: readonly string[],
     storedAi: Awaited<ReturnType<typeof readStoredAiConfiguration>>,
   ): Promise<
     | NonNullable<WorkbenchSession["changelistState"]>["pendingReceipt"]
@@ -10710,6 +10988,8 @@ export class WorkbenchController implements vscode.Disposable {
       return {
         token: randomUUID(),
         task: CHANGELIST_SPLIT_TASK,
+        // V025-R50：回执绑定明确分析选择（项目内相对路径，去重排序）。
+        selectedPaths: [...new Set(selectedRelativePaths)].sort(),
         receipt: { ...receipt, task: CHANGELIST_SPLIT_TASK },
         coverage: collected.coverage,
         files: collected.coverageFiles,
