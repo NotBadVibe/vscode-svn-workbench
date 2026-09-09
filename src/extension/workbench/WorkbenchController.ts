@@ -5036,17 +5036,17 @@ export class WorkbenchController implements vscode.Disposable {
         await this.exportReleaseNotes(session, message.requestId);
         return;
       case "changelist/suggest": {
-        // v0.0.12 批次 B：semantic 模式先走受限差异回执（不调用模型），
-        // 确认后再经 changelist/run-semantic 语义拆分；默认 metadata 分组。
+        // V025-R49：本地整理是确定性独立动作，不经过模型。
+        // semantic 模式先走受限差异回执（不调用模型），
+        // 确认后再经 changelist/run-semantic 语义拆分；默认 metadata 为纯本地分组。
         if (asString(data.mode) === "semantic") {
           await this.previewChangelistSplitReceipt(session, message.requestId);
           return;
         }
         const candidates = await this.collectScopeCandidates(session);
-        await this.runChangelistSplit(
+        await this.runChangelistLocalTidy(
           session,
           candidates,
-          {},
           message.requestId,
         );
         return;
@@ -10613,9 +10613,59 @@ export class WorkbenchController implements vscode.Disposable {
   }
 
   /**
-   * v0.0.12 批次 B：拆分建议公共编排（元数据分组与语义拆分共用）——
-   * 构建请求（含仍有效确认事实）→ 调用模型/本地回退 → 范围/候选/去重
+   * V025-R49：本地整理（确定性独立动作，不经过模型）。
+   * 只用路径元数据按目录/文件类型分组：不读取差异正文、不调用 Provider，
+   * 模型配置与否不影响结果；来源固定为 `local-rule`（本地确定性）。
+   */
+  private async runChangelistLocalTidy(
+    session: WorkbenchSession,
+    candidates: Awaited<ReturnType<typeof collectCommitCandidates>>,
+    requestId?: string,
+  ): Promise<void> {
+    const convention = await resolveCommitConventionConfig(
+      session.scope.repositoryRoot,
+      session.scope.project?.projectRoot,
+    );
+    const selectedPaths = candidates
+      .filter(
+        (item) => item.selection !== "blocked" && item.selection !== "excluded",
+      )
+      .map((item) => item.absolutePath);
+    const request = buildCommitSplitAiRequest(
+      session.scope,
+      candidates,
+      selectedPaths,
+      {
+        convention: toAiCommitConventionHint(convention.config),
+        userConfirmations: this.readValidConfirmations(session, candidates),
+      },
+    );
+    const rawResult = createLocalCommitSplitResult(request);
+    const result = validateCommitSplitResult(
+      session.scope,
+      rawResult,
+      selectedPaths,
+    );
+    session.changelistState = {
+      suggestions: result.splits.map((item) => ({
+        ...item,
+        paths: item.paths.map((filePath) =>
+          normalizeRelative(
+            path.relative(session.scope.repositoryRoot, filePath),
+          ),
+        ),
+      })),
+      warnings: result.warnings,
+      source: "local-rule",
+    };
+    await this.sendChangelistsSnapshot(session, requestId, candidates);
+  }
+
+  /**
+   * v0.0.12 批次 B：语义拆分公共编排（仅 changelist/run-semantic 调用）——
+   * 构建请求（含仍有效确认事实 + 受限差异）→ 调用模型/本地回退 → 范围/候选/去重
    * 校验 → 写入 changelistState → 下发快照。requestOptions 传入 diffs。
+   * V025-R49：本地整理不再经过此方法（见 runChangelistLocalTidy）。
    */
   private async runChangelistSplit(
     session: WorkbenchSession,

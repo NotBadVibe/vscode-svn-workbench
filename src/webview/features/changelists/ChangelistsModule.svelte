@@ -506,19 +506,25 @@
 
   let receiptExpanded = $state(false);
   /*
-   * v0.1.6 V016-D：语义拆分收进 AssistancePanel（单一「需要帮助」入口）。
-   * - 页头只保留次级「自动整理」（去 sparkle，直接 changelist/suggest metadata，
-   *   无回执预告；模型可用时 Host 实际可调模型，来源徽章如实标“模型建议”）。
-   * - 面板模型组唯一模型入口「按改动意图拆分」（kind:model），回执卡与三动作
-   *   移入面板 children，回执 token 仍由页面闭包持有，绝不进入组件。
+   * v0.1.6 V016-D + V025-R49：语义拆分收进 AssistancePanel（单一「需要帮助」入口）。
+   * - 页头「自动整理」是本地确定性动作（changelist/suggest metadata，Host 纯本地规则，
+   *   不经模型、不外发，来源固定“本地检查”）。
+   * - 面板本地组唯一本地入口「自动整理」（kind:local），模型组唯一模型入口
+   *   「按改动意图拆分」（kind:model），回执卡与三动作移入面板 children，
+   *   回执 token 仍由页面闭包持有，绝不进入组件。
    * - 页面级唯一 primary=意向单入口（确认应用/移出变更集）；面板内展开动作不计。
-   * - 协议与 Host 零改动。
+   * - 仅元数据模式不声称理解业务意图（purpose 声明未读取差异正文）。
    */
   let assistanceExpanded = $state(false);
   const assistanceConfigured = $derived(
     !snapshot.aiPrivacy.model.includes("未配置"),
   );
   const assistanceSource = $derived<AssistanceSourceState>(snapshot.source);
+  /*
+   * V025-R49：本地入口唯一性——页头「自动整理」是唯一的本地整理入口
+   * （本地确定性，不外发）；面板只承载唯一的模型入口，避免同名双按钮
+   * 造成键盘/读屏歧义。本地来源/输入类型见页头说明、外发预览与建议来源标注。
+   */
   const assistanceModelActions = $derived.by((): AssistanceActionItem[] => [
     {
       label: changelistAssistanceLabels.semanticSplit,
@@ -746,12 +752,13 @@
       <span class="eyebrow">SVN 变更集</span>
       <h1>变更集管理</h1>
       <p>
-        建议分组按目录和文件类型生成，不表示语义或依赖关系分析。模型可用时来源为“模型建议”，否则为本地检查；{draftStorageLabels.changelistCheckHint}
+        自动整理是本地确定性分组（按目录和文件类型，不外发，不理解业务意图）。按改动意图拆分需确认外发回执后才调用模型；{draftStorageLabels.changelistCheckHint}
       </p>
     </div>
-    <!-- v0.1.6 V016-D：页头只保留次级「自动整理」（去 sparkle，不弹回执预告）；语义拆分收进下方 AssistancePanel。 -->
+    <!-- V025-R49：页头「自动整理」是唯一的本地确定性入口（不弹回执预告，不外发）；语义拆分收进下方 AssistancePanel。 -->
     <button
       class="button button--secondary"
+      title={changelistAssistanceLabels.autoTidyHint}
       onclick={() => onAction("changelist/suggest", { mode: "metadata" })}
       >{changelistAssistanceLabels.autoTidy}</button
     >
@@ -761,8 +768,10 @@
     </div>{/if}
   <div class="privacy-note">
     <strong>外发预览</strong><span
-      >{snapshot.aiPrivacy.data}；最多 {snapshot.aiPrivacy.fileLimit} 个文件；模型
-      {snapshot.aiPrivacy.model}；不含历史。点击“自动整理”才会发送。</span
+      >自动整理是本地确定性动作，不发送任何内容；最多 {snapshot.aiPrivacy
+        .fileLimit} 个文件；模型
+      {snapshot.aiPrivacy
+        .model}；不含历史。只有“按改动意图拆分”确认回执后才会发送。</span
     >
   </div>
   <!-- v0.1.6 V016-D：分组帮助单一「需要帮助」入口（默认折叠；回执卡与三动作收进面板，token 链原样）。 -->
