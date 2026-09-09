@@ -18,6 +18,8 @@ export const FileType = {
 
 export const Uri = {
   file: (fsPath: string) => ({ fsPath }),
+  /** V024-R42：诊断 openUrl 单测需要 Uri.parse（仅透传，安全校验仍走 URL）。 */
+  parse: (value: string) => ({ toString: () => value }),
   from: (parts: { scheme: string; path: string }) => ({
     ...parts,
     toString: () => `${parts.scheme}:${parts.path}`,
@@ -50,6 +52,8 @@ export class Disposable {
 
 export const env = {
   clipboard: { writeText: async () => undefined },
+  /** V024-R42：诊断 openUrl 安全动作单测可断言外部打开目标。 */
+  openExternal: async () => undefined,
 };
 
 export interface MockWebviewPanel {

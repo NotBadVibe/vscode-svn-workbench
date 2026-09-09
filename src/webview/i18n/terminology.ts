@@ -593,19 +593,41 @@ export const scopeSourceLabels: Record<WorkbenchScopeView["source"], string> = {
  */
 export const draftStorageLabels = {
   sharedCommitDraft:
-    "与提交页共享同一份草稿，仅本次会话保留，尚未写入文件。切换模块不会生成第二份提交说明。",
+    "与提交页共享同一份草稿，保存在工作区状态中，切换模块不会生成第二份提交说明；尚未写入文件，提交前仍需预览确认。",
   changelistCheckHint: "应用前会重新检查范围与最新工作副本状态。",
   advancedGuardHint: "本地有未提交修改时，将阻止执行，请先处理本地修改后再试。",
   checkpointFailedDetail: "检查点保存失败，草稿仍保留在本次会话中。",
   validationFailed: "校验未通过",
 } as const;
 
-/** V022-R30：冲突合并草稿已同步（用户语言，诊断代码另进详情）。 */
+/**
+ * V024-R51：存续范围三态用户语言（集中收口，页面不各自造词）。
+ * - 未同步：本地输入尚未形成检查点；
+ * - 仅会话保留：会话检查点已保留，未写入工作副本，重启后不恢复；
+ * - 已写入工作副本：已保存到磁盘工作副本文件，仍需走预览确认才会提交/标记解决。
+ * 会话检查点绝不标为已写文件；重启后无正文恢复必须明示，不得假装已恢复。
+ */
+export const draftPersistenceLabels = {
+  unsynced:
+    "未同步：本地输入尚未形成检查点，切换、刷新或重载前请先保存检查点或复制",
+  sessionOnly: "仅会话保留：会话检查点已保留，未写入工作副本，重启后不恢复",
+  written:
+    "已写入工作副本：已保存到磁盘工作副本文件，仍需走预览确认才会提交或标记解决",
+  restartNotice:
+    "重启后草稿正文不恢复；如需保留请先复制或导出。会话检查点不是已写文件。",
+  viewPrefsOnly:
+    "视图偏好仅保存排序、密度与展开状态，不保存正文、路径候选与凭据；按工作区与项目隔离，可随时清除。",
+} as const;
+
+/**
+ * V022-R30：冲突合并草稿已同步（用户语言，诊断代码另进详情）。
+ * V024-R51：会话检查点绝不标为已写文件；明确未写入工作副本、重启后不恢复、复制/导出为可靠出口。
+ */
 export function conflictDraftSyncedLabel(
   revision: number | string,
   dirty: boolean,
 ): string {
-  return `合并草稿仅本次会话保留、尚未写入文件（修订 ${revision}，${dirty ? "有未保存变更" : "已保存"}），关闭任务前可复制或导出。`;
+  return `会话检查点已保留（合并草稿仅本次会话保留，未写入工作副本，修订 ${revision}，${dirty ? "有未保存变更" : "检查点已保存"}；重启后不恢复，关闭任务前可复制或导出）。`;
 }
 
 export const conflictDraftWorkingLabels = {

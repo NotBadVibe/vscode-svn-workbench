@@ -1189,6 +1189,25 @@ export interface DiagnosticsSnapshot {
   reportText: string;
 }
 
+/**
+ * V024-R38/R48：本地搁置清单条目视图（Host 签发，Webview 只展示）。
+ * - displayName 为中文显示名；id/patchFileName 为内部安全标识；
+ * - integrity 说明补丁完整性；缺省 shelves 表示尚未加载。
+ */
+export interface ShelfEntryView {
+  id: string;
+  displayName: string;
+  createdAt: string;
+  fileCount: number;
+  files: string[];
+  baselineRevision?: string;
+  repositoryUuid: string;
+  projectName?: string;
+  patchFileName: string;
+  integrity: "ok" | "missing-patch" | "corrupt" | "unreadable";
+  integrityDetail?: string;
+}
+
 export interface RepositorySnapshot {
   kind: "repository";
   recovery?: {
@@ -1255,7 +1274,8 @@ export interface RepositorySnapshot {
         | "relocate"
         | "merge"
         | "apply-patch"
-        | "shelf";
+        | "shelf"
+        | "restore-shelf";
       title: string;
       commands: string[];
       details: string[];
@@ -1299,6 +1319,9 @@ export interface RepositorySnapshot {
       rangeNote?: string;
     };
     feedback?: string;
+    shelves?: ShelfEntryView[];
+    shelvesError?: string;
+    shelfFeedback?: string;
   };
 }
 
@@ -1454,8 +1477,19 @@ export type WorkbenchModuleSnapshot =
   | ActivitySnapshot;
 
 /**
+ * V024-R39：项目级统计状态（Host/Webview/Mock 共用）。
+ * - loading：正在采集（Webview 本地重试等待态；Host 快照终态不下发 loading）；
+ * - ready：统计可信（counts 缺省仅表示非 SVN/路径缺失等不适用）；
+ * - error：采集失败且无上一成功值（counts 缺省，不得当作 0）；
+ * - stale：采集失败但保留上一成功值（counts 为过期值，须配 staleReason）。
+ */
+export type ProjectStatsStatus = "loading" | "ready" | "error" | "stale";
+
+/**
  * v0.0.7 项目总览（§6.1）：只读优先的项目列表。允许聚合数量，但不得
  * 把多个项目自动合成一个 operationScope。
+ * V024-R39：统计状态显式建模；零修改（counts 全 0）与未读取/失败（counts 缺省）
+ * 不得等同；stale 必须保留上一成功值并说明过期原因与时间。
  */
 export interface ProjectOverviewItem {
   /** workspace folder / 项目名称。 */
@@ -1478,8 +1512,18 @@ export interface ProjectOverviewItem {
   workingCopyRoot?: string;
   /** 所属仓库 UUID（仅展示）。 */
   repositoryUuid?: string;
-  /** 变更、冲突和未版本化数量；非 SVN 项目缺省。 */
+  /** 变更、冲突和未版本化数量；非 SVN 项目缺省。
+   * V024-R39：缺省表示未读取/失败/不适用，绝不等于 0；零修改必须显式全 0。
+   */
   counts?: { changes: number; conflicts: number; unversioned: number };
+  /** V024-R39：项目级统计状态（Host 签发，Webview 只展示不推导）。 */
+  statsStatus: ProjectStatsStatus;
+  /** V024-R39：采集失败时的中文原因（error/stale 携带，ready 缺省）。 */
+  statsError?: string;
+  /** V024-R39：最近一次成功统计时间（ISO；ready/stale 携带）。 */
+  statsUpdatedAt?: string;
+  /** V024-R39：过期原因（stale 必带，如“工作副本统计失败，已保留上次成功值”）。 */
+  staleReason?: string;
   /** 是否为当前会话项目。 */
   current: boolean;
 }
@@ -1488,6 +1532,11 @@ export interface ProjectsSnapshot {
   kind: "projects";
   projects: ProjectOverviewItem[];
   generatedAt: string;
+  /**
+   * V024-R39：统计请求序号（Host 每次构建递增）。Webview 保留已见最大
+   * 序号，旧序号快照晚到直接忽略，不覆盖新状态。
+   */
+  statsSeq: number;
 }
 
 export interface MessageEnvelope<TType extends string, TPayload> {
@@ -1750,6 +1799,10 @@ export type WebviewAction =
   | "repository/execute-advanced"
   | "repository/export-patch"
   | "repository/select-patch"
+  | "repository/refresh-shelves"
+  | "repository/preview-shelf-restore"
+  | "repository/export-shelf"
+  | "repository/delete-shelf"
   | "repository/generate-release-notes"
   | "repository/export-release-notes"
   | "changelist/suggest"
@@ -1768,6 +1821,7 @@ export type WebviewAction =
   | "file/copy-path"
   | "projects/open-task"
   | "projects/switch"
+  | "projects/retry-stats"
   | "activity/refresh"
   | "activity/retry"
   | "activity/open-output"
@@ -1905,6 +1959,10 @@ export const webviewActions = [
   "repository/execute-advanced",
   "repository/export-patch",
   "repository/select-patch",
+  "repository/refresh-shelves",
+  "repository/preview-shelf-restore",
+  "repository/export-shelf",
+  "repository/delete-shelf",
   "repository/generate-release-notes",
   "repository/export-release-notes",
   "changelist/suggest",
@@ -1923,6 +1981,7 @@ export const webviewActions = [
   "file/copy-path",
   "projects/open-task",
   "projects/switch",
+  "projects/retry-stats",
   "activity/refresh",
   "activity/retry",
   "activity/open-output",
@@ -2533,6 +2592,139 @@ export function isUpdatePreviewView(
 }
 
 /**
+ * V024-R39：项目统计状态守卫（Host/Webview/Mock 共用）。
+ * 非法状态字符串一律拒绝（fail-closed，调用方按无统计处理，不当作 0）。
+ */
+export function isProjectStatsStatus(
+  value: unknown,
+): value is ProjectStatsStatus {
+  return (
+    value === "loading" ||
+    value === "ready" ||
+    value === "error" ||
+    value === "stale"
+  );
+}
+
+/**
+ * V024-R39：项目总览条目守卫（Host/Webview/Mock 共用）。
+ * - statsStatus 必填且为合法状态；
+ * - counts 缺省表示未读取/失败/不适用（绝不等于 0），携带时三项必须为有限数值；
+ * - stale 必须携带上一成功值（counts）与 staleReason；
+ * - ready/stale 携带 statsUpdatedAt（成功时间），error/stale 携带 statsError（中文原因）。
+ * 畸形载荷一律拒绝（fail-closed，调用方按无该项目统计处理）。
+ */
+export function isProjectOverviewItem(
+  value: unknown,
+): value is ProjectOverviewItem {
+  if (!isRecord(value)) return false;
+  if (
+    typeof value.name !== "string" ||
+    typeof value.absolutePath !== "string" ||
+    typeof value.exists !== "boolean" ||
+    (value.binding !== "workingCopyRoot" &&
+      value.binding !== "parentWorkingCopy" &&
+      value.binding !== "nestedWorkingCopy" &&
+      value.binding !== "external" &&
+      value.binding !== "notSvn" &&
+      value.binding !== "missing") ||
+    typeof value.bindingLabel !== "string" ||
+    typeof value.current !== "boolean" ||
+    !isProjectStatsStatus(value.statsStatus)
+  ) {
+    return false;
+  }
+  if (
+    (value.workingCopyRoot !== undefined &&
+      typeof value.workingCopyRoot !== "string") ||
+    (value.repositoryUuid !== undefined &&
+      typeof value.repositoryUuid !== "string") ||
+    (value.statsError !== undefined && typeof value.statsError !== "string") ||
+    (value.statsUpdatedAt !== undefined &&
+      typeof value.statsUpdatedAt !== "string") ||
+    (value.staleReason !== undefined && typeof value.staleReason !== "string")
+  ) {
+    return false;
+  }
+  if (value.counts !== undefined) {
+    if (!isRecord(value.counts)) return false;
+    const counts = value.counts as Record<string, unknown>;
+    for (const key of ["changes", "conflicts", "unversioned"] as const) {
+      if (typeof counts[key] !== "number" || !Number.isFinite(counts[key])) {
+        return false;
+      }
+    }
+  }
+  // stale 必须保留上一成功值并说明过期原因：缺 counts 或缺 staleReason 即非法。
+  if (value.statsStatus === "stale") {
+    if (value.counts === undefined || typeof value.staleReason !== "string") {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * V024-R39：项目总览快照守卫（Host/Webview/Mock 共用）。
+ * statsSeq 必填（旧序号快照由 Webview 按序号忽略，不在此拒绝）；
+ * 任一条目非法即整快照拒绝（fail-closed，调用方保留上一可信快照）。
+ */
+export function isProjectsSnapshot(value: unknown): value is ProjectsSnapshot {
+  if (!isRecord(value)) return false;
+  if (
+    value.kind !== "projects" ||
+    !Array.isArray(value.projects) ||
+    typeof value.generatedAt !== "string" ||
+    typeof value.statsSeq !== "number" ||
+    !Number.isFinite(value.statsSeq)
+  ) {
+    return false;
+  }
+  for (const entry of value.projects as unknown[]) {
+    if (!isProjectOverviewItem(entry)) return false;
+  }
+  return true;
+}
+
+/**
+ * V024-R38/R48：搁置条目视图守卫（Host/Webview/Mock 共用）。
+ * 缺省字段即合法（旧快照兼容）；携带时逐项严检，畸形拒绝。
+ */
+export function isShelfEntryView(value: unknown): value is ShelfEntryView {
+  if (!isRecord(value)) return false;
+  if (
+    typeof value.id !== "string" ||
+    value.id.length === 0 ||
+    typeof value.displayName !== "string" ||
+    value.displayName.length === 0 ||
+    typeof value.createdAt !== "string" ||
+    typeof value.fileCount !== "number" ||
+    !Number.isFinite(value.fileCount) ||
+    !Array.isArray(value.files) ||
+    !(value.files as unknown[]).every((item) => typeof item === "string") ||
+    typeof value.repositoryUuid !== "string" ||
+    typeof value.patchFileName !== "string" ||
+    (value.integrity !== "ok" &&
+      value.integrity !== "missing-patch" &&
+      value.integrity !== "corrupt" &&
+      value.integrity !== "unreadable")
+  ) {
+    return false;
+  }
+  if (
+    (value.baselineRevision !== undefined &&
+      typeof value.baselineRevision !== "string") ||
+    (value.projectName !== undefined &&
+      typeof value.projectName !== "string") ||
+    (value.integrityDetail !== undefined &&
+      typeof value.integrityDetail !== "string")
+  ) {
+    return false;
+  }
+  return true;
+}
+
+/**
  * V021-R14/R15：RepositorySnapshot / UpdateSnapshot 类型守卫（Host/Webview/Mock 共用）。
  * 无 releaseNotes/preview 的旧快照继续接受（向后兼容）；携带时必须分别通过
  * isReleaseNotesView/isUpdatePreviewView，否则整快照拒绝（fail-closed）。
@@ -2556,6 +2748,20 @@ export function isRepositorySnapshot(
   if (
     advanced.releaseNotes !== undefined &&
     !isReleaseNotesView(advanced.releaseNotes)
+  ) {
+    return false;
+  }
+  if (advanced.shelves !== undefined) {
+    if (!Array.isArray(advanced.shelves)) return false;
+    for (const entry of advanced.shelves as unknown[]) {
+      if (!isShelfEntryView(entry)) return false;
+    }
+  }
+  if (
+    (advanced.shelvesError !== undefined &&
+      typeof advanced.shelvesError !== "string") ||
+    (advanced.shelfFeedback !== undefined &&
+      typeof advanced.shelfFeedback !== "string")
   ) {
     return false;
   }

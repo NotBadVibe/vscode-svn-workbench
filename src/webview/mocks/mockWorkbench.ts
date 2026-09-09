@@ -324,6 +324,8 @@ const mockModifiedByPath = new Map<string, string>();
 let currentMockSessionId = "mock-session-id";
 /** v0.0.17 批次 E：会话共享筛选预设（mock 内存，与 Host 会话状态总线语义一致）。 */
 let mockFilterPresets: FilterPresetView[] = [];
+/** V024-R39：mock 项目统计序号（每次构建 projects 快照递增，模拟 Host statsSeq）。 */
+let mockProjectsSeq = 0;
 
 /** 重建当前模块快照（预设存取后回发，模拟 Host 下发新快照）。 */
 function currentModuleSnapshot(): WorkbenchModuleSnapshot {
@@ -796,9 +798,18 @@ export function startMockWorkbench(): void {
         changes: ["changes", changesSnapshot],
         commit: ["commit", commitSnapshot],
         update: ["update", updateSnapshot],
+        // V024-R40：冲突数直达该项目冲突任务（mock 直接注入冲突快照）。
+        conflicts: ["conflicts", () => conflictSnapshot()],
       };
       const entry = taskSnapshots[data.task];
       if (entry) injectSnapshot(entry[0], entry[1]());
+    }
+    // V024-R39：mock 单项目重试即下发新序号快照（其他项目值保持可信）。
+    if (
+      action === "projects/retry-stats" &&
+      typeof data.projectRoot === "string"
+    ) {
+      injectSnapshot("projects", projectsSnapshot());
     }
     if (action === "open-diff" && typeof data.relativePath === "string") {
       const target = data.relativePath;
@@ -2410,20 +2421,24 @@ export function startMockWorkbench(): void {
     }
     if (
       action === "repository/preview-advanced" ||
-      action === "repository/select-patch"
+      action === "repository/select-patch" ||
+      action === "repository/preview-shelf-restore"
     ) {
       const operation =
         action === "repository/select-patch"
           ? "apply-patch"
-          : typeof data.operation === "string"
-            ? data.operation
-            : "branch";
+          : action === "repository/preview-shelf-restore"
+            ? "restore-shelf"
+            : typeof data.operation === "string"
+              ? data.operation
+              : "branch";
       const destructive = [
         "switch",
         "relocate",
         "merge",
         "apply-patch",
         "shelf",
+        "restore-shelf",
       ].includes(operation);
       const titleByOperation: Record<string, string> = {
         branch: "创建分支",
@@ -2432,6 +2447,7 @@ export function startMockWorkbench(): void {
         relocate: "重定位仓库根地址",
         merge: "合并到当前工作副本",
         shelf: "创建本地搁置（补丁 + 还原）",
+        "restore-shelf": "恢复本地搁置",
         "apply-patch": "应用补丁",
       };
       const title = titleByOperation[operation] ?? "仓库操作";
@@ -2486,6 +2502,18 @@ export function startMockWorkbench(): void {
         "repository",
         repositorySnapshot({
           advanced: { feedback: "补丁已导出：/tmp/svn-workbench.patch" },
+        }),
+      );
+    }
+    if (
+      action === "repository/refresh-shelves" ||
+      action === "repository/export-shelf" ||
+      action === "repository/delete-shelf"
+    ) {
+      injectSnapshot(
+        "repository",
+        repositorySnapshot({
+          advanced: { shelfFeedback: "搁置清单已刷新。" },
         }),
       );
     }
@@ -3774,6 +3802,7 @@ function settingsSnapshot(
 }
 
 function projectsSnapshot(): WorkbenchModuleSnapshot {
+  // V024-R39：统计状态显式建模；零修改（全 0）与未读取/失败（无 counts）不等同。
   return {
     kind: "projects",
     projects: [
@@ -3785,6 +3814,8 @@ function projectsSnapshot(): WorkbenchModuleSnapshot {
         bindingLabel: "独立工作副本根",
         workingCopyRoot: "/mock/vscode-svn",
         counts: { changes: 2, conflicts: 0, unversioned: 1 },
+        statsStatus: "ready",
+        statsUpdatedAt: new Date().toISOString(),
         current: true,
       },
       {
@@ -3795,6 +3826,10 @@ function projectsSnapshot(): WorkbenchModuleSnapshot {
         bindingLabel: "位于上层工作副本",
         workingCopyRoot: "/mock/code",
         counts: { changes: 1, conflicts: 1, unversioned: 0 },
+        statsStatus: "stale",
+        statsError: "工作副本统计失败：模拟超时；其他项目统计不受影响。",
+        statsUpdatedAt: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+        staleReason: "工作副本统计失败，已保留上次成功值。",
         current: false,
       },
       {
@@ -3803,10 +3838,12 @@ function projectsSnapshot(): WorkbenchModuleSnapshot {
         exists: true,
         binding: "notSvn",
         bindingLabel: "非 SVN 目录",
+        statsStatus: "ready",
         current: false,
       },
     ],
     generatedAt: new Date().toISOString(),
+    statsSeq: ++mockProjectsSeq,
   };
 }
 
@@ -3967,7 +4004,9 @@ function activitySnapshot(): WorkbenchModuleSnapshot {
         repositoryUuid: "mock-repository-uuid",
         scopeLabel: "冲突草稿 src/conflict/example.ts",
         impactedCount: 1,
-        previewSummary: "已保存冲突合并草稿（仅内存）",
+        // V024-R51：与 Host 一致，会话检查点绝不标为已写文件。
+        previewSummary:
+          "会话检查点已保留（未写入工作副本，仅本次会话；重启后不恢复，请复制或导出）",
         nextActions: [{ id: "open-output", label: "打开日志" }],
       },
     ],
@@ -4050,6 +4089,20 @@ function repositorySnapshot(
         parentUrl: "https://svn.example.test/repos/workbench",
         entries: browserEntries,
       },
+      shelves: [
+        {
+          id: "shelf-1700000000000-abcdef",
+          displayName: "修复登录",
+          createdAt: "2026-09-01T10:00:00.000Z",
+          fileCount: 2,
+          files: ["src/a.ts", "src/b.ts"],
+          baselineRevision: "42",
+          repositoryUuid: "mock-repo",
+          projectName: "示例项目",
+          patchFileName: "shelf-1700000000000-abcdef.patch",
+          integrity: "ok",
+        },
+      ],
     },
     ...guardedOverrides,
   } as WorkbenchModuleSnapshot;

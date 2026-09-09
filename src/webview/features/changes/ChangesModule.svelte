@@ -79,7 +79,10 @@
     saveListPreferences,
     type ListDensity,
   } from "../../app/listPreferences";
-  import { onboarding } from "../../app/onboarding.svelte";
+  import {
+    deriveOnboardingBranch,
+    onboarding,
+  } from "../../app/onboarding.svelte";
 
   let {
     snapshot,
@@ -547,9 +550,25 @@
   /*
    * v0.0.18 批次 A（C-03）：引导埋点——看到候选文件完成第 2 步；
    * 勾选至少一个文件完成第 3 步（冲突文件不可提交的说明在引导文案里）。
+   *
+   * V024-R41：干净分支也要能走完第 2 步——渲染即记录（空列表由空态解释
+   * “干净是正常状态”），不再要求 files.length > 0；同时按候选/冲突重算
+   * 分支（与引导纯函数同源，冲突仅在无可提交项时独立成支）。
+   * 纯本地状态更新，不调用 SVN。
    */
   $effect(() => {
-    if (snapshot.files.length > 0) onboarding.recordStep("view-changes");
+    onboarding.recordStep("view-changes");
+    onboarding.setBranch(
+      deriveOnboardingBranch({
+        fileCount: snapshot.files.length,
+        conflictedCount: snapshot.summary.conflicted ?? 0,
+        hasCommittable: snapshot.files.some((file) =>
+          isActionableForMode(file, MODE),
+        ),
+        cliMissing: false,
+        nonSvn: false,
+      }),
+    );
   });
   $effect(() => {
     if (selected.size > 0) onboarding.recordStep("select-files");

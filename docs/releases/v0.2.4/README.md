@@ -35,7 +35,7 @@
 
 - **原评审映射：** 第 38 项。
 - **优先级 / 证据等级：** P1 / 源码已确认的任务闭环缺口。
-- **实施状态：** 待实施。
+- **实施状态：** 已实施（搁置索引/迁移 `src/repository/shelfIndex.ts` + Host 预览/恢复/导出/删除链 `repositoryWorkbenchActions.ts` + 清单 UI `PatchShelfTask.svelte`；证据见 `tests/unit/shelfIndex.test.ts`、`tests/components/PatchShelfTask.test.ts`、`tests/unit/workbenchShelfRestore.test.ts`）。
 - **看到的现状：** Shelf 写入扩展存储目录后主要返回文件路径，页面提供创建与通用选择 Patch，缺少重启后可发现的搁置清单。
 - **用户影响：** 能创建却难找回，用户必须记住私有存储目录，无法形成临时切换任务的闭环。
 - **现有证据与预计改动入口：** [PatchShelfTask.svelte](../../../src/webview/features/repository/tasks/PatchShelfTask.svelte)、[repositoryWorkbenchActions.ts](../../../src/extension/workbench/repositoryWorkbenchActions.ts)、[advancedRepositoryTools.ts](../../../src/repository/advancedRepositoryTools.ts)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
@@ -50,10 +50,10 @@
 
 **验收场景与完成条件：**
 
-- [ ] 创建后重启可找到并预览正确条目。
-- [ ] 同名多项目不串用。
-- [ ] 损坏 Patch、丢文件、存储不可写、scope 不匹配均可恢复或导出。
-- [ ] 恢复需新 token，取消不改工作副本，成功不会自动提交。
+- [x] 创建后重启可找到并预览正确条目。
+- [x] 同名多项目不串用。
+- [x] 损坏 Patch、丢文件、存储不可写、scope 不匹配均可恢复或导出。
+- [x] 恢复需新 token，取消不改工作副本，成功不会自动提交。
 
 <a id="v024-r39"></a>
 
@@ -61,7 +61,7 @@
 
 - **原评审映射：** 第 39 项。
 - **优先级 / 证据等级：** P1 / 源码已确认。
-- **实施状态：** 待实施。
+- **实施状态：** 已实施（统计状态显式建模 `ProjectStatsStatus` + `statsSeq` + 定向重试 `projects/retry-stats`，Host 按工作副本分组采集；证据见 `tests/unit/projectStats.test.ts`、`tests/unit/projectsProtocolGuards.test.ts`、`tests/unit/workbenchProjectsActions.test.ts`、`tests/components/ProjectsModule.test.ts`）。
 - **看到的现状：** 统计异常写入输出面板，counts 缺失时 UI 隐藏整块数量。
 - **用户影响：** 用户分不清干净、未读取、失败和过期，多项目状态不可相信。
 - **现有证据与预计改动入口：** [ProjectsModule.svelte](../../../src/webview/features/projects/ProjectsModule.svelte)、[WorkbenchController.ts](../../../src/extension/workbench/WorkbenchController.ts)、[workbenchProtocol.ts](../../../src/protocol/workbenchProtocol.ts)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
@@ -75,9 +75,9 @@
 
 **验收场景与完成条件：**
 
-- [ ] 一个工作副本失败时其他项目仍显示可信统计。
-- [ ] 零修改明确显示 0，不与未读取等同。
-- [ ] 重试只影响目标项目/共享副本，旧请求晚到不会覆盖新状态。
+- [x] 一个工作副本失败时其他项目仍显示可信统计。
+- [x] 零修改明确显示 0，不与未读取等同。
+- [x] 重试只影响目标项目/共享副本，旧请求晚到不会覆盖新状态。
 
 <a id="v024-r40"></a>
 
@@ -85,7 +85,7 @@
 
 - **原评审映射：** 第 40 项。
 - **优先级 / 证据等级：** P2 / 能力完善。
-- **实施状态：** 待实施。
+- **实施状态：** 已实施（名称/路径搜索、只看有修改、冲突优先/名称排序、冲突数直达单项目冲突任务、完整路径复制；证据见 `tests/components/ProjectsModule.test.ts`、`tests/unit/workbenchProjectsActions.test.ts`、`tests/unit/scmProjectSlicing.test.ts`）。
 - **看到的现状：** 当前总览缺少名称路径搜索、排序，冲突/变更数主要是静态 chip。已有独立项目动作不重复新增。
 - **用户影响：** 多仓库用户不能迅速找到需要处理的项目。
 - **现有证据与预计改动入口：** [ProjectsModule.svelte](../../../src/webview/features/projects/ProjectsModule.svelte)、[WorkbenchController.ts](../../../src/extension/workbench/WorkbenchController.ts)、[projectSwitchGuard.ts](../../../src/extension/workbench/projectSwitchGuard.ts)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
@@ -99,10 +99,10 @@
 
 **验收场景与完成条件：**
 
-- [ ] 同名项目路径消歧，搜索清空与排序记忆正常。
-- [ ] 点击某项目冲突数只打开该项目。
-- [ ] 失败统计不当作 0 排序，仍有醒目标记。
-- [ ] 多根/嵌套/external 范围不扩张。
+- [x] 同名项目路径消歧，搜索清空与排序记忆正常。
+- [x] 点击某项目冲突数只打开该项目。
+- [x] 失败统计不当作 0 排序，仍有醒目标记。
+- [x] 多根/嵌套/external 范围不扩张。
 
 <a id="v024-r41"></a>
 
@@ -110,7 +110,7 @@
 
 - **原评审映射：** 第 41 项。
 - **优先级 / 证据等级：** P2 / 源码已确认。
-- **实施状态：** 待实施。
+- **实施状态：** 已实施（`deriveOnboardingBranch` 五态纯推导 + `OnboardingStrip` 分支展示与只读恢复；证据见 `tests/unit/onboarding.test.ts`、`tests/components/OnboardingStrip.test.ts`、`tests/components/ChangesOnboardingBranch.test.ts`）。
 - **看到的现状：** 查看修改的步骤依赖 files.length>0，选择步骤依赖 selected.size>0；干净仓库可能停在固定流程。
 - **用户影响：** 第一次安装就打开干净项目的用户无法完成引导，误认为需要制造修改。
 - **现有证据与预计改动入口：** [onboarding.svelte.ts](../../../src/webview/app/onboarding.svelte.ts)、[ChangesModule.svelte](../../../src/webview/features/changes/ChangesModule.svelte)、[OnboardingStrip.svelte](../../../src/webview/components/ui/OnboardingStrip.svelte)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
@@ -124,10 +124,10 @@
 
 **验收场景与完成条件：**
 
-- [ ] 干净/修改/冲突/非 SVN/CLI 缺失五态有可完成的路径或明确恢复。
-- [ ] 中途刷新不丢手工草稿。
-- [ ] 跳过后不自动再次打开。
-- [ ] 引导完成不产生提交。
+- [x] 干净/修改/冲突/非 SVN/CLI 缺失五态有可完成的路径或明确恢复。
+- [x] 中途刷新不丢手工草稿。
+- [x] 跳过后不自动再次打开。
+- [x] 引导完成不产生提交。
 
 <a id="v024-r42"></a>
 
@@ -135,7 +135,7 @@
 
 - **原评审映射：** 第 42 项。
 - **优先级 / 证据等级：** P2 / 能力完善。
-- **实施状态：** 待实施。
+- **实施状态：** 已实施（空/非 SVN/路径丢失/CLI 缺失各态可执行恢复，只复用诊断安全动作白名单；证据见 `tests/components/ProjectsModule.test.ts`、`tests/components/DiagnosticsModule.test.ts`、`tests/unit/diagnosticActions.test.ts`）。
 - **看到的现状：** 部分空态只有非 SVN/请先检出/路径失效说明，没有连接打开文件夹或诊断动作。
 - **用户影响：** 知道原因却不知道在产品里怎么继续。
 - **现有证据与预计改动入口：** [ProjectsModule.svelte](../../../src/webview/features/projects/ProjectsModule.svelte)、[DiagnosticsModule.svelte](../../../src/webview/features/diagnostics/DiagnosticsModule.svelte)、[environmentDiagnostics.ts](../../../src/diagnostics/environmentDiagnostics.ts)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
@@ -149,9 +149,9 @@
 
 **验收场景与完成条件：**
 
-- [ ] 空/非 SVN/路径丢失/CLI 缺失各态至少一个有效下一步。
+- [x] 空/非 SVN/路径丢失/CLI 缺失各态至少一个有效下一步。
 - [ ] 取消选择不清理其他工作区。
-- [ ] 安全动作参数非法被 Host 拒绝且错误可理解。
+- [x] 安全动作参数非法被 Host 拒绝且错误可理解。
 
 <a id="v024-r48"></a>
 
@@ -159,7 +159,7 @@
 
 - **原评审映射：** 第 48 项。
 - **优先级 / 证据等级：** P2 / 源码已确认。
-- **实施状态：** 待实施。
+- **实施状态：** 已实施（中文显示名与内部安全 ID/文件名分离，Webview 实时提示 + Host 复验；证据见 `tests/unit/shelfIndex.test.ts`、`tests/components/PatchShelfTask.test.ts`）。
 - **看到的现状：** 名称输入只提示长度，Host 限定 [A-Za-z0-9._-]；中文名称到预览才被拒。
 - **用户影响：** 中文产品中输入修复登录这样的常见名称失败，反馈太晚。
 - **现有证据与预计改动入口：** [PatchShelfTask.svelte](../../../src/webview/features/repository/tasks/PatchShelfTask.svelte)、[repositoryWorkbenchActions.ts](../../../src/extension/workbench/repositoryWorkbenchActions.ts)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
@@ -173,10 +173,10 @@
 
 **验收场景与完成条件：**
 
-- [ ] 中文/空格展示名称创建与重启列表读取一致。
-- [ ] ../、NUL、换行不能改变存储路径。
-- [ ] 同名条目通过日期/项目消歧。
-- [ ] 旧 Shelf 仍可预览恢复。
+- [x] 中文/空格展示名称创建与重启列表读取一致。
+- [x] ../、NUL、换行不能改变存储路径。
+- [x] 同名条目通过日期/项目消歧。
+- [x] 旧 Shelf 仍可预览恢复。
 
 <a id="v024-r51"></a>
 
@@ -184,7 +184,7 @@
 
 - **原评审映射：** 第 51 项。
 - **优先级 / 证据等级：** P2 / 明确存续边界与候选扩展。
-- **实施状态：** 待实施。
+- **实施状态：** 部分实施（视图偏好白名单 + 操作时间线存续告知已落地，证据见 `tests/unit/draftPersistenceTiers.test.ts`、`tests/components/ActivityPersistenceNotice.test.ts`；正文跨重启恢复未批准未实现，第四项验收不适用）。
 - **看到的现状：** 冲突草稿、部分预设和时间线仅内存；已有会话内保护，不等于跨重启恢复。
 - **用户影响：** 用户看到已同步或已保存检查点，可能误以为关掉 VS Code 后也能找回。
 - **现有证据与预计改动入口：** [projectDraftStore.ts](../../../src/extension/workbench/projectDraftStore.ts)、[ActivityModule.svelte](../../../src/webview/features/activity/ActivityModule.svelte)、[listPreferences.ts](../../../src/webview/app/listPreferences.ts)、[projectSwitchGuard.ts](../../../src/extension/workbench/projectSwitchGuard.ts)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
@@ -198,16 +198,28 @@
 
 **验收场景与完成条件：**
 
-- [ ] 会话检查点不会被标为已写文件。
-- [ ] 重启后没有正文恢复时明确告知，不假装已恢复。
-- [ ] 偏好跨项目不串用。
+- [x] 会话检查点不会被标为已写文件。
+- [x] 重启后没有正文恢复时明确告知，不假装已恢复。
+- [x] 偏好跨项目不串用。
 - [ ] 如果批准正文持久化实现，则必须覆盖内容版本失配、磁盘不可写、清理与用户删除，不把凭据写入。
 
 ## 4. 测试落点
 
 下列是已存在的回归入口，实施时扩展真实行为用例；如需新测试文件，按任务 ID 建立并同步实现映射。本次未新增待开发功能的验收用例；现有回归运行结果见路线的本次验证记录，不代表新功能已经通过。
 
-- [ProjectsModule.test.ts](../../../tests/components/ProjectsModule.test.ts)
+- [ChangesOnboardingBranch.test.ts](../../../tests/components/ChangesOnboardingBranch.test.ts)（V024-R41 新增：干净/冲突分支集成与草稿保留）
+- [OnboardingStrip.test.ts](../../../tests/components/OnboardingStrip.test.ts)（V024-R41 扩展：五态恢复只读断言）
+- [onboarding.test.ts](../../../tests/unit/onboarding.test.ts)（V024-R41 扩展：五态推导/必需步骤/重算）
+- [ProjectsModule.test.ts](../../../tests/components/ProjectsModule.test.ts)（V024-R39/R40/R42：统计状态/筛选直达/空态恢复）
+- [projectStats.test.ts](../../../tests/unit/projectStats.test.ts)（V024-R39：统计装配 ready/error/stale/分组隔离/定向重放）
+- [projectsProtocolGuards.test.ts](../../../tests/unit/projectsProtocolGuards.test.ts)（V024-R39：协议守卫）
+- [workbenchProjectsActions.test.ts](../../../tests/unit/workbenchProjectsActions.test.ts)（V024-R39 重试拒绝、V024-R40 冲突直达）
+- [diagnosticActions.test.ts](../../../tests/unit/diagnosticActions.test.ts)（V024-R42：安全动作白名单）
+- [shelfIndex.test.ts](../../../tests/unit/shelfIndex.test.ts)（V024-R38/R48：中文显示名分离、索引/迁移/原子保存；P3-2 控制字符文件名拒绝）
+- [workbenchShelfRestore.test.ts](../../../tests/unit/workbenchShelfRestore.test.ts)（V024-R38 Host 级恢复链：token 失配拒绝/候选变化拒绝/取消不改工作副本/成功不提交且保留搁置；P3-1 repositoryUuid 白名单）
+- [PatchShelfTask.test.ts](../../../tests/components/PatchShelfTask.test.ts)（V024-R38/R48：清单/恢复/导出/删除/IME）
+- [draftPersistenceTiers.test.ts](../../../tests/unit/draftPersistenceTiers.test.ts)（V024-R51：三态文案、偏好隔离/白名单/清理）
+- [ActivityPersistenceNotice.test.ts](../../../tests/components/ActivityPersistenceNotice.test.ts)（V024-R51：时间线徽标与重启告知）
 - [DiagnosticsModule.test.ts](../../../tests/components/DiagnosticsModule.test.ts)
 - [projectSwitchGuard.test.ts](../../../tests/unit/projectSwitchGuard.test.ts)
 - [workbenchProjectSwitch.test.ts](../../../tests/unit/workbenchProjectSwitch.test.ts)

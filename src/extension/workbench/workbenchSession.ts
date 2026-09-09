@@ -266,6 +266,8 @@ export interface WorkbenchSession extends OpenWorkbenchRequest {
       browser?: RepositorySnapshot["advanced"]["browser"];
       releaseNotes?: RepositorySnapshot["advanced"]["releaseNotes"];
       feedback?: string;
+      /** V024-R38：搁置清单只读缓存说明（实际清单随快照重建，不持久化正文）。 */
+      shelfFeedback?: string;
       preview?: {
         token: string;
         candidateHash: string;

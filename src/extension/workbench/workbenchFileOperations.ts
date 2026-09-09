@@ -35,7 +35,8 @@ export function asAdvancedRepositoryOperation(
     value === "relocate" ||
     value === "merge" ||
     value === "apply-patch" ||
-    value === "shelf"
+    value === "shelf" ||
+    value === "restore-shelf"
     ? value
     : undefined;
 }
