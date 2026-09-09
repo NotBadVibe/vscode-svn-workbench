@@ -292,11 +292,15 @@ export interface WorkbenchSession extends OpenWorkbenchRequest {
         issues: string[];
         destructive: boolean;
         input: Record<string, string>;
-        /** V026-R43：生成该预览的源/目标绑定（归一化后），随快照下发供 Webview 失效比对。 */
+        /** V026-R43：生成该预览的源/目标绑定（归一化后），随快照下发供 Webview 失效比对。
+         * V026-R44：源修订版本冻结三字段（分支/标签），执行前复验固定版本。 */
         sourceUrl?: string;
         targetUrl?: string;
         sourceOrigin?: string;
         targetOrigin?: string;
+        sourceRevision?: string;
+        sourceResolvedRevision?: string;
+        sourceRevisionMode?: string;
       };
     };
   };

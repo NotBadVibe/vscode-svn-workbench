@@ -2534,6 +2534,38 @@ export function startMockWorkbench(): void {
       const mockSourceLabel = mockOriginLabel(mockSourceOrigin);
       const mockTargetLabel = mockOriginLabel(mockTargetOrigin);
       const mockSourceText = `源：${mockSource}${mockSourceLabel ? `（${mockSourceLabel}）` : ""}`;
+      // V026-R44：Mock 固定源修订版本（HEAD→r42，指定透传），与 Host 冻结语义对齐。
+      const mockRequestedRevision =
+        operation === "branch" || operation === "tag"
+          ? (mockSourceIntent.revision ??
+              (typeof data.sourceRevision === "string"
+                ? (data.sourceRevision as string)
+                : "HEAD")) ||
+            "HEAD"
+          : undefined;
+      const mockRevisionMode =
+        operation === "branch" || operation === "tag"
+          ? typeof data.sourceRevisionMode === "string" &&
+            (data.sourceRevisionMode as string) === "revision"
+            ? "revision"
+            : /^head$/i.test((mockRequestedRevision ?? "HEAD").trim()) ||
+                !(mockRequestedRevision ?? "").trim()
+              ? "HEAD"
+              : "revision"
+          : undefined;
+      const mockFixedRevision =
+        operation === "branch" || operation === "tag"
+          ? mockRevisionMode === "HEAD"
+            ? "42"
+            : (mockRequestedRevision ?? "")
+                .trim()
+                .replace(/^r/i, "")
+                .replace(/^0+(?=\d)/, "") || "42"
+          : undefined;
+      const mockBranchSourceText =
+        operation === "branch" || operation === "tag"
+          ? `源：${mockSource}@r${mockFixedRevision}${mockRevisionMode === "HEAD" ? "（远端 HEAD 已固定为 r42，执行时不会跟随新的 HEAD）" : `（指定修订版本 r${mockFixedRevision}）`}${mockSourceLabel ? `（${mockSourceLabel}）` : ""}`
+          : mockSourceText;
       const mockTargetText = `目标：${mockTarget}${mockTargetLabel ? `（${mockTargetLabel}）` : ""}`;
       // V026-R43/R46：详情行与 Host 同操作结构对齐（意向单按行计数）。
       const mockDetails =
@@ -2558,9 +2590,9 @@ export function startMockWorkbench(): void {
                 ]
               : operation === "branch" || operation === "tag"
                 ? [
-                    mockSourceText,
+                    mockBranchSourceText,
                     mockTargetText,
-                    "直接在仓库端创建，不包含未提交的本地修改。",
+                    "当前工作副本无本地未提交修改；远端 copy 仍只复制源 URL@revision，不会夹带本地内容。",
                     "浏览选择只用于填充源/目标，未改变本地工作副本操作范围。",
                   ]
                 : [
@@ -2586,6 +2618,20 @@ export function startMockWorkbench(): void {
                 operation === "switch" ? undefined : mockSourceOrigin,
               targetOrigin:
                 operation === "merge" ? undefined : mockTargetOrigin,
+              sourceRevision:
+                operation === "branch" || operation === "tag"
+                  ? mockRevisionMode === "HEAD"
+                    ? "HEAD"
+                    : (mockFixedRevision ?? "42")
+                  : undefined,
+              sourceResolvedRevision:
+                operation === "branch" || operation === "tag"
+                  ? (mockFixedRevision ?? "42")
+                  : undefined,
+              sourceRevisionMode:
+                operation === "branch" || operation === "tag"
+                  ? mockRevisionMode
+                  : undefined,
               commands:
                 operation === "shelf"
                   ? [
@@ -2594,9 +2640,13 @@ export function startMockWorkbench(): void {
                     ]
                   : operation === "apply-patch"
                     ? ['svn patch "feature.patch" "."']
-                    : [
-                        `svn ${operation} <validated-source> <validated-target>`,
-                      ],
+                    : operation === "branch" || operation === "tag"
+                      ? [
+                          `svn copy -r ${mockFixedRevision ?? "42"} <validated-source> <validated-target> -m <message> --encoding utf-8`,
+                        ]
+                      : [
+                          `svn ${operation} <validated-source> <validated-target>`,
+                        ],
               details: mockDetails,
             },
           },

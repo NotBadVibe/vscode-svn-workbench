@@ -26,6 +26,7 @@ import {
   MAX_REMOTE_COMPARE_CHARS,
   MAX_REMOTE_FILE_PREVIEW_BYTES,
   MAX_REMOTE_HISTORY_ENTRIES,
+  normalizeBranchTagSourceRevision,
   normalizeRemoteRevisionInput,
   normalizeRepositoryUrlIntent,
   normalizeReleaseNotesRange,
@@ -373,6 +374,12 @@ export class RepositoryWorkbenchActions {
                 session.repositoryState.advanced.preview.sourceOrigin,
               targetOrigin:
                 session.repositoryState.advanced.preview.targetOrigin,
+              sourceRevision:
+                session.repositoryState.advanced.preview.sourceRevision,
+              sourceResolvedRevision:
+                session.repositoryState.advanced.preview.sourceResolvedRevision,
+              sourceRevisionMode:
+                session.repositoryState.advanced.preview.sourceRevisionMode,
             }
           : undefined,
       },
@@ -597,8 +604,66 @@ export class RepositoryWorkbenchActions {
         stripUrlSlash(sourceUrl) === stripUrlSlash(targetUrl)
       )
         issues.push("源 URL 与目标 URL 不能相同。");
-      // 只读存在性：源必须可读；目标不可读可能是正常新建，失败只作提示不直接阻止。
-      if (sourceUrl && source.issues.length === 0) {
+      // V026-R44：源模式明确远端 HEAD 或指定 rN；HEAD 在预览时解析为固定 revision。
+      const rawRevisionMode =
+        typeof data.sourceRevisionMode === "string"
+          ? (data.sourceRevisionMode as string)
+          : undefined;
+      const rawRevisionValue =
+        sourceIntent.revision ??
+        (typeof data.sourceRevision === "string"
+          ? (data.sourceRevision as string)
+          : "HEAD");
+      // 指定模式下空输入不得静默回落为 HEAD，必须明确要求补填。
+      const sourceRevisionInput =
+        rawRevisionMode === "revision" &&
+        (rawRevisionValue == null || String(rawRevisionValue).trim() === "")
+          ? {
+              mode: "revision" as const,
+              requestedRevision: "",
+              revision: undefined,
+              issues: ["已选择指定修订版本，请填写正整数修订号（例如 r42）。"],
+            }
+          : normalizeBranchTagSourceRevision(rawRevisionValue);
+      for (const issue of sourceRevisionInput.issues) issues.push(issue);
+      let fixedSourceRevision: string | undefined;
+      if (sourceRevisionInput.issues.length === 0) {
+        if (sourceRevisionInput.mode === "HEAD") {
+          const resolved = await resolveHeadRevision(
+            session.svnPath,
+            session.scope,
+          );
+          if (!resolved) {
+            issues.push(
+              "未能解析远端 HEAD（网络或仓库不可达），请检查连接后重新预览，或改填指定修订号（例如 r42）。",
+            );
+          } else {
+            fixedSourceRevision = resolved;
+          }
+        } else {
+          fixedSourceRevision = sourceRevisionInput.revision;
+        }
+      }
+      // 只读存在性：源必须在固定修订可读；目标不可读可能是正常新建，失败只作提示不直接阻止。
+      if (sourceUrl && source.issues.length === 0 && fixedSourceRevision) {
+        const pinned = await runSvnCommand(
+          session.svnPath,
+          ["info", "--xml", "-r", fixedSourceRevision, sourceUrl],
+          session.scope.repositoryRoot,
+        );
+        if (pinned.exitCode !== 0) {
+          const reason = (pinned.stderr || pinned.stdout || "")
+            .trim()
+            .slice(0, 200);
+          issues.push(
+            `源 ${sourceUrl}@r${fixedSourceRevision} 不可读（修订版本不存在、无权限或网络失败${reason ? `：${reason}` : ""}），请核对修订号与权限后重新预览。当前浏览与本地范围未受影响。`,
+          );
+        }
+      } else if (
+        sourceUrl &&
+        source.issues.length === 0 &&
+        !fixedSourceRevision
+      ) {
         const problem = await probeReadable(sourceUrl, "源 URL");
         if (problem) issues.push(problem);
       }
@@ -615,20 +680,33 @@ export class RepositoryWorkbenchActions {
         }
       }
       commands.push(
-        `svn copy ${quoteRelative(sourceUrl)} ${quoteRelative(targetUrl)} -m <message> --encoding utf-8`,
+        fixedSourceRevision
+          ? `svn copy -r ${fixedSourceRevision} ${quoteRelative(sourceUrl)} ${quoteRelative(targetUrl)} -m <message> --encoding utf-8`
+          : `svn copy ${quoteRelative(sourceUrl)} ${quoteRelative(targetUrl)} -m <message> --encoding utf-8`,
       );
       const sourceFrom = originLabel(sourceOrigin);
       const targetFrom = originLabel(targetOrigin);
+      const sourceRevisionText = fixedSourceRevision
+        ? `${sourceUrl}@r${fixedSourceRevision}${sourceRevisionInput.mode === "HEAD" ? `（远端 HEAD 已固定为 r${fixedSourceRevision}，执行时不会跟随新的 HEAD）` : `（指定修订版本 r${fixedSourceRevision}）`}`
+        : `${sourceUrl || "未填写"}（源修订版本未固定，请重新预览）`;
+      const localUncommittedText =
+        candidates.length > 0
+          ? `当前工作副本有 ${candidates.length} 个本地未提交修改，均不参与本次远端 copy（远端 copy 只复制源 URL@revision）。`
+          : "当前工作副本无本地未提交修改；远端 copy 仍只复制源 URL@revision，不会夹带本地内容。";
       details.push(
-        `源：${sourceUrl || "未填写"}${sourceFrom ? `（${sourceFrom}）` : ""}`,
+        `源：${sourceRevisionText}${sourceFrom ? `（${sourceFrom}）` : ""}`,
         `目标：${targetUrl || "未填写"}${targetFrom ? `（${targetFrom}）` : ""}`,
-        "直接在仓库端创建，不包含未提交的本地修改。",
+        localUncommittedText,
         "浏览选择只用于填充源/目标，未改变本地工作副本操作范围。",
       );
       input.sourceUrl = sourceUrl;
       input.targetUrl = targetUrl;
       if (sourceOrigin) input.sourceOrigin = sourceOrigin;
       if (targetOrigin) input.targetOrigin = targetOrigin;
+      input.sourceRevision = sourceRevisionInput.requestedRevision;
+      input.sourceRevisionMode = sourceRevisionInput.mode;
+      if (fixedSourceRevision)
+        input.sourceResolvedRevision = fixedSourceRevision;
     } else if (operation === "switch") {
       title = "切换工作副本";
       destructive = true;
@@ -839,10 +917,14 @@ export class RepositoryWorkbenchActions {
       destructive,
       input,
       // V026-R43：源/目标绑定随快照下发，表单变化后旧预览立即标失效。
+      // V026-R44：源修订版本冻结三字段随快照下发，表单/重预览不一致即失效。
       sourceUrl: input.sourceUrl || undefined,
       targetUrl: input.targetUrl || undefined,
       sourceOrigin: input.sourceOrigin || undefined,
       targetOrigin: input.targetOrigin || undefined,
+      sourceRevision: input.sourceRevision || undefined,
+      sourceResolvedRevision: input.sourceResolvedRevision || undefined,
+      sourceRevisionMode: input.sourceRevisionMode || undefined,
     };
     await this.host.sendRepositorySnapshot(session, requestId);
   }
@@ -1248,7 +1330,64 @@ export class RepositoryWorkbenchActions {
       }
       return;
     }
-
+    // V026-R44：分支/标签执行前复验固定来源与目标存在性，不静默漂移到新 HEAD。
+    if (preview.operation === "branch" || preview.operation === "tag") {
+      const fixed = preview.input?.sourceResolvedRevision;
+      const sourceUrl = preview.input?.sourceUrl;
+      const targetUrl = preview.input?.targetUrl;
+      const failBranchTag = async (
+        title: string,
+        message: string,
+      ): Promise<void> => {
+        state.preview = undefined;
+        await this.host.sendError(
+          "repository",
+          title,
+          message,
+          true,
+          requestId,
+        );
+        try {
+          await this.host.sendRepositorySnapshot(session, requestId);
+        } catch {
+          // 忽略：原拒绝已送达，旧预览已作废。
+        }
+      };
+      if (!fixed || !/^\d+$/.test(fixed) || !sourceUrl || !targetUrl) {
+        await failBranchTag(
+          "高级操作预览已失效",
+          "源修订版本未固定（缺少源 URL@revision），请重新生成预览后再确认执行。",
+        );
+        return;
+      }
+      const sourceCheck = await runSvnCommand(
+        session.svnPath,
+        ["info", "--xml", "-r", fixed, sourceUrl],
+        session.scope.repositoryRoot,
+      );
+      if (sourceCheck.exitCode !== 0) {
+        const reason = (sourceCheck.stderr || sourceCheck.stdout || "")
+          .trim()
+          .slice(0, 200);
+        await failBranchTag(
+          "源修订版本已失效",
+          `源 ${sourceUrl}@r${fixed} 复验失败（修订版本不存在、无权限或网络失败${reason ? `：${reason}` : ""}），已阻止执行。请核对修订号与权限后重新预览。`,
+        );
+        return;
+      }
+      const targetCheck = await runSvnCommand(
+        session.svnPath,
+        ["info", "--xml", targetUrl],
+        session.scope.repositoryRoot,
+      );
+      if (targetCheck.exitCode === 0) {
+        await failBranchTag(
+          "目标已存在",
+          `目标 ${targetUrl} 已存在，直接创建会失败。请更换目标名称后重新预览。`,
+        );
+        return;
+      }
+    }
     const controller = new AbortController();
     session.activeOperation = { moduleId: "repository", controller };
     await this.host.post({
@@ -1268,10 +1407,17 @@ export class RepositoryWorkbenchActions {
     try {
       const input = preview.input;
       if (preview.operation === "branch" || preview.operation === "tag") {
+        // V026-R44：按预览冻结的固定修订执行，不跟随新 HEAD。
+        const fixedArgs =
+          preview.input?.sourceResolvedRevision &&
+          /^\d+$/.test(preview.input.sourceResolvedRevision)
+            ? ["-r", preview.input.sourceResolvedRevision]
+            : [];
         result = await runSvnCommand(
           session.svnPath,
           [
             "copy",
+            ...fixedArgs,
             input.sourceUrl,
             input.targetUrl,
             "-m",
@@ -1282,7 +1428,7 @@ export class RepositoryWorkbenchActions {
           session.scope.repositoryRoot,
           { signal: controller.signal },
         );
-        successMessage = `${preview.operation === "branch" ? "分支" : "标签"}已在仓库端创建：${input.targetUrl}`;
+        successMessage = `${preview.operation === "branch" ? "分支" : "标签"}已按源 ${input.sourceUrl}@r${preview.input?.sourceResolvedRevision ?? "?"} 创建：${input.targetUrl}`;
       } else if (preview.operation === "switch") {
         result = await runSvnCommand(
           session.svnPath,

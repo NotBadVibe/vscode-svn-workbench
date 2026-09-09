@@ -354,6 +354,72 @@ export function normalizeRepositoryUrlIntent(
 }
 
 /**
+ * V026-R44：分支/标签源修订版本输入归一化（纯函数，Host/Webview/Mock 语义一致）。
+ * - 空输入视为远端 HEAD（向后兼容旧预览/手填）；HEAD 大小写不敏感；
+ * - 正整数去前导零（r007 → 7）；其余 fail-closed 给出中文原因。
+ */
+export function normalizeBranchTagSourceRevision(value: unknown): {
+  mode: "HEAD" | "revision";
+  requestedRevision: string;
+  revision?: string;
+  issues: string[];
+} {
+  const raw =
+    typeof value === "string"
+      ? value.trim()
+      : value == null
+        ? ""
+        : String(value).trim();
+  if (!raw || /^head$/i.test(raw)) {
+    return {
+      mode: "HEAD",
+      requestedRevision: "HEAD",
+      revision: "HEAD",
+      issues: [],
+    };
+  }
+  if (/^\d+$/.test(raw)) {
+    try {
+      const parsed = BigInt(raw);
+      if (parsed > 0n) {
+        const revision = String(parsed);
+        return {
+          mode: "revision",
+          requestedRevision: revision,
+          revision,
+          issues: [],
+        };
+      }
+    } catch {
+      // 落入下方统一拒绝。
+    }
+  }
+  // 接受可选 r/R 前缀（例如 r42），归一化为纯数字。
+  const digits = /^r(\d+)$/i.exec(raw)?.[1];
+  if (digits) {
+    try {
+      const parsed = BigInt(digits);
+      if (parsed > 0n) {
+        const revision = String(parsed);
+        return {
+          mode: "revision",
+          requestedRevision: revision,
+          revision,
+          issues: [],
+        };
+      }
+    } catch {
+      // 落入下方统一拒绝。
+    }
+  }
+  return {
+    mode: "HEAD",
+    requestedRevision: raw,
+    issues: ["源修订版本只能选择远端 HEAD 或填写正整数修订号（例如 r42）。"],
+  };
+}
+
+/**
  * V026-R46：远端修订输入归一化（纯函数）。空表示未填（调用方按 HEAD/缺省处理）；
  * HEAD 大小写不敏感；正整数去前导零；其余 fail-closed 给出中文原因。
  */

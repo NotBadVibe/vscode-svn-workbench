@@ -41,6 +41,9 @@
   /* V026-R43：常用路径组合（branches/tags + 名称），保留手填。 */
   let nameFamily = $state<"branches" | "tags">("branches");
   let nameInput = $state("");
+  /* V026-R44：分支/标签源修订版本显式模式（远端 HEAD 或指定 rN）。 */
+  let sourceRevisionMode = $state<"HEAD" | "revision">("HEAD");
+  let sourceRevisionInput = $state("");
   /* V026-R43：同一预览 token 只自动作废一次，避免输入过程中反复发消息。 */
   let discardedToken = $state<string | undefined>(undefined);
 
@@ -61,11 +64,12 @@
   );
   /**
    * V026-R43：表单与生成该预览的绑定不一致时，旧预览视为失效。
-   * - 两侧统一归一化后比对：Host/Mock 写入的绑定已归一化，表单侧同样归一化，
-   *   预览生成后未改动即一致，不误伤；用户真实改动（或空绑定后补填）即失效；
-   * - 只比对本操作相关侧：switch 无源、merge 无目标、relocate 源为旧根，
-   *   不比较无意义侧，避免跨操作残留状态误伤。
+   * V026-R44：分支/标签同时比对源修订版本绑定；旧预览缺失冻结字段时
+   * 视为失效，必须重新预览以固定源 URL@revision。
    */
+  const effectiveSourceRevision = $derived(
+    sourceRevisionMode === "HEAD" ? "HEAD" : sourceRevisionInput.trim(),
+  );
   const previewStale = $derived.by(() => {
     if (!previewForOperation) return false;
     if (
@@ -75,6 +79,34 @@
       (previewForOperation.sourceUrl ?? "") !== normalizeSvnUrl(sourceUrl)
     ) {
       return true;
+    }
+    if (operation === "branch" || operation === "tag") {
+      // 旧预览无冻结字段：视为失效，要求按新契约重新预览。
+      if (
+        previewForOperation.sourceResolvedRevision === undefined &&
+        (previewForOperation as Record<string, unknown>).sourceRevision ===
+          undefined
+      ) {
+        return true;
+      }
+      const normalizeRevision = (value: string): string => {
+        const trimmed = value.trim();
+        if (!trimmed || /^head$/i.test(trimmed)) return "HEAD";
+        return trimmed.replace(/^r/i, "").replace(/^0+(?=\d)/, "");
+      };
+      const bound = normalizeRevision(
+        previewForOperation.sourceRevision ??
+          previewForOperation.sourceResolvedRevision ??
+          "HEAD",
+      );
+      const current = normalizeRevision(
+        sourceRevisionMode === "HEAD" ? "HEAD" : effectiveSourceRevision,
+      );
+      // 指定模式下空输入归一化为 HEAD 会掩盖缺失：显式视为不一致。
+      if (sourceRevisionMode === "revision" && !sourceRevisionInput.trim()) {
+        return true;
+      }
+      if (bound !== current) return true;
     }
     if (
       operation !== "merge" &&
@@ -141,15 +173,30 @@
   }
 
   function preview(): void {
+    // V026-R44：分支/标签显式源修订版本（HEAD 或指定 rN），Host 预览时固定。
+    const sourceRevision =
+      operation === "branch" || operation === "tag"
+        ? sourceRevisionMode === "HEAD"
+          ? "HEAD"
+          : sourceRevisionInput.trim()
+        : undefined;
     onAction("repository/preview-advanced", {
       operation,
       // 旧扁平字段保留兼容；新结构化意图优先，Host 归一化复验。
       sourceUrl,
       targetUrl,
-      source: { url: sourceUrl, origin: sourceOrigin },
+      source:
+        operation === "branch" || operation === "tag"
+          ? { url: sourceUrl, origin: sourceOrigin, revision: sourceRevision }
+          : { url: sourceUrl, origin: sourceOrigin },
       target: { url: targetUrl, origin: targetOrigin },
       sourceOrigin,
       targetOrigin,
+      sourceRevision,
+      sourceRevisionMode:
+        operation === "branch" || operation === "tag"
+          ? sourceRevisionMode
+          : undefined,
       message: operationMessage,
     });
   }
@@ -185,6 +232,33 @@
             >使用当前浏览位置填入源</button
           >{/if}
       </div>
+    {/if}
+    {#if operation === "branch" || operation === "tag"}
+      <fieldset class="advanced-operation-form__wide operation-guidance">
+        <legend>源修订版本（预览时固定为 rN，执行不再跟随新的 HEAD）</legend>
+        <label
+          ><input
+            type="radio"
+            name="source-revision-mode"
+            value="HEAD"
+            bind:group={sourceRevisionMode}
+          />远端 HEAD（预览时解析为固定修订版本）</label
+        >
+        <label
+          ><input
+            type="radio"
+            name="source-revision-mode"
+            value="revision"
+            bind:group={sourceRevisionMode}
+          />指定修订版本</label
+        >
+        {#if sourceRevisionMode === "revision"}<input
+            bind:value={sourceRevisionInput}
+            placeholder="例如 r42"
+            inputmode="numeric"
+            aria-label="指定源修订版本"
+          />{/if}
+      </fieldset>
     {/if}
     {#if operation !== "merge"}<label class="field"
         ><span>{operation === "relocate" ? "新的仓库根地址" : "目标 URL"}</span
@@ -254,7 +328,7 @@
         class="advanced-operation-form__wide notice notice--warning"
         role="status"
       >
-        源或目标已变化，旧预览已自动作废。请重新生成预览后再确认执行；最终写入仍走原有安全契约。
+        源、源修订版本或目标已变化，旧预览已自动作废。请重新生成预览后再确认执行；最终写入仍走原有安全契约。
       </div>
     {/if}
     <div class="advanced-operation-form__wide operation-guidance">

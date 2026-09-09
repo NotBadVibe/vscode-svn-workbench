@@ -1375,6 +1375,16 @@ export interface RepositorySnapshot {
       targetUrl?: string;
       sourceOrigin?: string;
       targetOrigin?: string;
+      /**
+       * V026-R44：分支/标签源修订版本冻结绑定（Host 归一化后写入，可选向后兼容）。
+       * - sourceRevision：用户请求的源模式（HEAD 或数字 rN 字符串）；
+       * - sourceResolvedRevision：预览时固定的数字修订（HEAD 已解析为 rN）；
+       * - sourceRevisionMode：HEAD 或 revision。执行前 Host 以会话内 input 复验，
+       *   不信任 Webview 回传；表单/重预览输入不一致时旧预览只读失效。
+       */
+      sourceRevision?: string;
+      sourceResolvedRevision?: string;
+      sourceRevisionMode?: string;
     };
     releaseNotes?: {
       markdown: string;
@@ -2928,12 +2938,19 @@ export function isRepositoryRemoteCompareView(
 
 /**
  * V026-R43：高级预览源/目标绑定守卫（可选字段，缺省兼容旧预览）。
+ * V026-R44：新增源修订版本冻结三字段（均为可选字符串，缺省兼容旧预览）。
  */
 export function isRepositoryAdvancedPreviewBinding(
   value: unknown,
 ): value is Pick<
   NonNullable<RepositorySnapshot["advanced"]["preview"]>,
-  "sourceUrl" | "targetUrl" | "sourceOrigin" | "targetOrigin"
+  | "sourceUrl"
+  | "targetUrl"
+  | "sourceOrigin"
+  | "targetOrigin"
+  | "sourceRevision"
+  | "sourceResolvedRevision"
+  | "sourceRevisionMode"
 > {
   if (!isRecord(value)) return false;
   if (value.sourceUrl !== undefined && typeof value.sourceUrl !== "string")
@@ -2950,6 +2967,21 @@ export function isRepositoryAdvancedPreviewBinding(
     typeof value.targetOrigin !== "string"
   )
     return false;
+  if (
+    value.sourceRevision !== undefined &&
+    typeof value.sourceRevision !== "string"
+  )
+    return false;
+  if (
+    value.sourceResolvedRevision !== undefined &&
+    typeof value.sourceResolvedRevision !== "string"
+  )
+    return false;
+  if (
+    value.sourceRevisionMode !== undefined &&
+    typeof value.sourceRevisionMode !== "string"
+  )
+    return false;
   return true;
 }
 
@@ -2958,22 +2990,39 @@ export function isRepositoryAdvancedPreviewBinding(
  * 兼容旧扁平 sourceUrl/targetUrl 字符串；新结构化 source/target 记录优先：
  * `{ url: string; origin?: "browse" | "manual" | "shortcut"; revision?: string }`。
  * origin 仅作展示与问题解释 hint，不参与 Host 信任判断；Host 一律归一化复验。
+ * V026-R44：source 结构可携带 revision（HEAD 或数字 rN）；旧扁平 sourceRevision
+ * 兼容（Host 归一化复验，不信任 Webview 断言）。
  */
 export function readRepositoryUrlIntent(
   data: Record<string, unknown>,
   structuredKey: "source" | "target",
   legacyKey: "sourceUrl" | "targetUrl",
-): { rawUrl: string; origin?: string } {
+): { rawUrl: string; origin?: string; revision?: string } {
   const structured = data[structuredKey];
   if (isRecord(structured) && typeof structured.url === "string") {
     return {
       rawUrl: structured.url,
       origin:
         typeof structured.origin === "string" ? structured.origin : undefined,
+      revision:
+        typeof structured.revision === "string"
+          ? structured.revision
+          : structuredKey === "source" &&
+              typeof data.sourceRevision === "string"
+            ? (data.sourceRevision as string)
+            : undefined,
     };
   }
   const legacy = data[legacyKey];
-  return { rawUrl: typeof legacy === "string" ? legacy : "" };
+  if (structuredKey !== "source") {
+    return { rawUrl: typeof legacy === "string" ? legacy : "" };
+  }
+  const legacyRevision = data.sourceRevision;
+  return {
+    rawUrl: typeof legacy === "string" ? legacy : "",
+    origin: undefined,
+    revision: typeof legacyRevision === "string" ? legacyRevision : undefined,
+  };
 }
 
 /**

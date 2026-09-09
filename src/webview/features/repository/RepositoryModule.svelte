@@ -347,7 +347,11 @@
       const text = line.trim();
       if (text.startsWith("源：")) {
         // V026-R43：详情行末来源标注非 URL，回填前剥离。
-        const value = stripPreviewUrlOriginSuffix(text.slice(2));
+        // V026-R44：源行含 `@rN（固定说明）`，回填只取纯 URL，修订版本走冻结绑定。
+        const value = stripPreviewUrlOriginSuffix(text.slice(2))
+          .split("（")[0]
+          .trim()
+          .replace(/@r\d+$/, "");
         if (value && value !== "未填写" && payload.sourceUrl === undefined)
           payload.sourceUrl = value;
       }
@@ -372,6 +376,15 @@
         if (verb === "merge" && payload.sourceUrl === undefined)
           payload.sourceUrl = value;
       }
+    }
+    // V026-R44：分支/标签重查必须携带已确认的源修订版本模式，不静默回落 HEAD。
+    if (preview.operation === "branch" || preview.operation === "tag") {
+      if (preview.sourceRevision !== undefined)
+        payload.sourceRevision = preview.sourceRevision;
+      else if (preview.sourceResolvedRevision !== undefined)
+        payload.sourceRevision = preview.sourceResolvedRevision;
+      if (preview.sourceRevisionMode !== undefined)
+        payload.sourceRevisionMode = preview.sourceRevisionMode;
     }
     // shelf 中文显示名在命令中为“搁置“<名称>””形式；解析失败仅重发 operation。
     if (preview.operation === "shelf") {
