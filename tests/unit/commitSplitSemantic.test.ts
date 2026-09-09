@@ -5,6 +5,7 @@ import {
   createLocalCommitSplitResult,
   normalizeCommitSplitResult,
   validateCommitSplitResult,
+  validateCommitSplitResultStrict,
 } from "../../src/ai/commitSplitAi";
 import type { CommitCandidate } from "../../src/commit/commitCandidateCollector";
 import type { OperationScope } from "../../src/scope/operationScope";
@@ -129,5 +130,73 @@ describe("commitSplitAi 语义拆分（v0.0.12 批次 B）", () => {
     // s1：a 保留、outside 被拒；s2：a 已被 s1 使用 → 丢弃，b 保留。
     expect(result.splits[0].paths).toEqual([absolute("src/a.ts")]);
     expect(result.splits[1].paths).toEqual([absolute("src/b.ts")]);
+  });
+});
+
+describe("commitSplitAi 严格校验（V025-R50）", () => {
+  const malicious = {
+    splits: [
+      {
+        id: "s1",
+        title: "拆分 1",
+        summary: "",
+        message: "",
+        paths: ["src/a.ts", "src/ghost.ts"],
+        reason: "",
+        risks: [],
+      },
+      {
+        id: "s2",
+        title: "拆分 2",
+        summary: "",
+        message: "",
+        paths: ["src/a.ts", "../outside.ts", "src/b.ts"],
+        reason: "",
+        risks: [],
+      },
+    ],
+    warnings: [],
+  };
+  const candidates = [candidate("src/a.ts"), candidate("src/b.ts")];
+
+  it("虚构/重复/范围外/超出选择路径导致整份无效且无残余", () => {
+    const strict = validateCommitSplitResultStrict(
+      scope,
+      malicious,
+      ["src/a.ts"],
+      candidates,
+    );
+    expect(strict.valid).toBe(false);
+    // 整份拒绝：不得修剪后残留有效拆分。
+    expect(strict.splits).toEqual([]);
+    expect(strict.errors.join("；")).toContain("虚构或已过期");
+    expect(strict.errors.join("；")).toContain("重复");
+    expect(strict.errors.join("；")).toContain("不在当前操作范围");
+    expect(strict.errors.join("；")).toContain("超出本次分析选择");
+  });
+
+  it("合法集合全部通过", () => {
+    const strict = validateCommitSplitResultStrict(
+      scope,
+      {
+        splits: [
+          {
+            id: "s1",
+            title: "拆分 1",
+            summary: "",
+            message: "",
+            paths: ["src/a.ts"],
+            reason: "",
+            risks: [],
+          },
+        ],
+        warnings: [],
+      },
+      ["src/a.ts", "src/b.ts"],
+      candidates,
+    );
+    expect(strict.valid).toBe(true);
+    expect(strict.errors).toEqual([]);
+    expect(strict.splits[0].paths).toEqual([absolute("src/a.ts")]);
   });
 });

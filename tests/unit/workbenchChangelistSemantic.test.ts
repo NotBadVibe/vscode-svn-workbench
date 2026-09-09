@@ -287,7 +287,10 @@ afterEach(() => {
 describe("changelist 语义拆分（v0.0.12 批次 B）", () => {
   it("preview-receipt 只下发回执（任务 changelist-split），不调用模型", async () => {
     const { session, send } = await createSession("changelists");
-    await send("changelist/preview-receipt", {});
+    // V025-R50：回执按明确勾选集合生成。
+    await send("changelist/preview-receipt", {
+      selectedPaths: ["app/a.ts", "app/b.ts"],
+    });
     await vi.waitFor(() => expect(posted.length).toBeGreaterThan(0));
     expect(receiptMessages()).toHaveLength(1);
     expect(session.changelistState?.pendingReceipt?.task).toBe(
@@ -299,11 +302,17 @@ describe("changelist 语义拆分（v0.0.12 批次 B）", () => {
 
   it("run-semantic 携带匹配 token 时生成语义建议（含 purpose）", async () => {
     const { session, send } = await createSession("changelists");
-    await send("changelist/preview-receipt", {});
+    await send("changelist/preview-receipt", {
+      selectedPaths: ["app/a.ts", "app/b.ts"],
+    });
     await vi.waitFor(() => expect(posted.length).toBeGreaterThan(0));
     const token = receiptMessages()[0].token;
     posted.length = 0;
-    await send("changelist/run-semantic", { receiptToken: token });
+    // V025-R50：确认时回传当前选择（与回执绑定集合一致）。
+    await send("changelist/run-semantic", {
+      receiptToken: token,
+      selectedPaths: ["app/a.ts", "app/b.ts"],
+    });
     await vi.waitFor(() => expect(posted.length).toBeGreaterThan(0));
     const snapshot = changelistSnapshotOf();
     expect(snapshot?.suggestions?.length).toBeGreaterThan(0);
@@ -320,6 +329,8 @@ describe("changelist 语义拆分（v0.0.12 批次 B）", () => {
       pendingReceipt: {
         token: "wrong-task",
         task: "commit-draft",
+        // V025-R50：回执绑定明确分析选择。
+        selectedPaths: [],
         receipt: {
           task: "commit-draft",
           projectId: "p",
@@ -353,7 +364,9 @@ describe("changelist 语义拆分（v0.0.12 批次 B）", () => {
 
   it("receipt-dismiss 放弃回执并说明未外发", async () => {
     const { session, send } = await createSession("changelists");
-    await send("changelist/preview-receipt", {});
+    await send("changelist/preview-receipt", {
+      selectedPaths: ["app/a.ts", "app/b.ts"],
+    });
     await vi.waitFor(() => expect(posted.length).toBeGreaterThan(0));
     const token = receiptMessages()[0].token;
     posted.length = 0;

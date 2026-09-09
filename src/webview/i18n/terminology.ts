@@ -877,6 +877,8 @@ export const conflictAssistanceLabels = {
  * 不外发，来源固定 `local-rule`）；「按改动意图拆分」是唯一模型入口，
  * 收进 AssistancePanel 模型组（kind:model），走 `changelist/preview-receipt`
  * 回执链；未配置时禁用并如实说明。元数据模式不声称理解业务意图。
+ * V025-R50：语义拆分默认按明确勾选集合生成回执；空选择要求明确选择分析范围
+ * （当前范围全部候选为显式选项，仍不得超出原 scope）；改选作废旧回执。
  */
 export const changelistAssistanceLabels = {
   panelTitle: "分组帮助",
@@ -887,6 +889,12 @@ export const changelistAssistanceLabels = {
   semanticSplit: "按改动意图拆分（含差异需确认）",
   semanticSplitHint: "含差异，需确认后外发",
   unconfiguredDisabledReason: "未配置外部模型，本地检查仍可用",
+  splitScopeRequired:
+    "请先勾选要分析的文件，或明确选择分析当前范围全部候选后再生成语义拆分回执。",
+  splitSelectAll: "分析当前范围全部候选",
+  splitScopeCancel: "取消",
+  splitSelectionChanged:
+    "选择已变化，旧语义拆分回执已作废；请用当前选择重新生成回执。",
 } as const;
 
 /**

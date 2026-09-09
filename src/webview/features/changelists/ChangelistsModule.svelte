@@ -474,17 +474,35 @@
     applyPaths = [...suggestion.paths];
   }
 
-  /** v0.0.12 批次 B：语义拆分（先展示受限差异回执，确认后调用模型）。 */
+  /**
+   * V025-R50：语义拆分默认按明确勾选集合生成回执；空选择不回退为全部候选，
+   * 要求明确选择分析范围（当前范围全部候选为显式选项，仍不得超出原 scope）。
+   */
+  let splitScopePrompt = $state(false);
   function requestSemanticSplit(): void {
-    onAction("changelist/preview-receipt", {});
+    if (selectedPaths.length > 0) {
+      splitScopePrompt = false;
+      onAction("changelist/preview-receipt", { selectedPaths });
+    } else {
+      splitScopePrompt = true;
+      announcement = changelistAssistanceLabels.splitScopeRequired;
+    }
+  }
+
+  function requestSemanticSplitAll(): void {
+    splitScopePrompt = false;
+    onAction("changelist/preview-receipt", { selectAll: true });
   }
 
   function confirmSemanticSplit(): void {
     if (!changelistReceipt) return;
+    // V025-R50：确认时回传当前选择；改选后 Host 拒绝旧 token。
     onAction("changelist/run-semantic", {
       receiptToken: changelistReceipt.token,
+      selectedPaths,
     });
     changelistReceipt = undefined;
+    receiptSelectionFingerprint = undefined;
   }
 
   function continueMetadataSplit(): void {
@@ -493,6 +511,7 @@
       onAction("changelist/receipt-dismiss", { token: receipt.token });
     }
     changelistReceipt = undefined;
+    receiptSelectionFingerprint = undefined;
     onAction("changelist/suggest", { mode: "metadata" });
   }
 
@@ -502,6 +521,7 @@
       onAction("changelist/receipt-dismiss", { token: receipt.token });
     }
     changelistReceipt = undefined;
+    receiptSelectionFingerprint = undefined;
   }
 
   let receiptExpanded = $state(false);
@@ -537,9 +557,41 @@
       onSelect: requestSemanticSplit,
     },
   ]);
-  /* 回执到达自动展开面板，保证“生成后可见”；用户可手动收起。 */
+  /* 回执到达自动展开面板，保证“生成后可见”；用户可手动收起。
+   * V025-R50：回执绑定到达时的明确选择；选择变化即作废旧回执——本地作废
+   * 回执视图并通知 Host 放弃（未确认前未外发），Host 侧同样复验。 */
+  let receiptSelectionFingerprint = $state<string | undefined>(undefined);
+  let receiptFingerprintToken = $state<string | undefined>(undefined);
+  function selectionFingerprint(): string {
+    return [...selectedPaths].sort().join("\n");
+  }
   $effect(() => {
-    if (changelistReceipt) assistanceExpanded = true;
+    if (changelistReceipt) {
+      assistanceExpanded = true;
+      // 只在新回执到达时钉住指纹；选择变化不得跟随刷新指纹，
+      // 否则改选作废检查永远比对一致。
+      if (receiptFingerprintToken !== changelistReceipt.token) {
+        receiptFingerprintToken = changelistReceipt.token;
+        receiptSelectionFingerprint = selectionFingerprint();
+      }
+    } else {
+      receiptFingerprintToken = undefined;
+    }
+  });
+  $effect(() => {
+    const current = selectionFingerprint();
+    const receipt = changelistReceipt;
+    if (
+      receipt &&
+      receiptSelectionFingerprint !== undefined &&
+      current !== receiptSelectionFingerprint
+    ) {
+      onAction("changelist/receipt-dismiss", { token: receipt.token });
+      changelistReceipt = undefined;
+      receiptSelectionFingerprint = undefined;
+      splitScopePrompt = false;
+      announcement = changelistAssistanceLabels.splitSelectionChanged;
+    }
   });
   // v0.0.14 批次 D：变更集应用意向单
   let changelistTriggerEl = $state<HTMLElement | null>(null);
@@ -872,6 +924,33 @@
             type="button"
             class="button button--secondary"
             onclick={dismissSplitReceipt}>放弃</button
+          >
+        </div>
+      </div>
+    {/if}
+    {#if splitScopePrompt}
+      <!-- V025-R50：空选择时要求明确选择分析范围，不回退为全部候选。 -->
+      <div
+        class="commit-receipt"
+        role="region"
+        aria-label="选择语义拆分分析范围"
+      >
+        <p role="status">
+          {changelistAssistanceLabels.splitScopeRequired}
+        </p>
+        <div class="commit-receipt__actions">
+          <button
+            type="button"
+            class="button button--primary"
+            onclick={requestSemanticSplitAll}
+            >{changelistAssistanceLabels.splitSelectAll}（{allEntries()
+              .length}）</button
+          >
+          <button
+            type="button"
+            class="button button--secondary"
+            onclick={() => (splitScopePrompt = false)}
+            >{changelistAssistanceLabels.splitScopeCancel}</button
           >
         </div>
       </div>

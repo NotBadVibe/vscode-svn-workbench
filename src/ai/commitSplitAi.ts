@@ -104,6 +104,101 @@ export function normalizeCommitSplitResult(
   };
 }
 
+export interface CommitSplitStrictIssue {
+  kind: "out-of-scope" | "not-selected" | "unknown" | "duplicate";
+  path: string;
+}
+
+export interface CommitSplitStrictResult {
+  /** 全部路径合法时为 true；任一虚构/越界/重复/过期即为 false。 */
+  valid: boolean;
+  /** valid 时为归一化拆分（绝对路径），无效时为空（整份拒绝，不修剪残余）。 */
+  splits: AiCommitSplitSuggestion[];
+  warnings: string[];
+  /** 中文拒绝原因（逐项）。 */
+  errors: string[];
+}
+
+/**
+ * V025-R50：模型拆分结果逐项严格校验。发现虚构、越界、重复或过期路径则
+ * 整份建议无效（valid=false），调用方必须拒绝该份建议并解释，不得静默修剪
+ * 后把其余内容当作有效建议；人工选择与草稿由调用方保留。
+ */
+export function validateCommitSplitResultStrict(
+  scope: OperationScope,
+  result: AiCommitSplitResult,
+  allowedRelativePaths: readonly string[],
+  candidates: readonly { relativePath: string }[],
+): CommitSplitStrictResult {
+  const normalized = normalizeCommitSplitResult(result);
+  const toKey = (absolutePath: string): string =>
+    normalizePathKey(absolutePath, nativePathSemantics);
+  const allowed = new Set(
+    allowedRelativePaths.map((relativePath) =>
+      toKey(toAbsolutePath(scope, relativePath)),
+    ),
+  );
+  const candidateKeys = new Set(
+    candidates.map((candidate) =>
+      toKey(toAbsolutePath(scope, candidate.relativePath)),
+    ),
+  );
+  const used = new Set<string>();
+  const issues: CommitSplitStrictIssue[] = [];
+  const splits = normalized.splits
+    .map((split, index) => {
+      const paths: string[] = [];
+      for (const rawPath of split.paths) {
+        const absolutePath = toAbsolutePath(scope, rawPath);
+        if (!isPathInScope(scope, absolutePath, nativePathSemantics)) {
+          issues.push({ kind: "out-of-scope", path: rawPath });
+          continue;
+        }
+        const key = toKey(absolutePath);
+        if (used.has(key)) {
+          issues.push({ kind: "duplicate", path: rawPath });
+          continue;
+        }
+        if (!allowed.has(key)) {
+          issues.push({
+            kind: candidateKeys.has(key) ? "not-selected" : "unknown",
+            path: rawPath,
+          });
+          continue;
+        }
+        used.add(key);
+        paths.push(absolutePath);
+      }
+      return {
+        ...split,
+        id: split.id || `split-${index + 1}`,
+        paths,
+      };
+    })
+    .filter((split) => split.paths.length > 0);
+
+  const errors = issues.map((issue) => describeSplitIssue(issue));
+  return {
+    valid: errors.length === 0,
+    splits: errors.length === 0 ? splits : [],
+    warnings: normalized.warnings,
+    errors,
+  };
+}
+
+function describeSplitIssue(issue: CommitSplitStrictIssue): string {
+  switch (issue.kind) {
+    case "out-of-scope":
+      return `“${issue.path}”不在当前操作范围内`;
+    case "not-selected":
+      return `“${issue.path}”超出本次分析选择`;
+    case "duplicate":
+      return `“${issue.path}”在多个拆分中重复出现`;
+    case "unknown":
+      return `“${issue.path}”为虚构或已过期路径`;
+  }
+}
+
 export function validateCommitSplitResult(
   scope: OperationScope,
   result: AiCommitSplitResult,

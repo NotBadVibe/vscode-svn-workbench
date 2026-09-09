@@ -1122,6 +1122,8 @@ test("semantic changelist split: receipt-confirmed then purpose/deps suggestions
 }) => {
   await page.goto("/");
   await openModule(page, "变更集");
+  // V025-R50：语义拆分按明确勾选集合生成回执，先勾选要分析的文件。
+  await page.getByRole("checkbox", { name: "选择 src/extension.ts" }).click();
   // v0.1.6 V016-D：语义拆分收进帮助面板，先展开「需要帮助」。
   await page.getByRole("button", { name: "需要帮助" }).click();
   await page.getByRole("button", { name: /按改动意图拆分/ }).click();

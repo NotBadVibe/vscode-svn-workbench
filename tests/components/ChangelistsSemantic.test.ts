@@ -75,14 +75,67 @@ function renderWith(overrides: Partial<ChangelistsSnapshot> = {}) {
 }
 
 describe("ChangelistsModule 语义拆分（v0.0.12 批次 B）", () => {
-  it("“按改动意图拆分”先请求回执，不直接调用模型", async () => {
+  it("已勾选时“按改动意图拆分”按明确勾选集合请求回执，不直接调用模型", async () => {
     const onAction = renderWith();
+    await fireEvent.click(
+      screen.getByRole("checkbox", { name: "选择 src/a.ts" }),
+    );
     // v0.1.6 V016-D：语义拆分收进 AssistancePanel，先展开「需要帮助」。
     await fireEvent.click(screen.getByRole("button", { name: "需要帮助" }));
     await fireEvent.click(
       screen.getByRole("button", { name: /按改动意图拆分/ }),
     );
-    expect(onAction).toHaveBeenCalledWith("changelist/preview-receipt", {});
+    // V025-R50：回执按明确勾选集合生成。
+    expect(onAction).toHaveBeenCalledWith("changelist/preview-receipt", {
+      selectedPaths: ["src/a.ts"],
+    });
+    expect(onAction).not.toHaveBeenCalledWith(
+      "changelist/run-semantic",
+      expect.anything(),
+    );
+  });
+
+  it("空选择时要求明确选择分析范围，可显式选择全部候选", async () => {
+    const onAction = renderWith();
+    await fireEvent.click(screen.getByRole("button", { name: "需要帮助" }));
+    await fireEvent.click(
+      screen.getByRole("button", { name: /按改动意图拆分/ }),
+    );
+    // V025-R50：空选择不回退为全部候选，不发回执请求。
+    expect(onAction).not.toHaveBeenCalledWith(
+      "changelist/preview-receipt",
+      expect.anything(),
+    );
+    expect(
+      screen.getByRole("region", { name: "选择语义拆分分析范围" }),
+    ).toBeInTheDocument();
+    await fireEvent.click(
+      screen.getByRole("button", { name: /分析当前范围全部候选/ }),
+    );
+    expect(onAction).toHaveBeenCalledWith("changelist/preview-receipt", {
+      selectAll: true,
+    });
+  });
+
+  it("改选后旧回执本地作废并通知 Host 放弃", async () => {
+    const onAction = vi.fn();
+    render(ChangelistsModule, {
+      snapshot,
+      onAction,
+      changelistReceipt: receipt,
+    });
+    expect(
+      screen.getByRole("region", { name: "语义拆分外发回执" }),
+    ).toBeInTheDocument();
+    // V025-R50：勾选变化即作废旧回执（未确认前未外发）。
+    await fireEvent.click(
+      screen.getByRole("checkbox", { name: "选择 src/a.ts" }),
+    );
+    await vi.waitFor(() =>
+      expect(onAction).toHaveBeenCalledWith("changelist/receipt-dismiss", {
+        token: "split-receipt-1",
+      }),
+    );
     expect(onAction).not.toHaveBeenCalledWith(
       "changelist/run-semantic",
       expect.anything(),
@@ -103,8 +156,10 @@ describe("ChangelistsModule 语义拆分（v0.0.12 批次 B）", () => {
       screen.getByText("语义拆分（changelist-split）"),
     ).toBeInTheDocument();
     await fireEvent.click(screen.getByRole("button", { name: "开始语义拆分" }));
+    // V025-R50：确认时回传当前选择（此处无勾选，Host 侧与回执绑定集合比对）。
     expect(onAction).toHaveBeenCalledWith("changelist/run-semantic", {
       receiptToken: "split-receipt-1",
+      selectedPaths: [],
     });
   });
 
