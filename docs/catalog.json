@@ -578,12 +578,12 @@
     },
     {
       "version": "0.2.5",
-      "status": "draft",
-      "phase": "planned",
+      "status": "released",
+      "phase": "released",
       "baseVersion": "0.2.4",
       "canonicalEntry": "releases/v0.2.5/README.md",
       "manifest": "releases/v0.2.5/manifest.json",
-      "releasedFact": false,
+      "releasedFact": true,
       "topics": [
         "team-rule-preview",
         "local-grouping",
