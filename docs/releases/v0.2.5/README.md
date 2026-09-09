@@ -34,7 +34,7 @@
 
 - **原评审映射：** 第 47 项。
 - **优先级 / 证据等级：** P2 / 体验建议。
-- **实施状态：** 待实施。
+- **实施状态：** 已实施。
 - **看到的现状：** 设置可以编辑前缀、模块与工单正则，但缺少就地示例验证，用户到提交时才发现规则不合适。
 - **用户影响：** 不熟悉正则的人难以配置团队规范，可能阻断所有提交。
 - **现有证据与预计改动入口：** [SettingsModule.svelte](../../../src/webview/features/settings/SettingsModule.svelte)、[commitConvention.ts](../../../src/commit/commitConvention.ts)、[CommitMessageEditor.svelte](../../../src/webview/features/commit/CommitMessageEditor.svelte)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
@@ -48,8 +48,8 @@
 
 **验收场景与完成条件：**
 
-- [ ] 同一示例在设置与提交页得到相同结论。
-- [ ] 非法正则、空允许列表、中文模块、真实/缺失工单号有明确原因。
+- [x] 同一示例在设置与提交页得到相同结论。
+- [x] 非法正则、空允许列表、中文模块、真实/缺失工单号有明确原因。
 - [ ] 预览样例不保存团队配置，不发模型请求。
 
 <a id="v025-r49"></a>
@@ -58,7 +58,7 @@
 
 - **原评审映射：** 第 49 项。
 - **优先级 / 证据等级：** P2 / 来源心理预期问题，非外发漏洞结论。
-- **实施状态：** 待实施。
+- **实施状态：** 已实施。
 - **看到的现状：** 自动整理降低 AI 标识后，模型可用时仍可调用模型；已有外发提示，因此不应描述成未告知上传。
 - **用户影响：** 用户不清楚等待与外发换来的收益，目录分组也可能承担模型成本。
 - **现有证据与预计改动入口：** [ChangelistsModule.svelte](../../../src/webview/features/changelists/ChangelistsModule.svelte)、[WorkbenchController.ts](../../../src/extension/workbench/WorkbenchController.ts)、[AssistancePanel.svelte](../../../src/webview/components/assistance/AssistancePanel.svelte)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
@@ -72,17 +72,17 @@
 
 **验收场景与完成条件：**
 
-- [ ] 本地整理在有/无模型配置时均无外部请求且结果稳定。
-- [ ] 模型拆分需确认回执，失败不覆盖人工方案与选择。
-- [ ] 仅元数据模式不得声称理解业务意图。
+- [x] 本地整理在有/无模型配置时均无外部请求且结果稳定。
+- [x] 模型拆分需确认回执，失败不覆盖人工方案与选择。
+- [x] 仅元数据模式不得声称理解业务意图。
 
 <a id="v025-r50"></a>
 
 ### V025-R50 · 语义拆分输入与用户选择一致
 
 - **原评审映射：** 第 50 项。
-- **优先级 / 证据等级：** P2 / 待复现的范围认知风险。
-- **实施状态：** 待实施。
+- **优先级 / 证据等级：** P2 / 待复现的范围认知风险（已复现并修复，复现证据见测试落点与提交记录）。
+- **实施状态：** 已实施。
 - **看到的现状：** preview-receipt 的 selectedPaths 从全部非 blocked/excluded 候选推导，不直接等于 session.selectedPaths；需复现 Changes 交接及手工改选的实际路径。
 - **用户影响：** 用户以为只分析勾选的 N 项，实际回执可能包含当前范围 M 项；尚未认定越出右键 scope。
 - **现有证据与预计改动入口：** [WorkbenchController.ts](../../../src/extension/workbench/WorkbenchController.ts)、[ChangelistsModule.svelte](../../../src/webview/features/changelists/ChangelistsModule.svelte)、[workbenchChangelistSemantic.test.ts](../../../tests/unit/workbenchChangelistSemantic.test.ts)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
@@ -96,10 +96,10 @@
 
 **验收场景与完成条件：**
 
-- [ ] 目录 10 项仅勾 2 项时回执和模型请求都只含这 2 项。
-- [ ] 取消回执无外发，改选后旧 token 被拒。
-- [ ] 模型虚构/重复/范围外路径被拒且人工选择保持。
-- [ ] 未复现时记反证和已有保护机制。
+- [x] 目录 10 项仅勾 2 项时回执和模型请求都只含这 2 项。
+- [x] 取消回执无外发，改选后旧 token 被拒。
+- [x] 模型虚构/重复/范围外路径被拒且人工选择保持。
+- [ ] 未复现时记反证和已有保护机制（本版已复现，不适用，留空）。
 
 ## 4. 测试落点
 

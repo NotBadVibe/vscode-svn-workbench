@@ -234,6 +234,49 @@ describe("V025-R49 本地整理确定性（不经模型）", () => {
     expect(providerControl.calls).toBe(0);
   });
 
+  it("有模型配置仍零外部请求且来源为本地检查", async () => {
+    const { controller, send } = await createSession();
+    // 有效模型配置 mock：即使 provider 可解析，本地整理也不经过模型链。
+    const resolveSpy = vi
+      .spyOn(
+        controller as unknown as {
+          resolveStoredAiProvider: (scenario: string) => Promise<unknown>;
+        },
+        "resolveStoredAiProvider",
+      )
+      .mockResolvedValue({
+        baseUrl: "https://ai.example.test/v1",
+        model: "test-model",
+        apiKey: "test-key",
+      });
+    const { OpenAiCompatibleProvider } =
+      await import("../../src/ai/openAiCompatibleProvider");
+    const splitSpy = vi.spyOn(
+      OpenAiCompatibleProvider.prototype,
+      "suggestCommitSplits",
+    );
+    try {
+      // 有效配置确实可解析（不断言密钥原文，仅确认不抛错）。
+      await expect(
+        (
+          controller as unknown as {
+            resolveStoredAiProvider: (scenario: string) => Promise<unknown>;
+          }
+        ).resolveStoredAiProvider("commitSplit"),
+      ).resolves.toBeDefined();
+      await send("changelist/suggest", { mode: "metadata" });
+      await vi.waitFor(() => expect(posted.length).toBeGreaterThan(0));
+      const snapshot = changelistSnapshotOf();
+      expect(snapshot?.suggestions?.length).toBeGreaterThan(0);
+      expect(snapshot?.source).toBe("local-rule");
+      expect(providerControl.calls).toBe(0);
+      expect(splitSpy).not.toHaveBeenCalled();
+    } finally {
+      splitSpy.mockRestore();
+      resolveSpy.mockRestore();
+    }
+  });
+
   it("默认模式（无 mode）同样走本地整理且结果稳定", async () => {
     const { send } = await createSession();
     await send("changelist/suggest", {});

@@ -417,6 +417,70 @@ describe("V025-R50 语义拆分输入与用户选择一致", () => {
     }
   });
 
+  it("R50-5b：预置手工建议遇严格失败后清空建议但人工选择保留", async () => {
+    const { controller, session, send } = await createSession();
+    await send("changelist/preview-receipt", {
+      selectedPaths: ["app/f01.ts", "app/f02.ts"],
+    });
+    await vi.waitFor(() => expect(posted.length).toBeGreaterThan(0));
+    const token = receiptMessages()[0].payload.token;
+    // 预置手工/本地整理建议与人工选择（平台无关相对路径断言）。
+    // 注意：仅替换 suggestions，保留 preview-receipt 建立的 pendingReceipt。
+    if (!session.changelistState) throw new Error("缺少 changelistState");
+    session.changelistState.suggestions = [
+      {
+        id: "manual-1",
+        title: "人工方案",
+        summary: "人工保留",
+        message: "人工保留",
+        paths: ["app/f01.ts"],
+        reason: "人工",
+        risks: [],
+      },
+    ];
+    session.selectedPaths = ["app/f01.ts", "app/f02.ts"];
+    vi.spyOn(
+      controller as unknown as {
+        resolveStoredAiProvider: (scenario: string) => Promise<never>;
+      },
+      "resolveStoredAiProvider",
+    ).mockResolvedValue({} as never);
+    const { OpenAiCompatibleProvider } =
+      await import("../../src/ai/openAiCompatibleProvider");
+    const splitSpy = vi
+      .spyOn(OpenAiCompatibleProvider.prototype, "suggestCommitSplits")
+      .mockResolvedValue({
+        splits: [
+          {
+            id: "bad-1",
+            title: "无效拆分",
+            summary: "虚构",
+            message: "msg",
+            paths: ["app/f01.ts", "app/ghost.ts"],
+            reason: "r",
+            risks: [],
+          },
+        ],
+        warnings: [],
+      });
+    try {
+      posted.length = 0;
+      await send("changelist/run-semantic", {
+        receiptToken: token,
+        selectedPaths: ["app/f01.ts", "app/f02.ts"],
+      });
+      await vi.waitFor(() => expect(posted.length).toBeGreaterThan(0));
+      // 严格失败清空建议（含此前本地整理建议），但人工选择保留。
+      expect(changelistSnapshotOf()?.suggestions ?? []).toHaveLength(0);
+      expect(session.selectedPaths).toEqual(["app/f01.ts", "app/f02.ts"]);
+      const feedback = changelistSnapshotOf()?.feedback ?? "";
+      expect(feedback).toContain("已一并清空");
+      expect(feedback).toContain("人工选择保留");
+    } finally {
+      splitSpy.mockRestore();
+    }
+  });
+
   it("R50-7：会话共享选择与刷新后候选求交收缩并说明移除原因", async () => {
     const { session, send } = await createSession();
     // 交接带入 3 项，其中 1 项已不在当前候选（过期）。

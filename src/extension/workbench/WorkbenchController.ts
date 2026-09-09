@@ -10804,7 +10804,7 @@ export class WorkbenchController implements vscode.Disposable {
       rejected.suggestions = [];
       rejected.warnings = [];
       rejected.fallbackReason = undefined;
-      rejected.feedback = `模型返回的拆分建议包含无效路径，已整体拒绝，未采用：${strict.errors.slice(0, 3).join("；")}${strict.errors.length > 3 ? "等" : ""}。人工选择与草稿不受影响；可重试或改用本地整理。`;
+      rejected.feedback = `模型返回的拆分建议包含无效路径，已整体拒绝，未采用：${strict.errors.slice(0, 3).join("；")}${strict.errors.length > 3 ? "等" : ""}。此前的本地整理建议已一并清空，人工选择保留，草稿不受影响；可重试或改用本地整理。`;
       session.changelistState = rejected;
       await this.sendError(
         "changelists",
