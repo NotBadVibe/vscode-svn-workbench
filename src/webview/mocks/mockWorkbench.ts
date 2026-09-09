@@ -36,6 +36,10 @@ import {
   type ResolvedCommitSelectionRules,
 } from "../../commit/commitSelectionRuleResolver";
 import { createCommitSelectionEvaluator } from "../../commit/commitSelectionRuleEvaluator";
+import {
+  buildCommitConventionConfigFromEditorInput,
+  previewCommitConventionSample,
+} from "../../commit/commitConventionRules";
 import type { SvnStatus } from "../../svn/svnTypes";
 import { workbenchBridge } from "../bridge/vscodeBridge";
 import { onboarding } from "../app/onboarding.svelte";
@@ -2110,6 +2114,43 @@ export function startMockWorkbench(): void {
             ...settingsSnapshotValue.ai,
             models: [{ id: "deepseek-v4-flash", owner: "deepseek" }],
             feedback: { tone: "success", message: "读取到 1 个可用模型。" },
+          },
+        }),
+      );
+    }
+    if (action === "settings/preview-team-sample") {
+      // V025-R47 Mock：与 Host 同一纯逻辑计算示例结论（基于未保存草稿，
+      // 不写配置、不发模型请求），供 Webview E2E 与手工演示使用。
+      const payload = (data ?? {}) as Record<string, unknown>;
+      const asText = (value: unknown): string =>
+        typeof value === "string" ? value : "";
+      const config = buildCommitConventionConfigFromEditorInput({
+        enabled: payload.enabled === true,
+        requiredIssueId: payload.requiredIssueId === true,
+        issueIdPattern: asText(payload.issueIdPattern),
+        requiredModule: payload.requiredModule === true,
+        allowedModulesText: asText(payload.allowedModulesText),
+        requiredPrefix: payload.requiredPrefix === true,
+        allowedPrefixesText: asText(payload.allowedPrefixesText),
+      });
+      const sample = asText(payload.sample);
+      const preview = previewCommitConventionSample(sample, config);
+      injectSnapshot(
+        "settings",
+        settingsSnapshot({
+          team: {
+            ...settingsSnapshotValue.team,
+            samplePreview: {
+              sample,
+              skeleton: preview.skeleton,
+              valid: preview.valid,
+              configIssues: preview.configIssues,
+              ...(preview.budgetIssue === undefined
+                ? {}
+                : { budgetIssue: preview.budgetIssue }),
+              ruleResults: preview.ruleResults,
+              draftBased: true as const,
+            },
           },
         }),
       );

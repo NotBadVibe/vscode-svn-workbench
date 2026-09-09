@@ -239,6 +239,11 @@ export interface WorkbenchSession extends OpenWorkbenchRequest {
     };
     /** 团队规则动作一次性反馈。 */
     teamFeedback?: { tone: "success" | "warning" | "error"; message: string };
+    /**
+     * V025-R47：提交说明样例即时校验结论（Host 权威计算，基于未保存草稿）。
+     * 保存团队规则成功后清除；草稿变化由 Webview 按 sample 指纹判断过期。
+     */
+    teamSamplePreview?: SettingsSnapshot["team"]["samplePreview"];
   };
   /**
    * v0.0.17 批次 A：Update 独立模块的会话状态（自 repositoryState 拆出）。

@@ -1137,8 +1137,37 @@ export interface SettingsSnapshot {
       source: "local-rule" | "configured-model" | "local-rule-fallback";
       fallbackReason?: string;
     };
+    /**
+     * V025-R47：提交说明样例即时校验（Host 权威结论，Webview 只展示）。
+     * 基于设置页当前未保存草稿计算，不写入团队配置，不发起模型请求；
+     * 逐规则结论与提交页使用同一校验逻辑，草稿变化后视为过期。
+     */
+    samplePreview?: TeamSamplePreview;
   };
   selection: CommitSelectionSettingsSection;
+}
+
+/** V025-R47：团队规则示例逐规则结论（Host 签发，Webview 只展示）。 */
+export interface TeamSampleRuleResult {
+  rule: "prefix" | "module" | "issueId";
+  label: string;
+  required: boolean;
+  passed: boolean;
+  message: string;
+}
+
+/** V025-R47：团队规则示例预览（Host 签发，Webview 只展示）。 */
+export interface TeamSamplePreview {
+  /** 发起校验时的样例原文（用于 Webview 判断草稿是否已变化）。 */
+  sample: string;
+  /** 符合前缀/模块结构的骨架；要求工单号时为占位写法，不编造真实工单号。 */
+  skeleton: string;
+  valid: boolean;
+  configIssues: string[];
+  budgetIssue?: string;
+  ruleResults: TeamSampleRuleResult[];
+  /** 恒为 true：结论基于未保存草稿，未写入任何配置文件，也未发起模型请求。 */
+  draftBased: true;
 }
 
 export type DiagnosticActionId =
@@ -1776,6 +1805,7 @@ export type WebviewAction =
   | "settings/test-ai"
   | "settings/list-models"
   | "settings/save-team"
+  | "settings/preview-team-sample"
   | "settings/recommend-team"
   | "settings/open-team-file"
   | "settings/preview-team-migration"
@@ -1936,6 +1966,7 @@ export const webviewActions = [
   "settings/test-ai",
   "settings/list-models",
   "settings/save-team",
+  "settings/preview-team-sample",
   "settings/recommend-team",
   "settings/open-team-file",
   "settings/preview-team-migration",

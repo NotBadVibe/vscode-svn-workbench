@@ -97,6 +97,7 @@ import {
   validateCommitConventionConfig,
   validateCommitMessageConvention,
 } from "../../commit/commitConvention";
+import { previewCommitConventionSample } from "../../commit/commitConventionRules";
 import { runCommitFlow } from "../../commit/commitFlow";
 import {
   SVN_WORKBENCH_CONFIG_FILE,
@@ -4269,6 +4270,8 @@ export class WorkbenchController implements vscode.Disposable {
           );
           const state = this.ensureSettingsState(session);
           state.recommendedTeamConfig = undefined;
+          // V025-R47：已保存配置变化，基于旧草稿的示例结论失效，清除。
+          state.teamSamplePreview = undefined;
           state.recommendation = {
             summary: "团队提交规范已保存。",
             reasons: ["后续提交预检将使用当前仓库配置。"],
@@ -4286,6 +4289,33 @@ export class WorkbenchController implements vscode.Disposable {
             message.requestId,
           );
         }
+        return;
+      }
+      case "settings/preview-team-sample": {
+        // V025-R47：示例即时校验。只用当前未保存草稿做纯 Host 校验：
+        // 不写团队配置，不发模型请求；逐规则结论与提交页同一逻辑。
+        const config = toTeamConfig(data);
+        const sample = asStringAllowEmpty(data.sample) ?? "";
+        const preview = previewCommitConventionSample(sample, config);
+        const state = this.ensureSettingsState(session);
+        state.teamSamplePreview = {
+          sample,
+          skeleton: preview.skeleton,
+          valid: preview.valid,
+          configIssues: preview.configIssues,
+          ...(preview.budgetIssue === undefined
+            ? {}
+            : { budgetIssue: preview.budgetIssue }),
+          ruleResults: preview.ruleResults.map((item) => ({
+            rule: item.rule,
+            label: item.label,
+            required: item.required,
+            passed: item.passed,
+            message: item.message,
+          })),
+          draftBased: true as const,
+        };
+        await this.sendSettingsSnapshot(session, message.requestId);
         return;
       }
       case "settings/recommend-team": {
@@ -8805,6 +8835,7 @@ export class WorkbenchController implements vscode.Disposable {
         requiredPrefix: team.requiredPrefix,
         allowedPrefixesText: formatCommitConventionList(team.allowedPrefixes),
         warnings: teamState.warnings,
+        samplePreview: state.teamSamplePreview,
         memory: {
           source: memory.source,
           count: memory.entries.length,
