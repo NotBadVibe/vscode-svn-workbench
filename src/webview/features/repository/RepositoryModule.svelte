@@ -17,6 +17,7 @@
   import {
     extractRelocateTarget,
     isOperationIntentStale,
+    stripPreviewUrlOriginSuffix,
     type OperationIntentKind,
   } from "../../../operation/operationIntent";
   import {
@@ -345,12 +346,13 @@
     for (const line of preview.details ?? []) {
       const text = line.trim();
       if (text.startsWith("源：")) {
-        const value = text.slice(2).trim();
+        // V026-R43：详情行末来源标注非 URL，回填前剥离。
+        const value = stripPreviewUrlOriginSuffix(text.slice(2));
         if (value && value !== "未填写" && payload.sourceUrl === undefined)
           payload.sourceUrl = value;
       }
       if (text.startsWith("目标：") || text.startsWith("新根：")) {
-        const value = text.slice(3).trim();
+        const value = stripPreviewUrlOriginSuffix(text.slice(3));
         if (value && value !== "未填写" && payload.targetUrl === undefined)
           payload.targetUrl = value;
       }

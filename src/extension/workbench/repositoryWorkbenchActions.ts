@@ -11,17 +11,30 @@ import { collectSvnProperties } from "../../properties/svnProperties";
 import {
   WORKBENCH_PROTOCOL_VERSION,
   isReleaseNotesView,
+  isRepositoryRemoteCompareView,
+  isRepositoryRemoteFileView,
+  isRepositoryRemoteHistoryView,
+  readRepositoryUrlIntent,
   type HostToWebviewMessage,
   type RepositorySnapshot,
   type WorkbenchModuleId,
 } from "../../protocol/workbenchProtocol";
 import {
   buildReleaseNotes,
+  classifyRemoteContent,
+  extractRemoteRevisionFromInfoXml,
+  MAX_REMOTE_COMPARE_CHARS,
+  MAX_REMOTE_FILE_PREVIEW_BYTES,
+  MAX_REMOTE_HISTORY_ENTRIES,
+  normalizeRemoteRevisionInput,
+  normalizeRepositoryUrlIntent,
   normalizeReleaseNotesRange,
   parseSvnListXml,
   validatePatchText,
   validateRepositoryUrl,
 } from "../../repository/advancedRepositoryTools";
+import { parseSvnLogXml } from "../../history/svnHistoryParser";
+import { normalizeSvnUrl } from "../../svn/svnUrl";
 import {
   buildShelfId,
   loadShelfIndex,
@@ -311,6 +324,28 @@ export class RepositoryWorkbenchActions {
       },
       advanced: {
         browser: session.repositoryState?.advanced?.browser,
+        // V026-R46：远端只读视图外发前纵深校验，畸形 fail-closed 丢弃该字段。
+        remoteFile:
+          session.repositoryState?.advanced?.remoteFile !== undefined &&
+          isRepositoryRemoteFileView(
+            session.repositoryState.advanced.remoteFile,
+          )
+            ? session.repositoryState.advanced.remoteFile
+            : undefined,
+        remoteHistory:
+          session.repositoryState?.advanced?.remoteHistory !== undefined &&
+          isRepositoryRemoteHistoryView(
+            session.repositoryState.advanced.remoteHistory,
+          )
+            ? session.repositoryState.advanced.remoteHistory
+            : undefined,
+        remoteCompare:
+          session.repositoryState?.advanced?.remoteCompare !== undefined &&
+          isRepositoryRemoteCompareView(
+            session.repositoryState.advanced.remoteCompare,
+          )
+            ? session.repositoryState.advanced.remoteCompare
+            : undefined,
         releaseNotes,
         feedback: session.repositoryState?.advanced?.feedback,
         shelves: shelfEntries,
@@ -332,6 +367,12 @@ export class RepositoryWorkbenchActions {
                 session.repositoryState.advanced.preview.candidateHash,
               repositoryUuid:
                 session.repositoryState.advanced.preview.repositoryUuid,
+              sourceUrl: session.repositoryState.advanced.preview.sourceUrl,
+              targetUrl: session.repositoryState.advanced.preview.targetUrl,
+              sourceOrigin:
+                session.repositoryState.advanced.preview.sourceOrigin,
+              targetOrigin:
+                session.repositoryState.advanced.preview.targetOrigin,
             }
           : undefined,
       },
@@ -346,6 +387,11 @@ export class RepositoryWorkbenchActions {
     return session.repositoryState.advanced;
   }
 
+  /**
+   * V026-R46：只读仓库浏览（不写本地文件、不改 operationScope）。
+   * 失败时保留上次成功条目与 lastGoodUrl，调用方可一键返回；
+   * 成功时附带远端修订与仓库/项目关系，供 UI 明确来源。
+   */
   async browseRepository(
     session: WorkbenchSession,
     requestedUrl: string | undefined,
@@ -360,16 +406,34 @@ export class RepositoryWorkbenchActions {
       infoResult.exitCode === 0
         ? parseInfoXml(infoResult.stdout, session.scope.repositoryRoot)
         : undefined;
-    const url = requestedUrl?.trim() || info?.url || info?.repositoryRoot;
+    const rawRequested =
+      requestedUrl?.trim() || info?.url || info?.repositoryRoot;
     const state = this.host.ensureAdvancedRepositoryState(session);
-    if (!url) {
-      state.browser = { url: "", entries: [], error: "未能解析当前仓库 URL。" };
+    const previous = state.browser;
+    if (!rawRequested) {
+      state.browser = {
+        url: "",
+        entries: previous?.entries ?? [],
+        error: "未能解析当前仓库 URL。",
+        lastGoodUrl: previous?.url || previous?.lastGoodUrl,
+      };
       await this.host.sendRepositorySnapshot(session, requestId);
       return;
     }
+    // V026-R43：先逐段规范编码（已编码不重复编码），再做归属校验。
+    const url = normalizeSvnUrl(rawRequested);
     const issues = validateRepositoryUrl(url, info?.repositoryRoot);
     if (issues.length > 0) {
-      state.browser = { url, entries: [], error: issues.join(" ") };
+      state.browser = {
+        url,
+        parentUrl:
+          repositoryParentUrl(url, info?.repositoryRoot) ?? previous?.parentUrl,
+        entries: previous?.entries ?? [],
+        error: issues.join(" "),
+        repositoryRoot: info?.repositoryRoot,
+        projectUrl: info?.url,
+        lastGoodUrl: previous?.url || previous?.lastGoodUrl,
+      };
       await this.host.sendRepositorySnapshot(session, requestId);
       return;
     }
@@ -378,18 +442,56 @@ export class RepositoryWorkbenchActions {
       ["list", "--xml", url],
       session.scope.repositoryRoot,
     );
-    state.browser =
-      result.exitCode === 0
-        ? {
-            url,
-            parentUrl: repositoryParentUrl(url, info?.repositoryRoot),
-            entries: parseSvnListXml(result.stdout),
-          }
-        : {
-            url,
-            entries: [],
-            error: result.stderr || result.stdout || "无法读取仓库目录。",
-          };
+    if (result.exitCode !== 0) {
+      state.browser = {
+        url,
+        parentUrl:
+          repositoryParentUrl(url, info?.repositoryRoot) ?? previous?.parentUrl,
+        entries: previous?.entries ?? [],
+        error: result.stderr || result.stdout || "无法读取仓库目录。",
+        revision: previous?.revision,
+        repositoryRoot: info?.repositoryRoot,
+        projectUrl: info?.url,
+        lastGoodUrl: previous?.url || previous?.lastGoodUrl,
+      };
+      await this.host.sendRepositorySnapshot(session, requestId);
+      return;
+    }
+    // 只读远端修订（svn info URL），失败不阻断目录展示，仅记为未知。
+    let revision: string | undefined;
+    try {
+      const remoteInfo = await runSvnCommand(
+        session.svnPath,
+        ["info", "--xml", url],
+        session.scope.repositoryRoot,
+      );
+      if (remoteInfo.exitCode === 0) {
+        revision = extractRemoteRevisionFromInfoXml(remoteInfo.stdout);
+      }
+    } catch {
+      revision = undefined;
+    }
+    state.browser = {
+      url,
+      parentUrl: repositoryParentUrl(url, info?.repositoryRoot),
+      entries: parseSvnListXml(result.stdout),
+      revision,
+      repositoryRoot: info?.repositoryRoot,
+      projectUrl: info?.url,
+      lastGoodUrl: url,
+    };
+    await this.host.sendRepositorySnapshot(session, requestId);
+  }
+
+  /**
+   * V026-R43：源/目标变化后立即作废旧预览（只清预览，不碰浏览与远端只读视图）。
+   */
+  async discardAdvancedPreview(
+    session: WorkbenchSession,
+    requestId?: string,
+  ): Promise<void> {
+    const state = this.host.ensureAdvancedRepositoryState(session);
+    state.preview = undefined;
     await this.host.sendRepositorySnapshot(session, requestId);
   }
 
@@ -414,6 +516,39 @@ export class RepositoryWorkbenchActions {
         typeof value === "string" ? [[key, value.trim()]] : [],
       ),
     );
+    // V026-R43：结构化 URL/revision 意图优先，旧扁平 sourceUrl/targetUrl 兼容。
+    // origin 仅作展示 hint；Host 一律归一化复验编码/权限/边界，不信任 Webview 断言。
+    const sourceIntent = readRepositoryUrlIntent(data, "source", "sourceUrl");
+    const targetIntent = readRepositoryUrlIntent(data, "target", "targetUrl");
+    const sourceOrigin =
+      sourceIntent.origin ??
+      (typeof data.sourceOrigin === "string" ? data.sourceOrigin : undefined);
+    const targetOrigin =
+      targetIntent.origin ??
+      (typeof data.targetOrigin === "string" ? data.targetOrigin : undefined);
+    const originLabel = (origin?: string): string | undefined => {
+      if (origin === "browse") return "仓库浏览选择";
+      if (origin === "shortcut") return "常用路径组合";
+      if (origin === "manual") return "手动输入";
+      return undefined;
+    };
+    /** 只读存在性探针（svn info URL）：不写本地，仅把失效目录/权限/网络转成中文问题。 */
+    const probeReadable = async (
+      normalizedUrl: string,
+      role: string,
+    ): Promise<string | undefined> => {
+      const probed = await runSvnCommand(
+        session.svnPath,
+        ["info", "--xml", normalizedUrl],
+        session.scope.repositoryRoot,
+      );
+      if (probed.exitCode === 0) return undefined;
+      const reason = probed.stderr || probed.stdout || "";
+      const suffix = reason
+        ? `（${reason.trim().slice(0, 200)}）`
+        : "（目标不存在、无权限或网络失败，请核对后重试。）";
+      return `${role}不可读，请检查存在性与权限${suffix}当前浏览与本地范围未受影响。`;
+    };
     const infoResult = await runSvnCommand(
       session.svnPath,
       ["info", "--xml", session.scope.repositoryRoot],
@@ -433,12 +568,28 @@ export class RepositoryWorkbenchActions {
     if (operation === "branch" || operation === "tag") {
       title = operation === "branch" ? "创建分支" : "创建标签";
       destructive = false;
-      const sourceUrl = input.sourceUrl || info?.url || "";
-      const targetUrl = input.targetUrl || "";
-      issues.push(
-        ...validateRepositoryUrl(sourceUrl, info?.repositoryRoot),
-        ...validateRepositoryUrl(targetUrl, info?.repositoryRoot),
+      const rawSource = sourceIntent.rawUrl || info?.url || "";
+      const rawTarget = targetIntent.rawUrl || "";
+      const source = normalizeRepositoryUrlIntent(
+        rawSource,
+        info?.repositoryRoot,
       );
+      const target = normalizeRepositoryUrlIntent(
+        rawTarget,
+        info?.repositoryRoot,
+      );
+      const sourceUrl = source.normalizedUrl;
+      const targetUrl = target.normalizedUrl;
+      for (const issue of source.issues) issues.push(`源 URL：${issue}`);
+      for (const issue of target.issues) issues.push(`目标 URL：${issue}`);
+      if (source.crossRepository)
+        issues.push(
+          "源 URL 与当前仓库归属不一致（跨仓库），已阻止合并成一次操作。",
+        );
+      if (target.crossRepository)
+        issues.push(
+          "目标 URL 与当前仓库归属不一致（跨仓库），已阻止合并成一次操作。",
+        );
       if (!input.message) issues.push("远端 copy 必须填写提交说明。");
       if (
         sourceUrl &&
@@ -446,63 +597,138 @@ export class RepositoryWorkbenchActions {
         stripUrlSlash(sourceUrl) === stripUrlSlash(targetUrl)
       )
         issues.push("源 URL 与目标 URL 不能相同。");
+      // 只读存在性：源必须可读；目标不可读可能是正常新建，失败只作提示不直接阻止。
+      if (sourceUrl && source.issues.length === 0) {
+        const problem = await probeReadable(sourceUrl, "源 URL");
+        if (problem) issues.push(problem);
+      }
+      if (targetUrl && target.issues.length === 0) {
+        const probed = await runSvnCommand(
+          session.svnPath,
+          ["info", "--xml", targetUrl],
+          session.scope.repositoryRoot,
+        );
+        if (probed.exitCode === 0) {
+          issues.push(
+            "目标 URL 已存在，直接创建会失败，请更换目标名称后重新预览。",
+          );
+        }
+      }
       commands.push(
         `svn copy ${quoteRelative(sourceUrl)} ${quoteRelative(targetUrl)} -m <message> --encoding utf-8`,
       );
+      const sourceFrom = originLabel(sourceOrigin);
+      const targetFrom = originLabel(targetOrigin);
       details.push(
-        `源：${sourceUrl || "未填写"}`,
-        `目标：${targetUrl || "未填写"}`,
+        `源：${sourceUrl || "未填写"}${sourceFrom ? `（${sourceFrom}）` : ""}`,
+        `目标：${targetUrl || "未填写"}${targetFrom ? `（${targetFrom}）` : ""}`,
         "直接在仓库端创建，不包含未提交的本地修改。",
+        "浏览选择只用于填充源/目标，未改变本地工作副本操作范围。",
       );
       input.sourceUrl = sourceUrl;
+      input.targetUrl = targetUrl;
+      if (sourceOrigin) input.sourceOrigin = sourceOrigin;
+      if (targetOrigin) input.targetOrigin = targetOrigin;
     } else if (operation === "switch") {
       title = "切换工作副本";
       destructive = true;
-      issues.push(
-        ...validateRepositoryUrl(input.targetUrl || "", info?.repositoryRoot),
+      const rawTarget = targetIntent.rawUrl || "";
+      const target = normalizeRepositoryUrlIntent(
+        rawTarget,
+        info?.repositoryRoot,
       );
+      const targetUrl = target.normalizedUrl;
+      for (const issue of target.issues) issues.push(`目标 URL：${issue}`);
+      if (target.crossRepository)
+        issues.push(
+          "目标 URL 与当前仓库归属不一致（跨仓库），请确认后再预览。",
+        );
+      if (targetUrl && target.issues.length === 0) {
+        const problem = await probeReadable(targetUrl, "目标 URL");
+        if (problem) issues.push(problem);
+      }
       if (candidates.length > 0)
         issues.push(
           `工作副本存在 ${candidates.length} 个本地变更，已阻止切换。`,
         );
       commands.push(
-        `svn switch ${quoteRelative(input.targetUrl || "")} ${quoteRelative(session.scope.repositoryRoot)} --accept postpone`,
+        `svn switch ${quoteRelative(targetUrl || "")} ${quoteRelative(session.scope.repositoryRoot)} --accept postpone`,
       );
-      details.push("切换工作副本 URL；执行后必须重新采集状态。");
+      const targetFrom = originLabel(targetOrigin);
+      details.push(
+        `目标：${targetUrl || "未填写"}${targetFrom ? `（${targetFrom}）` : ""}`,
+        "只修改当前工作副本；不会自动提交。",
+        "切换工作副本 URL；执行后必须重新采集状态。",
+        "浏览选择只用于填充目标，未改变本地工作副本操作范围。",
+      );
+      // V026-R43：switch 无源概念，不绑定 sourceUrl/sourceOrigin。
+      delete input.sourceUrl;
+      delete input.sourceOrigin;
+      input.targetUrl = targetUrl;
+      if (targetOrigin) input.targetOrigin = targetOrigin;
     } else if (operation === "relocate") {
       title = "重定位仓库根地址";
       destructive = true;
       const oldRoot = info?.repositoryRoot || "";
-      issues.push(
-        ...validateRepositoryUrl(oldRoot),
-        ...validateRepositoryUrl(input.targetUrl || ""),
-      );
+      const rawTarget = targetIntent.rawUrl || "";
+      const target = normalizeRepositoryUrlIntent(rawTarget);
+      const targetUrl = target.normalizedUrl;
+      issues.push(...validateRepositoryUrl(oldRoot));
+      for (const issue of target.issues) issues.push(`新根：${issue}`);
+      if (targetUrl && target.issues.length === 0) {
+        const problem = await probeReadable(targetUrl, "新根");
+        if (problem) issues.push(problem);
+      }
       if (candidates.length > 0)
         issues.push(
           `工作副本存在 ${candidates.length} 个本地变更，已阻止重定位。`,
         );
       commands.push(
-        `svn switch --relocate ${quoteRelative(oldRoot)} ${quoteRelative(input.targetUrl || "")} ${quoteRelative(session.scope.repositoryRoot)}`,
+        `svn switch --relocate ${quoteRelative(oldRoot)} ${quoteRelative(targetUrl || "")} ${quoteRelative(session.scope.repositoryRoot)}`,
       );
+      const targetFrom = originLabel(targetOrigin);
       details.push(
         `旧根：${oldRoot || "未解析"}`,
-        `新根：${input.targetUrl || "未填写"}`,
+        `新根：${targetUrl || "未填写"}${targetFrom ? `（${targetFrom}）` : ""}`,
+        "浏览选择只用于填充新根，未改变本地工作副本操作范围。",
       );
       input.sourceUrl = oldRoot;
+      input.targetUrl = targetUrl;
+      if (targetOrigin) input.targetOrigin = targetOrigin;
     } else if (operation === "merge") {
       title = "合并到当前工作副本";
       destructive = true;
-      issues.push(
-        ...validateRepositoryUrl(input.sourceUrl || "", info?.repositoryRoot),
+      const rawSource = sourceIntent.rawUrl || "";
+      const source = normalizeRepositoryUrlIntent(
+        rawSource,
+        info?.repositoryRoot,
       );
+      const sourceUrl = source.normalizedUrl;
+      for (const issue of source.issues) issues.push(`源 URL：${issue}`);
+      if (source.crossRepository)
+        issues.push("源 URL 与当前仓库归属不一致（跨仓库），请确认后再预览。");
+      if (sourceUrl && source.issues.length === 0) {
+        const problem = await probeReadable(sourceUrl, "源 URL");
+        if (problem) issues.push(problem);
+      }
       if (candidates.length > 0)
         issues.push(
           `工作副本存在 ${candidates.length} 个本地变更，已阻止合并。`,
         );
       commands.push(
-        `svn merge ${quoteRelative(input.sourceUrl || "")} ${quoteRelative(session.scope.repositoryRoot)} --accept postpone`,
+        `svn merge ${quoteRelative(sourceUrl || "")} ${quoteRelative(session.scope.repositoryRoot)} --accept postpone`,
       );
-      details.push("合并只写入工作副本，不会自动提交；冲突统一进入冲突模块。");
+      const sourceFrom = originLabel(sourceOrigin);
+      details.push(
+        `源：${sourceUrl || "未填写"}${sourceFrom ? `（${sourceFrom}）` : ""}`,
+        "合并只写入工作副本，不会自动提交；冲突统一进入冲突模块。",
+        "浏览选择只用于填充源，未改变本地工作副本操作范围。",
+      );
+      input.sourceUrl = sourceUrl;
+      if (sourceOrigin) input.sourceOrigin = sourceOrigin;
+      // V026-R43：merge 无目标概念，不绑定 targetUrl/targetOrigin。
+      delete input.targetUrl;
+      delete input.targetOrigin;
     } else if (operation === "restore-shelf") {
       title = "恢复本地搁置";
       destructive = true;
@@ -612,6 +838,245 @@ export class RepositoryWorkbenchActions {
       issues: [...new Set(issues)],
       destructive,
       input,
+      // V026-R43：源/目标绑定随快照下发，表单变化后旧预览立即标失效。
+      sourceUrl: input.sourceUrl || undefined,
+      targetUrl: input.targetUrl || undefined,
+      sourceOrigin: input.sourceOrigin || undefined,
+      targetOrigin: input.targetOrigin || undefined,
+    };
+    await this.host.sendRepositorySnapshot(session, requestId);
+  }
+
+  /**
+   * V026-R46：只读远端文件内容（svn cat 内存读取，不写本地文件、不改 scope）。
+   * 二进制/超限/无权限只展示限制说明与复制 URL 恢复出口，保留浏览导航状态。
+   */
+  async previewRemoteFile(
+    session: WorkbenchSession,
+    data: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    const state = this.host.ensureAdvancedRepositoryState(session);
+    const infoResult = await runSvnCommand(
+      session.svnPath,
+      ["info", "--xml", session.scope.repositoryRoot],
+      session.scope.repositoryRoot,
+    );
+    const info =
+      infoResult.exitCode === 0
+        ? parseInfoXml(infoResult.stdout, session.scope.repositoryRoot)
+        : undefined;
+    const rawUrl =
+      typeof data.url === "string"
+        ? data.url
+        : typeof data.sourceUrl === "string"
+          ? data.sourceUrl
+          : "";
+    const intent = normalizeRepositoryUrlIntent(rawUrl, info?.repositoryRoot);
+    const revisionInput = normalizeRemoteRevisionInput(data.revision);
+    if (intent.issues.length > 0 || revisionInput.issues.length > 0) {
+      state.remoteFile = {
+        url: intent.normalizedUrl || rawUrl.trim(),
+        requestedRevision:
+          typeof data.revision === "string" ? data.revision.trim() : undefined,
+        sourceLabel: "远端只读预览",
+        error: [...intent.issues, ...revisionInput.issues].join(" "),
+      };
+      await this.host.sendRepositorySnapshot(session, requestId);
+      return;
+    }
+    const revision = revisionInput.revision;
+    const target =
+      revision && revision !== "HEAD"
+        ? `${intent.normalizedUrl}@${revision}`
+        : intent.normalizedUrl;
+    const result = await runSvnCommand(
+      session.svnPath,
+      ["cat", target],
+      session.scope.repositoryRoot,
+      { maxOutputBytes: MAX_REMOTE_FILE_PREVIEW_BYTES + 1024 },
+    );
+    if (result.exitCode !== 0) {
+      state.remoteFile = {
+        url: intent.normalizedUrl,
+        requestedRevision: revision,
+        sourceLabel: `远端只读：${intent.normalizedUrl}${revision ? `@r${revision}` : ""}`,
+        error:
+          result.stderr ||
+          result.stdout ||
+          "无法读取远端文件（目标不存在、无权限或网络失败）。浏览位置已保留，可复制 URL 后重试。",
+      };
+      await this.host.sendRepositorySnapshot(session, requestId);
+      return;
+    }
+    const classified = classifyRemoteContent(
+      result.stdout,
+      MAX_REMOTE_FILE_PREVIEW_BYTES,
+    );
+    state.remoteFile = {
+      url: intent.normalizedUrl,
+      revision: revision ?? state.browser?.revision,
+      requestedRevision: revision,
+      sourceLabel: `远端只读：${intent.normalizedUrl}${revision ? `@r${revision}` : state.browser?.revision ? `@r${state.browser.revision}` : ""}（未写入本地）`,
+      binary: classified.binary || undefined,
+      truncated: classified.truncated || undefined,
+      size: Buffer.byteLength(result.stdout, "utf8"),
+      contentPreview: classified.binary ? undefined : classified.preview,
+      error: classified.binary
+        ? "二进制文件不在工作台内预览正文，可复制 URL 后用外部工具打开。"
+        : classified.truncated
+          ? `文件超过 ${Math.floor(MAX_REMOTE_FILE_PREVIEW_BYTES / 1024)} KB，只展示前部内容；完整内容请复制 URL 后用外部工具查看。`
+          : undefined,
+    };
+    await this.host.sendRepositorySnapshot(session, requestId);
+  }
+
+  /**
+   * V026-R46：只读远端文件历史（svn log URL，不进入工作副本范围，不写本地）。
+   */
+  async queryRemoteHistory(
+    session: WorkbenchSession,
+    data: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    const state = this.host.ensureAdvancedRepositoryState(session);
+    const infoResult = await runSvnCommand(
+      session.svnPath,
+      ["info", "--xml", session.scope.repositoryRoot],
+      session.scope.repositoryRoot,
+    );
+    const info =
+      infoResult.exitCode === 0
+        ? parseInfoXml(infoResult.stdout, session.scope.repositoryRoot)
+        : undefined;
+    const rawUrl = typeof data.url === "string" ? data.url : "";
+    const intent = normalizeRepositoryUrlIntent(rawUrl, info?.repositoryRoot);
+    if (intent.issues.length > 0) {
+      state.remoteHistory = {
+        url: intent.normalizedUrl || rawUrl.trim(),
+        revisions: [],
+        error: intent.issues.join(" "),
+      };
+      await this.host.sendRepositorySnapshot(session, requestId);
+      return;
+    }
+    const result = await runSvnCommand(
+      session.svnPath,
+      [
+        "log",
+        "--xml",
+        "--limit",
+        String(MAX_REMOTE_HISTORY_ENTRIES),
+        intent.normalizedUrl,
+      ],
+      session.scope.repositoryRoot,
+    );
+    if (result.exitCode !== 0) {
+      state.remoteHistory = {
+        url: intent.normalizedUrl,
+        revisions: [],
+        error:
+          result.stderr ||
+          result.stdout ||
+          "无法读取远端历史（目标不存在、无权限或网络失败）。浏览位置已保留。",
+      };
+      await this.host.sendRepositorySnapshot(session, requestId);
+      return;
+    }
+    const revisions = parseSvnLogXml(result.stdout)
+      .slice(0, MAX_REMOTE_HISTORY_ENTRIES)
+      .map((item) => ({
+        revision: item.revision,
+        author: item.author,
+        date: item.date,
+        message: item.message,
+      }));
+    state.remoteHistory = {
+      url: intent.normalizedUrl,
+      revisions,
+      error: revisions.length === 0 ? "该远端路径暂无可展示历史。" : undefined,
+    };
+    await this.host.sendRepositorySnapshot(session, requestId);
+  }
+
+  /**
+   * V026-R46：远端 revision 比较只读预览（svn diff，复用 revision-patch 只读语义）。
+   * 不写工作副本、无本地路径操作；超限截断展示。
+   */
+  async compareRemoteRevisions(
+    session: WorkbenchSession,
+    data: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    const state = this.host.ensureAdvancedRepositoryState(session);
+    const infoResult = await runSvnCommand(
+      session.svnPath,
+      ["info", "--xml", session.scope.repositoryRoot],
+      session.scope.repositoryRoot,
+    );
+    const info =
+      infoResult.exitCode === 0
+        ? parseInfoXml(infoResult.stdout, session.scope.repositoryRoot)
+        : undefined;
+    const rawUrl = typeof data.url === "string" ? data.url : "";
+    const intent = normalizeRepositoryUrlIntent(rawUrl, info?.repositoryRoot);
+    const from = normalizeRemoteRevisionInput(
+      data.fromRevision ?? data.leftRevision,
+    );
+    const to = normalizeRemoteRevisionInput(
+      data.toRevision ?? data.rightRevision,
+    );
+    const combined = [
+      ...intent.issues,
+      ...from.issues.map((issue) => `起始修订：${issue}`),
+      ...to.issues.map((issue) => `结束修订：${issue}`),
+    ];
+    if (!from.revision) combined.push("请填写起始修订号（正整数或 HEAD）。");
+    if (!to.revision) combined.push("请填写结束修订号（正整数或 HEAD）。");
+    if (combined.length > 0 || !from.revision || !to.revision) {
+      state.remoteCompare = {
+        url: intent.normalizedUrl || rawUrl.trim(),
+        fromRevision: from.revision ?? "",
+        toRevision: to.revision ?? "",
+        error: combined.join(" ") || "修订输入不完整。",
+      };
+      await this.host.sendRepositorySnapshot(session, requestId);
+      return;
+    }
+    const fromRevision = from.revision as string;
+    const toRevision = to.revision as string;
+    const result = await runSvnCommand(
+      session.svnPath,
+      ["diff", intent.normalizedUrl, "-r", `${fromRevision}:${toRevision}`],
+      session.scope.repositoryRoot,
+      { maxOutputBytes: MAX_DIFF_BYTES },
+    );
+    if (result.exitCode !== 0) {
+      state.remoteCompare = {
+        url: intent.normalizedUrl,
+        fromRevision,
+        toRevision,
+        error:
+          result.stderr ||
+          result.stdout ||
+          "无法比较远端修订（目标不存在、无权限或网络失败）。浏览位置已保留。",
+      };
+      await this.host.sendRepositorySnapshot(session, requestId);
+      return;
+    }
+    const output = result.stdout.includes("\0") ? "" : result.stdout;
+    const truncated = output.length > MAX_REMOTE_COMPARE_CHARS;
+    state.remoteCompare = {
+      url: intent.normalizedUrl,
+      fromRevision,
+      toRevision,
+      diffPreview: truncated
+        ? output.slice(0, MAX_REMOTE_COMPARE_CHARS)
+        : output || "所选修订之间没有文本差异。",
+      truncated: truncated || undefined,
+      error: result.stdout.includes("\0")
+        ? "二进制差异不在工作台内预览，可复制 URL 后用外部工具比较。"
+        : undefined,
     };
     await this.host.sendRepositorySnapshot(session, requestId);
   }

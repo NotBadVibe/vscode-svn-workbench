@@ -3,6 +3,7 @@ import {
   isFileTargetView,
   isHistoryQueryView,
   isReleaseNotesView,
+  readRepositoryUrlIntent,
   isUpdatePreviewView,
   isWorkbenchModuleId,
   isWorkbenchTaskForModule,
@@ -41,6 +42,7 @@ import {
   previewCommitConventionSample,
 } from "../../commit/commitConventionRules";
 import type { SvnStatus } from "../../svn/svnTypes";
+import { normalizeSvnUrl } from "../../svn/svnUrl";
 import { workbenchBridge } from "../bridge/vscodeBridge";
 import { onboarding } from "../app/onboarding.svelte";
 import {
@@ -2431,6 +2433,10 @@ export function startMockWorkbench(): void {
               parentUrl: url.endsWith("/trunk")
                 ? "https://svn.example.test/repos/workbench"
                 : "https://svn.example.test/repos/workbench/trunk",
+              revision: "42",
+              repositoryRoot: "https://svn.example.test/repos/workbench",
+              projectUrl: "https://svn.example.test/repos/workbench/trunk",
+              lastGoodUrl: url,
               entries: [
                 {
                   name: "src",
@@ -2492,6 +2498,77 @@ export function startMockWorkbench(): void {
         "apply-patch": "应用补丁",
       };
       const title = titleByOperation[operation] ?? "仓库操作";
+      // V026-R43：结构化意图优先、归一化后绑定，与 Host 语义对齐
+      // （switch 不绑定源、merge 不绑定目标；Webview 失效比对只看相关侧，
+      // 归一化两侧一致即不会在预览生成后误伤）。
+      const mockSourceIntent = readRepositoryUrlIntent(
+        data as Record<string, unknown>,
+        "source",
+        "sourceUrl",
+      );
+      const mockTargetIntent = readRepositoryUrlIntent(
+        data as Record<string, unknown>,
+        "target",
+        "targetUrl",
+      );
+      const mockSourceOrigin =
+        mockSourceIntent.origin ??
+        (typeof data.sourceOrigin === "string" ? data.sourceOrigin : undefined);
+      const mockTargetOrigin =
+        mockTargetIntent.origin ??
+        (typeof data.targetOrigin === "string" ? data.targetOrigin : undefined);
+      const mockOriginLabel = (origin?: string): string | undefined => {
+        if (origin === "browse") return "仓库浏览选择";
+        if (origin === "shortcut") return "常用路径组合";
+        if (origin === "manual") return "手动输入";
+        return undefined;
+      };
+      const rawMockSource = mockSourceIntent.rawUrl.trim();
+      const rawMockTarget = mockTargetIntent.rawUrl.trim();
+      const mockSource = rawMockSource
+        ? normalizeSvnUrl(rawMockSource)
+        : "https://svn.example.test/repos/workbench/trunk";
+      const mockTarget = rawMockTarget
+        ? normalizeSvnUrl(rawMockTarget)
+        : "https://svn.example.test/repos/workbench/branches/mock";
+      const mockSourceLabel = mockOriginLabel(mockSourceOrigin);
+      const mockTargetLabel = mockOriginLabel(mockTargetOrigin);
+      const mockSourceText = `源：${mockSource}${mockSourceLabel ? `（${mockSourceLabel}）` : ""}`;
+      const mockTargetText = `目标：${mockTarget}${mockTargetLabel ? `（${mockTargetLabel}）` : ""}`;
+      // V026-R43/R46：详情行与 Host 同操作结构对齐（意向单按行计数）。
+      const mockDetails =
+        operation === "relocate"
+          ? [
+              "旧根：https://svn.example.test/repos/workbench",
+              `新根：${mockTarget}${mockTargetLabel ? `（${mockTargetLabel}）` : ""}`,
+              "浏览选择只用于填充新根，未改变本地工作副本操作范围。",
+            ]
+          : operation === "merge"
+            ? [
+                mockSourceText,
+                "合并只写入工作副本，不会自动提交；冲突统一进入冲突模块。",
+                "浏览选择只用于填充源，未改变本地范围。",
+              ]
+            : operation === "switch"
+              ? [
+                  mockTargetText,
+                  "只修改当前工作副本；不会自动提交。",
+                  "切换工作副本 URL；执行后必须重新采集状态。",
+                  "浏览选择只用于填充目标，未改变本地工作副本操作范围。",
+                ]
+              : operation === "branch" || operation === "tag"
+                ? [
+                    mockSourceText,
+                    mockTargetText,
+                    "直接在仓库端创建，不包含未提交的本地修改。",
+                    "浏览选择只用于填充源/目标，未改变本地工作副本操作范围。",
+                  ]
+                : [
+                    mockSourceText,
+                    mockTargetText,
+                    "只修改当前工作副本；不会自动提交。",
+                    "执行后重新采集状态。",
+                  ];
       injectSnapshot(
         "repository",
         repositorySnapshot({
@@ -2503,6 +2580,12 @@ export function startMockWorkbench(): void {
               destructive,
               canExecute: true,
               issues: [],
+              sourceUrl: operation === "switch" ? undefined : mockSource,
+              targetUrl: operation === "merge" ? undefined : mockTarget,
+              sourceOrigin:
+                operation === "switch" ? undefined : mockSourceOrigin,
+              targetOrigin:
+                operation === "merge" ? undefined : mockTargetOrigin,
               commands:
                 operation === "shelf"
                   ? [
@@ -2514,17 +2597,7 @@ export function startMockWorkbench(): void {
                     : [
                         `svn ${operation} <validated-source> <validated-target>`,
                       ],
-              details: destructive
-                ? operation === "relocate"
-                  ? [
-                      "旧根：https://svn.example.test/repos/workbench",
-                      `新根：${typeof data.targetUrl === "string" && data.targetUrl.trim().length > 0 ? data.targetUrl.trim() : "https://svn.example.test/repos/workbench-new"}`,
-                    ]
-                  : [
-                      "只修改当前工作副本；不会自动提交。",
-                      "执行后重新采集状态。",
-                    ]
-                : ["仓库端操作，不包含本地未提交修改。"],
+              details: mockDetails,
             },
           },
         }),
@@ -2535,6 +2608,95 @@ export function startMockWorkbench(): void {
         "repository",
         repositorySnapshot({
           advanced: { feedback: "高级仓库操作已完成；状态已经重新采集。" },
+        }),
+      );
+    }
+    if (action === "repository/discard-advanced-preview") {
+      injectSnapshot(
+        "repository",
+        repositorySnapshot({
+          advanced: {},
+        }),
+      );
+    }
+    if (action === "repository/preview-remote-file") {
+      const url =
+        typeof data.url === "string" && data.url
+          ? data.url
+          : "https://svn.example.test/repos/workbench/trunk/README.md";
+      const requestedRevision =
+        typeof data.revision === "string" ? data.revision : undefined;
+      injectSnapshot(
+        "repository",
+        repositorySnapshot({
+          advanced: {
+            remoteFile: {
+              url,
+              requestedRevision,
+              revision: requestedRevision ?? "42",
+              sourceLabel: `远端只读：${url}${requestedRevision ? `@r${requestedRevision}` : "@r42"}（未写入本地）`,
+              contentPreview:
+                "# 示例仓库\n\n只读远端内容预览（Mock，不写本地文件）。\n",
+            },
+          },
+        }),
+      );
+    }
+    if (action === "repository/query-remote-history") {
+      const url =
+        typeof data.url === "string" && data.url
+          ? data.url
+          : "https://svn.example.test/repos/workbench/trunk/README.md";
+      injectSnapshot(
+        "repository",
+        repositorySnapshot({
+          advanced: {
+            remoteHistory: {
+              url,
+              revisions: [
+                {
+                  revision: "42",
+                  author: "yangnan",
+                  date: "2026-07-30T08:00:00.000Z",
+                  message: "更新说明文档",
+                },
+                {
+                  revision: "41",
+                  author: "team",
+                  date: "2026-07-29T06:00:00.000Z",
+                  message: "补充安装步骤",
+                },
+              ],
+            },
+          },
+        }),
+      );
+    }
+    if (action === "repository/compare-remote-revisions") {
+      const url =
+        typeof data.url === "string" && data.url
+          ? data.url
+          : "https://svn.example.test/repos/workbench/trunk/README.md";
+      const fromRevision =
+        typeof data.fromRevision === "string" && data.fromRevision
+          ? data.fromRevision
+          : "41";
+      const toRevision =
+        typeof data.toRevision === "string" && data.toRevision
+          ? data.toRevision
+          : "42";
+      injectSnapshot(
+        "repository",
+        repositorySnapshot({
+          advanced: {
+            remoteCompare: {
+              url,
+              fromRevision,
+              toRevision,
+              diffPreview:
+                "--- README.md\t(r41)\n+++ README.md\t(r42)\n@@ -1 +1 @@\n-旧说明\n+新说明\n",
+            },
+          },
         }),
       );
     }
@@ -4128,6 +4290,10 @@ function repositorySnapshot(
       browser: {
         url: "https://svn.example.test/repos/workbench/trunk",
         parentUrl: "https://svn.example.test/repos/workbench",
+        revision: "42",
+        repositoryRoot: "https://svn.example.test/repos/workbench",
+        projectUrl: "https://svn.example.test/repos/workbench/trunk",
+        lastGoodUrl: "https://svn.example.test/repos/workbench/trunk",
         entries: browserEntries,
       },
       shelves: [

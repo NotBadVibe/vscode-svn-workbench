@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   buildReleaseNotes,
+  classifyRemoteContent,
+  extractRemoteRevisionFromInfoXml,
   MAX_RELEASE_NOTES_PATHS_PER_REVISION,
+  normalizeRemoteRevisionInput,
+  normalizeRepositoryUrlIntent,
   normalizeReleaseNotesRange,
   parseSvnListXml,
   validatePatchText,
@@ -202,5 +206,86 @@ describe("advancedRepositoryTools", () => {
       resolvedHeadRevision: "42",
     });
     expect(head.markdown).toMatch(/HEAD 已固定为 r42/);
+  });
+});
+
+/* V026-R43/R46：结构化 URL 意图、远端修订与只读内容分类。 */
+describe("V026-R43/R46 repository intents", () => {
+  it("中文/空格/# 按段编码且不重复编码", () => {
+    const root = "https://svn.example/internal/r";
+    const intent = normalizeRepositoryUrlIntent(
+      "https://svn.example/internal/r/trunk/设计 文档/v1#终版.ts",
+      root,
+    );
+    expect(intent.issues).toEqual([]);
+    expect(intent.crossRepository).toBe(false);
+    expect(intent.normalizedUrl).toBe(
+      `https://svn.example/internal/r/trunk/${encodeURIComponent("设计 文档")}/${encodeURIComponent("v1#终版.ts")}`,
+    );
+    const encoded = normalizeRepositoryUrlIntent(
+      "https://svn.example/internal/r/trunk/a%20b/c%23d",
+      root,
+    );
+    expect(encoded.issues).toEqual([]);
+    expect(encoded.normalizedUrl).toBe(
+      "https://svn.example/internal/r/trunk/a%20b/c%23d",
+    );
+  });
+
+  it("跨仓库目标标记 crossRepository 并就地解释", () => {
+    const intent = normalizeRepositoryUrlIntent(
+      "https://other.example/repo/branches/a",
+      "https://svn.example/internal/r",
+    );
+    expect(intent.crossRepository).toBe(true);
+    expect(intent.issues.join(" ")).toMatch(/仓库根地址内/);
+  });
+
+  it("空输入如实提示补填", () => {
+    expect(
+      normalizeRepositoryUrlIntent("  ", undefined).issues.join(" "),
+    ).toMatch(/完整且有效/);
+  });
+
+  it("远端修订接受 HEAD/正整数并去前导零", () => {
+    expect(normalizeRemoteRevisionInput("HEAD")).toMatchObject({
+      revision: "HEAD",
+      issues: [],
+    });
+    expect(normalizeRemoteRevisionInput("head")).toMatchObject({
+      revision: "HEAD",
+      issues: [],
+    });
+    expect(normalizeRemoteRevisionInput("0042")).toMatchObject({
+      revision: "42",
+      issues: [],
+    });
+    expect(normalizeRemoteRevisionInput("").issues).toEqual([]);
+    expect(normalizeRemoteRevisionInput("0").issues.join(" ")).toMatch(
+      /正整数或 HEAD/,
+    );
+    expect(normalizeRemoteRevisionInput("r42").issues.join(" ")).toMatch(
+      /正整数或 HEAD/,
+    );
+  });
+
+  it("远端内容区分二进制与超限截断", () => {
+    expect(classifyRemoteContent("hello").truncated).toBe(false);
+    expect(classifyRemoteContent("a\0b").binary).toBe(true);
+    const big = "设".repeat(200000);
+    const classified = classifyRemoteContent(big, 1024);
+    expect(classified.truncated).toBe(true);
+    expect(
+      new TextEncoder().encode(classified.preview).length,
+    ).toBeLessThanOrEqual(1024);
+  });
+
+  it("远端修订从 info XML 提取，缺失不虚构", () => {
+    expect(
+      extractRemoteRevisionFromInfoXml(
+        '<entry revision="42"><commit revision="41"/></entry>',
+      ),
+    ).toBe("41");
+    expect(extractRemoteRevisionFromInfoXml("<lists></lists>")).toBeUndefined();
   });
 });

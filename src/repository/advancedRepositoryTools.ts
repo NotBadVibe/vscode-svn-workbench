@@ -1,4 +1,5 @@
 import type { SvnRevision } from "../history/svnHistoryParser";
+import { isSvnUrlWithinRepository, normalizeSvnUrl } from "../svn/svnUrl";
 
 export interface RepositoryBrowserEntry {
   name: string;
@@ -313,6 +314,103 @@ function decodeXml(value: string): string {
 
 function stripTrailingSlash(value: string): string {
   return value.replace(/\/+$/, "");
+}
+
+/** V026-R46：远端只读内容预览上限（内存展示用，不落盘）。 */
+export const MAX_REMOTE_FILE_PREVIEW_BYTES = 256 * 1024;
+
+/** V026-R46：远端文件历史默认读取条数上限。 */
+export const MAX_REMOTE_HISTORY_ENTRIES = 50;
+
+/** V026-R46：远端修订比较差异预览上限（字符数，超限截断只读展示）。 */
+export const MAX_REMOTE_COMPARE_CHARS = 20000;
+
+/**
+ * V026-R43：结构化 URL 意图归一化（纯函数，Host/Webview/Mock 语义一致）。
+ * - 空输入如实提示补填；非法 URL 沿用既有 validateRepositoryUrl 拒绝；
+ * - 先逐段规范编码（中文/空格/# 正确编码，已编码不重复编码），再做仓库归属校验；
+ * - crossRepository=true 表示语法合法但不在当前仓库根内（调用方就地解释，不合并执行）。
+ */
+export function normalizeRepositoryUrlIntent(
+  rawValue: unknown,
+  repositoryRoot?: string,
+): { normalizedUrl: string; issues: string[]; crossRepository: boolean } {
+  const raw = typeof rawValue === "string" ? rawValue.trim() : "";
+  if (!raw) {
+    return {
+      normalizedUrl: "",
+      issues: ["请输入完整且有效的 SVN URL。"],
+      crossRepository: false,
+    };
+  }
+  const normalizedUrl = normalizeSvnUrl(raw);
+  const issues = validateRepositoryUrl(normalizedUrl, repositoryRoot);
+  const crossRepository =
+    issues.some((issue) => issue.includes("仓库根地址内")) ||
+    (repositoryRoot
+      ? !isSvnUrlWithinRepository(normalizedUrl, repositoryRoot)
+      : false);
+  return { normalizedUrl, issues, crossRepository };
+}
+
+/**
+ * V026-R46：远端修订输入归一化（纯函数）。空表示未填（调用方按 HEAD/缺省处理）；
+ * HEAD 大小写不敏感；正整数去前导零；其余 fail-closed 给出中文原因。
+ */
+export function normalizeRemoteRevisionInput(value: unknown): {
+  revision?: string;
+  issues: string[];
+} {
+  if (value === undefined || value === null) return { issues: [] };
+  const raw = String(value).trim();
+  if (!raw) return { issues: [] };
+  if (/^head$/i.test(raw)) return { revision: "HEAD", issues: [] };
+  if (/^\d+$/.test(raw)) {
+    try {
+      const parsed = BigInt(raw);
+      if (parsed > 0n) return { revision: String(parsed), issues: [] };
+    } catch {
+      // 落入下方统一拒绝。
+    }
+  }
+  return { issues: ["修订号只能填写正整数或 HEAD。"] };
+}
+
+/**
+ * V026-R46：远端只读内容分类（纯函数，不触碰文件系统）。
+ * - binary：含空字节即二进制，不展示正文；
+ * - truncated：按 UTF-8 字节数裁剪预览，调用方必须展示截断说明与复制 URL 恢复出口。
+ */
+export function classifyRemoteContent(
+  content: string,
+  maxBytes: number = MAX_REMOTE_FILE_PREVIEW_BYTES,
+): { truncated: boolean; binary: boolean; preview: string } {
+  if (content.includes("\0")) {
+    return { truncated: false, binary: true, preview: "" };
+  }
+  const encoder = new TextEncoder();
+  if (encoder.encode(content).length <= maxBytes) {
+    return { truncated: false, binary: false, preview: content };
+  }
+  let preview = content;
+  while (preview.length > 0 && encoder.encode(preview).length > maxBytes) {
+    preview = preview.slice(0, Math.max(0, Math.floor(preview.length / 2)));
+  }
+  return { truncated: true, binary: false, preview };
+}
+
+/**
+ * V026-R46：从 `svn info --xml URL` 输出提取远端修订（只读展示用）。
+ * 解析不到返回 undefined（调用方显示“修订未知”，不虚构）。
+ */
+export function extractRemoteRevisionFromInfoXml(
+  xml: string,
+): string | undefined {
+  const commit = /<commit\s+revision="([^"]+)"/.exec(xml)?.[1];
+  if (commit && /^\d+$/.test(commit)) return commit;
+  const entry = /<entry[^>]*\srevision="([^"]+)"/.exec(xml)?.[1];
+  if (entry && /^\d+$/.test(entry)) return entry;
+  return undefined;
 }
 
 function parseRevision(value: string | undefined): number | undefined {

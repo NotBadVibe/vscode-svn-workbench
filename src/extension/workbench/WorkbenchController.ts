@@ -4949,6 +4949,33 @@ export class WorkbenchController implements vscode.Disposable {
           message.requestId,
         );
         return;
+      case "repository/preview-remote-file":
+        await this.repositoryActions.previewRemoteFile(
+          session,
+          data,
+          message.requestId,
+        );
+        return;
+      case "repository/query-remote-history":
+        await this.repositoryActions.queryRemoteHistory(
+          session,
+          data,
+          message.requestId,
+        );
+        return;
+      case "repository/compare-remote-revisions":
+        await this.repositoryActions.compareRemoteRevisions(
+          session,
+          data,
+          message.requestId,
+        );
+        return;
+      case "repository/discard-advanced-preview":
+        await this.repositoryActions.discardAdvancedPreview(
+          session,
+          message.requestId,
+        );
+        return;
       case "repository/preview-advanced":
         await this.previewAdvancedRepositoryOperation(
           session,
