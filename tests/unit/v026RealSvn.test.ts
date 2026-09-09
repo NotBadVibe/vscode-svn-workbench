@@ -429,7 +429,7 @@ describe("V026 真实 SVN 隔离仓库", () => {
           const preview = previewOf(session);
           expect(
             preview?.commands?.join("\n"),
-            `模式 ${JSON.stringify(mode)} 应生成试运行与真实命令`,
+            `模式 ${JSON.stringify(mode)} 应生成试运行与真实命令（issues=${JSON.stringify(preview?.issues ?? null)}）`,
           ).toContain("--dry-run");
           expectCleanWorkingCopy(repo.workingCopy);
         }

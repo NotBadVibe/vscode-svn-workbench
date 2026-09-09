@@ -26,9 +26,15 @@ export function decodeSvnUrlSegmentSafe(segment: string): string {
 
 /**
  * V026-R43：单段规范编码（先解一次再编码，避免 %20 → %2520 重复编码）。
+ * Windows 盘符段（如 `C:`，含已误编码 `C%3A` 解码后形态）保持原样：file URL 盘符
+ * 冒号是路径语法的一部分（`file:///C:/...`），编码成 `C%3A` 会导致与 svn
+ * 返回的仓库根 URL 前缀比对失败（Windows file 仓库归属误判为跨仓库）及
+ * 后续 svn 调用使用非规范 URL。纯字符串判断，不读 process。
  */
 export function encodeSvnUrlSegmentOnce(segment: string): string {
-  return encodeURIComponent(decodeSvnUrlSegmentSafe(segment));
+  const decoded = decodeSvnUrlSegmentSafe(segment);
+  if (/^[A-Za-z]:$/.test(decoded)) return decoded;
+  return encodeURIComponent(decoded);
 }
 
 /**
@@ -36,7 +42,8 @@ export function encodeSvnUrlSegmentOnce(segment: string): string {
  * - 去首尾空白与多余尾斜杠；非法 URL 返回裁剪后原文（调用方用 validate 拒绝）；
  * - SVN URL 不承载 query/hash 语义：`?`/`#` 视为路径字符逐段编码（未编码 `#`
  *   不得被 URL 解析吞成 fragment）；已编码输入先解一次，不重复编码；
- * - 中文/空格/# 正确编码；平台无关（纯字符串处理，不读 process）。
+ * - 中文/空格/# 正确编码；Windows file URL 盘符段（`C:`）冒号保留不编码；
+ *   平台无关（纯字符串处理，不读 process）。
  */
 export function normalizeSvnUrl(rawUrl: string): string {
   const trimmed = rawUrl.trim();

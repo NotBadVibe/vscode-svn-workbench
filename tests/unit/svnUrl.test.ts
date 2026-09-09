@@ -186,4 +186,29 @@ describe("SVN URL 规范化（V026-R43）", () => {
       ),
     ).toBe(false);
   });
+
+  it("Windows file URL 盘符冒号不编码（与 pathToFileURL 同形）", () => {
+    // Windows file 仓库根：盘符段 `C:` 是路径语法的一部分，不得编成 `C%3A`；
+    // 否则与 svn info 返回的仓库根前缀比对失败，Windows 合并 dry-run 被误判跨仓库阻止。
+    expect(normalizeSvnUrl("file:///C:/Users/test/repository")).toBe(
+      "file:///C:/Users/test/repository",
+    );
+    expect(
+      normalizeSvnUrl("file:///C:/Users/test/repository/branches/feature-b"),
+    ).toBe("file:///C:/Users/test/repository/branches/feature-b");
+    // 已被误编码的输入同样归一回规范形（解后重编不残留 %3A）。
+    expect(normalizeSvnUrl("file:///C%3A/Users/test/repository")).toBe(
+      "file:///C:/Users/test/repository",
+    );
+    expect(
+      isSvnUrlWithinRepository(
+        "file:///C:/Users/test/repository/branches/feature-b",
+        "file:///C:/Users/test/repository",
+      ),
+    ).toBe(true);
+    // POSIX file URL 不受影响。
+    expect(normalizeSvnUrl("file:///tmp/svn-real-abc/repository")).toBe(
+      "file:///tmp/svn-real-abc/repository",
+    );
+  });
 });

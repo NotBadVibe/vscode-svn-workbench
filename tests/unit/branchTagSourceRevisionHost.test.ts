@@ -58,11 +58,11 @@ function stubDefault() {
     if (
       args[0] === "info" &&
       args.includes("-r") &&
-      args.includes("https://svn.example/r/trunk")
+      args.at(-1) === "https://svn.example/r/trunk"
     ) {
       return { exitCode: 0, stdout: "<info/>", stderr: "" };
     }
-    if (args[0] === "info" && args.includes("https://svn.example/r/tags/v1")) {
+    if (args[0] === "info" && args.at(-1) === "https://svn.example/r/tags/v1") {
       return { exitCode: 1, stdout: "", stderr: "Not found" };
     }
     if (args[0] === "info") {
@@ -134,7 +134,7 @@ describe("V026-R44 主机：分支/标签源修订版本冻结", () => {
       }
       if (
         args[0] === "info" &&
-        args.includes("https://svn.example/r/tags/v1")
+        args.at(-1) === "https://svn.example/r/tags/v1"
       ) {
         return { exitCode: 1, stdout: "", stderr: "Not found" };
       }
@@ -290,7 +290,7 @@ describe("V026-R44 主机：分支/标签源修订版本冻结", () => {
       }
       if (
         args[0] === "info" &&
-        args.includes("https://svn.example/r/tags/v1")
+        args.at(-1) === "https://svn.example/r/tags/v1"
       ) {
         return { exitCode: 1, stdout: "", stderr: "Not found" };
       }
