@@ -1237,6 +1237,35 @@ export interface ShelfEntryView {
   integrityDetail?: string;
 }
 
+/**
+ * V026-R45：合并修订选择视图（随高级预览下发，Host 签发，Webview 只展示）。
+ * - mode：eligible=全部符合条件 / specific=指定修订 / range=修订范围；
+ * - resolvedRevisions：最终待合并的单个修订集合（去重排序，eligible 模式为空表示完整合并）；
+ * - eligible/merged：只读采集的 mergeinfo 集合（快照上限 200，超出截断并标记）；
+ * - mergeinfoSupported=false 表示仓库/工作副本无 mergeinfo 支持，未做已合并校验；
+ * - dryRunFiles/dryRunConflicts：`svn merge --dry-run` 解析出的预计文件/冲突（上限 20，超出截断）。
+ */
+export interface RepositoryMergePreview {
+  mode: "eligible" | "specific" | "range";
+  requestedRevisions?: string[];
+  fromRevision?: string;
+  toRevision?: string;
+  resolvedRevisions: string[];
+  eligible: string[];
+  merged: string[];
+  eligibleCount: number;
+  mergedCount: number;
+  eligibleTruncated?: boolean;
+  mergedTruncated?: boolean;
+  mergeinfoSupported: boolean;
+  mergeinfoNote?: string;
+  dryRunCommand?: string;
+  dryRunFiles: string[];
+  dryRunConflicts: string[];
+  dryRunSummary?: string;
+  dryRunTruncated?: boolean;
+}
+
 export interface RepositorySnapshot {
   kind: "repository";
   recovery?: {
@@ -1385,6 +1414,11 @@ export interface RepositorySnapshot {
       sourceRevision?: string;
       sourceResolvedRevision?: string;
       sourceRevisionMode?: string;
+      /**
+       * V026-R45：合并修订选择视图（仅 merge 操作携带，可选向后兼容）。
+       * 执行前 Host 以会话内 input 复验，不信任 Webview 回传。
+       */
+      merge?: RepositoryMergePreview;
     };
     releaseNotes?: {
       markdown: string;
@@ -2980,6 +3014,76 @@ export function isRepositoryAdvancedPreviewBinding(
   if (
     value.sourceRevisionMode !== undefined &&
     typeof value.sourceRevisionMode !== "string"
+  )
+    return false;
+  if (value.merge !== undefined && !isRepositoryMergePreviewView(value.merge))
+    return false;
+  return true;
+}
+
+/**
+ * V026-R45：合并修订选择视图守卫（Host/Webview/Mock 共用，可选向后兼容）。
+ * 缺省表示非 merge 预览或旧预览；携带时逐项校验，不把坏载荷发给 Webview。
+ */
+export function isRepositoryMergePreviewView(
+  value: unknown,
+): value is RepositoryMergePreview {
+  if (!isRecord(value)) return false;
+  if (
+    value.mode !== "eligible" &&
+    value.mode !== "specific" &&
+    value.mode !== "range"
+  )
+    return false;
+  const stringArray = (field: unknown): boolean =>
+    field === undefined ||
+    (Array.isArray(field) &&
+      (field as unknown[]).every((item) => typeof item === "string"));
+  if (!stringArray(value.requestedRevisions)) return false;
+  if (
+    (value.fromRevision !== undefined &&
+      typeof value.fromRevision !== "string") ||
+    (value.toRevision !== undefined && typeof value.toRevision !== "string")
+  )
+    return false;
+  if (!stringArray(value.resolvedRevisions)) return false;
+  if (!stringArray(value.eligible)) return false;
+  if (!stringArray(value.merged)) return false;
+  if (
+    typeof value.eligibleCount !== "number" ||
+    !Number.isFinite(value.eligibleCount) ||
+    typeof value.mergedCount !== "number" ||
+    !Number.isFinite(value.mergedCount)
+  )
+    return false;
+  if (
+    (value.eligibleTruncated !== undefined &&
+      typeof value.eligibleTruncated !== "boolean") ||
+    (value.mergedTruncated !== undefined &&
+      typeof value.mergedTruncated !== "boolean")
+  )
+    return false;
+  if (typeof value.mergeinfoSupported !== "boolean") return false;
+  if (
+    value.mergeinfoNote !== undefined &&
+    typeof value.mergeinfoNote !== "string"
+  )
+    return false;
+  if (
+    value.dryRunCommand !== undefined &&
+    typeof value.dryRunCommand !== "string"
+  )
+    return false;
+  if (!stringArray(value.dryRunFiles)) return false;
+  if (!stringArray(value.dryRunConflicts)) return false;
+  if (
+    value.dryRunSummary !== undefined &&
+    typeof value.dryRunSummary !== "string"
+  )
+    return false;
+  if (
+    value.dryRunTruncated !== undefined &&
+    typeof value.dryRunTruncated !== "boolean"
   )
     return false;
   return true;

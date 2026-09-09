@@ -44,6 +44,11 @@
   /* V026-R44：分支/标签源修订版本显式模式（远端 HEAD 或指定 rN）。 */
   let sourceRevisionMode = $state<"HEAD" | "revision">("HEAD");
   let sourceRevisionInput = $state("");
+  /* V026-R45：合并修订选择三模式（全部符合条件/指定修订/修订范围）。 */
+  let mergeMode = $state<"eligible" | "specific" | "range">("eligible");
+  let mergeRevisionsInput = $state("");
+  let mergeRangeFrom = $state("");
+  let mergeRangeTo = $state("");
   /* V026-R43：同一预览 token 只自动作废一次，避免输入过程中反复发消息。 */
   let discardedToken = $state<string | undefined>(undefined);
 
@@ -61,6 +66,40 @@
     snapshot.advanced.preview?.operation === operation
       ? snapshot.advanced.preview
       : undefined,
+  );
+  /* V026-R45：合并模式/修订输入归一化（与 Host 语义对齐，供失效比对；非法输入原样保留以触发失效）。 */
+  const normalizedMergeRevisions = $derived.by(() => {
+    try {
+      return mergeRevisionsInput
+        .split(/[,;\s]+/)
+        .map((token) =>
+          token
+            .trim()
+            .replace(/^r/i, "")
+            .replace(/^0+(?=\d)/, ""),
+        )
+        .filter((token) => token.length > 0)
+        .sort((a, b) => {
+          if (/^\d+$/.test(a) && /^\d+$/.test(b))
+            return BigInt(a) < BigInt(b) ? -1 : 1;
+          return a < b ? -1 : 1;
+        })
+        .join(",");
+    } catch {
+      return mergeRevisionsInput.trim();
+    }
+  });
+  const normalizedMergeFrom = $derived(
+    mergeRangeFrom
+      .trim()
+      .replace(/^r/i, "")
+      .replace(/^0+(?=\d)/, ""),
+  );
+  const normalizedMergeTo = $derived(
+    mergeRangeTo
+      .trim()
+      .replace(/^r/i, "")
+      .replace(/^0+(?=\d)/, ""),
   );
   /**
    * V026-R43：表单与生成该预览的绑定不一致时，旧预览视为失效。
@@ -113,6 +152,27 @@
       (previewForOperation.targetUrl ?? "") !== normalizeSvnUrl(targetUrl)
     ) {
       return true;
+    }
+    // V026-R45：合并模式/修订输入变化后旧预览失效（只看相关侧）。
+    if (operation === "merge" && previewForOperation.merge) {
+      const bound = previewForOperation.merge;
+      if (bound.mode !== mergeMode) return true;
+      if (mergeMode === "specific") {
+        const boundRevisions = (
+          bound.requestedRevisions ??
+          bound.resolvedRevisions ??
+          []
+        ).join(",");
+        if (boundRevisions !== normalizedMergeRevisions) return true;
+      }
+      if (mergeMode === "range") {
+        if (
+          (bound.fromRevision ?? "") !== normalizedMergeFrom ||
+          (bound.toRevision ?? "") !== normalizedMergeTo
+        ) {
+          return true;
+        }
+      }
     }
     return false;
   });
@@ -180,6 +240,16 @@
           ? "HEAD"
           : sourceRevisionInput.trim()
         : undefined;
+    // V026-R45：合并修订选择三模式，结构化意图优先，旧扁平字段兼容。
+    const mergeIntent =
+      operation === "merge"
+        ? {
+            mode: mergeMode,
+            revisions: mergeRevisionsInput.trim(),
+            from: mergeRangeFrom.trim(),
+            to: mergeRangeTo.trim(),
+          }
+        : undefined;
     onAction("repository/preview-advanced", {
       operation,
       // 旧扁平字段保留兼容；新结构化意图优先，Host 归一化复验。
@@ -197,9 +267,28 @@
         operation === "branch" || operation === "tag"
           ? sourceRevisionMode
           : undefined,
+      merge: mergeIntent,
+      mergeMode: mergeIntent?.mode,
+      mergeRevisions: mergeIntent?.revisions,
+      mergeRangeFrom: mergeIntent?.from,
+      mergeRangeTo: mergeIntent?.to,
       message: operationMessage,
     });
   }
+
+  /* V026-R45：合并预览的可解释摘要（Host 签发，Webview 只展示）。 */
+  const mergePreview = $derived(
+    operation === "merge" ? previewForOperation?.merge : undefined,
+  );
+  const mergeModeLabel = $derived(
+    mergePreview?.mode === "specific"
+      ? "指定修订"
+      : mergePreview?.mode === "range"
+        ? "修订范围"
+        : mergePreview
+          ? "全部符合条件"
+          : undefined,
+  );
 </script>
 
 <section class="operation-card operation-card--wide repository-task-card">
@@ -259,6 +348,82 @@
             aria-label="指定源修订版本"
           />{/if}
       </fieldset>
+    {/if}
+    {#if operation === "merge"}
+      <fieldset class="advanced-operation-form__wide operation-guidance">
+        <legend
+          >合并修订选择（试运行先行，执行前复验；反向合并/重积分本版不支持）</legend
+        >
+        <label
+          ><input
+            type="radio"
+            name="merge-revision-mode"
+            value="eligible"
+            bind:group={mergeMode}
+          />全部符合条件（按 mergeinfo 一次合并源分支尚未合并的变更）</label
+        >
+        <label
+          ><input
+            type="radio"
+            name="merge-revision-mode"
+            value="specific"
+            bind:group={mergeMode}
+          />指定修订（单个回补或不连续多选）</label
+        >
+        <label
+          ><input
+            type="radio"
+            name="merge-revision-mode"
+            value="range"
+            bind:group={mergeMode}
+          />修订范围（连续区间）</label
+        >
+        {#if mergeMode === "specific"}<input
+            bind:value={mergeRevisionsInput}
+            placeholder="例如 r42，或 r42, r45"
+            aria-label="指定合并修订（逗号分隔多选）"
+          />{/if}
+        {#if mergeMode === "range"}<span class="advanced-shortcut-row">
+            <input
+              bind:value={mergeRangeFrom}
+              placeholder="起始，例如 r40"
+              aria-label="合并范围起始修订"
+            />
+            <span aria-hidden="true">→</span>
+            <input
+              bind:value={mergeRangeTo}
+              placeholder="结束，例如 r45"
+              aria-label="合并范围结束修订"
+            />
+          </span>{/if}
+      </fieldset>
+    {/if}
+    {#if mergePreview}
+      <div
+        class="advanced-operation-form__wide operation-guidance"
+        role="status"
+      >
+        <span
+          >已采集合并信息：模式{mergeModeLabel}；
+          {#if mergePreview.mergeinfoSupported}可合并 {mergePreview.eligibleCount}
+            个{#if mergePreview.eligible.length > 0}（r{mergePreview.eligible.join(
+                "、r",
+              )}）{/if}；已合并 {mergePreview.mergedCount} 个{:else}mergeinfo
+            不可用（{mergePreview.mergeinfoNote ??
+              "源或工作副本不支持 mergeinfo"}），未做已合并校验{/if}。
+        </span>
+        {#if mergePreview.resolvedRevisions.length > 0}<span
+            >待合并：r{mergePreview.resolvedRevisions.join("、r")}。</span
+          >{/if}
+        {#if mergePreview.dryRunSummary}<span
+            >试运行（只读）：{mergePreview.dryRunSummary}</span
+          >{/if}
+        {#if mergePreview.dryRunConflicts.length > 0}<span
+            >预计冲突：{mergePreview.dryRunConflicts.join(
+              "、",
+            )}（执行后请进入冲突模块处理）。</span
+          >{/if}
+      </div>
     {/if}
     {#if operation !== "merge"}<label class="field"
         ><span>{operation === "relocate" ? "新的仓库根地址" : "目标 URL"}</span

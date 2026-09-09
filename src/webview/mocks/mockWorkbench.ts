@@ -43,6 +43,15 @@ import {
 } from "../../commit/commitConventionRules";
 import type { SvnStatus } from "../../svn/svnTypes";
 import { normalizeSvnUrl } from "../../svn/svnUrl";
+import {
+  buildMergeRevisionArgs,
+  classifyMergeSelection,
+  describeMergeRevisionMapping,
+  expandMergeSelection,
+  normalizeMergeRevisionSelection,
+  parseMergeDryRunOutput,
+  readMergeRevisionIntent,
+} from "../../repository/mergeRevisionSelection";
 import { workbenchBridge } from "../bridge/vscodeBridge";
 import { onboarding } from "../app/onboarding.svelte";
 import {
@@ -2567,6 +2576,62 @@ export function startMockWorkbench(): void {
           ? `源：${mockSource}@r${mockFixedRevision}${mockRevisionMode === "HEAD" ? "（远端 HEAD 已固定为 r42，执行时不会跟随新的 HEAD）" : `（指定修订版本 r${mockFixedRevision}）`}${mockSourceLabel ? `（${mockSourceLabel}）` : ""}`
           : mockSourceText;
       const mockTargetText = `目标：${mockTarget}${mockTargetLabel ? `（${mockTargetLabel}）` : ""}`;
+      // V026-R45：Mock 合并修订选择（固定 eligible r43/r44、merged r42），与 Host 冻结语义对齐。
+      const mockMergeIntent =
+        operation === "merge"
+          ? readMergeRevisionIntent(data as Record<string, unknown>)
+          : undefined;
+      const mockMergeSelection =
+        operation === "merge" && mockMergeIntent
+          ? normalizeMergeRevisionSelection(
+              mockMergeIntent.mode,
+              mockMergeIntent.revisions,
+              mockMergeIntent.fromRevision,
+              mockMergeIntent.toRevision,
+            )
+          : undefined;
+      const mockEligible = operation === "merge" ? ["43", "44"] : [];
+      const mockMerged = operation === "merge" ? ["42"] : [];
+      const mockMergeResolved =
+        operation === "merge" && mockMergeSelection
+          ? mockMergeSelection.mode === "eligible"
+            ? [...mockEligible]
+            : mockMergeSelection.mode === "specific"
+              ? [...mockMergeSelection.requestedRevisions]
+              : expandMergeSelection(mockMergeSelection)
+          : [];
+      const mockMergeIssues =
+        operation === "merge" && mockMergeSelection
+          ? [
+              ...mockMergeSelection.issues,
+              ...classifyMergeSelection(
+                mockMergeSelection.mode === "eligible" ? [] : mockMergeResolved,
+                mockEligible,
+                mockMerged,
+                true,
+              ).issues,
+            ]
+          : [];
+      const mockMergeArgs =
+        operation === "merge"
+          ? buildMergeRevisionArgs(
+              (mockMergeSelection?.mode ?? "eligible") === "eligible"
+                ? []
+                : mockMergeResolved,
+            )
+          : [];
+      const mockMergeArgsText =
+        mockMergeArgs.length > 0 ? ` ${mockMergeArgs.join(" ")}` : "";
+      const mockMergeModeLabel =
+        mockMergeSelection?.mode === "specific"
+          ? "指定修订"
+          : mockMergeSelection?.mode === "range"
+            ? "修订范围"
+            : "全部符合条件";
+      const mockDryRunParsed =
+        operation === "merge" && mockMergeIssues.length === 0
+          ? parseMergeDryRunOutput("U mock/app.ts\n")
+          : undefined;
       // V026-R43/R46：详情行与 Host 同操作结构对齐（意向单按行计数）。
       const mockDetails =
         operation === "relocate"
@@ -2578,7 +2643,15 @@ export function startMockWorkbench(): void {
           : operation === "merge"
             ? [
                 mockSourceText,
+                `模式：${mockMergeModeLabel}。${describeMergeRevisionMapping((mockMergeSelection?.mode ?? "eligible") === "eligible" ? [] : mockMergeResolved)}`,
+                `可合并 r${mockEligible.join("、r")}（共 ${mockEligible.length} 个）；已合并 r${mockMerged.join("、r")}（共 ${mockMerged.length} 个）。`,
+                ...(mockDryRunParsed
+                  ? [
+                      `试运行（只读，未改工作副本）：${mockDryRunParsed.summary}`,
+                    ]
+                  : []),
                 "合并只写入工作副本，不会自动提交；冲突统一进入冲突模块。",
+                "反向合并/重积分等额外模式本版不支持，已延期。",
                 "浏览选择只用于填充源，未改变本地范围。",
               ]
             : operation === "switch"
@@ -2610,8 +2683,9 @@ export function startMockWorkbench(): void {
               operation,
               title,
               destructive,
-              canExecute: true,
-              issues: [],
+              canExecute:
+                operation === "merge" ? mockMergeIssues.length === 0 : true,
+              issues: operation === "merge" ? mockMergeIssues : [],
               sourceUrl: operation === "switch" ? undefined : mockSource,
               targetUrl: operation === "merge" ? undefined : mockTarget,
               sourceOrigin:
@@ -2632,6 +2706,35 @@ export function startMockWorkbench(): void {
                 operation === "branch" || operation === "tag"
                   ? mockRevisionMode
                   : undefined,
+              merge:
+                operation === "merge" && mockMergeSelection
+                  ? {
+                      mode: mockMergeSelection.mode,
+                      requestedRevisions:
+                        mockMergeSelection.requestedRevisions.length > 0
+                          ? mockMergeSelection.requestedRevisions
+                          : undefined,
+                      fromRevision: mockMergeSelection.fromRevision,
+                      toRevision: mockMergeSelection.toRevision,
+                      resolvedRevisions:
+                        mockMergeSelection.mode === "eligible"
+                          ? []
+                          : mockMergeResolved,
+                      eligible: mockEligible,
+                      merged: mockMerged,
+                      eligibleCount: mockEligible.length,
+                      mergedCount: mockMerged.length,
+                      mergeinfoSupported: true,
+                      dryRunCommand:
+                        mockMergeIssues.length === 0
+                          ? `svn merge --dry-run${mockMergeArgsText} <validated-source> <validated-wc> --accept postpone`
+                          : undefined,
+                      dryRunFiles: mockDryRunParsed?.files ?? [],
+                      dryRunConflicts: mockDryRunParsed?.conflicts ?? [],
+                      dryRunSummary: mockDryRunParsed?.summary,
+                      dryRunTruncated: mockDryRunParsed?.truncated || undefined,
+                    }
+                  : undefined,
               commands:
                 operation === "shelf"
                   ? [
@@ -2644,9 +2747,18 @@ export function startMockWorkbench(): void {
                       ? [
                           `svn copy -r ${mockFixedRevision ?? "42"} <validated-source> <validated-target> -m <message> --encoding utf-8`,
                         ]
-                      : [
-                          `svn ${operation} <validated-source> <validated-target>`,
-                        ],
+                      : operation === "merge"
+                        ? [
+                            ...(mockMergeIssues.length === 0
+                              ? [
+                                  `svn merge --dry-run${mockMergeArgsText} <validated-source> <validated-wc> --accept postpone`,
+                                ]
+                              : []),
+                            `svn merge${mockMergeArgsText} <validated-source> <validated-wc> --accept postpone`,
+                          ]
+                        : [
+                            `svn ${operation} <validated-source> <validated-target>`,
+                          ],
               details: mockDetails,
             },
           },

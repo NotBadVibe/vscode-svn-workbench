@@ -12,6 +12,7 @@ import type {
   FilterPresetView,
   HistoryQueryView,
   HistorySnapshot,
+  RepositoryMergePreview,
   RepositorySnapshot,
   SettingsSnapshot,
   UpdatePreviewView,
@@ -301,6 +302,8 @@ export interface WorkbenchSession extends OpenWorkbenchRequest {
         sourceRevision?: string;
         sourceResolvedRevision?: string;
         sourceRevisionMode?: string;
+        /** V026-R45：合并修订选择视图（仅 merge 预览，随快照下发供 Webview 展示）。 */
+        merge?: RepositoryMergePreview;
       };
     };
   };

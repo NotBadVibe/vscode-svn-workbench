@@ -84,8 +84,8 @@
 
 - **原评审映射：** 第 45 项。
 - **优先级 / 证据等级：** P2 / 明确功能边界扩展。
-- **实施状态：** 待实施。
-- **看到的现状：** 目前主要输入 sourceUrl 并构造 svn merge URL WC，不便完成单个修复回补。
+- **实施状态：** 已实施（`codex/dev-v0.2.6`）。
+- **看到的现状（实施前）：** 主要输入 sourceUrl 并构造 svn merge URL WC，不便完成单个修复回补。
 - **用户影响：** 高级用户仍需转到命令行挑选修订，无法在界面判断已合并与可合并。
 - **现有证据与预计改动入口：** [AdvancedTask.svelte](../../../src/webview/features/repository/tasks/AdvancedTask.svelte)、[repositoryWorkbenchActions.ts](../../../src/extension/workbench/repositoryWorkbenchActions.ts)、[workbenchProtocol.ts](../../../src/protocol/workbenchProtocol.ts)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
 
@@ -96,11 +96,11 @@
 3. 生成试运行、预计文件/冲突与准确命令，再由用户确认。
 4. 本地未提交修改阻止策略不放宽，反向合并/重积分等额外模式单独延期。
 
-**验收场景与完成条件：**
+**验收场景与完成条件（已实现，均有自动化用例）：**
 
-- [ ] 单修订、连续范围、不连续选择、已合并修订、无 mergeinfo 支持分别有正确结果。
-- [ ] dry-run 不改工作副本，执行前复验源/目标/本地状态/token。
-- [ ] 产生冲突后进入冲突处理，取消及部分失败重采状态，不自动提交。
+- [x] 单修订、连续范围、不连续选择、已合并修订、无 mergeinfo 支持分别有正确结果。
+- [x] dry-run 不改工作副本，执行前复验源/目标/本地状态/token。
+- [x] 产生冲突后进入冲突处理，取消及部分失败重采状态，不自动提交。
 
 <a id="v026-r46"></a>
 

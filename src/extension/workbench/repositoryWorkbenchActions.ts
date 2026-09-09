@@ -16,6 +16,7 @@ import {
   isRepositoryRemoteHistoryView,
   readRepositoryUrlIntent,
   type HostToWebviewMessage,
+  type RepositoryMergePreview,
   type RepositorySnapshot,
   type WorkbenchModuleId,
 } from "../../protocol/workbenchProtocol";
@@ -47,6 +48,19 @@ import {
   type ShelfEntry,
   type ShelfIndexDeps,
 } from "../../repository/shelfIndex";
+import {
+  buildMergeRevisionArgs,
+  classifyMergeSelection,
+  describeMergeRevisionMapping,
+  expandMergeSelection,
+  MAX_MERGE_DRYRUN_PATHS,
+  MAX_MERGE_MERGEINFO_ENTRIES,
+  normalizeMergeRevisionSelection,
+  parseMergeDryRunOutput,
+  parseMergeinfoRevisions,
+  readMergeRevisionIntent,
+  type MergeRevisionMode,
+} from "../../repository/mergeRevisionSelection";
 import { validatePathsInScope } from "../../scope/pathBoundaryGuard";
 import { nativePathSemantics } from "../../scope/nativePathSemantics";
 import { parseInfoXml } from "../../svn/parsers/infoXmlParser";
@@ -380,6 +394,7 @@ export class RepositoryWorkbenchActions {
                 session.repositoryState.advanced.preview.sourceResolvedRevision,
               sourceRevisionMode:
                 session.repositoryState.advanced.preview.sourceRevisionMode,
+              merge: session.repositoryState.advanced.preview.merge,
             }
           : undefined,
       },
@@ -571,6 +586,8 @@ export class RepositoryWorkbenchActions {
     const details: string[] = [];
     let title: string;
     let destructive: boolean;
+    // V026-R45：合并修订选择视图（仅 merge 预览，随快照下发供 Webview 展示）。
+    let mergeView: RepositoryMergePreview | undefined;
 
     if (operation === "branch" || operation === "tag") {
       title = operation === "branch" ? "创建分支" : "创建标签";
@@ -789,17 +806,143 @@ export class RepositoryWorkbenchActions {
         const problem = await probeReadable(sourceUrl, "源 URL");
         if (problem) issues.push(problem);
       }
+      // V026-R45：三种明确模式 + 只读 eligible/merged 采集 + dry-run 先行。
+      const mergeIntent = readMergeRevisionIntent(data);
+      const selection = normalizeMergeRevisionSelection(
+        mergeIntent.mode,
+        mergeIntent.revisions,
+        mergeIntent.fromRevision,
+        mergeIntent.toRevision,
+      );
+      for (const issue of selection.issues) issues.push(issue);
+      let eligible: string[] = [];
+      let merged: string[] = [];
+      let mergeinfoSupported = true;
+      let mergeinfoNote: string | undefined;
+      if (sourceUrl && source.issues.length === 0) {
+        const collected = await this.collectMergeRevisionSets(
+          session,
+          sourceUrl,
+        );
+        eligible = collected.eligible;
+        merged = collected.merged;
+        mergeinfoSupported = collected.supported;
+        mergeinfoNote = collected.note;
+      }
+      const modeLabel =
+        selection.mode === "eligible"
+          ? "全部符合条件"
+          : selection.mode === "specific"
+            ? "指定修订"
+            : "修订范围";
+      let resolved: string[] = [];
+      if (selection.issues.length === 0) {
+        if (selection.mode === "eligible") {
+          resolved = [...eligible];
+          if (
+            mergeinfoSupported &&
+            resolved.length === 0 &&
+            sourceUrl &&
+            source.issues.length === 0
+          ) {
+            issues.push(
+              "当前没有可合并修订（源分支暂无尚未合并的变更），已阻止执行；如源分支后续有新提交，请重新预览。",
+            );
+          }
+        } else if (selection.mode === "specific") {
+          resolved = [...selection.requestedRevisions];
+        } else {
+          resolved = expandMergeSelection(selection);
+        }
+        if (
+          selection.mode !== "eligible" &&
+          resolved.length > 0 &&
+          sourceUrl &&
+          source.issues.length === 0
+        ) {
+          const classification = classifyMergeSelection(
+            resolved,
+            eligible,
+            merged,
+            mergeinfoSupported,
+          );
+          for (const issue of classification.issues) issues.push(issue);
+        }
+      }
+      const revisionArgs = buildMergeRevisionArgs(
+        selection.mode === "eligible" ? [] : resolved,
+      );
+      const mergeArgsPreview =
+        revisionArgs.length > 0 ? ` ${revisionArgs.join(" ")}` : "";
+      const realCommand = `svn merge${mergeArgsPreview} ${quoteRelative(sourceUrl || "")} ${quoteRelative(session.scope.repositoryRoot)} --accept postpone`;
+      let dryRunCommand: string | undefined;
+      let dryRunFiles: string[] = [];
+      let dryRunConflicts: string[] = [];
+      let dryRunSummary: string | undefined;
+      let dryRunTruncated = false;
+      if (issues.length === 0 && sourceUrl && source.issues.length === 0) {
+        dryRunCommand = `svn merge --dry-run${mergeArgsPreview} ${quoteRelative(sourceUrl)} ${quoteRelative(session.scope.repositoryRoot)} --accept postpone`;
+        const dryRun = await runSvnCommand(
+          session.svnPath,
+          [
+            "merge",
+            "--dry-run",
+            ...revisionArgs,
+            sourceUrl,
+            session.scope.repositoryRoot,
+            "--accept",
+            "postpone",
+          ],
+          session.scope.repositoryRoot,
+          { maxOutputBytes: MAX_DIFF_BYTES },
+        );
+        if (dryRun.exitCode !== 0) {
+          issues.push(
+            `合并试运行失败（${(dryRun.stderr || dryRun.stdout || "未知错误").trim().slice(0, 200)}），已阻止执行；工作副本未改动，请核对源分支与修订后重新预览。`,
+          );
+          dryRunCommand = undefined;
+        } else {
+          const parsed = parseMergeDryRunOutput(
+            dryRun.stdout,
+            MAX_MERGE_DRYRUN_PATHS,
+          );
+          dryRunFiles = parsed.files;
+          dryRunConflicts = parsed.conflicts;
+          dryRunSummary = parsed.summary;
+          dryRunTruncated = parsed.truncated;
+        }
+      }
       if (candidates.length > 0)
         issues.push(
-          `工作副本存在 ${candidates.length} 个本地变更，已阻止合并。`,
+          `工作副本存在 ${candidates.length} 个本地变更，已阻止合并（该策略不放宽：请先提交、还原或搁置后再预览）。`,
         );
-      commands.push(
-        `svn merge ${quoteRelative(sourceUrl || "")} ${quoteRelative(session.scope.repositoryRoot)} --accept postpone`,
-      );
+      if (dryRunCommand) commands.push(dryRunCommand);
+      commands.push(realCommand);
       const sourceFrom = originLabel(sourceOrigin);
       details.push(
         `源：${sourceUrl || "未填写"}${sourceFrom ? `（${sourceFrom}）` : ""}`,
+        `模式：${modeLabel}。${describeMergeRevisionMapping(selection.mode === "eligible" ? [] : resolved)}`,
+      );
+      if (sourceUrl && source.issues.length === 0) {
+        if (mergeinfoSupported) {
+          details.push(
+            `可合并 r${eligible.length > 0 ? eligible.join("、r") : "（无）"}（共 ${eligible.length} 个）；已合并 r${merged.length > 0 ? merged.slice(0, MAX_MERGE_MERGEINFO_ENTRIES).join("、r") : "（无）"}（共 ${merged.length} 个）。`,
+          );
+        } else {
+          details.push(
+            `mergeinfo 不可用（${mergeinfoNote ?? "源或工作副本不支持 mergeinfo"}）：未做已合并校验，请自行确认修订号；全部符合条件模式已阻止，指定修订/范围仍可凭试运行继续。`,
+          );
+        }
+      }
+      if (dryRunSummary) {
+        details.push(`试运行（只读，未改工作副本）：${dryRunSummary}`);
+        for (const file of dryRunFiles) details.push(`预计文件 ${file}`);
+        for (const conflict of dryRunConflicts)
+          details.push(`预计冲突 ${conflict}（执行后请进入冲突模块处理）`);
+      }
+      details.push(
         "合并只写入工作副本，不会自动提交；冲突统一进入冲突模块。",
+        "反向合并/重积分等额外模式本版不支持，已延期。",
         "浏览选择只用于填充源，未改变本地工作副本操作范围。",
       );
       input.sourceUrl = sourceUrl;
@@ -807,6 +950,39 @@ export class RepositoryWorkbenchActions {
       // V026-R43：merge 无目标概念，不绑定 targetUrl/targetOrigin。
       delete input.targetUrl;
       delete input.targetOrigin;
+      input.mergeMode = selection.mode;
+      input.mergeRequestedRevisions = selection.requestedRevisions.join(",");
+      input.mergeFromRevision = selection.fromRevision ?? "";
+      input.mergeToRevision = selection.toRevision ?? "";
+      input.mergeResolvedRevisions =
+        selection.mode === "eligible" ? "" : resolved.join(",");
+      input.mergeEligibleAtPreview =
+        selection.mode === "eligible" ? eligible.join(",") : "";
+      mergeView = {
+        mode: selection.mode as MergeRevisionMode,
+        requestedRevisions:
+          selection.requestedRevisions.length > 0
+            ? selection.requestedRevisions
+            : undefined,
+        fromRevision: selection.fromRevision,
+        toRevision: selection.toRevision,
+        resolvedRevisions: selection.mode === "eligible" ? [] : resolved,
+        eligible: eligible.slice(0, MAX_MERGE_MERGEINFO_ENTRIES),
+        merged: merged.slice(0, MAX_MERGE_MERGEINFO_ENTRIES),
+        eligibleCount: eligible.length,
+        mergedCount: merged.length,
+        eligibleTruncated:
+          eligible.length > MAX_MERGE_MERGEINFO_ENTRIES || undefined,
+        mergedTruncated:
+          merged.length > MAX_MERGE_MERGEINFO_ENTRIES || undefined,
+        mergeinfoSupported,
+        mergeinfoNote,
+        dryRunCommand,
+        dryRunFiles,
+        dryRunConflicts,
+        dryRunSummary,
+        dryRunTruncated: dryRunTruncated || undefined,
+      };
     } else if (operation === "restore-shelf") {
       title = "恢复本地搁置";
       destructive = true;
@@ -925,8 +1101,65 @@ export class RepositoryWorkbenchActions {
       sourceRevision: input.sourceRevision || undefined,
       sourceResolvedRevision: input.sourceResolvedRevision || undefined,
       sourceRevisionMode: input.sourceRevisionMode || undefined,
+      // V026-R45：合并修订选择视图（仅 merge 操作携带）。
+      merge: mergeView,
     };
     await this.host.sendRepositorySnapshot(session, requestId);
+  }
+
+  /**
+   * V026-R45：只读采集 eligible/merged 修订集合（不写工作副本）。
+   * 任一 mergeinfo 查询失败即视为无 mergeinfo 支持（fail-open 只读采集，
+   * fail-closed 执行：eligible 模式阻止，指定/范围跳过已合并校验并明示）。
+   */
+  private async collectMergeRevisionSets(
+    session: WorkbenchSession,
+    sourceUrl: string,
+  ): Promise<{
+    eligible: string[];
+    merged: string[];
+    supported: boolean;
+    note?: string;
+  }> {
+    const workingCopy = session.scope.repositoryRoot;
+    const query = async (
+      which: "eligible" | "merged",
+    ): Promise<{ revisions?: string[]; error?: string }> => {
+      const result = await runSvnCommand(
+        session.svnPath,
+        ["mergeinfo", `--show-revs=${which}`, sourceUrl, workingCopy],
+        workingCopy,
+      );
+      if (result.exitCode !== 0) {
+        return {
+          error: (result.stderr || result.stdout || "查询失败")
+            .trim()
+            .slice(0, 200),
+        };
+      }
+      return { revisions: parseMergeinfoRevisions(result.stdout) };
+    };
+    const [eligibleResult, mergedResult] = await Promise.all([
+      query("eligible"),
+      query("merged"),
+    ]);
+    if (
+      eligibleResult.revisions === undefined ||
+      mergedResult.revisions === undefined
+    ) {
+      const reason = eligibleResult.error ?? mergedResult.error ?? "查询失败";
+      return {
+        eligible: [],
+        merged: [],
+        supported: false,
+        note: reason,
+      };
+    }
+    return {
+      eligible: eligibleResult.revisions,
+      merged: mergedResult.revisions,
+      supported: true,
+    };
   }
 
   /**
@@ -1388,6 +1621,128 @@ export class RepositoryWorkbenchActions {
         return;
       }
     }
+    // V026-R45：合并执行前复验源/本地状态/可合并集合（复验链零削弱）。
+    // - 本地未提交修改阻止策略不放宽；
+    // - eligible 模式用完整合并执行，源可合并集合变化即视为旧预览失效；
+    // - 指定/范围模式按冻结修订执行，复验仍可合并（防期间已被合并）；
+    // - 反向合并/重积分不生成任何命令，本版不支持。
+    if (preview.operation === "merge") {
+      const mergeSourceUrl = preview.input?.sourceUrl;
+      const mergeMode = preview.input?.mergeMode;
+      const mergeResolved = (preview.input?.mergeResolvedRevisions ?? "")
+        .split(",")
+        .map((item) => item.trim())
+        .filter((item) => /^\d+$/.test(item));
+      const failMerge = async (
+        title: string,
+        message: string,
+      ): Promise<void> => {
+        state.preview = undefined;
+        await this.host.sendError(
+          "repository",
+          title,
+          message,
+          true,
+          requestId,
+        );
+        try {
+          await this.host.sendRepositorySnapshot(session, requestId);
+        } catch {
+          // 忽略：原拒绝已送达，旧预览已作废。
+        }
+      };
+      if (
+        !mergeSourceUrl ||
+        (mergeMode !== "eligible" &&
+          mergeMode !== "specific" &&
+          mergeMode !== "range")
+      ) {
+        await failMerge(
+          "高级操作预览已失效",
+          "合并修订选择未固定（缺少源 URL 或合并模式），请重新生成预览后再确认执行。",
+        );
+        return;
+      }
+      const freshCandidates = await this.host.collectScopeCandidates(session);
+      if (freshCandidates.length > 0) {
+        await failMerge(
+          "工作副本已变化",
+          `工作副本存在 ${freshCandidates.length} 个本地变更，已阻止合并（该策略不放宽：请先提交、还原或搁置后再预览）。`,
+        );
+        return;
+      }
+      const mergeSourceCheck = await runSvnCommand(
+        session.svnPath,
+        ["info", "--xml", mergeSourceUrl],
+        session.scope.repositoryRoot,
+      );
+      if (mergeSourceCheck.exitCode !== 0) {
+        const reason = (
+          mergeSourceCheck.stderr ||
+          mergeSourceCheck.stdout ||
+          ""
+        )
+          .trim()
+          .slice(0, 200);
+        await failMerge(
+          "合并源已失效",
+          `源 ${mergeSourceUrl} 复验失败（目标不存在、无权限或网络失败${reason ? `：${reason}` : ""}），已阻止执行。请核对源分支后重新预览。`,
+        );
+        return;
+      }
+      const freshSets = await this.collectMergeRevisionSets(
+        session,
+        mergeSourceUrl,
+      );
+      if (mergeMode === "eligible") {
+        if (!freshSets.supported) {
+          await failMerge(
+            "合并条件已变化",
+            `当前无法采集可合并修订（${freshSets.note ?? "源或工作副本不支持 mergeinfo"}），旧预览已失效。请重新预览（全部符合条件模式需要 mergeinfo 支持）。`,
+          );
+          return;
+        }
+        // eligible 完整合并按执行时 mergeinfo 生效；源可合并集合变化即旧预览失效。
+        const previewedEligible = (preview.input?.mergeEligibleAtPreview ?? "")
+          .split(",")
+          .map((item) => item.trim())
+          .filter((item) => /^\d+$/.test(item))
+          .sort((a, b) => (BigInt(a) < BigInt(b) ? -1 : 1));
+        const currentEligible = [...freshSets.eligible].sort((a, b) =>
+          BigInt(a) < BigInt(b) ? -1 : 1,
+        );
+        if (previewedEligible.join(",") !== currentEligible.join(",")) {
+          await failMerge(
+            "合并条件已变化",
+            `源分支可合并集合已变化（预览时 ${previewedEligible.length} 个，当前 ${currentEligible.length} 个），旧预览已失效。请重新预览确认后再执行。`,
+          );
+          return;
+        }
+      } else {
+        if (mergeResolved.length === 0) {
+          await failMerge(
+            "高级操作预览已失效",
+            "合并修订选择为空，请重新生成预览后再确认执行。",
+          );
+          return;
+        }
+        if (freshSets.supported) {
+          const recheck = classifyMergeSelection(
+            mergeResolved,
+            freshSets.eligible,
+            freshSets.merged,
+            true,
+          );
+          if (recheck.issues.length > 0) {
+            await failMerge(
+              "合并条件已变化",
+              `${recheck.issues.join(" ")}旧预览已失效，请重新预览。`,
+            );
+            return;
+          }
+        }
+      }
+    }
     const controller = new AbortController();
     session.activeOperation = { moduleId: "repository", controller };
     await this.host.post({
@@ -1458,10 +1813,20 @@ export class RepositoryWorkbenchActions {
         );
         successMessage = `仓库根地址已重定位到 ${input.targetUrl}。`;
       } else if (preview.operation === "merge") {
+        // V026-R45：按预览冻结的修订选择执行（eligible=完整合并，指定/范围=-c/-r）。
+        // 复验已在执行前完成；此处只复用冻结值，不重新解释用户输入。
+        const frozenResolved = (preview.input?.mergeResolvedRevisions ?? "")
+          .split(",")
+          .map((item) => item.trim())
+          .filter((item) => /^\d+$/.test(item));
+        const frozenArgs = buildMergeRevisionArgs(
+          preview.input?.mergeMode === "eligible" ? [] : frozenResolved,
+        );
         result = await runSvnCommand(
           session.svnPath,
           [
             "merge",
+            ...frozenArgs,
             input.sourceUrl,
             session.scope.repositoryRoot,
             "--accept",
@@ -1470,7 +1835,21 @@ export class RepositoryWorkbenchActions {
           session.scope.repositoryRoot,
           { signal: controller.signal },
         );
-        successMessage = "合并结果已写入工作副本；尚未提交，请检查变更与冲突。";
+        if (result && result.exitCode === 0 && !result.cancelled) {
+          // V026-R45：执行成功后重采状态，有冲突即指引进入冲突模块；不自动提交。
+          const afterCandidates =
+            await this.host.collectScopeCandidates(session);
+          const conflicted = afterCandidates.filter(
+            (item) => item.status === "conflicted",
+          ).length;
+          successMessage =
+            conflicted > 0
+              ? `合并结果已写入工作副本（未提交）；检测到 ${conflicted} 个冲突，请进入冲突模块处理后再决定是否提交。`
+              : "合并结果已写入工作副本；尚未提交，请检查变更与冲突。";
+        } else {
+          successMessage =
+            "合并结果已写入工作副本；尚未提交，请检查变更与冲突。";
+        }
       } else if (preview.operation === "apply-patch") {
         result = await runSvnCommand(
           session.svnPath,

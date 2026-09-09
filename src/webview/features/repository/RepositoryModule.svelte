@@ -386,6 +386,24 @@
       if (preview.sourceRevisionMode !== undefined)
         payload.sourceRevisionMode = preview.sourceRevisionMode;
     }
+    // V026-R45：合并重查必须携带已确认的修订选择模式，不静默回落为全部符合条件。
+    if (preview.operation === "merge" && preview.merge) {
+      payload.mergeMode = preview.merge.mode;
+      if (preview.merge.requestedRevisions !== undefined)
+        payload.mergeRevisions = preview.merge.requestedRevisions.join(", ");
+      else if (preview.merge.resolvedRevisions.length > 0)
+        payload.mergeRevisions = preview.merge.resolvedRevisions.join(", ");
+      if (preview.merge.fromRevision !== undefined)
+        payload.mergeRangeFrom = preview.merge.fromRevision;
+      if (preview.merge.toRevision !== undefined)
+        payload.mergeRangeTo = preview.merge.toRevision;
+      payload.merge = {
+        mode: preview.merge.mode,
+        revisions: payload.mergeRevisions,
+        from: payload.mergeRangeFrom,
+        to: payload.mergeRangeTo,
+      };
+    }
     // shelf 中文显示名在命令中为“搁置“<名称>””形式；解析失败仅重发 operation。
     if (preview.operation === "shelf") {
       const shelfName =
