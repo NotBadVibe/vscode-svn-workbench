@@ -563,12 +563,12 @@
     },
     {
       "version": "0.2.4",
-      "status": "draft",
-      "phase": "planned",
+      "status": "released",
+      "phase": "released",
       "baseVersion": "0.2.3",
       "canonicalEntry": "releases/v0.2.4/README.md",
       "manifest": "releases/v0.2.4/manifest.json",
-      "releasedFact": false,
+      "releasedFact": true,
       "topics": [
         "shelf-recovery",
         "project-status",
