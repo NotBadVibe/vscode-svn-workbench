@@ -592,12 +592,12 @@
     },
     {
       "version": "0.2.6",
-      "status": "draft",
-      "phase": "planned",
+      "status": "released",
+      "phase": "released",
       "baseVersion": "0.2.5",
       "canonicalEntry": "releases/v0.2.6/README.md",
       "manifest": "releases/v0.2.6/manifest.json",
-      "releasedFact": false,
+      "releasedFact": true,
       "topics": [
         "repository-browser",
         "revision-pinned-copy",
