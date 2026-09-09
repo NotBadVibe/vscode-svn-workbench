@@ -35,8 +35,8 @@
 
 - **原评审映射：** 第 43 项。
 - **优先级 / 证据等级：** P2 / 体验建议。
-- **实施状态：** 待实施。
-- **看到的现状：** Branch/Tag/Switch 等依赖完整 URL 输入，已有仓库浏览无法直接作为来源/目标选择器。
+- **实施状态：** 已实施（`codex/dev-v0.2.6`）。
+- **看到的现状（实施前）：** Branch/Tag/Switch 等依赖完整 URL 输入，已有仓库浏览无法直接作为来源/目标选择器。
 - **用户影响：** 地址长易拼错，用户需在浏览器与表单之间反复复制。
 - **现有证据与预计改动入口：** [AdvancedTask.svelte](../../../src/webview/features/repository/tasks/AdvancedTask.svelte)、[BrowseTask.svelte](../../../src/webview/features/repository/tasks/BrowseTask.svelte)、[repositoryWorkbenchActions.ts](../../../src/extension/workbench/repositoryWorkbenchActions.ts)、[svnUrl.ts](../../../src/svn/svnUrl.ts)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
 
@@ -47,12 +47,12 @@
 3. 先接只读选择与预览，最终写入仍走各自安全契约。
 4. 协议传结构化 URL/revision 意图，Host 负责解析编码/权限/边界。
 
-**验收场景与完成条件：**
+**验收场景与完成条件（已实现，均有自动化用例）：**
 
-- [ ] 中文/空格/# 路径按段正确编码，不重复编码。
-- [ ] 跨仓库目标、失效目录、权限失败就地解释。
-- [ ] 切换源目标立即使旧预览失效。
-- [ ] 浏览选择不扩大本地工作副本操作范围。
+- [x] 中文/空格/# 路径按段正确编码，不重复编码。
+- [x] 跨仓库目标、失效目录、权限失败就地解释（跨仓库一律“已阻止”口径，与分支一致）。
+- [x] 切换源目标立即使旧预览失效。
+- [x] 浏览选择不扩大本地工作副本操作范围。
 
 <a id="v026-r44"></a>
 
@@ -60,8 +60,8 @@
 
 - **原评审映射：** 第 44 项。
 - **优先级 / 证据等级：** P2 / 明确功能边界扩展。
-- **实施状态：** 待实施。
-- **看到的现状：** 当前远端 copy 未带明确 -r 选择，用户看到工作副本 rN 容易误以为标签来自该版本。
+- **实施状态：** 已实施（`codex/dev-v0.2.6`）。
+- **看到的现状（实施前）：** 当前远端 copy 未带明确 -r 选择，用户看到工作副本 rN 容易误以为标签来自该版本。
 - **用户影响：** 验收通过的版本与实际创建标签的内容可能不是同一来源。
 - **现有证据与预计改动入口：** [AdvancedTask.svelte](../../../src/webview/features/repository/tasks/AdvancedTask.svelte)、[repositoryWorkbenchActions.ts](../../../src/extension/workbench/repositoryWorkbenchActions.ts)、[workbenchProtocol.ts](../../../src/protocol/workbenchProtocol.ts)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
 
@@ -72,11 +72,11 @@
 3. 执行复验固定来源和目标存在性，不静默漂移到更新的 HEAD。
 4. 已验证 revision 不存在或无权限给恢复动作。
 
-**验收场景与完成条件：**
+**验收场景与完成条件（已实现，均有自动化用例，含真实 SVN 冻结用例）：**
 
-- [ ] 预览后远端 HEAD 前进，确认仍按已确认源版本或明确要求重预览。
-- [ ] 工作副本有未提交修改时不宣称其进入远端 copy。
-- [ ] 旧 token/改变 source revision/目标已存在被拒绝。
+- [x] 预览后远端 HEAD 前进，确认仍按已确认源版本或明确要求重预览。
+- [x] 工作副本有未提交修改时不宣称其进入远端 copy。
+- [x] 旧 token/改变 source revision/目标已存在被拒绝。
 
 <a id="v026-r45"></a>
 
@@ -96,10 +96,10 @@
 3. 生成试运行、预计文件/冲突与准确命令，再由用户确认。
 4. 本地未提交修改阻止策略不放宽，反向合并/重积分等额外模式单独延期。
 
-**验收场景与完成条件（已实现，均有自动化用例）：**
+**验收场景与完成条件（已实现，均有自动化用例，含真实 SVN 用例）：**
 
 - [x] 单修订、连续范围、不连续选择、已合并修订、无 mergeinfo 支持分别有正确结果。
-- [x] dry-run 不改工作副本，执行前复验源/目标/本地状态/token。
+- [x] dry-run 不改工作副本，执行前复验源/目标/本地状态/token；eligible 复验同比 eligible 与 merged 两集合（P1-1，非严格互补）。
 - [x] 产生冲突后进入冲突处理，取消及部分失败重采状态，不自动提交。
 
 <a id="v026-r46"></a>
@@ -108,8 +108,8 @@
 
 - **原评审映射：** 第 46 项。
 - **优先级 / 证据等级：** P2 / 能力完善。
-- **实施状态：** 待实施。
-- **看到的现状：** 文件条目主要复制 URL，尚未形成远端内容预览/文件历史/修订比较的顺滑入口。
+- **实施状态：** 已实施（`codex/dev-v0.2.6`）。
+- **看到的现状（实施前）：** 文件条目主要复制 URL，尚未形成远端内容预览/文件历史/修订比较的顺滑入口。
 - **用户影响：** 用户找到目标后任务中断，尤其历史删除文件无法靠 Explorer 继续。
 - **现有证据与预计改动入口：** [BrowseTask.svelte](../../../src/webview/features/repository/tasks/BrowseTask.svelte)、[HistoryModule.svelte](../../../src/webview/features/history/HistoryModule.svelte)、[DiffModule.svelte](../../../src/webview/features/diff/DiffModule.svelte)、[repositoryWorkbenchActions.ts](../../../src/extension/workbench/repositoryWorkbenchActions.ts)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
 
@@ -120,21 +120,26 @@
 3. 二进制/大文件/无权限显示限制和复制 URL 等恢复。
 4. 本地写动作不因仓库浏览扩大 scope，浏览历史与工作副本范围单独验证。
 
-**验收场景与完成条件：**
+**验收场景与完成条件（已实现，除已删除路径历史缺口外均有自动化用例，含真实 SVN 用例）：**
 
-- [ ] 浏览文件可看指定 revision 内容且来源明确。
-- [ ] 删除/复制历史、跨目录返回不丢位置。
-- [ ] 权限/网络失败保留导航状态。
-- [ ] 远端预览不产生本地文件写入或隐式外发。
+- [x] 浏览文件可看指定 revision 内容且来源明确。
+- [x] 复制路径历史可查、跨目录返回不丢位置（返回上次有效位置 + 面包屑）。
+- [ ] 已删除路径在 HEAD 的历史查看（需 peg 修订 `URL@N`，本版未做；`svn log` 无 peg 查已删路径失败 E160013，留待后续版本）。
+- [x] 权限/网络失败保留导航状态。
+- [x] 远端预览不产生本地文件写入或隐式外发。
 
 ## 4. 测试落点
 
-下列是已存在的回归入口，实施时扩展真实行为用例；如需新测试文件，按任务 ID 建立并同步实现映射。本次未新增待开发功能的验收用例；现有回归运行结果见路线的本次验证记录，不代表新功能已经通过。
+本版新增行为用例（源码/协议/测试三元组见实现映射 §8.9）：
 
-- [RepositoryModule.test.ts](../../../tests/components/RepositoryModule.test.ts)
-- [workbenchProtocol.test.ts](../../../tests/unit/workbenchProtocol.test.ts)
-- [operationIntent.test.ts](../../../tests/unit/operationIntent.test.ts)
-- [domainAcceptanceCoverage.test.ts](../../../tests/unit/domainAcceptanceCoverage.test.ts)
+- R43：[svnUrl.test.ts](../../../tests/unit/svnUrl.test.ts)、[advancedRepositoryTools.test.ts](../../../tests/unit/advancedRepositoryTools.test.ts)、[V026RepositoryBrowseAdvanced.test.ts](../../../tests/components/V026RepositoryBrowseAdvanced.test.ts)、[repositoryRemoteProtocolGuards.test.ts](../../../tests/unit/repositoryRemoteProtocolGuards.test.ts)。
+- R44：[branchTagSourceRevision.test.ts](../../../tests/unit/branchTagSourceRevision.test.ts)、[branchTagSourceRevisionHost.test.ts](../../../tests/unit/branchTagSourceRevisionHost.test.ts)、[V026BranchTagSourceRevision.test.ts](../../../tests/components/V026BranchTagSourceRevision.test.ts)。
+- R45：[mergeRevisionSelection.test.ts](../../../tests/unit/mergeRevisionSelection.test.ts)、[V026MergeRevisionSelection.test.ts](../../../tests/components/V026MergeRevisionSelection.test.ts)、[mergeEligibleMergedRecheck.test.ts](../../../tests/unit/mergeEligibleMergedRecheck.test.ts)（P1-1 eligible/merged 同比）。
+- R46：同 R43 远端三出口用例，另见 [V026RepositoryBrowseAdvanced.test.ts](../../../tests/components/V026RepositoryBrowseAdvanced.test.ts)。
+- 真实 SVN 隔离仓库（Blocker-2/P1-3）：[v026RealSvn.test.ts](../../../tests/unit/v026RealSvn.test.ts)（只读三出口/分支冻结/合并三模式 dry-run/冲突与重采/权限与空集阻止）。
+- 协议守卫：[workbenchProtocolV026Coverage.test.ts](../../../tests/unit/workbenchProtocolV026Coverage.test.ts)、[workbenchProtocol.test.ts](../../../tests/unit/workbenchProtocol.test.ts)、[operationIntent.test.ts](../../../tests/unit/operationIntent.test.ts)。
+
+既有回归入口：[RepositoryModule.test.ts](../../../tests/components/RepositoryModule.test.ts)、[domainAcceptanceCoverage.test.ts](../../../tests/unit/domainAcceptanceCoverage.test.ts)。
 
 ## 开发与验证约束
 

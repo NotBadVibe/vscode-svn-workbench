@@ -734,9 +734,10 @@ export class RepositoryWorkbenchActions {
       );
       const targetUrl = target.normalizedUrl;
       for (const issue of target.issues) issues.push(`目标 URL：${issue}`);
+      // P1-2：跨仓库一律“已阻止”口径；switch 跨仓库请改用重定位。
       if (target.crossRepository)
         issues.push(
-          "目标 URL 与当前仓库归属不一致（跨仓库），请确认后再预览。",
+          "目标 URL 与当前仓库归属不一致（跨仓库），已阻止切换；如需更换仓库根请改用重定位仓库地址。",
         );
       if (targetUrl && target.issues.length === 0) {
         const problem = await probeReadable(targetUrl, "目标 URL");
@@ -800,8 +801,11 @@ export class RepositoryWorkbenchActions {
       );
       const sourceUrl = source.normalizedUrl;
       for (const issue of source.issues) issues.push(`源 URL：${issue}`);
+      // V026-R43/P1-2：跨仓库一律“已阻止”口径（与分支/标签一致），fail-closed。
       if (source.crossRepository)
-        issues.push("源 URL 与当前仓库归属不一致（跨仓库），请确认后再预览。");
+        issues.push(
+          "源 URL 与当前仓库归属不一致（跨仓库），已阻止合并成一次操作。",
+        );
       if (sourceUrl && source.issues.length === 0) {
         const problem = await probeReadable(sourceUrl, "源 URL");
         if (problem) issues.push(problem);
@@ -958,6 +962,9 @@ export class RepositoryWorkbenchActions {
         selection.mode === "eligible" ? "" : resolved.join(",");
       input.mergeEligibleAtPreview =
         selection.mode === "eligible" ? eligible.join(",") : "";
+      // P1-1：eligible/merged 并非严格互补（record-only 等可单独改变 merged），
+      // 执行前复验必须同时比对两集合；快照缺失（旧预览）视为失效。
+      input.mergeMergedAtPreview = merged.join(",");
       mergeView = {
         mode: selection.mode as MergeRevisionMode,
         requestedRevisions:
@@ -1702,7 +1709,8 @@ export class RepositoryWorkbenchActions {
           );
           return;
         }
-        // eligible 完整合并按执行时 mergeinfo 生效；源可合并集合变化即旧预览失效。
+        // eligible 完整合并按执行时 mergeinfo 生效；源可合并/已合并集合任一变化即旧预览失效。
+        // P1-1：两集合非严格互补，须同比（record-only 等可单独改变 merged）。
         const previewedEligible = (preview.input?.mergeEligibleAtPreview ?? "")
           .split(",")
           .map((item) => item.trim())
@@ -1711,10 +1719,21 @@ export class RepositoryWorkbenchActions {
         const currentEligible = [...freshSets.eligible].sort((a, b) =>
           BigInt(a) < BigInt(b) ? -1 : 1,
         );
-        if (previewedEligible.join(",") !== currentEligible.join(",")) {
+        const previewedMerged = (preview.input?.mergeMergedAtPreview ?? "")
+          .split(",")
+          .map((item) => item.trim())
+          .filter((item) => /^\d+$/.test(item))
+          .sort((a, b) => (BigInt(a) < BigInt(b) ? -1 : 1));
+        const currentMerged = [...freshSets.merged].sort((a, b) =>
+          BigInt(a) < BigInt(b) ? -1 : 1,
+        );
+        if (
+          previewedEligible.join(",") !== currentEligible.join(",") ||
+          previewedMerged.join(",") !== currentMerged.join(",")
+        ) {
           await failMerge(
             "合并条件已变化",
-            `源分支可合并集合已变化（预览时 ${previewedEligible.length} 个，当前 ${currentEligible.length} 个），旧预览已失效。请重新预览确认后再执行。`,
+            `源分支可合并/已合并集合已变化（预览时可合并 ${previewedEligible.length} 个/已合并 ${previewedMerged.length} 个，当前可合并 ${currentEligible.length} 个/已合并 ${currentMerged.length} 个），旧预览已失效。请重新预览确认后再执行。`,
           );
           return;
         }
