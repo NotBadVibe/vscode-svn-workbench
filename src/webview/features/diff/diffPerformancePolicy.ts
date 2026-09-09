@@ -105,6 +105,37 @@ export const V018C_MODE_LABELS: Record<DiffPerformanceMode, string> = {
   simplified: "简化编辑器",
 };
 
+/*
+ * V027-R53 重型视图延迟挂载调度阈值（挂载调度，不改变降级模式语义）。
+ *
+ * 基线（生产构建 preview，同机 Apple M4）：1000 行首屏 P95 约 540ms，已贴近
+ * 500ms 出口预算；5000 行约 2135ms、10000 行约 4917ms，同步挂载会连带卡住
+ * 工具栏与降级出口的首漆。超过本阈值时组件先绘制轻量工具栏/出口条，重型
+ * Pierre 视图下一帧挂载，保证任务开始后 500ms 内出口可操作。
+ * 本阈值只影响挂载顺序，不改变 suggest/decide 的降级模式判定与 5000/100 边界
+ * （边界由 conflictPerformancePolicy.test.ts 锁定，含等于仍为 full）。
+ */
+export const V027_HEAVY_DEFER_LINE_THRESHOLD = 1000;
+
+/** V027-R53 延迟挂载调度输入：行数 + 最长行（复用 V018-C 长行阈值维度）。 */
+export interface HeavyDeferInput {
+  lines: number;
+  maxLineLength?: number;
+}
+
+/**
+ * 纯函数：是否延迟重型视图挂载。边界含等于：行数 ≤ 阈值且无长行时立即挂载；
+ * 行数超过阈值或存在长行（>1000 字符）时先绘制出口、下一帧再挂载重型视图。
+ */
+export function shouldDeferHeavyMount(input: HeavyDeferInput): boolean {
+  const lines = Math.max(0, Math.floor(input.lines));
+  const maxLineLength = Math.max(0, Math.floor(input.maxLineLength ?? 0));
+  return (
+    lines > V027_HEAVY_DEFER_LINE_THRESHOLD ||
+    maxLineLength > V018C_LONG_LINE_THRESHOLD
+  );
+}
+
 /**
  * 纯函数：冲突三档阈值判定（actualLines + 块数 + 长行）。
  * - 边界含等于：actualLines/fullMaxLines 与块数/fullMaxConflictBlocks 处仍为 full；

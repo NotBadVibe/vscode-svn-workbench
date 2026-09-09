@@ -78,6 +78,7 @@
   import TaskSummary from "../../components/task/TaskSummary.svelte";
   import {
     decideConflictPerformanceMode,
+    shouldDeferHeavyMount,
     V018C_MODE_LABELS,
   } from "../diff/diffPerformancePolicy";
 
@@ -627,6 +628,70 @@
     };
   });
   const workingDirty = $derived(mergeDraft !== savedWorking);
+  /*
+   * V027-R53 大文件延迟挂载调度：超预算（降级模式非 full）或行数/长行超过
+   * 调度阈值时，先绘制标题/导航/块列表/降级出口等轻量内容，重型 Pierre 视图
+   * （ConflictDiffView + ConflictResultEditor）下一帧挂载，保证任务开始后
+   * 500ms 内简化/外部出口可操作。挂载调度不改变降级模式语义与草稿/焦点契约：
+   * - 用户已切简化编辑器时取消待挂载（切分支即卸载重型视图，不做无用挂载）；
+   * - 文件身份变化重置调度（新文件重新走先出口后重型两阶段）；
+   * - 快照刷新（同文件）不重置，避免保存后刷新打断输入（R01 硬门禁）；
+   * - 后台挂载不抢焦点（焦点逻辑仍由既有 focusArmedFor 门控）。
+   */
+  const conflictNeedsHeavyDefer = $derived(
+    conflictPerf.mode !== "full" ||
+      shouldDeferHeavyMount({
+        lines: perfActualLines,
+        maxLineLength: perfMaxLineLength,
+      }),
+  );
+  // 初值 false：首帧只绘轻量内容（标题/导航/块列表/出口），effect 在首漆前
+  // 确认直挂（小文件）或安排下一帧挂载（大文件）；若初值为 true，首帧会先
+  // 同步挂载重型视图再纠正，延迟调度即失效。
+  let conflictHeavyReady = $state(false);
+  // 非响应式调度键：同文件快照刷新（保存/草稿回环）键不变，不重置挂载
+  //（R01：刷新不得打断输入/丢焦点）；文件或降级模式变化才重新走两阶段。
+  let conflictHeavyScheduledKey: string | undefined = undefined;
+  $effect(() => {
+    const defer = conflictNeedsHeavyDefer;
+    const fileKey = snapshot.selected?.relativePath ?? "";
+    const modeKey = conflictPerf.mode;
+    const scheduleKey = `${defer ? "defer" : "direct"}|${modeKey}|${fileKey}`;
+    if (scheduleKey === conflictHeavyScheduledKey) return;
+    conflictHeavyScheduledKey = scheduleKey;
+    if (!defer) {
+      conflictHeavyReady = true;
+      return;
+    }
+    conflictHeavyReady = false;
+    let cancelled = false;
+    const schedule = (): void => {
+      if (cancelled) return;
+      const stillSame = untrack(
+        () =>
+          (snapshot.selected?.relativePath ?? "") === fileKey &&
+          conflictPerf.mode === modeKey &&
+          !useSimplified,
+      );
+      if (stillSame) conflictHeavyReady = true;
+    };
+    let rafFirst = 0;
+    let rafSecond = 0;
+    let timer = 0;
+    if (typeof requestAnimationFrame === "function") {
+      rafFirst = requestAnimationFrame(() => {
+        rafSecond = requestAnimationFrame(schedule);
+      });
+    } else {
+      timer = window.setTimeout(schedule, 0);
+    }
+    return () => {
+      cancelled = true;
+      if (rafFirst) cancelAnimationFrame(rafFirst);
+      if (rafSecond) cancelAnimationFrame(rafSecond);
+      if (timer) window.clearTimeout(timer);
+    };
+  });
   // v0.1.1 V011-D：块级差异视图实例与进度（动作紧邻冲突块，进度与列表统一）。
   let diffView = $state<ConflictDiffView>();
   /*
@@ -2617,30 +2682,48 @@
             >
           </div>
           {#if !useSimplified}
-            <div class="conflict-diff-row">
-              <div class="conflict-diff-main">
-                <ConflictDiffView
-                  bind:this={diffView}
-                  workingText={diffWorkingText}
-                  relativePath={snapshot.selected?.relativePath ?? ""}
-                  language={perfHighlightLanguage}
-                  fileIdentity={conflictFileIdentity}
-                  showWhitespace={conflictShowWhitespace}
-                  ignoreWhitespace={conflictIgnoreWhitespace}
-                  ignoredWhitespaceCount={conflictIgnoredWhitespaceCount}
-                  onBlockProgress={notifyBlockProgress}
-                  onMergeConflictAction={handleDiffAction}
-                  onError={handleDiffError}
-                  onReady={handleDiffReady}
+            {#if conflictHeavyReady}
+              <div class="conflict-diff-row">
+                <div class="conflict-diff-main">
+                  <ConflictDiffView
+                    bind:this={diffView}
+                    workingText={diffWorkingText}
+                    relativePath={snapshot.selected?.relativePath ?? ""}
+                    language={perfHighlightLanguage}
+                    fileIdentity={conflictFileIdentity}
+                    showWhitespace={conflictShowWhitespace}
+                    ignoreWhitespace={conflictIgnoreWhitespace}
+                    ignoredWhitespaceCount={conflictIgnoredWhitespaceCount}
+                    onBlockProgress={notifyBlockProgress}
+                    onMergeConflictAction={handleDiffAction}
+                    onError={handleDiffError}
+                    onReady={handleDiffReady}
+                  />
+                </div>
+                <DiffOverview
+                  blocks={conflictOverviewBlocks}
+                  currentIndex={conflictOverviewCurrent}
+                  totalLines={conflictOverviewTotalLines}
+                  onSelect={selectConflictOverviewBlock}
                 />
               </div>
-              <DiffOverview
-                blocks={conflictOverviewBlocks}
-                currentIndex={conflictOverviewCurrent}
-                totalLines={conflictOverviewTotalLines}
-                onSelect={selectConflictOverviewBlock}
-              />
-            </div>
+            {:else}
+              <!--
+              V027-R53 延迟挂载占位：轻量真实信息（块数/行数），不是可滚动
+              代码内容，不计入首屏可读；降级出口（上方摘要区）已先行就绪。
+            -->
+              <div
+                class="notice"
+                role="status"
+                data-testid="conflict-heavy-deferred"
+              >
+                <span class="codicon codicon-info" aria-hidden="true"></span>
+                <span
+                  >完整视图加载中（{conflictBlocks.length} 个冲突块 / {perfActualLines}
+                  行），降级出口已就绪。</span
+                >
+              </div>
+            {/if}
           {:else}
             <div
               class="notice notice--info"
@@ -2736,55 +2819,58 @@
               </div>
             </div>
           {/if}
-          <div class="merge-block-toolbar">
-            <div>
-              <strong>块级合并</strong><span
-                >{conflictBlocks.length > 0
-                  ? `仍有 ${conflictBlocks.length} 个冲突块`
-                  : "未检测到冲突标记"}</span
-              >
-            </div>
-            {#if conflictBlocks.length > 0}
-              <!-- svelte-ignore a11y_no_noninteractive_tabindex -- 冲突块列表需要获得键盘焦点以便滚动。 -->
-              <div
-                class="merge-block-list scroll-region"
-                role="region"
-                aria-label="冲突块操作"
-                tabindex="0"
-                data-scroll-region
-              >
-                {#each conflictBlocks as block, index (block.start)}
-                  <article>
-                    <span>块 {index + 1}</span><small
-                      >{block.mine.split(/\r?\n/).filter(Boolean).length} 行本地 /
-                      {block.theirs.split(/\r?\n/).filter(Boolean).length} 行对方</small
-                    >
-                    <div>
-                      <button
-                        class="button button--secondary"
-                        onclick={() => applyBlock(index, "mine")}
-                        >采用我的修改</button
-                      ><button
-                        class="button button--secondary"
-                        onclick={() => applyBlock(index, "theirs")}
-                        >采用对方修改</button
-                      ><button
-                        class="button button--secondary"
-                        data-testid="take-both-block"
-                        disabled={disableTakeBoth}
-                        aria-disabled={disableTakeBoth ? "true" : "false"}
-                        title={disableTakeBoth
-                          ? "非文本冲突已禁用保留两者"
-                          : "保留两者"}
-                        onclick={() => applyBlock(index, "both")}
-                        >保留两者</button
-                      >
-                    </div>
-                  </article>
-                {/each}
+          {#if conflictHeavyReady || effectivePerfMode !== "simplified"}
+            <div class="merge-block-toolbar">
+              <div>
+                <strong>块级合并</strong><span
+                  >{conflictBlocks.length > 0
+                    ? `仍有 ${conflictBlocks.length} 个冲突块`
+                    : "未检测到冲突标记"}</span
+                >
               </div>
-            {/if}
-          </div>
+              {#if conflictBlocks.length > 0}
+                <!-- svelte-ignore a11y_no_noninteractive_tabindex -- 冲突块列表需要获得键盘焦点以便滚动。 -->
+                <div
+                  class="merge-block-list scroll-region"
+                  role="region"
+                  aria-label="冲突块操作"
+                  tabindex="0"
+                  data-scroll-region
+                >
+                  {#each conflictBlocks as block, index (block.start)}
+                    <article>
+                      <span>块 {index + 1}</span><small
+                        >{block.mine.split(/\r?\n/).filter(Boolean).length} 行本地
+                        /
+                        {block.theirs.split(/\r?\n/).filter(Boolean).length} 行对方</small
+                      >
+                      <div>
+                        <button
+                          class="button button--secondary"
+                          onclick={() => applyBlock(index, "mine")}
+                          >采用我的修改</button
+                        ><button
+                          class="button button--secondary"
+                          onclick={() => applyBlock(index, "theirs")}
+                          >采用对方修改</button
+                        ><button
+                          class="button button--secondary"
+                          data-testid="take-both-block"
+                          disabled={disableTakeBoth}
+                          aria-disabled={disableTakeBoth ? "true" : "false"}
+                          title={disableTakeBoth
+                            ? "非文本冲突已禁用保留两者"
+                            : "保留两者"}
+                          onclick={() => applyBlock(index, "both")}
+                          >保留两者</button
+                        >
+                      </div>
+                    </article>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+          {/if}
           {#if snapshot.selected.mergeEditor.feedback}<div
               class="conflict-inline-feedback"
               role="status"
@@ -2799,37 +2885,40 @@
               ></span>{issue}
             </div>{/each}
           {#if !useSimplified}
-            <div
-              class="conflict-editor conflict-editor--editable"
-              role="region"
-              aria-label="可编辑工作副本合并区域"
-              data-testid="conflict-result-editor"
-              oncompositionstart={() => (isComposing = true)}
-              oncompositionend={() => (isComposing = false)}
-            >
-              {#key conflictFileIdentity}
-                <ConflictResultEditor
-                  bind:this={resultEditor}
-                  fileIdentity={conflictFileIdentity}
-                  relativePath={snapshot.selected.relativePath}
-                  language={perfHighlightLanguage}
-                  initialText={snapshot.selected?.draft?.content ??
-                    snapshot.selected?.contents.working?.content ??
-                    diffWorkingText}
-                  readonly={!snapshot.selected.mergeEditor.editable}
-                  onDraftChange={handleResultDraftChange}
-                  onFallback={handleResultFallback}
-                  onError={handleDiffError}
-                />
-              {/key}
-              <div class="toolbar-actions toolbar-actions--spaced-top">
-                <button
-                  class="button button--secondary"
-                  data-testid="use-simple-editor-result"
-                  onclick={() => (useSimplified = true)}>使用简化编辑器</button
-                >
+            {#if conflictHeavyReady}
+              <div
+                class="conflict-editor conflict-editor--editable"
+                role="region"
+                aria-label="可编辑工作副本合并区域"
+                data-testid="conflict-result-editor"
+                oncompositionstart={() => (isComposing = true)}
+                oncompositionend={() => (isComposing = false)}
+              >
+                {#key conflictFileIdentity}
+                  <ConflictResultEditor
+                    bind:this={resultEditor}
+                    fileIdentity={conflictFileIdentity}
+                    relativePath={snapshot.selected.relativePath}
+                    language={perfHighlightLanguage}
+                    initialText={snapshot.selected?.draft?.content ??
+                      snapshot.selected?.contents.working?.content ??
+                      diffWorkingText}
+                    readonly={!snapshot.selected.mergeEditor.editable}
+                    onDraftChange={handleResultDraftChange}
+                    onFallback={handleResultFallback}
+                    onError={handleDiffError}
+                  />
+                {/key}
+                <div class="toolbar-actions toolbar-actions--spaced-top">
+                  <button
+                    class="button button--secondary"
+                    data-testid="use-simple-editor-result"
+                    onclick={() => (useSimplified = true)}
+                    >使用简化编辑器</button
+                  >
+                </div>
               </div>
-            </div>
+            {/if}
           {:else}
             <div
               class="conflict-editor conflict-editor--editable"
