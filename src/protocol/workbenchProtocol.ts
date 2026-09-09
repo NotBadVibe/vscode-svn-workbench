@@ -1237,6 +1237,35 @@ export interface ShelfEntryView {
   integrityDetail?: string;
 }
 
+/**
+ * V026-R45：合并修订选择视图（随高级预览下发，Host 签发，Webview 只展示）。
+ * - mode：eligible=全部符合条件 / specific=指定修订 / range=修订范围；
+ * - resolvedRevisions：最终待合并的单个修订集合（去重排序，eligible 模式为空表示完整合并）；
+ * - eligible/merged：只读采集的 mergeinfo 集合（快照上限 200，超出截断并标记）；
+ * - mergeinfoSupported=false 表示仓库/工作副本无 mergeinfo 支持，未做已合并校验；
+ * - dryRunFiles/dryRunConflicts：`svn merge --dry-run` 解析出的预计文件/冲突（上限 20，超出截断）。
+ */
+export interface RepositoryMergePreview {
+  mode: "eligible" | "specific" | "range";
+  requestedRevisions?: string[];
+  fromRevision?: string;
+  toRevision?: string;
+  resolvedRevisions: string[];
+  eligible: string[];
+  merged: string[];
+  eligibleCount: number;
+  mergedCount: number;
+  eligibleTruncated?: boolean;
+  mergedTruncated?: boolean;
+  mergeinfoSupported: boolean;
+  mergeinfoNote?: string;
+  dryRunCommand?: string;
+  dryRunFiles: string[];
+  dryRunConflicts: string[];
+  dryRunSummary?: string;
+  dryRunTruncated?: boolean;
+}
+
 export interface RepositorySnapshot {
   kind: "repository";
   recovery?: {
@@ -1293,6 +1322,54 @@ export interface RepositorySnapshot {
         date?: string;
       }>;
       error?: string;
+      /**
+       * V026-R46：只读浏览上下文（可选，向后兼容）。
+       * - revision：当前浏览 URL 的远端修订（解析不到即缺省，UI 显示“修订未知”）；
+       * - repositoryRoot/projectUrl：仓库根与本地项目检出地址，用于说明浏览位置与本地关系；
+       * - lastGoodUrl：最近一次成功浏览的 URL；失败时保留旧条目并给出返回出口。
+       */
+      revision?: string;
+      repositoryRoot?: string;
+      projectUrl?: string;
+      lastGoodUrl?: string;
+    };
+    /**
+     * V026-R46：远端只读内容预览（svn cat 内存读取，不写本地文件、不外发）。
+     * binary=true 不展示正文；truncated=true 必须配截断说明与复制 URL 出口。
+     */
+    remoteFile?: {
+      url: string;
+      revision?: string;
+      requestedRevision?: string;
+      sourceLabel: string;
+      binary?: boolean;
+      truncated?: boolean;
+      size?: number;
+      contentPreview?: string;
+      error?: string;
+    };
+    /** V026-R46：远端文件只读历史（svn log URL，revision 倒序，不进入工作副本范围）。 */
+    remoteHistory?: {
+      url: string;
+      revisions: Array<{
+        revision: string;
+        author?: string;
+        date?: string;
+        message?: string;
+      }>;
+      error?: string;
+    };
+    /**
+     * V026-R46：远端 revision 比较只读预览（复用 R09 revision-patch 语义：双侧只读、
+     * 无本地路径操作）。超限截断展示，不写本地文件。
+     */
+    remoteCompare?: {
+      url: string;
+      fromRevision: string;
+      toRevision: string;
+      diffPreview?: string;
+      truncated?: boolean;
+      error?: string;
     };
     preview?: {
       token: string;
@@ -1318,6 +1395,30 @@ export interface RepositorySnapshot {
       scopeHash?: string;
       candidateHash?: string;
       repositoryUuid?: string;
+      /**
+       * V026-R43：生成该预览的源/目标 URL 绑定（Host 归一化后写入）。
+       * Webview 表单输入与此不一致时必须把旧预览标为失效并要求重新预览；
+       * Host 执行前仍以会话内 input 为准复验，不信任 Webview 回传。
+       */
+      sourceUrl?: string;
+      targetUrl?: string;
+      sourceOrigin?: string;
+      targetOrigin?: string;
+      /**
+       * V026-R44：分支/标签源修订版本冻结绑定（Host 归一化后写入，可选向后兼容）。
+       * - sourceRevision：用户请求的源模式（HEAD 或数字 rN 字符串）；
+       * - sourceResolvedRevision：预览时固定的数字修订（HEAD 已解析为 rN）；
+       * - sourceRevisionMode：HEAD 或 revision。执行前 Host 以会话内 input 复验，
+       *   不信任 Webview 回传；表单/重预览输入不一致时旧预览只读失效。
+       */
+      sourceRevision?: string;
+      sourceResolvedRevision?: string;
+      sourceRevisionMode?: string;
+      /**
+       * V026-R45：合并修订选择视图（仅 merge 操作携带，可选向后兼容）。
+       * 执行前 Host 以会话内 input 复验，不信任 Webview 回传。
+       */
+      merge?: RepositoryMergePreview;
     };
     releaseNotes?: {
       markdown: string;
@@ -1825,6 +1926,10 @@ export type WebviewAction =
   | "repository/preview-cleanup"
   | "repository/execute-cleanup"
   | "repository/browse"
+  | "repository/preview-remote-file"
+  | "repository/query-remote-history"
+  | "repository/compare-remote-revisions"
+  | "repository/discard-advanced-preview"
   | "repository/preview-advanced"
   | "repository/execute-advanced"
   | "repository/export-patch"
@@ -1986,6 +2091,10 @@ export const webviewActions = [
   "repository/preview-cleanup",
   "repository/execute-cleanup",
   "repository/browse",
+  "repository/preview-remote-file",
+  "repository/query-remote-history",
+  "repository/compare-remote-revisions",
+  "repository/discard-advanced-preview",
   "repository/preview-advanced",
   "repository/execute-advanced",
   "repository/export-patch",
@@ -2756,6 +2865,271 @@ export function isShelfEntryView(value: unknown): value is ShelfEntryView {
 }
 
 /**
+ * V026-R43/R46：仓库浏览与远端只读视图类型守卫（Host/Webview/Mock 共用）。
+ * 可选字段缺省即合法（旧快照兼容）；携带时必须逐项严检，畸形一律拒绝
+ * （fail-closed，调用方按“无该视图”处理，不把坏载荷当作有效预览）。
+ */
+export function isRepositoryBrowserView(
+  value: unknown,
+): value is NonNullable<RepositorySnapshot["advanced"]["browser"]> {
+  if (!isRecord(value)) return false;
+  if (typeof value.url !== "string") return false;
+  if (value.parentUrl !== undefined && typeof value.parentUrl !== "string")
+    return false;
+  if (!Array.isArray(value.entries)) return false;
+  for (const entry of value.entries as unknown[]) {
+    if (!isRecord(entry)) return false;
+    if (typeof entry.name !== "string") return false;
+    if (entry.kind !== "file" && entry.kind !== "dir") return false;
+    if (entry.size !== undefined && typeof entry.size !== "number")
+      return false;
+    if (entry.revision !== undefined && typeof entry.revision !== "string")
+      return false;
+    if (entry.author !== undefined && typeof entry.author !== "string")
+      return false;
+    if (entry.date !== undefined && typeof entry.date !== "string")
+      return false;
+  }
+  if (value.error !== undefined && typeof value.error !== "string")
+    return false;
+  if (value.revision !== undefined && typeof value.revision !== "string")
+    return false;
+  if (
+    value.repositoryRoot !== undefined &&
+    typeof value.repositoryRoot !== "string"
+  )
+    return false;
+  if (value.projectUrl !== undefined && typeof value.projectUrl !== "string")
+    return false;
+  if (value.lastGoodUrl !== undefined && typeof value.lastGoodUrl !== "string")
+    return false;
+  return true;
+}
+
+export function isRepositoryRemoteFileView(
+  value: unknown,
+): value is NonNullable<RepositorySnapshot["advanced"]["remoteFile"]> {
+  if (!isRecord(value)) return false;
+  if (typeof value.url !== "string" || typeof value.sourceLabel !== "string")
+    return false;
+  if (value.revision !== undefined && typeof value.revision !== "string")
+    return false;
+  if (
+    value.requestedRevision !== undefined &&
+    typeof value.requestedRevision !== "string"
+  )
+    return false;
+  if (value.binary !== undefined && typeof value.binary !== "boolean")
+    return false;
+  if (value.truncated !== undefined && typeof value.truncated !== "boolean")
+    return false;
+  if (value.size !== undefined && typeof value.size !== "number") return false;
+  if (
+    value.contentPreview !== undefined &&
+    typeof value.contentPreview !== "string"
+  )
+    return false;
+  if (value.error !== undefined && typeof value.error !== "string")
+    return false;
+  return true;
+}
+
+export function isRepositoryRemoteHistoryView(
+  value: unknown,
+): value is NonNullable<RepositorySnapshot["advanced"]["remoteHistory"]> {
+  if (!isRecord(value)) return false;
+  if (typeof value.url !== "string") return false;
+  if (!Array.isArray(value.revisions)) return false;
+  for (const item of value.revisions as unknown[]) {
+    if (!isRecord(item)) return false;
+    if (typeof item.revision !== "string") return false;
+    if (item.author !== undefined && typeof item.author !== "string")
+      return false;
+    if (item.date !== undefined && typeof item.date !== "string") return false;
+    if (item.message !== undefined && typeof item.message !== "string")
+      return false;
+  }
+  if (value.error !== undefined && typeof value.error !== "string")
+    return false;
+  return true;
+}
+
+export function isRepositoryRemoteCompareView(
+  value: unknown,
+): value is NonNullable<RepositorySnapshot["advanced"]["remoteCompare"]> {
+  if (!isRecord(value)) return false;
+  if (typeof value.url !== "string") return false;
+  if (typeof value.fromRevision !== "string") return false;
+  if (typeof value.toRevision !== "string") return false;
+  if (value.diffPreview !== undefined && typeof value.diffPreview !== "string")
+    return false;
+  if (value.truncated !== undefined && typeof value.truncated !== "boolean")
+    return false;
+  if (value.error !== undefined && typeof value.error !== "string")
+    return false;
+  return true;
+}
+
+/**
+ * V026-R43：高级预览源/目标绑定守卫（可选字段，缺省兼容旧预览）。
+ * V026-R44：新增源修订版本冻结三字段（均为可选字符串，缺省兼容旧预览）。
+ */
+export function isRepositoryAdvancedPreviewBinding(
+  value: unknown,
+): value is Pick<
+  NonNullable<RepositorySnapshot["advanced"]["preview"]>,
+  | "sourceUrl"
+  | "targetUrl"
+  | "sourceOrigin"
+  | "targetOrigin"
+  | "sourceRevision"
+  | "sourceResolvedRevision"
+  | "sourceRevisionMode"
+> {
+  if (!isRecord(value)) return false;
+  if (value.sourceUrl !== undefined && typeof value.sourceUrl !== "string")
+    return false;
+  if (value.targetUrl !== undefined && typeof value.targetUrl !== "string")
+    return false;
+  if (
+    value.sourceOrigin !== undefined &&
+    typeof value.sourceOrigin !== "string"
+  )
+    return false;
+  if (
+    value.targetOrigin !== undefined &&
+    typeof value.targetOrigin !== "string"
+  )
+    return false;
+  if (
+    value.sourceRevision !== undefined &&
+    typeof value.sourceRevision !== "string"
+  )
+    return false;
+  if (
+    value.sourceResolvedRevision !== undefined &&
+    typeof value.sourceResolvedRevision !== "string"
+  )
+    return false;
+  if (
+    value.sourceRevisionMode !== undefined &&
+    typeof value.sourceRevisionMode !== "string"
+  )
+    return false;
+  if (value.merge !== undefined && !isRepositoryMergePreviewView(value.merge))
+    return false;
+  return true;
+}
+
+/**
+ * V026-R45：合并修订选择视图守卫（Host/Webview/Mock 共用，可选向后兼容）。
+ * 缺省表示非 merge 预览或旧预览；携带时逐项校验，不把坏载荷发给 Webview。
+ */
+export function isRepositoryMergePreviewView(
+  value: unknown,
+): value is RepositoryMergePreview {
+  if (!isRecord(value)) return false;
+  if (
+    value.mode !== "eligible" &&
+    value.mode !== "specific" &&
+    value.mode !== "range"
+  )
+    return false;
+  const stringArray = (field: unknown): boolean =>
+    field === undefined ||
+    (Array.isArray(field) &&
+      (field as unknown[]).every((item) => typeof item === "string"));
+  if (!stringArray(value.requestedRevisions)) return false;
+  if (
+    (value.fromRevision !== undefined &&
+      typeof value.fromRevision !== "string") ||
+    (value.toRevision !== undefined && typeof value.toRevision !== "string")
+  )
+    return false;
+  if (!stringArray(value.resolvedRevisions)) return false;
+  if (!stringArray(value.eligible)) return false;
+  if (!stringArray(value.merged)) return false;
+  if (
+    typeof value.eligibleCount !== "number" ||
+    !Number.isFinite(value.eligibleCount) ||
+    typeof value.mergedCount !== "number" ||
+    !Number.isFinite(value.mergedCount)
+  )
+    return false;
+  if (
+    (value.eligibleTruncated !== undefined &&
+      typeof value.eligibleTruncated !== "boolean") ||
+    (value.mergedTruncated !== undefined &&
+      typeof value.mergedTruncated !== "boolean")
+  )
+    return false;
+  if (typeof value.mergeinfoSupported !== "boolean") return false;
+  if (
+    value.mergeinfoNote !== undefined &&
+    typeof value.mergeinfoNote !== "string"
+  )
+    return false;
+  if (
+    value.dryRunCommand !== undefined &&
+    typeof value.dryRunCommand !== "string"
+  )
+    return false;
+  if (!stringArray(value.dryRunFiles)) return false;
+  if (!stringArray(value.dryRunConflicts)) return false;
+  if (
+    value.dryRunSummary !== undefined &&
+    typeof value.dryRunSummary !== "string"
+  )
+    return false;
+  if (
+    value.dryRunTruncated !== undefined &&
+    typeof value.dryRunTruncated !== "boolean"
+  )
+    return false;
+  return true;
+}
+
+/**
+ * V026-R43：高级操作结构化 URL 意图（Webview → Host）。
+ * 兼容旧扁平 sourceUrl/targetUrl 字符串；新结构化 source/target 记录优先：
+ * `{ url: string; origin?: "browse" | "manual" | "shortcut"; revision?: string }`。
+ * origin 仅作展示与问题解释 hint，不参与 Host 信任判断；Host 一律归一化复验。
+ * V026-R44：source 结构可携带 revision（HEAD 或数字 rN）；旧扁平 sourceRevision
+ * 兼容（Host 归一化复验，不信任 Webview 断言）。
+ */
+export function readRepositoryUrlIntent(
+  data: Record<string, unknown>,
+  structuredKey: "source" | "target",
+  legacyKey: "sourceUrl" | "targetUrl",
+): { rawUrl: string; origin?: string; revision?: string } {
+  const structured = data[structuredKey];
+  if (isRecord(structured) && typeof structured.url === "string") {
+    return {
+      rawUrl: structured.url,
+      origin:
+        typeof structured.origin === "string" ? structured.origin : undefined,
+      revision:
+        typeof structured.revision === "string"
+          ? structured.revision
+          : structuredKey === "source" &&
+              typeof data.sourceRevision === "string"
+            ? (data.sourceRevision as string)
+            : undefined,
+    };
+  }
+  const legacy = data[legacyKey];
+  if (structuredKey !== "source") {
+    return { rawUrl: typeof legacy === "string" ? legacy : "" };
+  }
+  const legacyRevision = data.sourceRevision;
+  return {
+    rawUrl: typeof legacy === "string" ? legacy : "",
+    origin: undefined,
+    revision: typeof legacyRevision === "string" ? legacyRevision : undefined,
+  };
+}
+
+/**
  * V021-R14/R15：RepositorySnapshot / UpdateSnapshot 类型守卫（Host/Webview/Mock 共用）。
  * 无 releaseNotes/preview 的旧快照继续接受（向后兼容）；携带时必须分别通过
  * isReleaseNotesView/isUpdatePreviewView，否则整快照拒绝（fail-closed）。
@@ -2793,6 +3167,36 @@ export function isRepositorySnapshot(
       typeof advanced.shelvesError !== "string") ||
     (advanced.shelfFeedback !== undefined &&
       typeof advanced.shelfFeedback !== "string")
+  ) {
+    return false;
+  }
+  if (
+    advanced.browser !== undefined &&
+    !isRepositoryBrowserView(advanced.browser)
+  ) {
+    return false;
+  }
+  if (
+    advanced.remoteFile !== undefined &&
+    !isRepositoryRemoteFileView(advanced.remoteFile)
+  ) {
+    return false;
+  }
+  if (
+    advanced.remoteHistory !== undefined &&
+    !isRepositoryRemoteHistoryView(advanced.remoteHistory)
+  ) {
+    return false;
+  }
+  if (
+    advanced.remoteCompare !== undefined &&
+    !isRepositoryRemoteCompareView(advanced.remoteCompare)
+  ) {
+    return false;
+  }
+  if (
+    advanced.preview !== undefined &&
+    !isRepositoryAdvancedPreviewBinding(advanced.preview)
   ) {
     return false;
   }

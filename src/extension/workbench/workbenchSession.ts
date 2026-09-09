@@ -12,6 +12,7 @@ import type {
   FilterPresetView,
   HistoryQueryView,
   HistorySnapshot,
+  RepositoryMergePreview,
   RepositorySnapshot,
   SettingsSnapshot,
   UpdatePreviewView,
@@ -270,6 +271,10 @@ export interface WorkbenchSession extends OpenWorkbenchRequest {
     advanced?: {
       browser?: RepositorySnapshot["advanced"]["browser"];
       releaseNotes?: RepositorySnapshot["advanced"]["releaseNotes"];
+      /** V026-R46：远端只读内容/历史/比较（内存快照，不持久化正文到磁盘）。 */
+      remoteFile?: RepositorySnapshot["advanced"]["remoteFile"];
+      remoteHistory?: RepositorySnapshot["advanced"]["remoteHistory"];
+      remoteCompare?: RepositorySnapshot["advanced"]["remoteCompare"];
       feedback?: string;
       /** V024-R38：搁置清单只读缓存说明（实际清单随快照重建，不持久化正文）。 */
       shelfFeedback?: string;
@@ -288,6 +293,17 @@ export interface WorkbenchSession extends OpenWorkbenchRequest {
         issues: string[];
         destructive: boolean;
         input: Record<string, string>;
+        /** V026-R43：生成该预览的源/目标绑定（归一化后），随快照下发供 Webview 失效比对。
+         * V026-R44：源修订版本冻结三字段（分支/标签），执行前复验固定版本。 */
+        sourceUrl?: string;
+        targetUrl?: string;
+        sourceOrigin?: string;
+        targetOrigin?: string;
+        sourceRevision?: string;
+        sourceResolvedRevision?: string;
+        sourceRevisionMode?: string;
+        /** V026-R45：合并修订选择视图（仅 merge 预览，随快照下发供 Webview 展示）。 */
+        merge?: RepositoryMergePreview;
       };
     };
   };

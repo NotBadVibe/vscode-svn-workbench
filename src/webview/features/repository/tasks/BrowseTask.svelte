@@ -13,6 +13,7 @@
     saveListPreferences,
   } from "../../../app/listPreferences";
   import { formatZhDateTime, formatZhFileSize } from "../../../i18n/formatters";
+  import { buildRepositoryChildUrl } from "../../../../svn/svnUrl";
 
   /*
    * v0.0.10 跨模块列表迁移：仓库浏览器复用共享搜索、结果数量与排序；
@@ -34,6 +35,10 @@
   let browserUrl = $state("");
   let initializedRepository = $state("");
   let query = $state("");
+  /* V026-R46：远端比较表单（只读，不写本地）。修订为空由 Host 提示补填。 */
+  let compareUrl = $state("");
+  let compareFrom = $state("");
+  let compareTo = $state("");
   let sortField = $state<BrowseSortField>("name");
   let sortDirection = $state<SortDirection>("asc");
   let dirsFirst = $state(true);
@@ -117,7 +122,39 @@
   }
 
   function childUrl(name: string): string {
-    return `${(snapshot.advanced.browser?.url ?? browserUrl).replace(/\/+$/, "")}/${encodeURIComponent(name)}`;
+    return buildRepositoryChildUrl(
+      snapshot.advanced.browser?.url ?? browserUrl,
+      name,
+    );
+  }
+
+  /** V026-R46：只读远端内容（svn cat 内存读取，不写本地文件）。 */
+  function viewRemoteFile(url: string, revision?: string): void {
+    onAction(
+      "repository/preview-remote-file",
+      revision ? { url, revision } : { url },
+    );
+  }
+
+  /** V026-R46：只读远端历史（svn log URL，不进入工作副本范围）。 */
+  function viewRemoteHistory(url: string): void {
+    onAction("repository/query-remote-history", { url });
+  }
+
+  /** V026-R46：远端 revision 比较只读预览（复用 revision-patch 只读语义）。 */
+  function compareRemote(url = compareUrl): void {
+    compareUrl = url;
+    onAction("repository/compare-remote-revisions", {
+      url: compareUrl,
+      fromRevision: compareFrom,
+      toRevision: compareTo,
+    });
+  }
+
+  /** V026-R46：失败后返回上次有效位置（不丢导航状态）。 */
+  function backToLastGood(): void {
+    const lastGood = snapshot.advanced.browser?.lastGoodUrl;
+    if (lastGood) openBrowser(lastGood);
   }
 
   interface BreadcrumbItem {
@@ -213,6 +250,15 @@
     >
   </div>
   {#if snapshot.advanced.browser}
+    <!-- V026-R46：当前浏览修订与本地项目根关系（只读，不进入工作副本范围）。 -->
+    <div class="notice" role="status">
+      <span class="codicon codicon-info" aria-hidden="true"></span><span>
+        正在浏览远端{snapshot.advanced.browser.revision
+          ? ` r${snapshot.advanced.browser.revision}`
+          : "（修订未知）"}；本地工作副本 r{snapshot.info.revision ??
+          "未知"}。远端预览不写入本地文件，也不改变本地操作范围。
+      </span>
+    </div>
     <nav class="browser-location" aria-label="仓库浏览位置">
       <button
         class="icon-button"
@@ -311,6 +357,17 @@
     {#if snapshot.advanced.browser.error}<div class="notice notice--error">
         {snapshot.advanced.browser.error}
       </div>{/if}
+    {#if snapshot.advanced.browser.error && snapshot.advanced.browser.lastGoodUrl}<div
+        class="notice notice--warning"
+        role="status"
+      >
+        导航状态已保留，可返回上次有效位置继续浏览。
+        <button
+          type="button"
+          class="button button--secondary"
+          onclick={backToLastGood}>返回上次有效位置</button
+        >
+      </div>{/if}
     <ScrollArea class="repository-browser-list" label="仓库目录内容"
       >{#if orderedEntries.length === 0 && !snapshot.advanced.browser.error}<div
           class="mini-empty"
@@ -342,12 +399,140 @@
               type="button"
               class="button button--secondary browser-entry__action"
               onclick={() =>
+                viewRemoteFile(childUrl(entry.name), entry.revision)}
+              >查看内容</button
+            >
+            <button
+              type="button"
+              class="button button--secondary browser-entry__action"
+              onclick={() => viewRemoteHistory(childUrl(entry.name))}
+              >查看历史</button
+            >
+            <button
+              type="button"
+              class="button button--secondary browser-entry__action"
+              onclick={() => {
+                compareUrl = childUrl(entry.name);
+                compareFrom = entry.revision ?? "";
+                compareTo = snapshot.advanced.browser?.revision ?? "";
+              }}>比较修订</button
+            >
+            <button
+              type="button"
+              class="button button--secondary browser-entry__action"
+              onclick={() =>
                 onAction("copy-text", { text: childUrl(entry.name) })}
               >复制 URL</button
             >
           {/if}
         </div>{/each}</ScrollArea
     >
+    {#if snapshot.advanced.remoteFile}<section
+        class="remote-preview"
+        aria-label="远端内容只读预览"
+      >
+        <h3>远端内容（只读）</h3>
+        <p>{snapshot.advanced.remoteFile.sourceLabel}</p>
+        {#if snapshot.advanced.remoteFile.error}<div
+            class="notice notice--error"
+          >
+            {snapshot.advanced.remoteFile.error}
+          </div>{/if}
+        {#if !snapshot.advanced.remoteFile.error && !snapshot.advanced.remoteFile.binary && snapshot.advanced.remoteFile.contentPreview !== undefined}<pre
+            class="remote-preview__content">{snapshot.advanced.remoteFile
+              .contentPreview}</pre>{/if}
+        <button
+          type="button"
+          class="button button--secondary"
+          onclick={() =>
+            onAction("copy-text", { text: snapshot.advanced.remoteFile?.url })}
+          >复制远端 URL</button
+        >
+      </section>{/if}
+    {#if snapshot.advanced.remoteHistory}<section
+        class="remote-preview"
+        aria-label="远端历史只读预览"
+      >
+        <h3>
+          远端历史（只读，共 {snapshot.advanced.remoteHistory.revisions.length} 条）
+        </h3>
+        <p>{snapshot.advanced.remoteHistory.url}（未进入工作副本范围）</p>
+        {#if snapshot.advanced.remoteHistory.error}<div
+            class="notice notice--error"
+          >
+            {snapshot.advanced.remoteHistory.error}
+          </div>{:else}
+          <ol class="remote-history-list">
+            {#each snapshot.advanced.remoteHistory.revisions as item (item.revision)}<li
+              >
+                <strong>r{item.revision}</strong>
+                <span
+                  >{item.author ?? "未知"}{item.date
+                    ? ` · ${formatZhDateTime(item.date)}`
+                    : ""}</span
+                >
+                {#if item.message}<p>{item.message}</p>{/if}
+                <button
+                  type="button"
+                  class="button button--secondary"
+                  onclick={() =>
+                    viewRemoteFile(
+                      snapshot.advanced.remoteHistory?.url ?? "",
+                      item.revision,
+                    )}>查看该修订内容</button
+                >
+              </li>{/each}
+          </ol>
+        {/if}
+      </section>{/if}
+    <section class="remote-preview" aria-label="远端修订比较">
+      <h3>远端修订比较（只读）</h3>
+      <div class="repository-browser-toolbar">
+        <label class="field"
+          ><span>远端 URL</span><input
+            bind:value={compareUrl}
+            placeholder="https://…/path/file"
+          /></label
+        ><label class="field"
+          ><span>起始修订</span><input
+            bind:value={compareFrom}
+            placeholder="rN 或 HEAD"
+            inputmode="numeric"
+          /></label
+        ><label class="field"
+          ><span>结束修订</span><input
+            bind:value={compareTo}
+            placeholder="rN 或 HEAD"
+            inputmode="numeric"
+          /></label
+        ><button
+          type="button"
+          class="button button--secondary"
+          disabled={!compareUrl}
+          onclick={() => compareRemote()}>比较远端修订</button
+        >
+      </div>
+      {#if snapshot.advanced.remoteCompare}<p>
+          {snapshot.advanced.remoteCompare.url} · r{snapshot.advanced
+            .remoteCompare.fromRevision} → r{snapshot.advanced.remoteCompare
+            .toRevision}（只读，无本地路径操作）
+        </p>
+        {#if snapshot.advanced.remoteCompare.error}<div
+            class="notice notice--error"
+          >
+            {snapshot.advanced.remoteCompare.error}
+          </div>{/if}
+        {#if snapshot.advanced.remoteCompare.diffPreview}<pre
+            class="remote-preview__content">{snapshot.advanced.remoteCompare
+              .diffPreview}</pre>
+          {#if snapshot.advanced.remoteCompare.truncated}<div
+              class="notice notice--warning"
+              role="status"
+            >
+              差异过长已截断，只展示前部内容。
+            </div>{/if}
+        {/if}{/if}
+    </section>
   {:else}<div class="preview-empty preview-empty--compact">
       <span class="codicon codicon-repo" aria-hidden="true"></span>
       <p>按需浏览仓库端目录，不读取文件正文。</p>

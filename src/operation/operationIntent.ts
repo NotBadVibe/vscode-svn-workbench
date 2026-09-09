@@ -271,6 +271,19 @@ export function isConfirmationChallengeSatisfied(
   );
 }
 
+/** V026-R43：剥离预览详情 URL 行末的来源标注（仅已知白名单，后缀非 URL 一部分）。
+ * Host/Mock 在“源/目标/新根”行追加“（手动输入/仓库浏览选择/常用路径组合）”
+ * 仅作展示 hint；复述期望与重查回填必须用纯 URL，否则归一化比对恒失败。 */
+export function stripPreviewUrlOriginSuffix(value: string): string {
+  return value
+    .trim()
+    .replace(
+      /\uff08(?:\u4ed3\u5e93\u6d4f\u89c8\u9009\u62e9|\u5e38\u7528\u8def\u5f84\u7ec4\u5408|\u624b\u52a8\u8f93\u5165)\uff09$/,
+      "",
+    )
+    .trim();
+}
+
 /** 从 Relocate 预览 details 提取“新根：<url>”行的期望目标（缺省返回 undefined，不虚构）。 */
 export function extractRelocateTarget(
   details: readonly string[] | undefined,
@@ -280,7 +293,9 @@ export function extractRelocateTarget(
     const prefix = "新根：";
     const index = line.indexOf(prefix);
     if (index >= 0) {
-      const target = line.slice(index + prefix.length).trim();
+      const target = stripPreviewUrlOriginSuffix(
+        line.slice(index + prefix.length),
+      );
       if (target && target !== "未填写") return target;
     }
   }

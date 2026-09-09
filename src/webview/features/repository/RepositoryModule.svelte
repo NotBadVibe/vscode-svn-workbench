@@ -17,6 +17,7 @@
   import {
     extractRelocateTarget,
     isOperationIntentStale,
+    stripPreviewUrlOriginSuffix,
     type OperationIntentKind,
   } from "../../../operation/operationIntent";
   import {
@@ -345,12 +346,17 @@
     for (const line of preview.details ?? []) {
       const text = line.trim();
       if (text.startsWith("源：")) {
-        const value = text.slice(2).trim();
+        // V026-R43：详情行末来源标注非 URL，回填前剥离。
+        // V026-R44：源行含 `@rN（固定说明）`，回填只取纯 URL，修订版本走冻结绑定。
+        const value = stripPreviewUrlOriginSuffix(text.slice(2))
+          .split("（")[0]
+          .trim()
+          .replace(/@r\d+$/, "");
         if (value && value !== "未填写" && payload.sourceUrl === undefined)
           payload.sourceUrl = value;
       }
       if (text.startsWith("目标：") || text.startsWith("新根：")) {
-        const value = text.slice(3).trim();
+        const value = stripPreviewUrlOriginSuffix(text.slice(3));
         if (value && value !== "未填写" && payload.targetUrl === undefined)
           payload.targetUrl = value;
       }
@@ -370,6 +376,33 @@
         if (verb === "merge" && payload.sourceUrl === undefined)
           payload.sourceUrl = value;
       }
+    }
+    // V026-R44：分支/标签重查必须携带已确认的源修订版本模式，不静默回落 HEAD。
+    if (preview.operation === "branch" || preview.operation === "tag") {
+      if (preview.sourceRevision !== undefined)
+        payload.sourceRevision = preview.sourceRevision;
+      else if (preview.sourceResolvedRevision !== undefined)
+        payload.sourceRevision = preview.sourceResolvedRevision;
+      if (preview.sourceRevisionMode !== undefined)
+        payload.sourceRevisionMode = preview.sourceRevisionMode;
+    }
+    // V026-R45：合并重查必须携带已确认的修订选择模式，不静默回落为全部符合条件。
+    if (preview.operation === "merge" && preview.merge) {
+      payload.mergeMode = preview.merge.mode;
+      if (preview.merge.requestedRevisions !== undefined)
+        payload.mergeRevisions = preview.merge.requestedRevisions.join(", ");
+      else if (preview.merge.resolvedRevisions.length > 0)
+        payload.mergeRevisions = preview.merge.resolvedRevisions.join(", ");
+      if (preview.merge.fromRevision !== undefined)
+        payload.mergeRangeFrom = preview.merge.fromRevision;
+      if (preview.merge.toRevision !== undefined)
+        payload.mergeRangeTo = preview.merge.toRevision;
+      payload.merge = {
+        mode: preview.merge.mode,
+        revisions: payload.mergeRevisions,
+        from: payload.mergeRangeFrom,
+        to: payload.mergeRangeTo,
+      };
     }
     // shelf 中文显示名在命令中为“搁置“<名称>””形式；解析失败仅重发 operation。
     if (preview.operation === "shelf") {

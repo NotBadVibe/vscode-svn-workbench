@@ -110,10 +110,10 @@ test("V015-F1：Switch 确认路径（预览→意向单九要素行→唯一主
     page.getByRole("heading", { name: "切换工作副本（Switch）" }),
   ).toBeVisible();
 
-  // 第 2 步：填写目标分支并生成预览。
+  // 第 2 步：填写目标分支并生成预览（尾斜杠归一化等价，不得误伤旧预览）。
   await page
     .getByLabel("目标 URL")
-    .fill("https://svn.example.test/repos/workbench/branches/feature");
+    .fill("https://svn.example.test/repos/workbench/branches/feature/");
   await page
     .getByRole("button", { name: "生成切换工作副本（Switch）预览" })
     .click();
@@ -127,6 +127,11 @@ test("V015-F1：Switch 确认路径（预览→意向单九要素行→唯一主
   const previewGrid = page.locator(".advanced-preview-grid");
   await expect(previewGrid.getByText(/svn switch/)).toBeVisible();
   await expect(
+    previewGrid.getByText(
+      "目标：https://svn.example.test/repos/workbench/branches/feature",
+    ),
+  ).toBeVisible();
+  await expect(
     previewGrid.getByText("只修改当前工作副本；不会自动提交。"),
   ).toBeVisible();
   await expect(page.getByText("我已核对")).toHaveCount(0);
@@ -137,10 +142,11 @@ test("V015-F1：Switch 确认路径（预览→意向单九要素行→唯一主
   await openIntent.click();
 
   // 第 4 步：意向单九要素行（范围/修订版本/可恢复性/影响清单/命令）。
+  // 预览详情含目标地址行与范围备注共 4 行，数量口径与详情行一致。
   const dialog = page.getByRole("dialog", { name: "切换工作副本" });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByText("切换工作副本").first()).toBeVisible();
-  await expect(dialog.getByText("最终将操作 2 个文件")).toBeVisible();
+  await expect(dialog.getByText("最终将操作 4 个文件")).toBeVisible();
   await expect(dialog.getByText("范围：")).toBeVisible();
   await expect(dialog.getByText("vscode-svn")).toBeVisible();
   await expect(dialog.getByText("修订版本：")).toBeVisible();

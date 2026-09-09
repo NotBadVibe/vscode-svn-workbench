@@ -9,6 +9,7 @@ import {
   OPERATION_INTENT_ACTION_LABELS,
   OPERATION_INTENT_KINDS,
   operationIntentTitle,
+  stripPreviewUrlOriginSuffix,
   validateOperationIntentForExecute,
   type OperationIntentView,
 } from "../../src/operation/operationIntent";
@@ -236,6 +237,32 @@ describe("V015-C2 Relocate 白名单目标复述", () => {
     expect(extractRelocateTarget(["旧根：https://old/r"])).toBeUndefined();
     expect(extractRelocateTarget(["新根：未填写"])).toBeUndefined();
     expect(extractRelocateTarget(undefined)).toBeUndefined();
+  });
+  it("V026-R43：新根行末来源标注不污染复述期望", () => {
+    expect(
+      extractRelocateTarget([
+        "旧根：https://svn.example.test/repos/workbench",
+        "新根：https://svn.example.test/repos/workbench-new（手动输入）",
+      ]),
+    ).toBe("https://svn.example.test/repos/workbench-new");
+    expect(
+      extractRelocateTarget([
+        "新根：https://svn.example.test/repos/workbench-new（仓库浏览选择）",
+      ]),
+    ).toBe("https://svn.example.test/repos/workbench-new");
+    expect(stripPreviewUrlOriginSuffix("https://h/r（常用路径组合）")).toBe(
+      "https://h/r",
+    );
+    expect(stripPreviewUrlOriginSuffix("https://h/r")).toBe("https://h/r");
+    // 归一化复述放行：期望纯 URL，实际大小写/尾斜杠等价。
+    expect(
+      isConfirmationChallengeSatisfied(
+        extractRelocateTarget([
+          "新根：https://svn.example.test/repos/workbench-new（手动输入）",
+        ]) ?? "",
+        "HTTPS://SVN.EXAMPLE.TEST/repos/workbench-new/",
+      ),
+    ).toBe(true);
   });
   it("V016-F1：userinfo 段不折叠（仅主机小写），大小写不一致拒绝", () => {
     // userinfo 保持原样：主机折叠后仍不得把 User 与 user 误判一致。

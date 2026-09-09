@@ -11,17 +11,32 @@ import { collectSvnProperties } from "../../properties/svnProperties";
 import {
   WORKBENCH_PROTOCOL_VERSION,
   isReleaseNotesView,
+  isRepositoryRemoteCompareView,
+  isRepositoryRemoteFileView,
+  isRepositoryRemoteHistoryView,
+  readRepositoryUrlIntent,
   type HostToWebviewMessage,
+  type RepositoryMergePreview,
   type RepositorySnapshot,
   type WorkbenchModuleId,
 } from "../../protocol/workbenchProtocol";
 import {
   buildReleaseNotes,
+  classifyRemoteContent,
+  extractRemoteRevisionFromInfoXml,
+  MAX_REMOTE_COMPARE_CHARS,
+  MAX_REMOTE_FILE_PREVIEW_BYTES,
+  MAX_REMOTE_HISTORY_ENTRIES,
+  normalizeBranchTagSourceRevision,
+  normalizeRemoteRevisionInput,
+  normalizeRepositoryUrlIntent,
   normalizeReleaseNotesRange,
   parseSvnListXml,
   validatePatchText,
   validateRepositoryUrl,
 } from "../../repository/advancedRepositoryTools";
+import { parseSvnLogXml } from "../../history/svnHistoryParser";
+import { normalizeSvnUrl } from "../../svn/svnUrl";
 import {
   buildShelfId,
   loadShelfIndex,
@@ -33,6 +48,19 @@ import {
   type ShelfEntry,
   type ShelfIndexDeps,
 } from "../../repository/shelfIndex";
+import {
+  buildMergeRevisionArgs,
+  classifyMergeSelection,
+  describeMergeRevisionMapping,
+  expandMergeSelection,
+  MAX_MERGE_DRYRUN_PATHS,
+  MAX_MERGE_MERGEINFO_ENTRIES,
+  normalizeMergeRevisionSelection,
+  parseMergeDryRunOutput,
+  parseMergeinfoRevisions,
+  readMergeRevisionIntent,
+  type MergeRevisionMode,
+} from "../../repository/mergeRevisionSelection";
 import { validatePathsInScope } from "../../scope/pathBoundaryGuard";
 import { nativePathSemantics } from "../../scope/nativePathSemantics";
 import { parseInfoXml } from "../../svn/parsers/infoXmlParser";
@@ -311,6 +339,28 @@ export class RepositoryWorkbenchActions {
       },
       advanced: {
         browser: session.repositoryState?.advanced?.browser,
+        // V026-R46：远端只读视图外发前纵深校验，畸形 fail-closed 丢弃该字段。
+        remoteFile:
+          session.repositoryState?.advanced?.remoteFile !== undefined &&
+          isRepositoryRemoteFileView(
+            session.repositoryState.advanced.remoteFile,
+          )
+            ? session.repositoryState.advanced.remoteFile
+            : undefined,
+        remoteHistory:
+          session.repositoryState?.advanced?.remoteHistory !== undefined &&
+          isRepositoryRemoteHistoryView(
+            session.repositoryState.advanced.remoteHistory,
+          )
+            ? session.repositoryState.advanced.remoteHistory
+            : undefined,
+        remoteCompare:
+          session.repositoryState?.advanced?.remoteCompare !== undefined &&
+          isRepositoryRemoteCompareView(
+            session.repositoryState.advanced.remoteCompare,
+          )
+            ? session.repositoryState.advanced.remoteCompare
+            : undefined,
         releaseNotes,
         feedback: session.repositoryState?.advanced?.feedback,
         shelves: shelfEntries,
@@ -332,6 +382,19 @@ export class RepositoryWorkbenchActions {
                 session.repositoryState.advanced.preview.candidateHash,
               repositoryUuid:
                 session.repositoryState.advanced.preview.repositoryUuid,
+              sourceUrl: session.repositoryState.advanced.preview.sourceUrl,
+              targetUrl: session.repositoryState.advanced.preview.targetUrl,
+              sourceOrigin:
+                session.repositoryState.advanced.preview.sourceOrigin,
+              targetOrigin:
+                session.repositoryState.advanced.preview.targetOrigin,
+              sourceRevision:
+                session.repositoryState.advanced.preview.sourceRevision,
+              sourceResolvedRevision:
+                session.repositoryState.advanced.preview.sourceResolvedRevision,
+              sourceRevisionMode:
+                session.repositoryState.advanced.preview.sourceRevisionMode,
+              merge: session.repositoryState.advanced.preview.merge,
             }
           : undefined,
       },
@@ -346,6 +409,11 @@ export class RepositoryWorkbenchActions {
     return session.repositoryState.advanced;
   }
 
+  /**
+   * V026-R46：只读仓库浏览（不写本地文件、不改 operationScope）。
+   * 失败时保留上次成功条目与 lastGoodUrl，调用方可一键返回；
+   * 成功时附带远端修订与仓库/项目关系，供 UI 明确来源。
+   */
   async browseRepository(
     session: WorkbenchSession,
     requestedUrl: string | undefined,
@@ -360,16 +428,34 @@ export class RepositoryWorkbenchActions {
       infoResult.exitCode === 0
         ? parseInfoXml(infoResult.stdout, session.scope.repositoryRoot)
         : undefined;
-    const url = requestedUrl?.trim() || info?.url || info?.repositoryRoot;
+    const rawRequested =
+      requestedUrl?.trim() || info?.url || info?.repositoryRoot;
     const state = this.host.ensureAdvancedRepositoryState(session);
-    if (!url) {
-      state.browser = { url: "", entries: [], error: "未能解析当前仓库 URL。" };
+    const previous = state.browser;
+    if (!rawRequested) {
+      state.browser = {
+        url: "",
+        entries: previous?.entries ?? [],
+        error: "未能解析当前仓库 URL。",
+        lastGoodUrl: previous?.url || previous?.lastGoodUrl,
+      };
       await this.host.sendRepositorySnapshot(session, requestId);
       return;
     }
+    // V026-R43：先逐段规范编码（已编码不重复编码），再做归属校验。
+    const url = normalizeSvnUrl(rawRequested);
     const issues = validateRepositoryUrl(url, info?.repositoryRoot);
     if (issues.length > 0) {
-      state.browser = { url, entries: [], error: issues.join(" ") };
+      state.browser = {
+        url,
+        parentUrl:
+          repositoryParentUrl(url, info?.repositoryRoot) ?? previous?.parentUrl,
+        entries: previous?.entries ?? [],
+        error: issues.join(" "),
+        repositoryRoot: info?.repositoryRoot,
+        projectUrl: info?.url,
+        lastGoodUrl: previous?.url || previous?.lastGoodUrl,
+      };
       await this.host.sendRepositorySnapshot(session, requestId);
       return;
     }
@@ -378,18 +464,56 @@ export class RepositoryWorkbenchActions {
       ["list", "--xml", url],
       session.scope.repositoryRoot,
     );
-    state.browser =
-      result.exitCode === 0
-        ? {
-            url,
-            parentUrl: repositoryParentUrl(url, info?.repositoryRoot),
-            entries: parseSvnListXml(result.stdout),
-          }
-        : {
-            url,
-            entries: [],
-            error: result.stderr || result.stdout || "无法读取仓库目录。",
-          };
+    if (result.exitCode !== 0) {
+      state.browser = {
+        url,
+        parentUrl:
+          repositoryParentUrl(url, info?.repositoryRoot) ?? previous?.parentUrl,
+        entries: previous?.entries ?? [],
+        error: result.stderr || result.stdout || "无法读取仓库目录。",
+        revision: previous?.revision,
+        repositoryRoot: info?.repositoryRoot,
+        projectUrl: info?.url,
+        lastGoodUrl: previous?.url || previous?.lastGoodUrl,
+      };
+      await this.host.sendRepositorySnapshot(session, requestId);
+      return;
+    }
+    // 只读远端修订（svn info URL），失败不阻断目录展示，仅记为未知。
+    let revision: string | undefined;
+    try {
+      const remoteInfo = await runSvnCommand(
+        session.svnPath,
+        ["info", "--xml", url],
+        session.scope.repositoryRoot,
+      );
+      if (remoteInfo.exitCode === 0) {
+        revision = extractRemoteRevisionFromInfoXml(remoteInfo.stdout);
+      }
+    } catch {
+      revision = undefined;
+    }
+    state.browser = {
+      url,
+      parentUrl: repositoryParentUrl(url, info?.repositoryRoot),
+      entries: parseSvnListXml(result.stdout),
+      revision,
+      repositoryRoot: info?.repositoryRoot,
+      projectUrl: info?.url,
+      lastGoodUrl: url,
+    };
+    await this.host.sendRepositorySnapshot(session, requestId);
+  }
+
+  /**
+   * V026-R43：源/目标变化后立即作废旧预览（只清预览，不碰浏览与远端只读视图）。
+   */
+  async discardAdvancedPreview(
+    session: WorkbenchSession,
+    requestId?: string,
+  ): Promise<void> {
+    const state = this.host.ensureAdvancedRepositoryState(session);
+    state.preview = undefined;
     await this.host.sendRepositorySnapshot(session, requestId);
   }
 
@@ -414,6 +538,39 @@ export class RepositoryWorkbenchActions {
         typeof value === "string" ? [[key, value.trim()]] : [],
       ),
     );
+    // V026-R43：结构化 URL/revision 意图优先，旧扁平 sourceUrl/targetUrl 兼容。
+    // origin 仅作展示 hint；Host 一律归一化复验编码/权限/边界，不信任 Webview 断言。
+    const sourceIntent = readRepositoryUrlIntent(data, "source", "sourceUrl");
+    const targetIntent = readRepositoryUrlIntent(data, "target", "targetUrl");
+    const sourceOrigin =
+      sourceIntent.origin ??
+      (typeof data.sourceOrigin === "string" ? data.sourceOrigin : undefined);
+    const targetOrigin =
+      targetIntent.origin ??
+      (typeof data.targetOrigin === "string" ? data.targetOrigin : undefined);
+    const originLabel = (origin?: string): string | undefined => {
+      if (origin === "browse") return "仓库浏览选择";
+      if (origin === "shortcut") return "常用路径组合";
+      if (origin === "manual") return "手动输入";
+      return undefined;
+    };
+    /** 只读存在性探针（svn info URL）：不写本地，仅把失效目录/权限/网络转成中文问题。 */
+    const probeReadable = async (
+      normalizedUrl: string,
+      role: string,
+    ): Promise<string | undefined> => {
+      const probed = await runSvnCommand(
+        session.svnPath,
+        ["info", "--xml", normalizedUrl],
+        session.scope.repositoryRoot,
+      );
+      if (probed.exitCode === 0) return undefined;
+      const reason = probed.stderr || probed.stdout || "";
+      const suffix = reason
+        ? `（${reason.trim().slice(0, 200)}）`
+        : "（目标不存在、无权限或网络失败，请核对后重试。）";
+      return `${role}不可读，请检查存在性与权限${suffix}当前浏览与本地范围未受影响。`;
+    };
     const infoResult = await runSvnCommand(
       session.svnPath,
       ["info", "--xml", session.scope.repositoryRoot],
@@ -429,16 +586,34 @@ export class RepositoryWorkbenchActions {
     const details: string[] = [];
     let title: string;
     let destructive: boolean;
+    // V026-R45：合并修订选择视图（仅 merge 预览，随快照下发供 Webview 展示）。
+    let mergeView: RepositoryMergePreview | undefined;
 
     if (operation === "branch" || operation === "tag") {
       title = operation === "branch" ? "创建分支" : "创建标签";
       destructive = false;
-      const sourceUrl = input.sourceUrl || info?.url || "";
-      const targetUrl = input.targetUrl || "";
-      issues.push(
-        ...validateRepositoryUrl(sourceUrl, info?.repositoryRoot),
-        ...validateRepositoryUrl(targetUrl, info?.repositoryRoot),
+      const rawSource = sourceIntent.rawUrl || info?.url || "";
+      const rawTarget = targetIntent.rawUrl || "";
+      const source = normalizeRepositoryUrlIntent(
+        rawSource,
+        info?.repositoryRoot,
       );
+      const target = normalizeRepositoryUrlIntent(
+        rawTarget,
+        info?.repositoryRoot,
+      );
+      const sourceUrl = source.normalizedUrl;
+      const targetUrl = target.normalizedUrl;
+      for (const issue of source.issues) issues.push(`源 URL：${issue}`);
+      for (const issue of target.issues) issues.push(`目标 URL：${issue}`);
+      if (source.crossRepository)
+        issues.push(
+          "源 URL 与当前仓库归属不一致（跨仓库），已阻止合并成一次操作。",
+        );
+      if (target.crossRepository)
+        issues.push(
+          "目标 URL 与当前仓库归属不一致（跨仓库），已阻止合并成一次操作。",
+        );
       if (!input.message) issues.push("远端 copy 必须填写提交说明。");
       if (
         sourceUrl &&
@@ -446,63 +621,375 @@ export class RepositoryWorkbenchActions {
         stripUrlSlash(sourceUrl) === stripUrlSlash(targetUrl)
       )
         issues.push("源 URL 与目标 URL 不能相同。");
+      // V026-R44：源模式明确远端 HEAD 或指定 rN；HEAD 在预览时解析为固定 revision。
+      const rawRevisionMode =
+        typeof data.sourceRevisionMode === "string"
+          ? (data.sourceRevisionMode as string)
+          : undefined;
+      const rawRevisionValue =
+        sourceIntent.revision ??
+        (typeof data.sourceRevision === "string"
+          ? (data.sourceRevision as string)
+          : "HEAD");
+      // 指定模式下空输入不得静默回落为 HEAD，必须明确要求补填。
+      const sourceRevisionInput =
+        rawRevisionMode === "revision" &&
+        (rawRevisionValue == null || String(rawRevisionValue).trim() === "")
+          ? {
+              mode: "revision" as const,
+              requestedRevision: "",
+              revision: undefined,
+              issues: ["已选择指定修订版本，请填写正整数修订号（例如 r42）。"],
+            }
+          : normalizeBranchTagSourceRevision(rawRevisionValue);
+      for (const issue of sourceRevisionInput.issues) issues.push(issue);
+      let fixedSourceRevision: string | undefined;
+      if (sourceRevisionInput.issues.length === 0) {
+        if (sourceRevisionInput.mode === "HEAD") {
+          const resolved = await resolveHeadRevision(
+            session.svnPath,
+            session.scope,
+          );
+          if (!resolved) {
+            issues.push(
+              "未能解析远端 HEAD（网络或仓库不可达），请检查连接后重新预览，或改填指定修订号（例如 r42）。",
+            );
+          } else {
+            fixedSourceRevision = resolved;
+          }
+        } else {
+          fixedSourceRevision = sourceRevisionInput.revision;
+        }
+      }
+      // 只读存在性：源必须在固定修订可读；目标不可读可能是正常新建，失败只作提示不直接阻止。
+      if (sourceUrl && source.issues.length === 0 && fixedSourceRevision) {
+        const pinned = await runSvnCommand(
+          session.svnPath,
+          ["info", "--xml", "-r", fixedSourceRevision, sourceUrl],
+          session.scope.repositoryRoot,
+        );
+        if (pinned.exitCode !== 0) {
+          const reason = (pinned.stderr || pinned.stdout || "")
+            .trim()
+            .slice(0, 200);
+          issues.push(
+            `源 ${sourceUrl}@r${fixedSourceRevision} 不可读（修订版本不存在、无权限或网络失败${reason ? `：${reason}` : ""}），请核对修订号与权限后重新预览。当前浏览与本地范围未受影响。`,
+          );
+        }
+      } else if (
+        sourceUrl &&
+        source.issues.length === 0 &&
+        !fixedSourceRevision
+      ) {
+        const problem = await probeReadable(sourceUrl, "源 URL");
+        if (problem) issues.push(problem);
+      }
+      if (targetUrl && target.issues.length === 0) {
+        const probed = await runSvnCommand(
+          session.svnPath,
+          ["info", "--xml", targetUrl],
+          session.scope.repositoryRoot,
+        );
+        if (probed.exitCode === 0) {
+          issues.push(
+            "目标 URL 已存在，直接创建会失败，请更换目标名称后重新预览。",
+          );
+        }
+      }
       commands.push(
-        `svn copy ${quoteRelative(sourceUrl)} ${quoteRelative(targetUrl)} -m <message> --encoding utf-8`,
+        fixedSourceRevision
+          ? `svn copy -r ${fixedSourceRevision} ${quoteRelative(sourceUrl)} ${quoteRelative(targetUrl)} -m <message> --encoding utf-8`
+          : `svn copy ${quoteRelative(sourceUrl)} ${quoteRelative(targetUrl)} -m <message> --encoding utf-8`,
       );
+      const sourceFrom = originLabel(sourceOrigin);
+      const targetFrom = originLabel(targetOrigin);
+      const sourceRevisionText = fixedSourceRevision
+        ? `${sourceUrl}@r${fixedSourceRevision}${sourceRevisionInput.mode === "HEAD" ? `（远端 HEAD 已固定为 r${fixedSourceRevision}，执行时不会跟随新的 HEAD）` : `（指定修订版本 r${fixedSourceRevision}）`}`
+        : `${sourceUrl || "未填写"}（源修订版本未固定，请重新预览）`;
+      const localUncommittedText =
+        candidates.length > 0
+          ? `当前工作副本有 ${candidates.length} 个本地未提交修改，均不参与本次远端 copy（远端 copy 只复制源 URL@revision）。`
+          : "当前工作副本无本地未提交修改；远端 copy 仍只复制源 URL@revision，不会夹带本地内容。";
       details.push(
-        `源：${sourceUrl || "未填写"}`,
-        `目标：${targetUrl || "未填写"}`,
-        "直接在仓库端创建，不包含未提交的本地修改。",
+        `源：${sourceRevisionText}${sourceFrom ? `（${sourceFrom}）` : ""}`,
+        `目标：${targetUrl || "未填写"}${targetFrom ? `（${targetFrom}）` : ""}`,
+        localUncommittedText,
+        "浏览选择只用于填充源/目标，未改变本地工作副本操作范围。",
       );
       input.sourceUrl = sourceUrl;
+      input.targetUrl = targetUrl;
+      if (sourceOrigin) input.sourceOrigin = sourceOrigin;
+      if (targetOrigin) input.targetOrigin = targetOrigin;
+      input.sourceRevision = sourceRevisionInput.requestedRevision;
+      input.sourceRevisionMode = sourceRevisionInput.mode;
+      if (fixedSourceRevision)
+        input.sourceResolvedRevision = fixedSourceRevision;
     } else if (operation === "switch") {
       title = "切换工作副本";
       destructive = true;
-      issues.push(
-        ...validateRepositoryUrl(input.targetUrl || "", info?.repositoryRoot),
+      const rawTarget = targetIntent.rawUrl || "";
+      const target = normalizeRepositoryUrlIntent(
+        rawTarget,
+        info?.repositoryRoot,
       );
+      const targetUrl = target.normalizedUrl;
+      for (const issue of target.issues) issues.push(`目标 URL：${issue}`);
+      // P1-2：跨仓库一律“已阻止”口径；switch 跨仓库请改用重定位。
+      if (target.crossRepository)
+        issues.push(
+          "目标 URL 与当前仓库归属不一致（跨仓库），已阻止切换；如需更换仓库根请改用重定位仓库地址。",
+        );
+      if (targetUrl && target.issues.length === 0) {
+        const problem = await probeReadable(targetUrl, "目标 URL");
+        if (problem) issues.push(problem);
+      }
       if (candidates.length > 0)
         issues.push(
           `工作副本存在 ${candidates.length} 个本地变更，已阻止切换。`,
         );
       commands.push(
-        `svn switch ${quoteRelative(input.targetUrl || "")} ${quoteRelative(session.scope.repositoryRoot)} --accept postpone`,
+        `svn switch ${quoteRelative(targetUrl || "")} ${quoteRelative(session.scope.repositoryRoot)} --accept postpone`,
       );
-      details.push("切换工作副本 URL；执行后必须重新采集状态。");
+      const targetFrom = originLabel(targetOrigin);
+      details.push(
+        `目标：${targetUrl || "未填写"}${targetFrom ? `（${targetFrom}）` : ""}`,
+        "只修改当前工作副本；不会自动提交。",
+        "切换工作副本 URL；执行后必须重新采集状态。",
+        "浏览选择只用于填充目标，未改变本地工作副本操作范围。",
+      );
+      // V026-R43：switch 无源概念，不绑定 sourceUrl/sourceOrigin。
+      delete input.sourceUrl;
+      delete input.sourceOrigin;
+      input.targetUrl = targetUrl;
+      if (targetOrigin) input.targetOrigin = targetOrigin;
     } else if (operation === "relocate") {
       title = "重定位仓库根地址";
       destructive = true;
       const oldRoot = info?.repositoryRoot || "";
-      issues.push(
-        ...validateRepositoryUrl(oldRoot),
-        ...validateRepositoryUrl(input.targetUrl || ""),
-      );
+      const rawTarget = targetIntent.rawUrl || "";
+      const target = normalizeRepositoryUrlIntent(rawTarget);
+      const targetUrl = target.normalizedUrl;
+      issues.push(...validateRepositoryUrl(oldRoot));
+      for (const issue of target.issues) issues.push(`新根：${issue}`);
+      if (targetUrl && target.issues.length === 0) {
+        const problem = await probeReadable(targetUrl, "新根");
+        if (problem) issues.push(problem);
+      }
       if (candidates.length > 0)
         issues.push(
           `工作副本存在 ${candidates.length} 个本地变更，已阻止重定位。`,
         );
       commands.push(
-        `svn switch --relocate ${quoteRelative(oldRoot)} ${quoteRelative(input.targetUrl || "")} ${quoteRelative(session.scope.repositoryRoot)}`,
+        `svn switch --relocate ${quoteRelative(oldRoot)} ${quoteRelative(targetUrl || "")} ${quoteRelative(session.scope.repositoryRoot)}`,
       );
+      const targetFrom = originLabel(targetOrigin);
       details.push(
         `旧根：${oldRoot || "未解析"}`,
-        `新根：${input.targetUrl || "未填写"}`,
+        `新根：${targetUrl || "未填写"}${targetFrom ? `（${targetFrom}）` : ""}`,
+        "浏览选择只用于填充新根，未改变本地工作副本操作范围。",
       );
       input.sourceUrl = oldRoot;
+      input.targetUrl = targetUrl;
+      if (targetOrigin) input.targetOrigin = targetOrigin;
     } else if (operation === "merge") {
       title = "合并到当前工作副本";
       destructive = true;
-      issues.push(
-        ...validateRepositoryUrl(input.sourceUrl || "", info?.repositoryRoot),
+      const rawSource = sourceIntent.rawUrl || "";
+      const source = normalizeRepositoryUrlIntent(
+        rawSource,
+        info?.repositoryRoot,
       );
+      const sourceUrl = source.normalizedUrl;
+      for (const issue of source.issues) issues.push(`源 URL：${issue}`);
+      // V026-R43/P1-2：跨仓库一律“已阻止”口径（与分支/标签一致），fail-closed。
+      if (source.crossRepository)
+        issues.push(
+          "源 URL 与当前仓库归属不一致（跨仓库），已阻止合并成一次操作。",
+        );
+      if (sourceUrl && source.issues.length === 0) {
+        const problem = await probeReadable(sourceUrl, "源 URL");
+        if (problem) issues.push(problem);
+      }
+      // V026-R45：三种明确模式 + 只读 eligible/merged 采集 + dry-run 先行。
+      const mergeIntent = readMergeRevisionIntent(data);
+      const selection = normalizeMergeRevisionSelection(
+        mergeIntent.mode,
+        mergeIntent.revisions,
+        mergeIntent.fromRevision,
+        mergeIntent.toRevision,
+      );
+      for (const issue of selection.issues) issues.push(issue);
+      let eligible: string[] = [];
+      let merged: string[] = [];
+      let mergeinfoSupported = true;
+      let mergeinfoNote: string | undefined;
+      if (sourceUrl && source.issues.length === 0) {
+        const collected = await this.collectMergeRevisionSets(
+          session,
+          sourceUrl,
+        );
+        eligible = collected.eligible;
+        merged = collected.merged;
+        mergeinfoSupported = collected.supported;
+        mergeinfoNote = collected.note;
+      }
+      const modeLabel =
+        selection.mode === "eligible"
+          ? "全部符合条件"
+          : selection.mode === "specific"
+            ? "指定修订"
+            : "修订范围";
+      let resolved: string[] = [];
+      if (selection.issues.length === 0) {
+        if (selection.mode === "eligible") {
+          resolved = [...eligible];
+          if (
+            mergeinfoSupported &&
+            resolved.length === 0 &&
+            sourceUrl &&
+            source.issues.length === 0
+          ) {
+            issues.push(
+              "当前没有可合并修订（源分支暂无尚未合并的变更），已阻止执行；如源分支后续有新提交，请重新预览。",
+            );
+          }
+        } else if (selection.mode === "specific") {
+          resolved = [...selection.requestedRevisions];
+        } else {
+          resolved = expandMergeSelection(selection);
+        }
+        if (
+          selection.mode !== "eligible" &&
+          resolved.length > 0 &&
+          sourceUrl &&
+          source.issues.length === 0
+        ) {
+          const classification = classifyMergeSelection(
+            resolved,
+            eligible,
+            merged,
+            mergeinfoSupported,
+          );
+          for (const issue of classification.issues) issues.push(issue);
+        }
+      }
+      const revisionArgs = buildMergeRevisionArgs(
+        selection.mode === "eligible" ? [] : resolved,
+      );
+      const mergeArgsPreview =
+        revisionArgs.length > 0 ? ` ${revisionArgs.join(" ")}` : "";
+      const realCommand = `svn merge${mergeArgsPreview} ${quoteRelative(sourceUrl || "")} ${quoteRelative(session.scope.repositoryRoot)} --accept postpone`;
+      let dryRunCommand: string | undefined;
+      let dryRunFiles: string[] = [];
+      let dryRunConflicts: string[] = [];
+      let dryRunSummary: string | undefined;
+      let dryRunTruncated = false;
+      if (issues.length === 0 && sourceUrl && source.issues.length === 0) {
+        dryRunCommand = `svn merge --dry-run${mergeArgsPreview} ${quoteRelative(sourceUrl)} ${quoteRelative(session.scope.repositoryRoot)} --accept postpone`;
+        const dryRun = await runSvnCommand(
+          session.svnPath,
+          [
+            "merge",
+            "--dry-run",
+            ...revisionArgs,
+            sourceUrl,
+            session.scope.repositoryRoot,
+            "--accept",
+            "postpone",
+          ],
+          session.scope.repositoryRoot,
+          { maxOutputBytes: MAX_DIFF_BYTES },
+        );
+        if (dryRun.exitCode !== 0) {
+          issues.push(
+            `合并试运行失败（${(dryRun.stderr || dryRun.stdout || "未知错误").trim().slice(0, 200)}），已阻止执行；工作副本未改动，请核对源分支与修订后重新预览。`,
+          );
+          dryRunCommand = undefined;
+        } else {
+          const parsed = parseMergeDryRunOutput(
+            dryRun.stdout,
+            MAX_MERGE_DRYRUN_PATHS,
+          );
+          dryRunFiles = parsed.files;
+          dryRunConflicts = parsed.conflicts;
+          dryRunSummary = parsed.summary;
+          dryRunTruncated = parsed.truncated;
+        }
+      }
       if (candidates.length > 0)
         issues.push(
-          `工作副本存在 ${candidates.length} 个本地变更，已阻止合并。`,
+          `工作副本存在 ${candidates.length} 个本地变更，已阻止合并（该策略不放宽：请先提交、还原或搁置后再预览）。`,
         );
-      commands.push(
-        `svn merge ${quoteRelative(input.sourceUrl || "")} ${quoteRelative(session.scope.repositoryRoot)} --accept postpone`,
+      if (dryRunCommand) commands.push(dryRunCommand);
+      commands.push(realCommand);
+      const sourceFrom = originLabel(sourceOrigin);
+      details.push(
+        `源：${sourceUrl || "未填写"}${sourceFrom ? `（${sourceFrom}）` : ""}`,
+        `模式：${modeLabel}。${describeMergeRevisionMapping(selection.mode === "eligible" ? [] : resolved)}`,
       );
-      details.push("合并只写入工作副本，不会自动提交；冲突统一进入冲突模块。");
+      if (sourceUrl && source.issues.length === 0) {
+        if (mergeinfoSupported) {
+          details.push(
+            `可合并 r${eligible.length > 0 ? eligible.join("、r") : "（无）"}（共 ${eligible.length} 个）；已合并 r${merged.length > 0 ? merged.slice(0, MAX_MERGE_MERGEINFO_ENTRIES).join("、r") : "（无）"}（共 ${merged.length} 个）。`,
+          );
+        } else {
+          details.push(
+            `mergeinfo 不可用（${mergeinfoNote ?? "源或工作副本不支持 mergeinfo"}）：未做已合并校验，请自行确认修订号；全部符合条件模式已阻止，指定修订/范围仍可凭试运行继续。`,
+          );
+        }
+      }
+      if (dryRunSummary) {
+        details.push(`试运行（只读，未改工作副本）：${dryRunSummary}`);
+        for (const file of dryRunFiles) details.push(`预计文件 ${file}`);
+        for (const conflict of dryRunConflicts)
+          details.push(`预计冲突 ${conflict}（执行后请进入冲突模块处理）`);
+      }
+      details.push(
+        "合并只写入工作副本，不会自动提交；冲突统一进入冲突模块。",
+        "反向合并/重积分等额外模式本版不支持，已延期。",
+        "浏览选择只用于填充源，未改变本地工作副本操作范围。",
+      );
+      input.sourceUrl = sourceUrl;
+      if (sourceOrigin) input.sourceOrigin = sourceOrigin;
+      // V026-R43：merge 无目标概念，不绑定 targetUrl/targetOrigin。
+      delete input.targetUrl;
+      delete input.targetOrigin;
+      input.mergeMode = selection.mode;
+      input.mergeRequestedRevisions = selection.requestedRevisions.join(",");
+      input.mergeFromRevision = selection.fromRevision ?? "";
+      input.mergeToRevision = selection.toRevision ?? "";
+      input.mergeResolvedRevisions =
+        selection.mode === "eligible" ? "" : resolved.join(",");
+      input.mergeEligibleAtPreview =
+        selection.mode === "eligible" ? eligible.join(",") : "";
+      // P1-1：eligible/merged 并非严格互补（record-only 等可单独改变 merged），
+      // 执行前复验必须同时比对两集合；快照缺失（旧预览）视为失效。
+      input.mergeMergedAtPreview = merged.join(",");
+      mergeView = {
+        mode: selection.mode as MergeRevisionMode,
+        requestedRevisions:
+          selection.requestedRevisions.length > 0
+            ? selection.requestedRevisions
+            : undefined,
+        fromRevision: selection.fromRevision,
+        toRevision: selection.toRevision,
+        resolvedRevisions: selection.mode === "eligible" ? [] : resolved,
+        eligible: eligible.slice(0, MAX_MERGE_MERGEINFO_ENTRIES),
+        merged: merged.slice(0, MAX_MERGE_MERGEINFO_ENTRIES),
+        eligibleCount: eligible.length,
+        mergedCount: merged.length,
+        eligibleTruncated:
+          eligible.length > MAX_MERGE_MERGEINFO_ENTRIES || undefined,
+        mergedTruncated:
+          merged.length > MAX_MERGE_MERGEINFO_ENTRIES || undefined,
+        mergeinfoSupported,
+        mergeinfoNote,
+        dryRunCommand,
+        dryRunFiles,
+        dryRunConflicts,
+        dryRunSummary,
+        dryRunTruncated: dryRunTruncated || undefined,
+      };
     } else if (operation === "restore-shelf") {
       title = "恢复本地搁置";
       destructive = true;
@@ -612,6 +1099,306 @@ export class RepositoryWorkbenchActions {
       issues: [...new Set(issues)],
       destructive,
       input,
+      // V026-R43：源/目标绑定随快照下发，表单变化后旧预览立即标失效。
+      // V026-R44：源修订版本冻结三字段随快照下发，表单/重预览不一致即失效。
+      sourceUrl: input.sourceUrl || undefined,
+      targetUrl: input.targetUrl || undefined,
+      sourceOrigin: input.sourceOrigin || undefined,
+      targetOrigin: input.targetOrigin || undefined,
+      sourceRevision: input.sourceRevision || undefined,
+      sourceResolvedRevision: input.sourceResolvedRevision || undefined,
+      sourceRevisionMode: input.sourceRevisionMode || undefined,
+      // V026-R45：合并修订选择视图（仅 merge 操作携带）。
+      merge: mergeView,
+    };
+    await this.host.sendRepositorySnapshot(session, requestId);
+  }
+
+  /**
+   * V026-R45：只读采集 eligible/merged 修订集合（不写工作副本）。
+   * 任一 mergeinfo 查询失败即视为无 mergeinfo 支持（fail-open 只读采集，
+   * fail-closed 执行：eligible 模式阻止，指定/范围跳过已合并校验并明示）。
+   */
+  private async collectMergeRevisionSets(
+    session: WorkbenchSession,
+    sourceUrl: string,
+  ): Promise<{
+    eligible: string[];
+    merged: string[];
+    supported: boolean;
+    note?: string;
+  }> {
+    const workingCopy = session.scope.repositoryRoot;
+    const query = async (
+      which: "eligible" | "merged",
+    ): Promise<{ revisions?: string[]; error?: string }> => {
+      const result = await runSvnCommand(
+        session.svnPath,
+        ["mergeinfo", `--show-revs=${which}`, sourceUrl, workingCopy],
+        workingCopy,
+      );
+      if (result.exitCode !== 0) {
+        return {
+          error: (result.stderr || result.stdout || "查询失败")
+            .trim()
+            .slice(0, 200),
+        };
+      }
+      return { revisions: parseMergeinfoRevisions(result.stdout) };
+    };
+    const [eligibleResult, mergedResult] = await Promise.all([
+      query("eligible"),
+      query("merged"),
+    ]);
+    if (
+      eligibleResult.revisions === undefined ||
+      mergedResult.revisions === undefined
+    ) {
+      const reason = eligibleResult.error ?? mergedResult.error ?? "查询失败";
+      return {
+        eligible: [],
+        merged: [],
+        supported: false,
+        note: reason,
+      };
+    }
+    return {
+      eligible: eligibleResult.revisions,
+      merged: mergedResult.revisions,
+      supported: true,
+    };
+  }
+
+  /**
+   * V026-R46：只读远端文件内容（svn cat 内存读取，不写本地文件、不改 scope）。
+   * 二进制/超限/无权限只展示限制说明与复制 URL 恢复出口，保留浏览导航状态。
+   */
+  async previewRemoteFile(
+    session: WorkbenchSession,
+    data: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    const state = this.host.ensureAdvancedRepositoryState(session);
+    const infoResult = await runSvnCommand(
+      session.svnPath,
+      ["info", "--xml", session.scope.repositoryRoot],
+      session.scope.repositoryRoot,
+    );
+    const info =
+      infoResult.exitCode === 0
+        ? parseInfoXml(infoResult.stdout, session.scope.repositoryRoot)
+        : undefined;
+    const rawUrl =
+      typeof data.url === "string"
+        ? data.url
+        : typeof data.sourceUrl === "string"
+          ? data.sourceUrl
+          : "";
+    const intent = normalizeRepositoryUrlIntent(rawUrl, info?.repositoryRoot);
+    const revisionInput = normalizeRemoteRevisionInput(data.revision);
+    if (intent.issues.length > 0 || revisionInput.issues.length > 0) {
+      state.remoteFile = {
+        url: intent.normalizedUrl || rawUrl.trim(),
+        requestedRevision:
+          typeof data.revision === "string" ? data.revision.trim() : undefined,
+        sourceLabel: "远端只读预览",
+        error: [...intent.issues, ...revisionInput.issues].join(" "),
+      };
+      await this.host.sendRepositorySnapshot(session, requestId);
+      return;
+    }
+    const revision = revisionInput.revision;
+    const target =
+      revision && revision !== "HEAD"
+        ? `${intent.normalizedUrl}@${revision}`
+        : intent.normalizedUrl;
+    const result = await runSvnCommand(
+      session.svnPath,
+      ["cat", target],
+      session.scope.repositoryRoot,
+      { maxOutputBytes: MAX_REMOTE_FILE_PREVIEW_BYTES + 1024 },
+    );
+    if (result.exitCode !== 0) {
+      state.remoteFile = {
+        url: intent.normalizedUrl,
+        requestedRevision: revision,
+        sourceLabel: `远端只读：${intent.normalizedUrl}${revision ? `@r${revision}` : ""}`,
+        error:
+          result.stderr ||
+          result.stdout ||
+          "无法读取远端文件（目标不存在、无权限或网络失败）。浏览位置已保留，可复制 URL 后重试。",
+      };
+      await this.host.sendRepositorySnapshot(session, requestId);
+      return;
+    }
+    const classified = classifyRemoteContent(
+      result.stdout,
+      MAX_REMOTE_FILE_PREVIEW_BYTES,
+    );
+    state.remoteFile = {
+      url: intent.normalizedUrl,
+      revision: revision ?? state.browser?.revision,
+      requestedRevision: revision,
+      sourceLabel: `远端只读：${intent.normalizedUrl}${revision ? `@r${revision}` : state.browser?.revision ? `@r${state.browser.revision}` : ""}（未写入本地）`,
+      binary: classified.binary || undefined,
+      truncated: classified.truncated || undefined,
+      size: Buffer.byteLength(result.stdout, "utf8"),
+      contentPreview: classified.binary ? undefined : classified.preview,
+      error: classified.binary
+        ? "二进制文件不在工作台内预览正文，可复制 URL 后用外部工具打开。"
+        : classified.truncated
+          ? `文件超过 ${Math.floor(MAX_REMOTE_FILE_PREVIEW_BYTES / 1024)} KB，只展示前部内容；完整内容请复制 URL 后用外部工具查看。`
+          : undefined,
+    };
+    await this.host.sendRepositorySnapshot(session, requestId);
+  }
+
+  /**
+   * V026-R46：只读远端文件历史（svn log URL，不进入工作副本范围，不写本地）。
+   */
+  async queryRemoteHistory(
+    session: WorkbenchSession,
+    data: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    const state = this.host.ensureAdvancedRepositoryState(session);
+    const infoResult = await runSvnCommand(
+      session.svnPath,
+      ["info", "--xml", session.scope.repositoryRoot],
+      session.scope.repositoryRoot,
+    );
+    const info =
+      infoResult.exitCode === 0
+        ? parseInfoXml(infoResult.stdout, session.scope.repositoryRoot)
+        : undefined;
+    const rawUrl = typeof data.url === "string" ? data.url : "";
+    const intent = normalizeRepositoryUrlIntent(rawUrl, info?.repositoryRoot);
+    if (intent.issues.length > 0) {
+      state.remoteHistory = {
+        url: intent.normalizedUrl || rawUrl.trim(),
+        revisions: [],
+        error: intent.issues.join(" "),
+      };
+      await this.host.sendRepositorySnapshot(session, requestId);
+      return;
+    }
+    const result = await runSvnCommand(
+      session.svnPath,
+      [
+        "log",
+        "--xml",
+        "--limit",
+        String(MAX_REMOTE_HISTORY_ENTRIES),
+        intent.normalizedUrl,
+      ],
+      session.scope.repositoryRoot,
+    );
+    if (result.exitCode !== 0) {
+      state.remoteHistory = {
+        url: intent.normalizedUrl,
+        revisions: [],
+        error:
+          result.stderr ||
+          result.stdout ||
+          "无法读取远端历史（目标不存在、无权限或网络失败）。浏览位置已保留。",
+      };
+      await this.host.sendRepositorySnapshot(session, requestId);
+      return;
+    }
+    const revisions = parseSvnLogXml(result.stdout)
+      .slice(0, MAX_REMOTE_HISTORY_ENTRIES)
+      .map((item) => ({
+        revision: item.revision,
+        author: item.author,
+        date: item.date,
+        message: item.message,
+      }));
+    state.remoteHistory = {
+      url: intent.normalizedUrl,
+      revisions,
+      error: revisions.length === 0 ? "该远端路径暂无可展示历史。" : undefined,
+    };
+    await this.host.sendRepositorySnapshot(session, requestId);
+  }
+
+  /**
+   * V026-R46：远端 revision 比较只读预览（svn diff，复用 revision-patch 只读语义）。
+   * 不写工作副本、无本地路径操作；超限截断展示。
+   */
+  async compareRemoteRevisions(
+    session: WorkbenchSession,
+    data: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    const state = this.host.ensureAdvancedRepositoryState(session);
+    const infoResult = await runSvnCommand(
+      session.svnPath,
+      ["info", "--xml", session.scope.repositoryRoot],
+      session.scope.repositoryRoot,
+    );
+    const info =
+      infoResult.exitCode === 0
+        ? parseInfoXml(infoResult.stdout, session.scope.repositoryRoot)
+        : undefined;
+    const rawUrl = typeof data.url === "string" ? data.url : "";
+    const intent = normalizeRepositoryUrlIntent(rawUrl, info?.repositoryRoot);
+    const from = normalizeRemoteRevisionInput(
+      data.fromRevision ?? data.leftRevision,
+    );
+    const to = normalizeRemoteRevisionInput(
+      data.toRevision ?? data.rightRevision,
+    );
+    const combined = [
+      ...intent.issues,
+      ...from.issues.map((issue) => `起始修订：${issue}`),
+      ...to.issues.map((issue) => `结束修订：${issue}`),
+    ];
+    if (!from.revision) combined.push("请填写起始修订号（正整数或 HEAD）。");
+    if (!to.revision) combined.push("请填写结束修订号（正整数或 HEAD）。");
+    if (combined.length > 0 || !from.revision || !to.revision) {
+      state.remoteCompare = {
+        url: intent.normalizedUrl || rawUrl.trim(),
+        fromRevision: from.revision ?? "",
+        toRevision: to.revision ?? "",
+        error: combined.join(" ") || "修订输入不完整。",
+      };
+      await this.host.sendRepositorySnapshot(session, requestId);
+      return;
+    }
+    const fromRevision = from.revision as string;
+    const toRevision = to.revision as string;
+    const result = await runSvnCommand(
+      session.svnPath,
+      ["diff", intent.normalizedUrl, "-r", `${fromRevision}:${toRevision}`],
+      session.scope.repositoryRoot,
+      { maxOutputBytes: MAX_DIFF_BYTES },
+    );
+    if (result.exitCode !== 0) {
+      state.remoteCompare = {
+        url: intent.normalizedUrl,
+        fromRevision,
+        toRevision,
+        error:
+          result.stderr ||
+          result.stdout ||
+          "无法比较远端修订（目标不存在、无权限或网络失败）。浏览位置已保留。",
+      };
+      await this.host.sendRepositorySnapshot(session, requestId);
+      return;
+    }
+    const output = result.stdout.includes("\0") ? "" : result.stdout;
+    const truncated = output.length > MAX_REMOTE_COMPARE_CHARS;
+    state.remoteCompare = {
+      url: intent.normalizedUrl,
+      fromRevision,
+      toRevision,
+      diffPreview: truncated
+        ? output.slice(0, MAX_REMOTE_COMPARE_CHARS)
+        : output || "所选修订之间没有文本差异。",
+      truncated: truncated || undefined,
+      error: result.stdout.includes("\0")
+        ? "二进制差异不在工作台内预览，可复制 URL 后用外部工具比较。"
+        : undefined,
     };
     await this.host.sendRepositorySnapshot(session, requestId);
   }
@@ -783,7 +1570,198 @@ export class RepositoryWorkbenchActions {
       }
       return;
     }
-
+    // V026-R44：分支/标签执行前复验固定来源与目标存在性，不静默漂移到新 HEAD。
+    if (preview.operation === "branch" || preview.operation === "tag") {
+      const fixed = preview.input?.sourceResolvedRevision;
+      const sourceUrl = preview.input?.sourceUrl;
+      const targetUrl = preview.input?.targetUrl;
+      const failBranchTag = async (
+        title: string,
+        message: string,
+      ): Promise<void> => {
+        state.preview = undefined;
+        await this.host.sendError(
+          "repository",
+          title,
+          message,
+          true,
+          requestId,
+        );
+        try {
+          await this.host.sendRepositorySnapshot(session, requestId);
+        } catch {
+          // 忽略：原拒绝已送达，旧预览已作废。
+        }
+      };
+      if (!fixed || !/^\d+$/.test(fixed) || !sourceUrl || !targetUrl) {
+        await failBranchTag(
+          "高级操作预览已失效",
+          "源修订版本未固定（缺少源 URL@revision），请重新生成预览后再确认执行。",
+        );
+        return;
+      }
+      const sourceCheck = await runSvnCommand(
+        session.svnPath,
+        ["info", "--xml", "-r", fixed, sourceUrl],
+        session.scope.repositoryRoot,
+      );
+      if (sourceCheck.exitCode !== 0) {
+        const reason = (sourceCheck.stderr || sourceCheck.stdout || "")
+          .trim()
+          .slice(0, 200);
+        await failBranchTag(
+          "源修订版本已失效",
+          `源 ${sourceUrl}@r${fixed} 复验失败（修订版本不存在、无权限或网络失败${reason ? `：${reason}` : ""}），已阻止执行。请核对修订号与权限后重新预览。`,
+        );
+        return;
+      }
+      const targetCheck = await runSvnCommand(
+        session.svnPath,
+        ["info", "--xml", targetUrl],
+        session.scope.repositoryRoot,
+      );
+      if (targetCheck.exitCode === 0) {
+        await failBranchTag(
+          "目标已存在",
+          `目标 ${targetUrl} 已存在，直接创建会失败。请更换目标名称后重新预览。`,
+        );
+        return;
+      }
+    }
+    // V026-R45：合并执行前复验源/本地状态/可合并集合（复验链零削弱）。
+    // - 本地未提交修改阻止策略不放宽；
+    // - eligible 模式用完整合并执行，源可合并集合变化即视为旧预览失效；
+    // - 指定/范围模式按冻结修订执行，复验仍可合并（防期间已被合并）；
+    // - 反向合并/重积分不生成任何命令，本版不支持。
+    if (preview.operation === "merge") {
+      const mergeSourceUrl = preview.input?.sourceUrl;
+      const mergeMode = preview.input?.mergeMode;
+      const mergeResolved = (preview.input?.mergeResolvedRevisions ?? "")
+        .split(",")
+        .map((item) => item.trim())
+        .filter((item) => /^\d+$/.test(item));
+      const failMerge = async (
+        title: string,
+        message: string,
+      ): Promise<void> => {
+        state.preview = undefined;
+        await this.host.sendError(
+          "repository",
+          title,
+          message,
+          true,
+          requestId,
+        );
+        try {
+          await this.host.sendRepositorySnapshot(session, requestId);
+        } catch {
+          // 忽略：原拒绝已送达，旧预览已作废。
+        }
+      };
+      if (
+        !mergeSourceUrl ||
+        (mergeMode !== "eligible" &&
+          mergeMode !== "specific" &&
+          mergeMode !== "range")
+      ) {
+        await failMerge(
+          "高级操作预览已失效",
+          "合并修订选择未固定（缺少源 URL 或合并模式），请重新生成预览后再确认执行。",
+        );
+        return;
+      }
+      const freshCandidates = await this.host.collectScopeCandidates(session);
+      if (freshCandidates.length > 0) {
+        await failMerge(
+          "工作副本已变化",
+          `工作副本存在 ${freshCandidates.length} 个本地变更，已阻止合并（该策略不放宽：请先提交、还原或搁置后再预览）。`,
+        );
+        return;
+      }
+      const mergeSourceCheck = await runSvnCommand(
+        session.svnPath,
+        ["info", "--xml", mergeSourceUrl],
+        session.scope.repositoryRoot,
+      );
+      if (mergeSourceCheck.exitCode !== 0) {
+        const reason = (
+          mergeSourceCheck.stderr ||
+          mergeSourceCheck.stdout ||
+          ""
+        )
+          .trim()
+          .slice(0, 200);
+        await failMerge(
+          "合并源已失效",
+          `源 ${mergeSourceUrl} 复验失败（目标不存在、无权限或网络失败${reason ? `：${reason}` : ""}），已阻止执行。请核对源分支后重新预览。`,
+        );
+        return;
+      }
+      const freshSets = await this.collectMergeRevisionSets(
+        session,
+        mergeSourceUrl,
+      );
+      if (mergeMode === "eligible") {
+        if (!freshSets.supported) {
+          await failMerge(
+            "合并条件已变化",
+            `当前无法采集可合并修订（${freshSets.note ?? "源或工作副本不支持 mergeinfo"}），旧预览已失效。请重新预览（全部符合条件模式需要 mergeinfo 支持）。`,
+          );
+          return;
+        }
+        // eligible 完整合并按执行时 mergeinfo 生效；源可合并/已合并集合任一变化即旧预览失效。
+        // P1-1：两集合非严格互补，须同比（record-only 等可单独改变 merged）。
+        const previewedEligible = (preview.input?.mergeEligibleAtPreview ?? "")
+          .split(",")
+          .map((item) => item.trim())
+          .filter((item) => /^\d+$/.test(item))
+          .sort((a, b) => (BigInt(a) < BigInt(b) ? -1 : 1));
+        const currentEligible = [...freshSets.eligible].sort((a, b) =>
+          BigInt(a) < BigInt(b) ? -1 : 1,
+        );
+        const previewedMerged = (preview.input?.mergeMergedAtPreview ?? "")
+          .split(",")
+          .map((item) => item.trim())
+          .filter((item) => /^\d+$/.test(item))
+          .sort((a, b) => (BigInt(a) < BigInt(b) ? -1 : 1));
+        const currentMerged = [...freshSets.merged].sort((a, b) =>
+          BigInt(a) < BigInt(b) ? -1 : 1,
+        );
+        if (
+          previewedEligible.join(",") !== currentEligible.join(",") ||
+          previewedMerged.join(",") !== currentMerged.join(",")
+        ) {
+          await failMerge(
+            "合并条件已变化",
+            `源分支可合并/已合并集合已变化（预览时可合并 ${previewedEligible.length} 个/已合并 ${previewedMerged.length} 个，当前可合并 ${currentEligible.length} 个/已合并 ${currentMerged.length} 个），旧预览已失效。请重新预览确认后再执行。`,
+          );
+          return;
+        }
+      } else {
+        if (mergeResolved.length === 0) {
+          await failMerge(
+            "高级操作预览已失效",
+            "合并修订选择为空，请重新生成预览后再确认执行。",
+          );
+          return;
+        }
+        if (freshSets.supported) {
+          const recheck = classifyMergeSelection(
+            mergeResolved,
+            freshSets.eligible,
+            freshSets.merged,
+            true,
+          );
+          if (recheck.issues.length > 0) {
+            await failMerge(
+              "合并条件已变化",
+              `${recheck.issues.join(" ")}旧预览已失效，请重新预览。`,
+            );
+            return;
+          }
+        }
+      }
+    }
     const controller = new AbortController();
     session.activeOperation = { moduleId: "repository", controller };
     await this.host.post({
@@ -803,10 +1781,17 @@ export class RepositoryWorkbenchActions {
     try {
       const input = preview.input;
       if (preview.operation === "branch" || preview.operation === "tag") {
+        // V026-R44：按预览冻结的固定修订执行，不跟随新 HEAD。
+        const fixedArgs =
+          preview.input?.sourceResolvedRevision &&
+          /^\d+$/.test(preview.input.sourceResolvedRevision)
+            ? ["-r", preview.input.sourceResolvedRevision]
+            : [];
         result = await runSvnCommand(
           session.svnPath,
           [
             "copy",
+            ...fixedArgs,
             input.sourceUrl,
             input.targetUrl,
             "-m",
@@ -817,7 +1802,7 @@ export class RepositoryWorkbenchActions {
           session.scope.repositoryRoot,
           { signal: controller.signal },
         );
-        successMessage = `${preview.operation === "branch" ? "分支" : "标签"}已在仓库端创建：${input.targetUrl}`;
+        successMessage = `${preview.operation === "branch" ? "分支" : "标签"}已按源 ${input.sourceUrl}@r${preview.input?.sourceResolvedRevision ?? "?"} 创建：${input.targetUrl}`;
       } else if (preview.operation === "switch") {
         result = await runSvnCommand(
           session.svnPath,
@@ -847,10 +1832,20 @@ export class RepositoryWorkbenchActions {
         );
         successMessage = `仓库根地址已重定位到 ${input.targetUrl}。`;
       } else if (preview.operation === "merge") {
+        // V026-R45：按预览冻结的修订选择执行（eligible=完整合并，指定/范围=-c/-r）。
+        // 复验已在执行前完成；此处只复用冻结值，不重新解释用户输入。
+        const frozenResolved = (preview.input?.mergeResolvedRevisions ?? "")
+          .split(",")
+          .map((item) => item.trim())
+          .filter((item) => /^\d+$/.test(item));
+        const frozenArgs = buildMergeRevisionArgs(
+          preview.input?.mergeMode === "eligible" ? [] : frozenResolved,
+        );
         result = await runSvnCommand(
           session.svnPath,
           [
             "merge",
+            ...frozenArgs,
             input.sourceUrl,
             session.scope.repositoryRoot,
             "--accept",
@@ -859,7 +1854,21 @@ export class RepositoryWorkbenchActions {
           session.scope.repositoryRoot,
           { signal: controller.signal },
         );
-        successMessage = "合并结果已写入工作副本；尚未提交，请检查变更与冲突。";
+        if (result && result.exitCode === 0 && !result.cancelled) {
+          // V026-R45：执行成功后重采状态，有冲突即指引进入冲突模块；不自动提交。
+          const afterCandidates =
+            await this.host.collectScopeCandidates(session);
+          const conflicted = afterCandidates.filter(
+            (item) => item.status === "conflicted",
+          ).length;
+          successMessage =
+            conflicted > 0
+              ? `合并结果已写入工作副本（未提交）；检测到 ${conflicted} 个冲突，请进入冲突模块处理后再决定是否提交。`
+              : "合并结果已写入工作副本；尚未提交，请检查变更与冲突。";
+        } else {
+          successMessage =
+            "合并结果已写入工作副本；尚未提交，请检查变更与冲突。";
+        }
       } else if (preview.operation === "apply-patch") {
         result = await runSvnCommand(
           session.svnPath,
