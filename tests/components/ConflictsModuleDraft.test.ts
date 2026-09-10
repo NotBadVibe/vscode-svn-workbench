@@ -177,6 +177,58 @@ describe("ConflictsModule 冲突草稿三选一守卫（v0.0.13）", () => {
     expect(screen.getByText(/检查点已保存/)).toBeInTheDocument();
   });
 
+  // V027-R53终审 P0-4：无草稿快照，ACK 是检查点 notice 的唯一来源
+  //（ACK 文案为“修订 N；重启后”，快照草稿文案带时间戳，可区分）。
+  const snapshotNoDraftAck: ConflictSnapshot = {
+    ...baseSnapshot,
+    selected: {
+      ...baseSnapshot.selected!,
+      draft: undefined,
+    },
+  };
+
+  it("V027-R53终审 P0-4：跨文件旧 ACK 不覆盖当前文件状态", async () => {
+    const onAction = vi.fn();
+    render(ConflictsModule, {
+      snapshot: snapshotNoDraftAck,
+      onAction,
+      conflictDraftAck: {
+        relativePath: "src/b.ts",
+        revision: 9,
+        updatedAt: Date.now(),
+      },
+    });
+    // 当前选中 src/a.ts 且无草稿：src/b.ts 的 ACK 必须被拒绝，不展示检查点 notice。
+    expect(screen.queryByText(/检查点已保存/)).not.toBeInTheDocument();
+  });
+
+  it("V027-R53终审 P0-4：同文件乱序 ACK 拒绝（旧 revision 不覆盖新状态）", async () => {
+    const onAction = vi.fn();
+    const { rerender } = render(ConflictsModule, {
+      snapshot: snapshotNoDraftAck,
+      onAction,
+      conflictDraftAck: {
+        relativePath: "src/a.ts",
+        revision: 3,
+        updatedAt: Date.now(),
+      },
+    });
+    // ACK 文案以“修订 3；”结尾（状态条 detail 用“·”，不会误匹配）。
+    expect(screen.getByText(/修订 3；/)).toBeInTheDocument();
+    // 乱序到达的旧 revision=2 必须被拒绝，展示仍为修订 3。
+    await rerender({
+      snapshot: snapshotNoDraftAck,
+      onAction,
+      conflictDraftAck: {
+        relativePath: "src/a.ts",
+        revision: 2,
+        updatedAt: Date.now() + 1,
+      },
+    } as never);
+    expect(screen.getByText(/修订 3；/)).toBeInTheDocument();
+    expect(screen.queryByText(/修订 2/)).not.toBeInTheDocument();
+  });
+
   it("保存失败 feedback 内联展示且草稿保留（编辑器与草稿不丢）", async () => {
     const onAction = vi.fn();
     render(ConflictsModule, { snapshot: baseSnapshot, onAction });

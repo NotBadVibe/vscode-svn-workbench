@@ -650,16 +650,33 @@
   // 确认直挂（小文件）或安排下一帧挂载（大文件）；若初值为 true，首帧会先
   // 同步挂载重型视图再纠正，延迟调度即失效。
   let conflictHeavyReady = $state(false);
+  /*
+   * V027-R53终审 P0-1：超阈值 simplified 档不再自动挂载重型视图。
+   * 实测 tier-500 降级出口 P95 3374→4566ms：2×rAF 只是推迟了同步挂载，重型
+   * Pierre 挂载（12000 行 + 500 块按钮）仍在出口探针轮询窗口内一次性阻塞主线程。
+   * 因此 simplified 档（未强制完整视图时）只绘出口骨架 + 占位，重型视图按需挂载
+   * （用户点“恢复完整视图”或切简化编辑器）；reduced/full 档仍自动挂载，但改用
+   * requestIdleCallback（超时兜底）让出主线程，避免饿死出口探针与首漆。
+   */
+  const conflictHeavyParked = $derived(
+    conflictPerf.mode === "simplified" && !perfForceFull,
+  );
   // 非响应式调度键：同文件快照刷新（保存/草稿回环）键不变，不重置挂载
-  //（R01：刷新不得打断输入/丢焦点）；文件或降级模式变化才重新走两阶段。
+  //（R01：刷新不得打断输入/丢焦点）；文件、降级模式或强制完整变化才重新走两阶段。
   let conflictHeavyScheduledKey: string | undefined = undefined;
   $effect(() => {
     const defer = conflictNeedsHeavyDefer;
+    const parked = conflictHeavyParked;
     const fileKey = snapshot.selected?.relativePath ?? "";
     const modeKey = conflictPerf.mode;
-    const scheduleKey = `${defer ? "defer" : "direct"}|${modeKey}|${fileKey}`;
+    const scheduleKey = `${parked ? "parked" : defer ? "defer" : "direct"}|${modeKey}|${fileKey}|${perfForceFull ? "forced" : "auto"}`;
     if (scheduleKey === conflictHeavyScheduledKey) return;
     conflictHeavyScheduledKey = scheduleKey;
+    if (parked) {
+      // 超阈值档按需加载：不安排自动挂载，出口骨架保持可交互。
+      conflictHeavyReady = false;
+      return;
+    }
     if (!defer) {
       conflictHeavyReady = true;
       return;
@@ -679,18 +696,43 @@
     let rafFirst = 0;
     let rafSecond = 0;
     let timer = 0;
-    if (typeof requestAnimationFrame === "function") {
-      rafFirst = requestAnimationFrame(() => {
-        rafSecond = requestAnimationFrame(schedule);
-      });
-    } else {
-      timer = window.setTimeout(schedule, 0);
-    }
+    let idleId = 0;
+    const scheduleIdle = (): void => {
+      const idle = (
+        window as unknown as {
+          requestIdleCallback?: (
+            callback: () => void,
+            options?: { timeout: number },
+          ) => number;
+          cancelIdleCallback?: (id: number) => void;
+        }
+      ).requestIdleCallback;
+      if (typeof idle === "function") {
+        idleId = idle.call(window, schedule, { timeout: 1500 });
+        return;
+      }
+      if (typeof requestAnimationFrame === "function") {
+        rafFirst = requestAnimationFrame(() => {
+          rafSecond = requestAnimationFrame(schedule);
+        });
+      } else {
+        timer = window.setTimeout(schedule, 0);
+      }
+    };
+    scheduleIdle();
     return () => {
       cancelled = true;
       if (rafFirst) cancelAnimationFrame(rafFirst);
       if (rafSecond) cancelAnimationFrame(rafSecond);
       if (timer) window.clearTimeout(timer);
+      if (idleId) {
+        const cancelIdle = (
+          window as unknown as {
+            cancelIdleCallback?: (id: number) => void;
+          }
+        ).cancelIdleCallback;
+        if (typeof cancelIdle === "function") cancelIdle.call(window, idleId);
+      }
     };
   });
   // v0.1.1 V011-D：块级差异视图实例与进度（动作紧邻冲突块，进度与列表统一）。
@@ -1320,14 +1362,34 @@
       }
     }
   });
+  /*
+   * V027-R53终审 P0-4：检查点 ACK 绑定目标（relativePath + 单调 revision）。
+   * - 目标不一致（切文件后到达的旧文件 ACK）直接拒绝，不覆盖当前文件状态；
+   * - 同文件严格旧版本（revision < 已应用版本）拒绝，避免旧 ACK 覆盖新草稿状态；
+   *   等版本重放幂等接受（同 revision 即同草稿版本，兼容 Mock 固定版本号）；
+   * - 每个 ACK 身份（path@revision）只消费一次，会话/文件切换不重放。
+   * 纯展示收敛，不改草稿/token/写入链（DiffModule targetId 绑定同模式）。
+   */
+  const appliedConflictAckRevisions = new SvelteMap<string, number>();
+  let consumedConflictAckKey: string | undefined = undefined;
   // 检查点 ACK 内联提示（编辑器与草稿保留）
   $effect(() => {
-    if (conflictDraftAck) {
-      // V024-R51：保留“检查点已保存”子串（旧断言），同时明示未写入工作副本与重启后不恢复。
-      conflictDraftFeedback = `会话检查点已保留（检查点已保存，未写入工作副本，修订 ${conflictDraftAck.revision}；重启后不恢复，请复制或导出）`;
-      checkpointStatus = "saved";
-      checkpointStatusDetail = `修订 ${conflictDraftAck.revision} · 未写入工作副本，仅本次会话`;
-    }
+    const ack = conflictDraftAck;
+    if (!ack) return;
+    const currentPath = snapshot.selected?.relativePath;
+    const ackKey = `${ack.relativePath}@${ack.revision}@${ack.updatedAt}`;
+    if (ackKey === consumedConflictAckKey) return;
+    // 目标绑定：ACK 与当前选中文件不一致时拒绝（切文件后旧 ACK 不得覆盖新文件）。
+    if (!currentPath || ack.relativePath !== currentPath) return;
+    // 单调性：严格旧版本拒绝（revision 只增不减；等版本为同草稿版本，重放幂等）。
+    const applied = appliedConflictAckRevisions.get(ack.relativePath);
+    if (applied !== undefined && ack.revision < applied) return;
+    consumedConflictAckKey = ackKey;
+    appliedConflictAckRevisions.set(ack.relativePath, ack.revision);
+    // V024-R51：保留“检查点已保存”子串（旧断言），同时明示未写入工作副本与重启后不恢复。
+    conflictDraftFeedback = `会话检查点已保留（检查点已保存，未写入工作副本，修订 ${ack.revision}；重启后不恢复，请复制或导出）`;
+    checkpointStatus = "saved";
+    checkpointStatusDetail = `修订 ${ack.revision} · 未写入工作副本，仅本次会话`;
   });
   // V012-D：Host 容量淘汰或 stale 只读的反馈也映射到 checkpoint 状态（可预期提示）
   $effect(() => {
@@ -2753,6 +2815,8 @@
               <!--
               V027-R53 延迟挂载占位：轻量真实信息（块数/行数），不是可滚动
               代码内容，不计入首屏可读；降级出口（上方摘要区）已先行就绪。
+              V027-R53终审 P0-1：simplified 档按需加载（不再自动挂载），占位如实
+              说明未加载而非加载中，避免用户空等；reduced/full 档仍为加载中。
             -->
               <div
                 class="notice"
@@ -2760,10 +2824,17 @@
                 data-testid="conflict-heavy-deferred"
               >
                 <span class="codicon codicon-info" aria-hidden="true"></span>
-                <span
-                  >完整视图加载中（{conflictBlocks.length} 个冲突块 / {perfActualLines}
-                  行），降级出口已就绪。</span
-                >
+                {#if conflictHeavyParked}
+                  <span
+                    >完整视图未加载（{conflictBlocks.length} 个冲突块 / {perfActualLines}
+                    行，已降级），降级出口已就绪，可使用简化编辑器或恢复完整视图。</span
+                  >
+                {:else}
+                  <span
+                    >完整视图加载中（{conflictBlocks.length} 个冲突块 / {perfActualLines}
+                    行），降级出口已就绪。</span
+                  >
+                {/if}
               </div>
             {/if}
           {:else}
