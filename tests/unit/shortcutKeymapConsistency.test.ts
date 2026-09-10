@@ -97,7 +97,11 @@ describe("集中 keymap 单一来源", () => {
       "diff/nextHunk",
       "diff/closeSettings",
       // Conflicts：保存语义为仅检查点（与 Diff 不同，需标注）
+      // V027-R52：新增 saveWorking（Ctrl/⌘+Enter 写工作副本，不接 Resolve）与
+      // leaveEditor（Esc 离开编辑区）；saveCheckpoint 语义不变（兼容旧行为）。
       "conflicts/saveCheckpoint",
+      "conflicts/saveWorking",
+      "conflicts/leaveEditor",
       "conflicts/prevBlock",
       "conflicts/nextBlock",
       "conflicts/undo",
@@ -117,6 +121,22 @@ describe("集中 keymap 单一来源", () => {
     expect(diffSave.note).toMatch(/工作副本/);
     expect(checkpoint.note).toMatch(/不写入工作副本/);
     expect(diffSave.title).not.toBe(checkpoint.title);
+    // V027-R52 兼容性：Ctrl/⌘+S 在冲突区仍是会话检查点（语义不变）。
+    expect(checkpoint.display).toBe("Ctrl/⌘+S");
+    expect(checkpoint.title).toBe("保存检查点（Ctrl/⌘+S，不写入工作副本）");
+    // V027-R52 新语义：Ctrl/⌘+Enter 写入工作副本，不触发标记解决。
+    const conflictSave = byRegionId.get("conflicts/saveWorking")!;
+    expect(conflictSave.display).toBe("Ctrl/⌘+Enter");
+    expect(conflictSave.display).not.toBe(checkpoint.display);
+    expect(conflictSave.title).not.toBe(checkpoint.title);
+    expect(conflictSave.note).toMatch(/写入工作副本/);
+    expect(conflictSave.note).toMatch(/重新核验/);
+    expect(conflictSave.note).toMatch(/不触发标记解决/);
+    // V027-R54：Esc 离开编辑区，IME 候选中不离开。
+    const leaveEditor = byRegionId.get("conflicts/leaveEditor")!;
+    expect(leaveEditor.display).toBe("Esc");
+    expect(leaveEditor.note).toMatch(/Tab 为缩进/);
+    expect(leaveEditor.note).toMatch(/IME/);
   });
 
   it("全部条目标记 IME 屏蔽，title 由 label + display 生成", () => {

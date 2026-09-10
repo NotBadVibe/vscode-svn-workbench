@@ -635,6 +635,18 @@ export const conflictDraftWorkingLabels = {
   clean: "工作副本与已保存内容一致",
 } as const;
 
+/**
+ * V027-R52：保存语义迁移提示（集中收口，页面不各自拼按键文案）。
+ * - Ctrl/⌘+S 在冲突区仅保存会话检查点（不写文件），与 Diff 的写盘语义不同；
+ * - 写入工作副本使用保存工作副本动作（按键展示取集中 keymap）。
+ */
+export function conflictSaveSemanticsNote(
+  checkpointDisplay: string,
+  saveWorkingDisplay: string,
+): string {
+  return `${checkpointDisplay} 仅保存会话检查点（不写入工作副本文件，重启后不恢复）；写入工作副本请使用“保存工作副本合并结果”（${saveWorkingDisplay}）。`;
+}
+
 export const conflictSwitchLabels = {
   descriptionIntro:
     "的合并草稿仅本次会话保留（尚未写入工作副本，未标记解决）。请选择：",

@@ -48,6 +48,7 @@
   import {
     conflictDraftSyncedLabel,
     conflictDraftWorkingLabels,
+    conflictSaveSemanticsNote,
     conflictSwitchLabels,
     conflictVerifyLabels,
     draftStorageLabels,
@@ -1670,6 +1671,41 @@
   }
 
   // V012-E：快捷键全局守卫（中文 IME 期间不触发，单一来源）
+  /**
+   * V027-R52：Ctrl/Cmd+Enter 保存到工作副本（与保存按钮同一动作，
+   * 写入前 Host 重新核验令牌/范围/内容；不触发标记解决）。
+   * Ctrl/Cmd+S 语义不变（仅会话检查点，不写文件），兼容旧行为。
+   */
+  function requestSaveWorking(): void {
+    const selected = snapshot.selected;
+    if (!selected?.mergeEditor.editable || !workingDirty) return;
+    onAction("conflict/save-working", {
+      editToken: selected.mergeEditor.token,
+      content: mergeDraft,
+    });
+  }
+  /** V027-R54：Esc 离开编辑区——焦点移到保存栏（Tab 仍为缩进）。 */
+  function exitEditorToSaveBar(): void {
+    const saveEnabled =
+      Boolean(snapshot.selected?.mergeEditor.editable) && workingDirty;
+    if (saveEnabled) saveButtonEl?.focus();
+    else checkpointButtonEl?.focus();
+  }
+  /** V027-R54：简化编辑器 Esc 离开（IME 候选/对话框打开时不抢）。 */
+  function onSimplifiedEditorKeydown(e: KeyboardEvent): void {
+    if (e.key !== "Escape") return;
+    if (isComposing || (resultEditor?.isComposing?.() ?? false)) return;
+    const target = e.target as HTMLElement | null;
+    if (target?.closest?.("dialog, [role='dialog'], [role='menu']")) return;
+    if (
+      typeof document !== "undefined" &&
+      document.querySelector("dialog[open]")
+    )
+      return;
+    e.preventDefault();
+    e.stopPropagation();
+    exitEditorToSaveBar();
+  }
   function handleModuleKeydown(e: KeyboardEvent): void {
     if (
       isImeComposingEvent(e) ||
@@ -1678,10 +1714,16 @@
     )
       return;
     const isMod = e.ctrlKey || e.metaKey;
-    // Ctrl/Cmd+S 保存检查点（不写入工作副本）
+    // Ctrl/Cmd+S 保存检查点（不写入工作副本；V027-R52 语义不变，兼容旧行为）
     if (isMod && e.key.toLowerCase() === "s") {
       e.preventDefault();
       flushCheckpoint();
+      return;
+    }
+    // V027-R52：Ctrl/Cmd+Enter 保存到工作副本（同一保存动作，不接 Resolve）
+    if (isMod && e.key === "Enter") {
+      e.preventDefault();
+      requestSaveWorking();
       return;
     }
     // ? 快捷键帮助（集中 keymap；与工具栏 `?` 共用模块级单一实例）
@@ -2907,6 +2949,7 @@
                     onDraftChange={handleResultDraftChange}
                     onFallback={handleResultFallback}
                     onError={handleDiffError}
+                    onExitEditor={exitEditorToSaveBar}
                   />
                 {/key}
                 <div class="toolbar-actions toolbar-actions--spaced-top">
@@ -2920,12 +2963,14 @@
               </div>
             {/if}
           {:else}
+            <!-- svelte-ignore a11y_no_noninteractive_element_interactions -- 简化编辑器 Esc 离开出口（冒泡自 CodeMirror 内容区）。 -->
             <div
               class="conflict-editor conflict-editor--editable"
               role="region"
               aria-label="可编辑工作副本合并区域（简化编辑器）"
               oncompositionstart={() => (isComposing = true)}
               oncompositionend={() => (isComposing = false)}
+              onkeydown={onSimplifiedEditorKeydown}
             >
               <div
                 class="conflict-codemirror-host"
@@ -3022,16 +3067,13 @@
               class={snapshot.resolvePreview
                 ? "button button--secondary"
                 : "button button--primary"}
+              data-testid="save-working-copy"
               disabled={!snapshot.selected.mergeEditor.editable ||
                 !workingDirty}
               title={snapshot.resolvePreview
                 ? "已生成解决预览，当前步骤为标记解决"
-                : undefined}
-              onclick={() =>
-                onAction("conflict/save-working", {
-                  editToken: snapshot.selected?.mergeEditor.token,
-                  content: mergeDraft,
-                })}>保存工作副本合并结果</button
+                : CONFLICT_SHORTCUTS.saveWorking.title}
+              onclick={requestSaveWorking}>保存工作副本合并结果</button
             ><button
               bind:this={checkpointButtonEl}
               class="button button--secondary"
@@ -3065,6 +3107,13 @@
                 onAction("conflict/draft-abandon", {
                   relativePath: snapshot.selected?.relativePath,
                 })}>放弃草稿</button
+            ><small
+              class="muted save-semantics-note"
+              data-testid="save-semantics-note"
+              >{conflictSaveSemanticsNote(
+                CONFLICT_SHORTCUTS.saveCheckpoint.display,
+                CONFLICT_SHORTCUTS.saveWorking.display,
+              )}</small
             >
           </div>
           <!-- V011-D 查看来源折叠区：默认不与块级动作争夺首屏 -->

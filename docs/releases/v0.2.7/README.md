@@ -35,7 +35,8 @@
 
 - **原评审映射：** 第 52 项。
 - **优先级 / 证据等级：** P2 / 跨模块语义不一致。
-- **实施状态：** 待实施。
+- **实施状态：** 已实施（Ctrl/⌘+S 冲突区语义不变：仅会话检查点；新增 Ctrl/⌘+Enter 保存到工作副本、Esc 离开编辑区、保存栏迁移提示；写入前 Host 复验链不动，不接 Resolve）。
+- **证据：** `tests/unit/shortcutKeymapConsistency.test.ts`、`tests/components/ConflictsSaveSemantics.test.ts`、`tests/webview-e2e/v027-save-keyboard.spec.ts`；实现映射见 `docs/current/实现与代码映射.md` 新增行。
 - **看到的现状：** Diff 保存写盘，冲突快捷键可能保存内存检查点；用户按惯性把 Ctrl/⌘+S 理解为文件已保存。
 - **用户影响：** 关闭窗口后可能才发现内容没有写入工作副本。
 - **现有证据与预计改动入口：** [conflictShortcuts.ts](../../../src/webview/features/conflicts/conflictShortcuts.ts)、[shortcuts.ts](../../../src/webview/keyboard/shortcuts.ts)、[MergeActionToolbar.svelte](../../../src/webview/features/conflicts/MergeActionToolbar.svelte)、[ConflictResultEditor.svelte](../../../src/webview/features/conflicts/ConflictResultEditor.svelte)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
@@ -49,10 +50,10 @@
 
 **验收场景与完成条件：**
 
-- [ ] Diff/冲突分别按保存键后状态与磁盘实际结果一致。
-- [ ] 检查点动作明确仅会话。
-- [ ] 保存失败继续可编辑与导出。
-- [ ] 中文 composition 中快捷键不误触发写入。
+- [x] Diff/冲突分别按保存键后状态与磁盘实际结果一致。
+- [x] 检查点动作明确仅会话。
+- [x] 保存失败继续可编辑与导出。
+- [x] 中文 composition 中快捷键不误触发写入。
 
 <a id="v027-r53"></a>
 
@@ -88,7 +89,8 @@
 
 - **原评审映射：** 第 54 项。
 - **优先级 / 证据等级：** P1 / 现有验收记录明确限制。
-- **实施状态：** 待实施。
+- **实施状态：** 已实施（Esc 离开编辑区到保存栏，Tab 仍缩进；Ctrl/⌘+Enter 保存；编辑→保存→核验→预览→确认全键盘可达，弹窗关闭回触发点；三主题/200%/reduced-motion 与真实读屏为人工观察项，未冒充通过）。
+- **证据：** `tests/webview-e2e/v027-save-keyboard.spec.ts`（R54 全键盘链）、`tests/components/ConflictsSaveSemantics.test.ts`（Esc 出口/IME/查找让行）；实现映射见 `docs/current/实现与代码映射.md` 新增行。
 - **看到的现状：** 合并编辑器正向 Tab 被缩进消费，现有记录需要 Shift+Tab 回退才能离开，Esc 未形成直观出口。
 - **用户影响：** 键盘用户能编辑却不容易继续保存/核验/解决，任务链不完整。
 - **现有证据与预计改动入口：** [ConflictResultEditor.svelte](../../../src/webview/features/conflicts/ConflictResultEditor.svelte)、[MergeActionToolbar.svelte](../../../src/webview/features/conflicts/MergeActionToolbar.svelte)、[shortcuts.ts](../../../src/webview/keyboard/shortcuts.ts)、[测试与验收基线.md](../../current/测试与验收基线.md)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
@@ -102,9 +104,9 @@
 
 **验收场景与完成条件：**
 
-- [ ] 仅键盘从非首文件进入、输入、保存、核验、到 Resolve 确认并取消，焦点可追踪。
-- [ ] 正向/反向均能离开编辑器，无需鼠标。
-- [ ] IME 候选 Esc/Enter 不退出任务。
+- [x] 仅键盘从非首文件进入、输入、保存、核验、到 Resolve 确认并取消，焦点可追踪。
+- [x] 正向/反向均能离开编辑器，无需鼠标。
+- [x] IME 候选 Esc/Enter 不退出任务。
 - [ ] 三主题/200%/reduced-motion 均可完成。
 
 <a id="v027-r56"></a>
@@ -139,6 +141,7 @@
 - [v018g-lifecycle.spec.ts](../../../tests/webview-e2e/v018g-lifecycle.spec.ts)
 - [v018-large-diff.spec.ts](../../../tests/webview-e2e/v018-large-diff.spec.ts)
 - [v017g-keyboard-paths.spec.ts](../../../tests/webview-e2e/v017g-keyboard-paths.spec.ts)
+- [v027-save-keyboard.spec.ts](../../../tests/webview-e2e/v027-save-keyboard.spec.ts)（V027-R52+R54：检查点≠写盘真动作、保存失败可编辑与导出、非首文件全键盘链到 Resolve 确认取消）
 - [conflictPerformancePolicy.test.ts](../../../tests/unit/conflictPerformancePolicy.test.ts)
 - [manualAcceptanceEnv.test.ts](../../../tests/unit/manualAcceptanceEnv.test.ts)
 
