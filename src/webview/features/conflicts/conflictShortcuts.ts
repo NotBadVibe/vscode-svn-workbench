@@ -39,6 +39,8 @@ export const CONFLICT_SHORTCUTS = Object.fromEntries(
   getShortcutsForRegion("conflicts").map((def) => [def.id, toView(def)]),
 ) as {
   readonly saveCheckpoint: ConflictShortcutView;
+  readonly saveWorking: ConflictShortcutView;
+  readonly leaveEditor: ConflictShortcutView;
   readonly prevBlock: ConflictShortcutView;
   readonly nextBlock: ConflictShortcutView;
   readonly undo: ConflictShortcutView;

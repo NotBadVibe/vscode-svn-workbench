@@ -35,7 +35,8 @@
 
 - **原评审映射：** 第 52 项。
 - **优先级 / 证据等级：** P2 / 跨模块语义不一致。
-- **实施状态：** 待实施。
+- **实施状态：** 已实施（Ctrl/⌘+S 冲突区语义不变：仅会话检查点；新增 Ctrl/⌘+Enter 保存到工作副本、Esc 离开编辑区、保存栏迁移提示；写入前 Host 复验链不动，不接 Resolve）。
+- **证据：** `tests/unit/shortcutKeymapConsistency.test.ts`、`tests/components/ConflictsSaveSemantics.test.ts`、`tests/webview-e2e/v027-save-keyboard.spec.ts`；实现映射见 `docs/current/实现与代码映射.md` 新增行。
 - **看到的现状：** Diff 保存写盘，冲突快捷键可能保存内存检查点；用户按惯性把 Ctrl/⌘+S 理解为文件已保存。
 - **用户影响：** 关闭窗口后可能才发现内容没有写入工作副本。
 - **现有证据与预计改动入口：** [conflictShortcuts.ts](../../../src/webview/features/conflicts/conflictShortcuts.ts)、[shortcuts.ts](../../../src/webview/keyboard/shortcuts.ts)、[MergeActionToolbar.svelte](../../../src/webview/features/conflicts/MergeActionToolbar.svelte)、[ConflictResultEditor.svelte](../../../src/webview/features/conflicts/ConflictResultEditor.svelte)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
@@ -49,10 +50,10 @@
 
 **验收场景与完成条件：**
 
-- [ ] Diff/冲突分别按保存键后状态与磁盘实际结果一致。
-- [ ] 检查点动作明确仅会话。
-- [ ] 保存失败继续可编辑与导出。
-- [ ] 中文 composition 中快捷键不误触发写入。
+- [x] Diff/冲突分别按保存键后状态与磁盘实际结果一致。
+- [x] 检查点动作明确仅会话。
+- [x] 保存失败继续可编辑与导出。
+- [x] 中文 composition 中快捷键不误触发写入。
 
 <a id="v027-r53"></a>
 
@@ -60,7 +61,7 @@
 
 - **原评审映射：** 第 53 项。
 - **优先级 / 证据等级：** P1 / 历史测量依据，需重新建立当前基准。
-- **实施状态：** 待实施。
+- **实施状态：** 已实施（出口调度/门禁断言/检查点 ACK 绑定修复落地，证据见收口节；完整视图 5 档未达标如实记失败，500 块降级出口与简化编辑器合格）。
 - **看到的现状：** v0.1.8 记录的设备上，10000 行首次可见 P95 约 4754ms，500 块动作约 3007ms；属于历史测量，不是本轮新实测。虚拟化/Worker/同步多窗格已有 no-go。
 - **用户影响：** 长时间空白、动作等待和大文件卡顿影响主任务，用户会转回其他工具。
 - **现有证据与预计改动入口：** [diffPerformancePolicy.ts](../../../src/webview/features/diff/diffPerformancePolicy.ts)、[measure-v018-browser.js](../../../scripts/measure-v018-browser.js)、[measure-conflict-performance.js](../../../scripts/measure-conflict-performance.js)、[v018g-lifecycle.spec.ts](../../../tests/webview-e2e/v018g-lifecycle.spec.ts)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
@@ -74,13 +75,13 @@
 
 **验收场景与完成条件：**
 
-- [ ] 固定 100/1000/5000/10000 行及 10/100/500 冲突块，报告 actualLines/设备/样本数/P50/P95。
-- [ ] 连续输入内容一致与无焦点丢失为硬门禁。
+- [x] 固定 100/1000/5000/10000 行及 10/100/500 冲突块，报告 actualLines/设备/样本数/P50/P95。
+- [x] 连续输入内容一致与无焦点丢失为硬门禁。
 - [ ] 候选体验目标：操作反馈 P95≤100ms、简化编辑输入处理 P95≤50ms，绝对预算按同机复测确认而非随意放宽。
-- [ ] 首屏候选门槛：标准设备上 5000 行首个可读内容 P95≤1500ms、10000 行 P95≤3000ms；100 块首个可操作冲突 P95≤1500ms、500 块默认简化编辑器可操作 P95≤2000ms。首个可读内容必须是可滚动的真实代码，不能把骨架或加载文案计为完成。
-- [ ] 超预算模式在任务开始后 500ms 内展示可操作的简化/外部工具出口；选择简化后按上述简化门槛计时验收，不能仅显示一个不可点击的提示。若当前同步挂载使出口也卡住，需先调整挂载调度，不能以已有按钮存在判为通过。
-- [ ] 固定 fixture、同设备与构建模式比较前后数据；若完整视图不能达到门槛，只有通过上述时限的可靠降级可作为该档交付方式，并明确标注完整视图未达标。调整候选门槛须记录原目标、测量依据和用户任务影响；只提交测量数字、无改善且无合格降级，不得关闭本任务。
-- [ ] 连续切换 100 次无实例/observer/内存持续增长，超预算明确降级。
+- [ ] 首屏候选门槛：标准设备上 5000 行首个可读内容 P95≤1500ms、10000 行 P95≤3000ms；100 块首个可操作冲突 P95≤1500ms、500 块默认简化编辑器可操作 P95≤2000ms。首个可读内容必须是可滚动的真实代码，不能把骨架或加载文案计为完成。注：实测完整视图 5 档未达标（5000 行冷/暖、10000 行冷/暖首个可读内容，100 块动作反馈，逐档 `passed:false`，见收口节证据）；500 块降级出口与简化编辑器合格，可作为该档交付方式。
+- [x] 超预算模式在任务开始后 500ms 内展示可操作的简化/外部工具出口；选择简化后按上述简化门槛计时验收，不能仅显示一个不可点击的提示。若当前同步挂载使出口也卡住，需先调整挂载调度，不能以已有按钮存在判为通过。
+- [x] 固定 fixture、同设备与构建模式比较前后数据；若完整视图不能达到门槛，只有通过上述时限的可靠降级可作为该档交付方式，并明确标注完整视图未达标。调整候选门槛须记录原目标、测量依据和用户任务影响；只提交测量数字、无改善且无合格降级，不得关闭本任务。
+- [x] 连续切换 100 次无实例/observer/内存持续增长，超预算明确降级。
 
 <a id="v027-r54"></a>
 
@@ -88,7 +89,8 @@
 
 - **原评审映射：** 第 54 项。
 - **优先级 / 证据等级：** P1 / 现有验收记录明确限制。
-- **实施状态：** 待实施。
+- **实施状态：** 已实施（Esc 离开编辑区到保存栏，Tab 仍缩进；Ctrl/⌘+Enter 保存；编辑→保存→核验→预览→确认全键盘可达，弹窗关闭回触发点；三主题/200%/reduced-motion 与真实读屏为人工观察项，未冒充通过）。
+- **证据：** `tests/webview-e2e/v027-save-keyboard.spec.ts`（R54 全键盘链）、`tests/components/ConflictsSaveSemantics.test.ts`（Esc 出口/IME/查找让行）；实现映射见 `docs/current/实现与代码映射.md` 新增行。
 - **看到的现状：** 合并编辑器正向 Tab 被缩进消费，现有记录需要 Shift+Tab 回退才能离开，Esc 未形成直观出口。
 - **用户影响：** 键盘用户能编辑却不容易继续保存/核验/解决，任务链不完整。
 - **现有证据与预计改动入口：** [ConflictResultEditor.svelte](../../../src/webview/features/conflicts/ConflictResultEditor.svelte)、[MergeActionToolbar.svelte](../../../src/webview/features/conflicts/MergeActionToolbar.svelte)、[shortcuts.ts](../../../src/webview/keyboard/shortcuts.ts)、[测试与验收基线.md](../../current/测试与验收基线.md)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
@@ -102,9 +104,9 @@
 
 **验收场景与完成条件：**
 
-- [ ] 仅键盘从非首文件进入、输入、保存、核验、到 Resolve 确认并取消，焦点可追踪。
-- [ ] 正向/反向均能离开编辑器，无需鼠标。
-- [ ] IME 候选 Esc/Enter 不退出任务。
+- [x] 仅键盘从非首文件进入、输入、保存、核验、到 Resolve 确认并取消，焦点可追踪。
+- [x] 正向/反向均能离开编辑器，无需鼠标。
+- [x] IME 候选 Esc/Enter 不退出任务。
 - [ ] 三主题/200%/reduced-motion 均可完成。
 
 <a id="v027-r56"></a>
@@ -113,7 +115,7 @@
 
 - **原评审映射：** 第 56 项。
 - **优先级 / 证据等级：** P2 / 待执行的用户任务研究。
-- **实施状态：** 待实施。
+- **实施状态：** 部分实施（自动化等价覆盖已汇总，见收口节；真人访谈/真实读屏/中低配实测未执行，不冒充通过）。
 - **看到的现状：** 上一轮是源码、Mock 生产 Webview 与既有记录评审，没有真实用户访谈；既有低配、真实读屏、外部工具真机证据有限。
 - **用户影响：** 只看功能存在和自动检查不能确认新手是否找到入口、是否误解保存与选择。
 - **现有证据与预计改动入口：** [测试与验收基线.md](../../current/测试与验收基线.md)、[create-manual-acceptance-env.js](../../../scripts/create-manual-acceptance-env.js)。以基准提交的符号/行为定位，不依赖易漂移行号；入口清单不是已经完成的改动。
@@ -121,7 +123,7 @@
 **具体改动：**
 
 1. 尽早安排新手/日常 SVN 开发者/多仓库维护者三类观察，最后一版汇总前后对比。
-2. 任务涵盖 30 混合修改选提交、20 文件审阅、多冲突、旧历史查询、重启恢复搁置、配置测试保存。
+2. 任务涵盖混合修改选提交、小规模文件审阅、多冲突、旧历史查询、重启恢复搁置、配置测试保存（30 混合修改/20 文件为目标规模；当前自动化等价为单文件主路径与 2 文件审阅队列，属部分等价需补测，见收口节覆盖表）。
 3. 记录完成率、耗时、返回次数、误点、求助与原话，不采集源码凭据。
 4. 未执行真实设备/读屏如实写未执行，不追溯改写旧发布结论。
 
@@ -139,6 +141,7 @@
 - [v018g-lifecycle.spec.ts](../../../tests/webview-e2e/v018g-lifecycle.spec.ts)
 - [v018-large-diff.spec.ts](../../../tests/webview-e2e/v018-large-diff.spec.ts)
 - [v017g-keyboard-paths.spec.ts](../../../tests/webview-e2e/v017g-keyboard-paths.spec.ts)
+- [v027-save-keyboard.spec.ts](../../../tests/webview-e2e/v027-save-keyboard.spec.ts)（V027-R52+R54：检查点≠写盘真动作、保存失败可编辑与导出、非首文件全键盘链到 Resolve 确认取消）
 - [conflictPerformancePolicy.test.ts](../../../tests/unit/conflictPerformancePolicy.test.ts)
 - [manualAcceptanceEnv.test.ts](../../../tests/unit/manualAcceptanceEnv.test.ts)
 
@@ -154,10 +157,43 @@
 - 普通证据写 `.validation/evidence/v0.2.x/<run>/`，记录实际提交、设备和命令。只有用户显式要求发布才能执行 `npm run evidence:release`、发布/标签或绑定发布产物；本计划不授权发布。
 - 各版自行覆盖正常、空、加载、失败、取消、过期与恢复；有写操作时成功/拒绝/过期/失败/恢复均测。键盘、中文 composition、小高度、200% 和 Light/Dark/High Contrast 随改动验收，不推迟到最后一版才检查。
 
+## 实施状态与验收记录（2026-09-09 收口）
+
+> 本节为规划允许的实施状态更新，不新增临时文档。
+
+### R52/R53/R54 实施状态
+
+- **R52 已实施**：Ctrl/⌘+S 保留冲突检查点（仅会话）语义兼容；新增 Ctrl/⌘+Enter 明确写盘（与保存按钮同一 `save-working` 链，复验不动，不接 Resolve）；帮助逐项说清对象；迁移提示常驻。证据：`tests/components/ConflictsSaveSemantics.test.ts`（8 用例）+ `tests/webview-e2e/v027-save-keyboard.spec.ts`（3 用例）。
+- **R53 已实施**：`scripts/measure-v027-r53.js`（候选门禁逐档断言，超预算 `passed:false` 且 exit 非零；tier-500 简化就绪/200 键连续输入一致 + 焦点保持/100 次交替切换探针；矩阵固定不缩、预算不放宽）+ 简化档按需加载（`conflictHeavyParked` 时不自动挂载重型视图，降级出口骨架先行可交互）+ 检查点 ACK 绑定 relativePath + 单调 revision（跨文件与乱序拒绝）落地。实测（`.validation/evidence/v0.2.x/`，工作区 gitignored）：完整视图 5 档未达标如实记失败（5000 行冷/暖、10000 行冷/暖首个可读内容，100 块动作反馈），500 块降级出口与简化编辑器合格。注（P2-7 时间倒挂澄清）：`v027-r53-after/v027-r53-after.json`（`measuredAt` 2026-09-10T00:46:02Z）先于 `v027-r53-baseline/v027-r53-baseline.json`（`measuredAt` 2026-09-10T00:53:56Z）运行；`stage` 只决定输出文件名，两次为同一脚本（`scripts/measure-v027-r53.js`）同机（Apple M4，同 renderer）重复测量，对应同一构建（当前 HEAD `78cab0a`，JSON 未记录 commit/build 字段）；两次失败档位一致，不影响“完整视图未达标、降级合格”结论。
+- **R54 已实施**：Esc 明确离开编辑器到保存栏（有脏落保存否则落检查点）；正向 Tab 缩进保留；IME 候选不退出；仅键盘非首文件→编辑→保存→核验→预览→Resolve 确认→取消全链 e2e。证据：同上 e2e+组件测试。
+- **R56 部分实施**：自动化等价覆盖汇总完成（见下）；**真人访谈/真实读屏/中低配设备实测未执行**（无设备与参与者，如实列为未完成观察项，不冒充通过）。
+
+### 自动化等价覆盖（v0.2.0 起持续收集）
+
+| 任务                                                      | 自动化证据                                                                                                                                                                                                             |
+| --------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 混合修改选提交（目标 30 混合修改；当前部分等价需补测）    | `daily-path.spec.ts`（单文件 Changes→Diff→Commit 全链） + `commit-handoff.spec.ts`（交接收缩/冲突指引）                                                                                                                |
+| 小规模文件审阅（目标 20 文件；当前 2 文件部分等价需补测） | `review-queue.spec.ts`（2 文件队列建立/导航/标已看/返回恢复）                                                                                                                                                          |
+| 多冲突处理                                                | `conflict-v013.spec.ts` + `v027-save-keyboard.spec.ts`（编辑→保存→预览→确认前）                                                                                                                                        |
+| 旧历史查询                                                | `workbench.spec.ts`（history load-more 追加旧修订/修订+作者+日期条件查询） + `history-changed-path.spec.ts`（V021-R17 修订修改直达/单文件历史收窄） + `v020r10-row-target.spec.ts`（V020-R10 右键单文件历史/返回恢复） |
+| 重启恢复搁置                                              | `tests/components/PatchShelfTask.test.ts` + `tests/unit/shelfIndex.test.ts`（索引/迁移/恢复链） + `tests/unit/workbenchShelfRestore.test.ts`（Host 级恢复链）                                                          |
+| 配置测试保存                                              | `settings-draft.spec.ts`（草稿不被覆盖+保存持久新值）                                                                                                                                                                  |
+
+### 未执行观察项（如实记录，不冒充）
+
+- 真人访谈（新手/日常 SVN 开发者/多仓库维护者三类）：未执行，无参与者。
+- 真实读屏（VoiceOver/NVDA）：未执行，无设备；axe/aria 自动化证据不代表读屏通过。
+- 中低配设备实测：未执行，当前数据均来自标准设备（Apple M4）。
+- 真实外部合并工具真机联调：未执行（接口经 mock/单测覆盖）。
+
+### 跨平台证据
+
+三平台 CI（macOS/ubuntu/windows）+ CodeQL 全绿（各版本发布时）；CI macOS 上 Diff 编辑类用例间歇抖动为环境时序问题（本地全绿），已列为 CI 加固观察项。
+
 ## 完成状态与交付清单
 
 - 已完成：本版问题与任务建档。除条目单独注明的文档索引纠偏外，不代表业务实现完成。
-- 待实施：本版全部业务修复/增强、最小复现与关联回归。
+- 待实施：本版候选门禁、R56 真人/真机观察与剩余关联回归（R52/R53/R54 业务实现见收口节，不再是“全部待实施”）。
 - 候选门禁：针对本版业务实现尚未执行；本次对现有代码的回归不等同本版候选验收，不引用旧版通过数字代替新实现结果。
 
 - [ ] 各任务有实现或明确反证/候选 no-go；未修复的确定缺陷不得以文档完成代替。

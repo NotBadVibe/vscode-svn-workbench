@@ -37,6 +37,7 @@
   } from "./diffWhitespace";
   import { SHORTCUTS_BY_REGION } from "../../keyboard/shortcuts";
   import { computeDiffHunks, computePatchHunks } from "./diffHunks";
+  import { shouldDeferHeavyMount } from "./diffPerformancePolicy";
   import type { DiffErrorInfo } from "./diffErrorTaxonomy";
   import {
     diffReviewLabels,
@@ -44,7 +45,7 @@
     diffReviewProgressLabel,
   } from "../../i18n/terminology";
   import { readReviewScroll, saveReviewScroll } from "./reviewScrollMemory";
-  import { tick } from "svelte";
+  import { tick, untrack } from "svelte";
 
   /**
    * V017-B：导航/保存按钮 title 来自集中 keymap（区域 `diff`），
@@ -159,6 +160,94 @@
   const hasDraft = $derived(snapshot.draft !== undefined);
   let editing = $state(false);
   let dirty = $state(false);
+  /*
+   * V027-R53 大文件延迟挂载调度：行数/长行超过调度阈值时，先绘制工具栏与
+   * 出口条，重型 Pierre 视图（DiffView，含全量差异计算）下一帧挂载，保证
+   * 任务开始后 500ms 内“在编辑器中对比”外部出口可操作。调度细节：
+   * - 差异块计算（Myers，行数线性成本）同样随挂载延迟，首漆只做行数扫描；
+   * - 进入编辑态立即挂载（编辑需要 Editor 实例，不等待下一帧）；
+   * - 同文件快照刷新不重置（保存后刷新不打断输入）；目标文件变化才重置；
+   * - 后台挂载不抢焦点（显式打开才激活目标标签，基线行为不变）。
+   */
+  const diffPerfLines = $derived.by(() => {
+    if (snapshot.binary) return 0;
+    const originalLines = snapshot.original
+      ? snapshot.original.split("\n").length
+      : 0;
+    const modifiedLines = snapshot.modified
+      ? snapshot.modified.split("\n").length
+      : 0;
+    return Math.max(originalLines, modifiedLines);
+  });
+  const diffPerfMaxLine = $derived.by(() => {
+    if (snapshot.binary) return 0;
+    let longest = 0;
+    for (const text of [snapshot.original, snapshot.modified]) {
+      if (!text) continue;
+      for (const line of text.split("\n")) {
+        if (line.length > longest) longest = line.length;
+      }
+    }
+    return longest;
+  });
+  const diffNeedsHeavyDefer = $derived(
+    !snapshot.binary &&
+      shouldDeferHeavyMount({
+        lines: diffPerfLines,
+        maxLineLength: diffPerfMaxLine,
+      }),
+  );
+  // 初值 false：首帧只绘工具栏/出口条（行数扫描），effect 在首漆前确认直挂
+  //（小文件）或安排下一帧挂载（大文件）；若初值为 true，首帧会先同步执行
+  // 全量差异计算与重型挂载再纠正，延迟调度即失效。
+  let diffHeavyReady = $state(false);
+  // 非响应式调度键：同文件刷新键不变，不重置挂载。
+  let diffHeavyScheduledKey: string | undefined = undefined;
+  $effect(() => {
+    const defer = diffNeedsHeavyDefer;
+    const fileKey = snapshot.relativePath ?? "";
+    const scheduleKey = `${defer ? "defer" : "direct"}|${fileKey}`;
+    if (editing) {
+      syncDiffHeavyScheduledKey(scheduleKey);
+      diffHeavyReady = true;
+      return;
+    }
+    if (scheduleKey === diffHeavyScheduledKey) return;
+    diffHeavyScheduledKey = scheduleKey;
+    if (!defer) {
+      diffHeavyReady = true;
+      return;
+    }
+    diffHeavyReady = false;
+    let cancelled = false;
+    const schedule = (): void => {
+      if (cancelled) return;
+      const stillSame = untrack(
+        () => (snapshot.relativePath ?? "") === fileKey,
+      );
+      if (stillSame) diffHeavyReady = true;
+    };
+    let rafFirst = 0;
+    let rafSecond = 0;
+    let timer = 0;
+    if (typeof requestAnimationFrame === "function") {
+      rafFirst = requestAnimationFrame(() => {
+        rafSecond = requestAnimationFrame(schedule);
+      });
+    } else {
+      timer = window.setTimeout(schedule, 0);
+    }
+    return () => {
+      cancelled = true;
+      if (rafFirst) cancelAnimationFrame(rafFirst);
+      if (rafSecond) cancelAnimationFrame(rafSecond);
+      if (timer) window.clearTimeout(timer);
+    };
+  });
+  /** 编辑态接管调度键，避免退出编辑后误判为新键而重走延迟。 */
+  function syncDiffHeavyScheduledKey(scheduleKey: string): void {
+    diffHeavyScheduledKey = scheduleKey;
+  }
   /** v0.0.10：路径详情开合与触发按钮焦点恢复。 */
   let pathDetailOpen = $state(false);
   let pathDetailTrigger = $state<HTMLButtonElement | null>(null);
@@ -196,13 +285,17 @@
   /**
    * v0.1.0：差异块导航在只读与编辑态一致可用；
    * 修订比较（patch 直渲）从 @@ 头解析块位置。
+   * V027-R53：延迟挂载未就绪时返回空块（Myers 计算随重型视图延迟），
+   * 导航/采用块按钮同步禁用，挂载后自动恢复（不改变块内容与范围）。
    */
   const hunks = $derived(
-    snapshot.binary
+    diffNeedsHeavyDefer && !diffHeavyReady
       ? []
-      : snapshot.language === "diff"
-        ? computePatchHunks(snapshot.modified)
-        : computeDiffHunks(snapshot.original, snapshot.modified),
+      : snapshot.binary
+        ? []
+        : snapshot.language === "diff"
+          ? computePatchHunks(snapshot.modified)
+          : computeDiffHunks(snapshot.original, snapshot.modified),
   );
   /**
    * V018-D：忽略空白的只读限制契约（identity/草稿/undo 保留或只读限制）。
@@ -1518,6 +1611,36 @@
     </div>
   {/if}
 
+  {#if diffNeedsHeavyDefer}
+    <!--
+      V027-R53 大文件出口条：与工具栏同帧绘制，不等待重型视图。
+      “在编辑器中对比”为可操作的外部出口（与更多菜单同动作、同禁用条件），
+      不是仅提示；完整视图随后挂载（加载中→已就绪如实切换，不把占位计为可读）。
+    -->
+    <div class="notice" role="status" data-testid="diff-perf-exit">
+      <span class="codicon codicon-info" aria-hidden="true"></span>
+      <span
+        >大文件（{diffPerfLines} 行）：{diffHeavyReady
+          ? "完整视图已就绪。"
+          : "完整视图加载中，出口已就绪。"}可在编辑器中对比，或等待完整视图。</span
+      >
+      <button
+        type="button"
+        class="button button--secondary"
+        data-testid="diff-perf-open-editor"
+        disabled={snapshot.binary || snapshot.truncated}
+        title={snapshot.binary
+          ? "二进制文件不支持文本对比"
+          : snapshot.truncated
+            ? "超过 5 MB 的文件不支持原生对比"
+            : "在 VS Code 原生差异编辑器中对比"}
+        onclick={() => onAction("diff/open-in-editor")}
+      >
+        在编辑器中对比
+      </button>
+    </div>
+  {/if}
+
   <!-- V018-D：主内容行（差异区 + 可折叠定位器，不抢文件/范围状态）。 -->
   <div class="diff-content-row">
     <div class="diff-content-main">
@@ -1553,6 +1676,17 @@
               <code>{snapshot.modified}</code>
             {/if}
       </pre>
+        {:else if diffNeedsHeavyDefer && !diffHeavyReady}
+          <!--
+            V027-R53 延迟挂载占位：轻量真实信息（文件名/行数），不是可滚动
+            代码内容，不计入首屏可读；出口条已先行就绪。
+          -->
+          <div class="notice" role="status" data-testid="diff-heavy-deferred">
+            <span class="codicon codicon-info" aria-hidden="true"></span>
+            <span
+              >完整视图加载中（{snapshot.relativePath}，{diffPerfLines} 行），出口已就绪。</span
+            >
+          </div>
         {:else}
           <DiffView
             relativePath={snapshot.relativePath}
@@ -1573,6 +1707,13 @@
             <span>BASE</span><span>工作副本</span>
           </div>
           <div class="codemirror-merge-host" bind:this={mergeHost}></div>
+        </div>
+      {:else if diffNeedsHeavyDefer && !diffHeavyReady}
+        <div class="notice" role="status" data-testid="diff-heavy-deferred">
+          <span class="codicon codicon-info" aria-hidden="true"></span>
+          <span
+            >完整视图加载中（{snapshot.relativePath}，{diffPerfLines} 行），出口已就绪。</span
+          >
         </div>
       {:else}
         <DiffView

@@ -263,6 +263,26 @@ const CONFLICT_SHORTCUTS = [
     imeGuarded: true,
   }),
   define({
+    id: "saveWorking",
+    region: "conflicts",
+    label: "保存到工作副本",
+    display: "Ctrl/⌘+Enter",
+    title: "保存到工作副本（Ctrl/⌘+Enter，写入工作副本文件）",
+    keys: ["Ctrl+Enter", "Cmd+Enter"],
+    note: "写入工作副本文件；写入前重新核验内容状态；不触发标记解决；IME 候选中不触发",
+    imeGuarded: true,
+  }),
+  define({
+    id: "leaveEditor",
+    region: "conflicts",
+    label: "离开编辑区",
+    display: "Esc",
+    title: "离开编辑区（Esc，到保存栏）",
+    keys: ["Escape"],
+    note: "编辑区内 Tab 为缩进；按 Esc 将焦点移到保存栏；查找面板输入框内 Esc 先关闭面板；IME 候选中先处理输入法，不离开",
+    imeGuarded: true,
+  }),
+  define({
     id: "prevBlock",
     region: "conflicts",
     label: "上一个块",
@@ -391,7 +411,13 @@ const COMPACT_HINT_IDS: Record<ShortcutRegion, readonly string[]> = {
   commitMessage: ["preview"],
   filterPreset: ["save"],
   diff: ["prevHunk", "nextHunk", "save"],
-  conflicts: ["prevBlock", "nextBlock", "saveCheckpoint", "find"],
+  conflicts: [
+    "prevBlock",
+    "nextBlock",
+    "saveCheckpoint",
+    "saveWorking",
+    "find",
+  ],
   dialog: ["cancel"],
 };
 

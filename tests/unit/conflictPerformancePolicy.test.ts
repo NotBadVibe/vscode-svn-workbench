@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   decideConflictPerformanceMode,
+  shouldDeferHeavyMount,
   V018C_LONG_LINE_THRESHOLD,
   V018C_REDUCED_CONTEXT_LINES,
   V018_PERFORMANCE_THRESHOLDS_PLACEHOLDER,
+  V027_HEAVY_DEFER_LINE_THRESHOLD,
 } from "../../src/webview/features/diff/diffPerformancePolicy";
 
 const T = V018_PERFORMANCE_THRESHOLDS_PLACEHOLDER;
@@ -104,5 +106,47 @@ describe("V018-C 冲突三档阈值判定", () => {
     );
     expect(d.mode).toBe("reduced");
     expect(d.recommendSimplified).toBe(false);
+  });
+});
+
+describe("V027-R53 重型视图延迟挂载调度", () => {
+  it("小文件立即挂载（100/1000 行，无长行）", () => {
+    expect(shouldDeferHeavyMount({ lines: 100 })).toBe(false);
+    expect(
+      shouldDeferHeavyMount({ lines: V027_HEAVY_DEFER_LINE_THRESHOLD }),
+    ).toBe(false);
+  });
+
+  it("边界含等于：1000 行仍立即挂载，1001 行延迟", () => {
+    expect(
+      shouldDeferHeavyMount({
+        lines: V027_HEAVY_DEFER_LINE_THRESHOLD + 1,
+      }),
+    ).toBe(true);
+  });
+
+  it("大文件延迟挂载（5000/10000 行）", () => {
+    expect(shouldDeferHeavyMount({ lines: 5000 })).toBe(true);
+    expect(shouldDeferHeavyMount({ lines: 10000 })).toBe(true);
+  });
+
+  it("长行维度：小文件+超长行延迟挂载，恰等于阈值不延迟", () => {
+    expect(
+      shouldDeferHeavyMount({
+        lines: 50,
+        maxLineLength: V018C_LONG_LINE_THRESHOLD + 1,
+      }),
+    ).toBe(true);
+    expect(
+      shouldDeferHeavyMount({
+        lines: 50,
+        maxLineLength: V018C_LONG_LINE_THRESHOLD,
+      }),
+    ).toBe(false);
+  });
+
+  it("非法输入钳制为 0（不延迟、不抛错）", () => {
+    expect(shouldDeferHeavyMount({ lines: -5 })).toBe(false);
+    expect(shouldDeferHeavyMount({ lines: Number.NaN })).toBe(false);
   });
 });

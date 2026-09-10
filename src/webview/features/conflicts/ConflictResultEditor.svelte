@@ -30,6 +30,7 @@
     onDraftChange,
     onFallback,
     onError,
+    onExitEditor,
   }: {
     fileIdentity?: string;
     relativePath: string;
@@ -39,6 +40,8 @@
     onDraftChange?: (text: string, revision: number) => void;
     onFallback?: (info: DiffErrorInfo, error: unknown) => void;
     onError?: (info: DiffErrorInfo, error: unknown) => void;
+    /** V027-R54：Esc 离开编辑区（焦点移到保存栏）；IME 候选期间不触发。 */
+    onExitEditor?: () => void;
   } = $props();
 
   let containerEl = $state<HTMLDivElement>();
@@ -196,6 +199,32 @@
     };
   });
 
+  /** V027-R54：Esc 离开编辑区——焦点移到保存栏（Tab 仍为缩进）。
+   * IME 候选期间先处理输入法，不离开；对话框/菜单打开时让给浮层；
+   * 查找面板输入框内 Esc 交给编辑器内部（关闭面板），不离开；编辑正文区
+   * Esc 即使被编辑器内部 preventDefault（默认 keymap 空操作）仍离开。 */
+  function onHostKeydown(e: KeyboardEvent): void {
+    if (e.key !== "Escape") return;
+    if (isComposing()) return;
+    const target = e.target as HTMLElement | null;
+    if (target?.closest?.("dialog, [role='dialog'], [role='menu']")) return;
+    if (
+      typeof document !== "undefined" &&
+      document.querySelector("dialog[open]")
+    )
+      return;
+    const path = typeof e.composedPath === "function" ? e.composedPath() : [];
+    const innermost = path[0] as HTMLElement | undefined;
+    if (
+      innermost instanceof HTMLInputElement ||
+      innermost instanceof HTMLTextAreaElement
+    )
+      return;
+    e.preventDefault();
+    e.stopPropagation();
+    onExitEditor?.();
+  }
+
   export function getText(): string {
     const h = untrack(() => handle);
     if (h) {
@@ -344,12 +373,14 @@
   }
 </script>
 
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions -- Esc 离开编辑区出口需要宿主键盘监听（冒泡自内部编辑器）。 -->
 <div
   bind:this={containerEl}
   class="conflict-result-editor-host"
   data-testid="conflict-result-editor-host"
   role="region"
   aria-label="可编辑合并结果"
+  onkeydown={onHostKeydown}
 ></div>
 
 <style>

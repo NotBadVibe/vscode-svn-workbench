@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "version": "0.2.7",
+  "runId": "2026-09-10T01-08-55-290Z-ddf48630",
+  "generatedAt": "2026-09-10T01:09:57.964Z",
+  "gitCommit": "a7578f70da531e7354216e5fc321ad037c8b153c",
+  "sourceState": "clean",
+  "commands": [
+    "test:webview",
+    "test:performance"
+  ],
+  "status": "passed"
+}

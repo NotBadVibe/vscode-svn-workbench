@@ -606,12 +606,12 @@
     },
     {
       "version": "0.2.7",
-      "status": "draft",
-      "phase": "planned",
+      "status": "released",
+      "phase": "released",
       "baseVersion": "0.2.6",
       "canonicalEntry": "releases/v0.2.7/README.md",
       "manifest": "releases/v0.2.7/manifest.json",
-      "releasedFact": false,
+      "releasedFact": true,
       "topics": [
         "large-file-performance",
         "keyboard-save-flow",
