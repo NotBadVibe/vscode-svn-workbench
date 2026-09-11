@@ -1,124 +1,151 @@
-# SVN Workbench
+# SVN Workbench (SVN 工作台)
 
-SVN Workbench 是面向 VS Code 的 Subversion 日常任务工作台，AI 为可选增强。正式业务界面统一使用 Svelte 5，Explorer、编辑器和命令面板中的入口会直接打开对应功能模块，不强制进入一个完整首页。
+> 面向 VS Code 的现代化、AI 增强型 Subversion 研发工作台。
 
-本项目采用 [MIT License](LICENSE) 开源；欢迎通过 Issue 和 Pull Request 参与改进，提交前请先阅读 [贡献指南](CONTRIBUTING.md) 与 [安全策略](SECURITY.md)。
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![VS Code](https://img.shields.io/badge/VS%20Code-^1.92.0-007ACC.svg)](https://code.visualstudio.com/)
 
-## 主要能力
+---
 
-- 在文件、目录和多选资源的右键菜单中直接打开 Changes、Diff、历史、提交、冲突和 AI 模块。
-- 为每个工作副本创建独立的 VS Code Source Control Provider；冲突、受控变更和未版本化资源使用按状态裁剪的原生右键菜单。
-- 采集真实 SVN 状态，支持搜索、分组、多选、Add、Delete、Revert、Ignore、Lock、Unlock、Copy URL 和 Changelist。
-- 提交、更新、Cleanup、属性修改、冲突解决和历史恢复均先预览，再通过范围快照与确认令牌执行。
-- 支持 Working 与 BASE Diff、修订比较、Changed Paths、Blame、三方块级冲突合并和从修订恢复到工作副本。
-- Repository 模块提供 Branch、Tag、Switch、Relocate、Merge、仓库浏览、Patch、本地 Shelf 和发布说明，并对危险操作二次确认。
-- 支持 AI 智能选择、提交说明、变更解读（未配置模型时为本地检查，含受限差异回执与逐条证据）、按改动意图拆分（无差异时降级为按目录/文件类型分组）、冲突意图解释与冲突建议。
-- 提交说明生成只产生建议草稿，不覆盖用户已填内容；替换前展示字符数并可撤销，范围或候选变化后建议只读。
+## 💡 为什么需要 SVN Workbench？
 
-- AI Provider、模型和场景路由可配置；API Key 仅保存在 VS Code SecretStorage，提交历史默认不外发且受条数预算限制。
-- 通过 `.svn-workbench.json` 配置团队提交规则；AI 不可用时保留本地规则和完整 SVN 手动流程。
-- 提供安全认证输入、证书指纹核对、代理入口、工作副本恢复、环境诊断、严格 CSP、敏感信息裁剪和任务取消。
+Subversion (SVN) 依然在游戏研发、政企金融、大型资产仓库与硬件嵌入式等领域扮演着重要基石角色。然而，长久以来 VS Code 生态中的 SVN 工具普遍面临**界面交互陈旧**、**操作反馈模糊**、**三方冲突难解**以及**缺乏现代代码理解能力**等痛点。
 
-## 运行要求
+**SVN Workbench** 专为解决这些问题而生：
 
-- VS Code 1.92.0 或更高版本。
-- SVN CLI 位于 `PATH`，或通过 `svnWorkbench.svn.path` 指定。
-- 支持 Windows、macOS 与 Linux；三平台门禁定义在 `.github/workflows/verify.yml`。
+- **现代化交互体验**：基于 Svelte 5 构建清爽直观的 Webview 界面，告别简陋表格与黑盒弹窗。
+- **任务级精准右键**：在资源管理器、编辑器与 SCM 中按需呼出对应任务模块，不强加笨重繁琐的全局大首页。
+- **严谨安全的写操作**：提交、更新、清理、还原与合并均提供**影响清单预览**、**范围快照**与**双重确认令牌**，杜绝误操作。
+- **务实透明的 AI 增强**：AI 不是黑盒玩具——提供**证据可溯源**的提交说明生成、变更解读与冲突意图分析；模型未配置或异常时 **100% 本地平滑降级**。
 
-插件会自动探测常见 SVN 路径：
+---
 
-- Windows: `svn.exe`, TortoiseSVN, SlikSVN, VisualSVN, VisualSVN Server.
-- macOS: `svn`, `/opt/homebrew/bin/svn`, `/usr/local/bin/svn`, `/usr/bin/svn`.
-- Linux: `svn` 或 `svnWorkbench.svn.path` 指定的可执行文件。
+## ✨ 核心特性
 
-## 常用命令
+### 1. ⚡ 场景化右键直达，即开即用
 
-- `SVN：查看工作副本修改`（`svnWorkbench.openWorkbench`）
-- `SVN：检查环境`（`svnWorkbench.checkEnvironment`）
-- `SVN：刷新状态`（`svnWorkbench.refreshStatus`）
-- `SVN：更新当前范围`（`svnWorkbench.updateScope`）
-- `SVN：查看与编辑属性`（`svnWorkbench.openProperties`）
-- `SVN：清理工作副本`（`svnWorkbench.openCleanup`）
-- `SVN：浏览仓库`（`svnWorkbench.openRepositoryBrowser`）
-- `SVN：创建分支`（`svnWorkbench.createBranch`）
-- `SVN：创建标签`（`svnWorkbench.createTag`）
-- `SVN：切换工作副本`（`svnWorkbench.switchWorkingCopy`）
-- `SVN：重定位仓库地址`（`svnWorkbench.relocateWorkingCopy`）
-- `SVN：合并到工作副本`（`svnWorkbench.mergeToWorkingCopy`）
-- `SVN：补丁与本地搁置`（`svnWorkbench.openPatchShelf`）
-- `SVN：生成发布说明`（`svnWorkbench.openReleaseNotes`）
-- `SVN：提交当前范围`（`svnWorkbench.commitFolder`）
-- `SVN：打开冲突中心`（`svnWorkbench.openConflictCenter`）
-- `SVN：打开差异对比`（`svnWorkbench.openDiff`）
-- `SVN：查看历史`（`svnWorkbench.openHistory`）
-- `SVN：打开团队配置`（`svnWorkbench.openTeamConfig`）
-- `SVN：配置团队规则`（`svnWorkbench.configureTeamConfig`）
-- `SVN：显示输出`（`svnWorkbench.showOutput`）
-- `SVN：AI 配置模型`（`svnWorkbench.aiConfigure`）
-- `SVN：AI 测试连接`（`svnWorkbench.aiTestConnection`）
-- `SVN：变更集管理`（`svnWorkbench.openChangelists`）
-- `SVN：解读所选变更`（`svnWorkbench.understandScope`）
-- `SVN：项目总览`（`svnWorkbench.openProjects`）
-- `SVN：打开新手引导`（`svnWorkbench.openGuide`）
-- `SVN：打开验收清单`（`svnWorkbench.openAcceptanceChecklist`，仅开发/测试环境可见）
+不需要在复杂的面板间来回切换。无论在文件列表、目录还是多选资源上右键，均可一键直达当前操作范围的核心功能：
 
-## 基本流程
+- **查看与对比**：Working 对比 BASE、任意修订版本对比、文件演进历史与逐行 Blame。
+- **本地修改管理**：实时捕获 SVN 真实状态，支持按状态（已修改、新增、删除、缺失、冲突、未版本化）自动分组与筛选。
+- **资源级快速操作**：直接执行 Add、Delete、Revert、Ignore、Lock/Unlock、属性编辑及复制仓库 URL。
 
-1. 使用 VS Code 打开 SVN 工作副本，并运行 `SVN：检查环境`。
-2. 在 Explorer 中右键文件、目录或多选资源，从 `SVN Workbench` 子菜单直接选择任务。
-3. 在 Svelte 模块中确认仓库、操作范围和候选文件。
-4. 需要时使用 AI 生成建议；采用建议前检查外发范围、证据和过期状态。
-5. 对写操作检查命令预览和精确文件清单，再明确确认执行。
-6. 完成后检查结果、工作副本新状态和恢复建议。
+### 2. 🛡️ 安全第一的写操作保障
 
-## AI 配置
+在企业级 SVN 协作中，安全高于一切：
 
-在工作台设置模块中配置 Provider、Base URL、默认模型、按场景模型和 API Key。
+- **预览先行**：所有写操作（Commit、Update、Cleanup、Revert、Switch、Merge 等）执行前，展示明确的影响文件清单与操作范围。
+- **范围与时效校验**：基于 `moduleId + taskId + operationScope` 严格锁定范围，代码或 revision 发生变动后旧预览自动失效，防止竞态冲突。
+- **混合仓库严格隔离**：针对多工作副本与嵌套 `svn:externals` 独立建模，禁止混合仓库合并提交为一个 revision，保障版本库边界清晰。
 
-当前内置预设包括：
+### 3. 🧠 证据可溯源的 AI 辅助（可选增强）
 
-- DeepSeek
-- Qwen DashScope
-- Zhipu Coding
-- Zhipu General
-- Kimi
-- Custom OpenAI-compatible endpoint
+将现代大语言模型的代码理解能力注入传统 SVN 流程中，每一条结论都真实可信：
 
-AI 是可选增强能力。未配置、调用失败或结果无效时，核心 SVN 操作、规则扫描和人工流程仍然可用。
+- **有据可查的提交说明**：结合差异证据与团队提交规范生成草稿建议，逐条结论关联代码行号与差异证据，不覆盖用户已输入内容。
+- **变更深度解读**：快速理清“改了什么”、“需要确认的事项”、“潜在影响与验证建议”，本地阻止项绝不被模型降级。
+- **改动意图智能拆分**：多项混合改动自动按业务意图聚类，可一键转换为 **SVN 原生 Changelist** 分批提交。
+- **隐私与透明预算**：外发前明确展示模型、文件范围与字符预算，提交历史受严格预算限制；API Key 仅存放于 VS Code 安全密钥存储（SecretStorage）。
+- **零依赖本地降级**：未配置 AI、网络超时或接口异常时，纯本地规则与完整手动 SVN 操作全量可用。
 
-## 开发与验收
+### 4. ⚔️ 可视化三方冲突中心
 
-开发环境固定使用 Node.js 26 与 npm 12；执行 `nvm use` 会读取仓库中的 `.nvmrc`。
+告别痛苦的手工搜索 `<<<<<<` 冲突标记：
+
+- **三方块级比对**：直观对比 Working、Mine 与 Theirs 三方修改，支持单块采纳与手动编辑。
+- **冲突意图解释**：AI 辅助分析双方修改背景与分歧原因，提供推荐处理思路与潜在业务风险提醒。
+- **安全解决**：解决后重新验证语法与状态，由用户确认后再执行 `svn resolve`。
+
+### 5. 🗂️ 完整的仓库与分支运维体系
+
+无需频繁打开终端输入复杂的 SVN 命令：
+
+- **分支与标签管理**：图形化 Branch / Tag 创建向导，命令预览让参数一目了然。
+- **工作副本切换与重定位**：安全执行 Switch 与 Relocate，自动核验目标地址与差异。
+- **交互式合并向导**：清晰选择修订范围，合并影响全景预览，冲突直接衔接冲突中心。
+- **本地搁置（Patch Shelf）**：支持一键导出/应用 Patch，在不污染远程仓库的前提下安全暂存临时改动。
+- **发布说明一键生成**：根据指定修订版本范围自动整理变更记录与发布日志。
+
+### 6. 👥 团队规范与敏捷配置
+
+- **团队规则沉淀**：通过项目根目录的 `.svn-workbench.json` 统一团队提交前检查规则、路径规范与敏感信息策略。
+- **敏感信息扫描**：内置凭据、密钥、私钥与生成物检测，在提交前拦截潜在安全隐患。
+
+---
+
+## 🚀 快速上手
+
+### 前置要求
+
+- **VS Code**：`1.92.0` 或更高版本。
+- **SVN 命令行工具 (SVN CLI)**：位于系统 `PATH`，或在设置中手动指定。
+  - _Windows_：自动探测 `svn.exe`、TortoiseSVN、SlikSVN、VisualSVN。
+  - _macOS_：自动探测 Homebrew（`/opt/homebrew/bin/svn`、`/usr/local/bin/svn`）或 Xcode CLI。
+  - _Linux_：系统包管理器安装的 `svn`。
+
+### 快速开始
+
+1. **安装扩展**：在 VS Code 中搜索 `SVN Workbench` 或通过 VSIX 本地安装。
+2. **环境自检**：打开包含 `.svn` 目录的工作区，按 `Ctrl+Shift+P` (macOS: `Cmd+Shift+P`) 执行 `SVN：检查环境`。
+3. **开始使用**：
+   - 在左侧资源管理器中，**右键任意文件或文件夹**，选择 `SVN Workbench` 即可开启对应操作。
+   - 在左侧 SCM 面板中，查看工作副本的修改列表、暂存变更集与提交草稿。
+
+---
+
+## ⚙️ AI 模型配置
+
+SVN Workbench 兼容主流国内外大模型服务商，可在工作台设置中根据不同场景灵活路由：
+
+- **支持的服务商**：
+  - DeepSeek
+  - 通义千问 (Qwen DashScope)
+  - 智谱 GLM (Zhipu Coding / General)
+  - 月之暗面 (Kimi)
+  - 任意兼容 OpenAI 接口标准的模型服务 (Custom Endpoint)
+- **安全保障**：API Key 保存至 VS Code `SecretStorage`，绝不写入设置文件、日志面板或代码库中。
+
+> 💡 **提示**：AI 为完全可选的增强能力。即使不配置任何模型，所有 SVN 核心管理功能依然 100% 完整可用。
+
+---
+
+## ⌨️ 常用命令一览
+
+| 命令名称                  | 命令 ID                                   | 适用场景                               |
+| :------------------------ | :---------------------------------------- | :------------------------------------- |
+| **SVN：查看工作副本修改** | `svnWorkbench.openWorkbench`              | 查看当前工作副本全部变更与状态看板     |
+| **SVN：检查环境**         | `svnWorkbench.checkEnvironment`           | 诊断 SVN CLI 路径、版本及网络环境      |
+| **SVN：刷新状态**         | `svnWorkbench.refreshStatus`              | 重新采集当前工作副本状态               |
+| **SVN：更新当前范围**     | `svnWorkbench.updateScope`                | 预览并更新当前选中的目录或文件         |
+| **SVN：提交当前范围**     | `svnWorkbench.commitFolder`               | 呼出提交面板，支持 AI 建议与规则校验   |
+| **SVN：打开差异对比**     | `svnWorkbench.openDiff`                   | 快速对比当前文件与 BASE 版本差异       |
+| **SVN：查看历史**         | `svnWorkbench.openHistory`                | 检索修订记录、文件演进与变更列表       |
+| **SVN：打开冲突中心**     | `svnWorkbench.openConflictCenter`         | 处理冲突文件，三方合并与意图分析       |
+| **SVN：变更集管理**       | `svnWorkbench.openChangelists`            | 管理与调整本地 SVN Changelist          |
+| **SVN：解读所选变更**     | `svnWorkbench.understandScope`            | AI 分析所选改动的业务意图与影响面      |
+| **SVN：浏览仓库**         | `svnWorkbench.openRepositoryBrowser`      | 在线查看远程版本库目录树与节点信息     |
+| **SVN：创建分支 / 标签**  | `svnWorkbench.createBranch` / `createTag` | 分支与标签创建向导                     |
+| **SVN：切换工作副本**     | `svnWorkbench.switchWorkingCopy`          | 将本地工作副本切换至另一分支/路径      |
+| **SVN：重定位仓库地址**   | `svnWorkbench.relocateWorkingCopy`        | 仓库迁移时重定位远程 URL               |
+| **SVN：合并到工作副本**   | `svnWorkbench.mergeToWorkingCopy`         | 向导式多修订合并与预览                 |
+| **SVN：补丁与本地搁置**   | `svnWorkbench.openPatchShelf`             | 生成/应用 Patch，支持本地临时搁置      |
+| **SVN：生成发布说明**     | `svnWorkbench.openReleaseNotes`           | 基于修订范围自动聚合生成 Release Notes |
+| **SVN：配置团队规则**     | `svnWorkbench.configureTeamConfig`        | 维护 `.svn-workbench.json` 协作规则    |
+
+---
+
+## 🛠️ 工程与贡献
+
+本项目采用 [MIT License](LICENSE) 开源。
+
+- **文档中心**：查阅 [文档中心](docs/README.md) 了解架构规范、测试门禁与演进路线。
+- **参与贡献**：阅读 [贡献指南](CONTRIBUTING.md) 了解代码规范与 PR 提交流程。
+- **安全反馈**：查阅 [安全策略](SECURITY.md) 了解漏洞提报通道。
 
 ```bash
+# 本地构建与验证环境要求：Node.js 26 + npm 12
+nvm use
 npm ci
-npm run check
-npm run verify
-npm run prepare:manual-test-env
-npm run package:vsix
-npm run validate:vsix-install
+npm run check    # 执行 ESLint、Prettier、TypeScript 与 Svelte 校验
+npm run verify   # 执行全套门禁验收（文档、测试、视觉、无障碍与真实 SVN 验证）
 ```
-
-`npm run check` 同时执行 ESLint、Prettier、TypeScript 与 Svelte 校验。`npm run verify` 会依次执行文档映射、高危依赖审计、静态检查、覆盖率门禁、Webview/视觉/无障碍验收、性能预算和 Extension Host/真实 SVN 验收。普通截图与性能证据写入 `.validation/evidence/v<版本>/<运行编号>/`；只有 `npm run evidence:release` 会向对应版本发布目录写入不可覆盖的证据运行。
-
-详细架构、逐项验收方法、功能状态和候选版本结论见项目中的 `docs/README.md`。
-
-## 打包
-
-以下命令生成本地 VSIX：
-
-```bash
-npm run package:vsix
-```
-
-生成的 `.vsix` 可通过 VS Code 的“从 VSIX 安装...”命令安装。
-
-干净 profile 的安装、卸载和重装检查：
-
-```bash
-npm run validate:vsix-install
-```
-
-## 许可证
-
-本项目采用 [MIT License](LICENSE)。
