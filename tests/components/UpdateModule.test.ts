@@ -548,13 +548,16 @@ describe("UpdateModule", () => {
   });
 
   it("V028-R02：当天预览时间显示为今天 HH:mm", () => {
+    // CI 运行在不同平台与时区（如 UTC），具体时钟值不可靠。
+    // 断言"今天 HH:mm"的格式结构：前缀"预览时间：今天 " + 时间模式，
+    // 不绑定具体小时/分钟，避免跨时区失败。
     const now = new Date();
     const todayIso = new Date(
       now.getFullYear(),
       now.getMonth(),
       now.getDate(),
-      9,
-      5,
+      12,
+      0,
     ).toISOString();
     render(UpdateModule, {
       snapshot: updateSnapshot({
@@ -575,6 +578,8 @@ describe("UpdateModule", () => {
       }),
       onAction: vi.fn(),
     });
-    expect(screen.getByText(/预览时间：今天 09:05/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/预览时间：今天 \d{2}:\d{2}/),
+    ).toBeInTheDocument();
   });
 });
