@@ -617,6 +617,19 @@
         "keyboard-save-flow",
         "real-user-validation"
       ]
+    },
+    {
+      "version": "0.2.8",
+      "status": "released",
+      "phase": "released",
+      "baseVersion": "0.2.7",
+      "canonicalEntry": "releases/v0.2.8/README.md",
+      "manifest": "releases/v0.2.8/manifest.json",
+      "releasedFact": true,
+      "topics": [
+        "settings-draft-beforeunload",
+        "preview-time-localization"
+      ]
     }
   ],
   "archive": [
