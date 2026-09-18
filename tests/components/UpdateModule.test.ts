@@ -537,10 +537,44 @@ describe("UpdateModule", () => {
     });
     expect(screen.getByText(/modified 1/)).toBeInTheDocument();
     expect(screen.getByText(/预览时间：/)).toBeInTheDocument();
+    // v0.2.8 V028-R02：预览时间经 formatZhDateTime 本地化，不再直出 ISO 字符串。
+    expect(screen.getByText(/预览时间：2026-09-07 08:00/)).toBeInTheDocument();
+    expect(screen.queryByText(/2026-09-07T00:00:00\.000Z/)).toBeNull();
     expect(screen.getByText(/HEAD 可变化/)).toBeInTheDocument();
     expect(screen.getByLabelText("本地重叠（1）")).toBeInTheDocument();
     expect(screen.getAllByText("src/overlap.ts").length).toBeGreaterThanOrEqual(
       2,
     );
+  });
+
+  it("V028-R02：当天预览时间显示为今天 HH:mm", () => {
+    const now = new Date();
+    const todayIso = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate(),
+      9,
+      5,
+    ).toISOString();
+    render(UpdateModule, {
+      snapshot: updateSnapshot({
+        preview: {
+          token: "update-today",
+          canExecute: true,
+          localCount: 0,
+          remoteCount: 1,
+          risk: "low",
+          overlapPaths: [],
+          remotePaths: ["src/today.ts"],
+          remoteByStatus: { added: 1 },
+          remoteIncomplete: false,
+          previewedAt: todayIso,
+          messages: [],
+          commands: ['svn update --accept postpone "."'],
+        },
+      }),
+      onAction: vi.fn(),
+    });
+    expect(screen.getByText(/预览时间：今天 09:05/)).toBeInTheDocument();
   });
 });

@@ -837,3 +837,127 @@ describe("SettingsModule V020-R07 配置草稿与测试反馈分离", () => {
     expect("apiKey" in snapshot.ai).toBe(false);
   });
 });
+
+describe("SettingsModule V028-R01 未保存草稿关闭警告", () => {
+  const baseUrlInput = () =>
+    screen.getByLabelText("接口地址（Base URL）") as HTMLInputElement;
+
+  it("有未保存草稿时 beforeunload 被拦截，保存/放弃后不再拦截", async () => {
+    render(SettingsModule, { snapshot, onAction: vi.fn() });
+
+    // 初始干净：不拦截
+    const cleanEvent = new Event("beforeunload", {
+      cancelable: true,
+    }) as BeforeUnloadEvent;
+    window.dispatchEvent(cleanEvent);
+    expect(cleanEvent.defaultPrevented).toBe(false);
+
+    // 编辑接口地址 → 草稿脏：拦截
+    await fireEvent.input(baseUrlInput(), {
+      target: { value: "https://dirty.example/v1" },
+    });
+    await waitFor(() => {
+      expect(screen.getByText(/有未保存的修改/)).toBeInTheDocument();
+    });
+    const dirtyEvent = new Event("beforeunload", {
+      cancelable: true,
+    }) as BeforeUnloadEvent;
+    window.dispatchEvent(dirtyEvent);
+    expect(dirtyEvent.defaultPrevented).toBe(true);
+
+    // 放弃修改 → 恢复干净：不再拦截
+    await fireEvent.click(screen.getByRole("button", { name: "放弃修改" }));
+    await waitFor(() => {
+      expect(screen.queryByText(/有未保存的修改/)).not.toBeInTheDocument();
+    });
+    const afterDiscardEvent = new Event("beforeunload", {
+      cancelable: true,
+    }) as BeforeUnloadEvent;
+    window.dispatchEvent(afterDiscardEvent);
+    expect(afterDiscardEvent.defaultPrevented).toBe(false);
+  });
+
+  it("保存成功后不再拦截 beforeunload", async () => {
+    const onAction = vi.fn();
+    const { rerender } = render(SettingsModule, { snapshot, onAction });
+    await fireEvent.input(baseUrlInput(), {
+      target: { value: "https://saved.example/v1" },
+    });
+    await waitFor(() => {
+      expect(screen.getByText(/有未保存的修改/)).toBeInTheDocument();
+    });
+
+    await fireEvent.click(screen.getByRole("button", { name: "保存配置" }));
+    expect(onAction).toHaveBeenCalledWith(
+      "settings/save-ai",
+      expect.objectContaining({ baseUrl: "https://saved.example/v1" }),
+    );
+
+    // 保存成功快照到达后，草稿收敛为已保存值，不再拦截
+    await rerender({
+      snapshot: {
+        ...snapshot,
+        ai: {
+          ...snapshot.ai,
+          baseUrl: "https://saved.example/v1",
+          feedback: {
+            tone: "success",
+            message: "AI 模型配置已保存。",
+          },
+        },
+      },
+      onAction,
+    });
+    await waitFor(() => {
+      expect(screen.queryByText(/有未保存的修改/)).not.toBeInTheDocument();
+    });
+    const event = new Event("beforeunload", {
+      cancelable: true,
+    }) as BeforeUnloadEvent;
+    window.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  it("团队规则草稿脏时同样拦截 beforeunload", async () => {
+    const { container } = render(SettingsModule, {
+      snapshot,
+      onAction: vi.fn(),
+    });
+    const teamTab = Array.from(container.querySelectorAll('[role="tab"]')).find(
+      (el) => el.textContent?.includes("团队提交规范"),
+    ) as HTMLElement;
+    expect(teamTab).toBeDefined();
+    await fireEvent.click(teamTab);
+
+    // 初始干净：不拦截
+    const cleanEvent = new Event("beforeunload", {
+      cancelable: true,
+    }) as BeforeUnloadEvent;
+    window.dispatchEvent(cleanEvent);
+    expect(cleanEvent.defaultPrevented).toBe(false);
+
+    // 启用提交规范 → 团队草稿脏：拦截
+    const enableCheckbox = container.querySelector(
+      'input[type="checkbox"]',
+    ) as HTMLInputElement;
+    expect(enableCheckbox).not.toBeNull();
+    await fireEvent.click(enableCheckbox);
+
+    // 确认 teamDirty 已生效（tab 按钮出现"未保存"）
+    await waitFor(
+      () => {
+        const teamTabAfter = Array.from(
+          container.querySelectorAll('[role="tab"]'),
+        ).find((el) => el.textContent?.includes("团队提交规范"));
+        expect(teamTabAfter?.textContent).toContain("未保存");
+      },
+      { timeout: 2000 },
+    );
+
+    const dirtyEvent = new Event("beforeunload", {
+      cancelable: true,
+    }) as BeforeUnloadEvent;
+    window.dispatchEvent(dirtyEvent);
+    expect(dirtyEvent.defaultPrevented).toBe(true);
+  });
+});

@@ -27,6 +27,7 @@
     updateRemoteOverlapLabel,
     updateViewLocalChangesLabel,
   } from "../../i18n/terminology";
+  import { formatZhDateTime } from "../../i18n/formatters";
 
   let {
     snapshot,
@@ -450,8 +451,9 @@
       {/if}
       {#if snapshot.preview.previewedAt}
         <p class="task-hint">
-          预览时间：{snapshot.preview.previewedAt}；执行时更新到最新远端，期间
-          HEAD 可变化，实际数量以执行结果为准。
+          预览时间：{formatZhDateTime(
+            snapshot.preview.previewedAt,
+          )}；执行时更新到最新远端，期间 HEAD 可变化，实际数量以执行结果为准。
         </p>
       {/if}
       <details class="command-preview">

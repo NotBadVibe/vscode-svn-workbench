@@ -168,6 +168,21 @@
 
   let aiDirty = $derived(isAiDirtyNow());
   let teamDirty = $derived(isTeamDirtyNow());
+
+  // Vercel Web Interface Guidelines（Forms）：有未保存修改时，关闭窗口/离开页面前
+  // 警告，避免 AI/团队规则草稿被静默丢弃。守卫读取当前 derived 脏状态，保存或
+  // 放弃后不再拦截。VS Code webview 重载/关闭均触发 beforeunload。
+  function handleBeforeUnload(event: BeforeUnloadEvent): void {
+    if (!aiDirty && !teamDirty) return;
+    event.preventDefault();
+    event.returnValue = "";
+  }
+
+  $effect(() => {
+    if (typeof window === "undefined") return;
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  });
   // 异步测试结果绑定发起时的输入指纹：用户继续编辑后旧结果标为过期。
   let testResultStale = $derived(
     (shownAiFeedbackKind === "test" || shownAiFeedbackKind === "list") &&
