@@ -578,8 +578,6 @@ describe("UpdateModule", () => {
       }),
       onAction: vi.fn(),
     });
-    expect(
-      screen.getByText(/预览时间：今天 \d{2}:\d{2}/),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/预览时间：今天 \d{2}:\d{2}/)).toBeInTheDocument();
   });
 });
